@@ -8,8 +8,8 @@ A research run that stops before handing off (usage limit, API error, crash, reb
 
 ## Schedule
 
-- launchd fires `linear-research.sh` hourly at 23:00–06:00 (replaces 23:59 / 05:10).
-- The script only starts work between 23:00 and 06:59 and logs a skip otherwise (launchd runs a missed fire once on wake). `--now` skips the hours check for manual runs; every other check still applies.
+- launchd fires `linear-research.sh` hourly at 01:00–06:00 (replaces 23:59 / 05:10; was 23:00–06:00 until PR ophis/claude#2).
+- The script only starts work between 01:00 and 06:59 and logs a skip otherwise (launchd runs a missed fire once on wake). `--now` skips the hours check for manual runs; every other check still applies.
 
 ## Tick
 
@@ -18,8 +18,7 @@ A research run that stops before handing off (usage limit, API error, crash, reb
 3. `pick.py --plan RUNS_LOG`: always runs Recover, then prints `resume <ISSUE> <SID> <k>`, `new`, or nothing. No claim.
 4. Nothing → skip (no probe).
 5. Probe usage (existing Haiku call). No `rate_limit_event` → skip.
-   - `resume` needs status ≠ `rejected`, `five_hour` < 0.8, and every `seven_day*` window < 1.
-   - `new` needs `five_hour` < 0.30.
+   - `resume` and `new` both need status ≠ `rejected`, `five_hour` < 0.9, and every `seven_day*` window < 1 (was 0.8 for resume and 0.30 for new until PR ophis/claude#2).
 6. `resume` → append `resume <ISSUE> session=<SID> n=<k>` to runs.log, then start tmux with the resume command.
    `new` → `pick.py --claim` (Pick + Claim), then start as today.
 7. The tmux command appends `end <ISSUE> session=<SID> exit=<code>` after `claude` exits (debugging only).
