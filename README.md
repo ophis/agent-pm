@@ -15,7 +15,7 @@ Skill files:
   - Read: `pick.py` runs `security find-generic-password -a frank.agent.w -s linear-api-key -w` at startup and sends the key only as the `Authorization` header to `api.linear.app`; it is never printed or written to disk. Works under launchd because the LaunchAgent runs in the login session.
 - `scripts/linear-research.sh` — headless runner: runs `pick.py`, then `claude -p` on the claimed issue in a detached tmux session `linear-research`, one run at a time, logs to `runs.log`. Empty queue → no Claude session.
   - `linear-research.sh` — real run. `linear-research.sh --dry-run` — reports what `pick.py` would recover and pick; changes nothing, starts no Claude.
-  - Scheduled daily at 00:00 and 05:00 by the LaunchAgent `~/Library/LaunchAgents/com.ophis.linear-research.plist` (not in git); launchd output goes to `~/Library/Logs/linear-research.log`.
+  - Scheduled daily at 00:00 and 05:10 (the 00:00 usage probe starts a 5-hour window; 05:10 leaves margin after it resets) by the LaunchAgent `~/Library/LaunchAgents/com.ophis.linear-research.plist` (not in git); launchd output goes to `~/Library/Logs/linear-research.log`.
   - Watch: `tmux attach -t linear-research`. Inspect a finished run: `claude --resume <session-id>`.
 - `review/` — unused draft (reuses one interactive tmux session); not wired into anything.
 
