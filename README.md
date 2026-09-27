@@ -13,7 +13,7 @@ Skill files:
 - `scripts/pick.py` — recovers issues left by dead runs, then claims the next Todo issue via the Linear API. Needs the agent account's API key in the Keychain: `security add-generic-password -a frank.agent.w -s linear-api-key -w`.
 - `scripts/linear-research.sh` — headless runner: runs `pick.py`, then `claude -p` on the claimed issue in a detached tmux session `linear-research`, one run at a time, logs to `runs.log`. Empty queue → no Claude session.
   - `linear-research.sh` — real run. `linear-research.sh --dry-run` — reports what `pick.py` would recover and pick; changes nothing, starts no Claude.
-  - Scheduled daily at 04:10 by the LaunchAgent `~/Library/LaunchAgents/com.ophis.linear-research.plist` (not in git); launchd output goes to `~/Library/Logs/linear-research.log`.
+  - Scheduled daily at 00:00 and 05:00 by the LaunchAgent `~/Library/LaunchAgents/com.ophis.linear-research.plist` (not in git); launchd output goes to `~/Library/Logs/linear-research.log`.
   - Watch: `tmux attach -t linear-research`. Inspect a finished run: `claude --resume <session-id>`.
 - `review/` — unused draft (reuses one interactive tmux session); not wired into anything.
 
@@ -23,7 +23,7 @@ Notes:
 
 ## Rescheduling
 
-Edit `Hour`/`Minute` under `StartCalendarInterval` in the plist, then reload (launchd reads the plist only at load):
+Edit the `Hour`/`Minute` entries under `StartCalendarInterval` (an array, one dict per time) in the plist, then reload (launchd reads the plist only at load):
 
 ```bash
 P=~/Library/LaunchAgents/com.ophis.linear-research.plist
