@@ -154,7 +154,7 @@ class Dispatcher(unittest.TestCase):
         self.assertIn("Resumed run 2 for TASK-8 (https://l/TASK-8) after an interruption. "
                       f"Re-read {self.home}/stages/deep-research.md first (it may have changed since this session started) "
                       "and follow its resume rule.", call)
-        self.assertIn("--model opus --effort xhigh --permission-mode auto --add-dir", call)
+        self.assertIn(f"--model opus --effort xhigh --permission-mode auto --add-dir {self.home} --add-dir", call)
         self.assertNotIn("--claim", " ".join(self.calls("pick")))
 
     def test_resume_blocked(self):

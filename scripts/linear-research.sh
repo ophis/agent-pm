@@ -88,4 +88,4 @@ else
 fi
 
 tmux new-session -d -s "$SESSION" -c "$STATE/work" \
-  "claude -p $(printf '%q' "$PROMPT") $SESSION_ARG --model opus --effort xhigh --permission-mode auto --add-dir $(printf '%q' "$HOME/playground/private_docs") < /dev/null; rc=\$?; echo \"\$(date '+%F %T') end $ISSUE session=$SID exit=\$rc\" >> $(printf '%q' "$RUNS")"
+  "claude -p $(printf '%q' "$PROMPT") $SESSION_ARG --model opus --effort xhigh --permission-mode auto --add-dir $(printf '%q' "$STATE") --add-dir $(printf '%q' "$HOME/playground/private_docs") < /dev/null; rc=\$?; echo \"\$(date '+%F %T') end $ISSUE session=$SID exit=\$rc\" >> $(printf '%q' "$RUNS")"
