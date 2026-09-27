@@ -30,7 +30,7 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous research run was interrupted. Moving this issue back to the Todo queue."
 USAGE = "usage: pick.py [--plan | --claim] [--dry-run] [RUNS_LOG] | --gate resume|new | --prune RUNS_LOG"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RUNS_LOG = os.path.join(ROOT, "runs.log")
+RUNS_LOG = os.path.join(ROOT, "logs", "runs.log")
 # claude keys transcripts by cwd, with "/" and "." replaced by "-".
 TRANSCRIPTS = os.path.expanduser("~/.claude/projects/" + os.path.join(ROOT, "work").replace("/", "-").replace(".", "-"))
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")

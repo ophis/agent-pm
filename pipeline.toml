@@ -1,0 +1,8 @@
+team = "Frank's Agents"
+human_members = ["ophis.w@outlook.com"]   # only their comments count as Handoff instructions
+
+[projects."Deep Research"]
+next = "Product Design"
+
+[projects."Product Design"]
+prefix = "PRD"                            # title prefix for issues created in this project

@@ -61,7 +61,7 @@ class Dispatcher(unittest.TestCase):
             self.write(os.path.join(bindir, name), body, 0o755)
         self.write(os.path.join(sdir, "pick.py"), FAKE_PICK, 0o755)
         self.script = shutil.copy(os.path.join(SCRIPTS, "linear-research.sh"), sdir)
-        self.runs = os.path.join(self.home, "runs.log")
+        self.runs = os.path.join(self.home, "logs", "runs.log")
         self.env = {"HOME": self.home, "FAKE": self.fake, "REAL_PICK": os.path.join(SCRIPTS, "pick.py"), "FAKE_HOUR": "02"}
         self.set_probe(probe(0.1))
 

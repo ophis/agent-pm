@@ -12,8 +12,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION=linear-research
 STATE="$(dirname "$DIR")"
 STAGE="$STATE/stages/deep-research.md"
-RUNS="$STATE/runs.log"
-mkdir -p "$STATE/work"
+RUNS="$STATE/logs/runs.log"
+mkdir -p "$STATE/work" "$STATE/logs"
 
 DRY=; NOW=
 for a in "$@"; do

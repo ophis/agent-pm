@@ -12,9 +12,9 @@
 		<string>/Users/francis/playground/agent-pm/scripts/linear-research.sh</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>/Users/francis/Library/Logs/linear-research.log</string>
+	<string>/Users/francis/playground/agent-pm/logs/research.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/francis/Library/Logs/linear-research.log</string>
+	<string>/Users/francis/playground/agent-pm/logs/research.log</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>

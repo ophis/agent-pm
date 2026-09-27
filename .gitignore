@@ -1,3 +1,4 @@
 work/
 docs/
-runs.log
+logs/
+__pycache__/
