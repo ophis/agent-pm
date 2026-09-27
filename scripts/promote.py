@@ -22,9 +22,8 @@ NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving bac
 STATES = ("Todo", "In Review", "Handoff", "Done")
 
 Q_SETUP = """query($t: String!) {
-  teams(filter: { name: { eq: $t } }) { nodes { id } }
-  workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } }
-  projects(first: 250) { nodes { id name } } }"""
+  teams(filter: { name: { eq: $t } }) { nodes { id projects(first: 50) { nodes { id name } } } }
+  workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
 Q_HANDOFF = """query($t: String!) { issues(filter: { team: { name: { eq: $t } }, state: { name: { eq: "Handoff" } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } attachments { nodes { title url } } } } }"""
 Q_DETAIL = """query($i: String!) { issue(id: $i) {
@@ -65,11 +64,12 @@ class Promoter:
     def __init__(self, gql, cfg, now, dry):
         self.gql, self.cfg, self.now, self.dry = gql, cfg, now, dry
         setup = gql(Q_SETUP, t=cfg["team"])
-        self.team = setup["teams"]["nodes"][0]["id"]
+        team = setup["teams"]["nodes"][0]
+        self.team = team["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
-        self.projects = {p["name"]: p["id"] for p in setup["projects"]["nodes"]}
+        self.projects = {p["name"]: p["id"] for p in team["projects"]["nodes"]}
         missing = [s for s in STATES if s not in self.states]
-        missing += [p["next"] for p in cfg["projects"].values() if p.get("next") and p["next"] not in self.projects]
+        missing += [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
         if missing:
             raise SystemExit(f"not found in Linear: {', '.join(missing)}")
 
@@ -80,7 +80,7 @@ class Promoter:
         issues = self.gql(Q_HANDOFF, t=self.cfg["team"])["issues"]["nodes"]
         work = []
         for src in issues:
-            nxt = self.cfg["projects"].get((src["project"] or {}).get("name"), {}).get("next")
+            nxt = self.cfg.get("projects", {}).get((src["project"] or {}).get("name"), {}).get("next")
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
@@ -136,8 +136,11 @@ class Promoter:
             ok(self.gql(M_RELATE, **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}}),
                "issueRelationCreate")
         self.move(src, "Done")
-        self.comment(src, f"Promoted to {child['identifier']}.")
         self.say(f"promote {src['identifier']} -> {child['identifier']}")
+        try:  # the source is Done now; a lost comment must not bounce it
+            self.comment(src, f"Promoted to {child['identifier']}.")
+        except (Exception, SystemExit) as e:
+            self.say(f"handoff-error {src['identifier']}: promoted, but the comment failed: {e}")
 
     def description(self, src, comments):
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
@@ -165,8 +168,9 @@ class Promoter:
             ok(self.gql(M_STATE, i=src["id"], s=self.states[state]), "issueUpdate")
 
     def comment_and_move(self, src, body, state):
-        self.comment(src, body)
+        # Move first: if the move fails, no comment is posted, so retries don't repeat it.
         self.move(src, state)
+        self.comment(src, body)
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG):

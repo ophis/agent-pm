@@ -47,9 +47,8 @@ class FakeLinear:
 
     def __call__(self, query, **v):
         if query == promote.Q_SETUP:
-            return {"teams": {"nodes": [{"id": "team"}]},
-                    "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]},
-                    "projects": {"nodes": [{"id": i, "name": n} for n, i in PROJECTS.items()]}}
+            return {"teams": {"nodes": [{"id": "team", "projects": {"nodes": [{"id": i, "name": n} for n, i in PROJECTS.items()]}}]},
+                    "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]}}
         if query == promote.Q_HANDOFF:
             return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]})
                                          for i in self.issues.values() if i["state"] == "Handoff"]}}
@@ -221,6 +220,20 @@ class TestIdempotency(Base):
         self.assertEqual(len(self.fake.children), 1)
         self.assertEqual(src["state"], "Done")
 
+    def test_rehandoff_after_failure_bounce_reuses_child(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 200, "In Review")
+        self.fake.said("DR-1", 190)
+        self.fake.moved("DR-1", 90, "Handoff", frm=STATES["In Review"])
+        cid = promote.child_id("DR-1", "p-pd", ago(90))
+        self.fake.children[cid] = {"id": cid, "identifier": "C-9"}  # created before the failure
+        self.fake.moved("DR-1", 60, "In Review", frm=STATES["Handoff"])  # failure bounce
+        self.fake.moved("DR-1", 10, "Handoff", frm=STATES["In Review"])
+        self.run_main()
+        self.assertEqual(len(self.fake.children), 1)
+        self.assertEqual(src["relations"], [cid])
+        self.assertEqual(src["state"], "Done")
+
     def test_new_review_cycle_gives_new_child(self):
         src = self.ready()
         self.run_main()
@@ -322,6 +335,37 @@ class TestFailures(Base):
         self.run_main()
         self.assertIn("C-9 already exists", src["posted"][0])
         self.assertEqual(src["state"], "In Review")
+
+
+class TestPartialFailures(Base):
+    def test_comment_failure_after_done_keeps_done(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 200, "In Review")
+        self.fake.said("DR-1", 190)
+        self.fake.moved("DR-1", 90, "Handoff", frm=STATES["In Review"])
+        orig = self.fake.__call__
+
+        def comment_fails(query, **v):
+            if query == promote.M_COMMENT:
+                raise SystemExit("linear api error: comment failed")
+            return orig(query, **v)
+        self.fake = comment_fails
+        self.run_main()
+        self.assertEqual(src["state"], "Done")
+        self.assertIn("promoted, but the comment failed", self.out)
+
+    def test_failed_bounce_move_posts_no_comment(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])  # no instructions
+        orig = self.fake.__call__
+
+        def move_fails(query, **v):
+            if query == promote.M_STATE:
+                raise SystemExit("linear api error: move failed")
+            return orig(query, **v)
+        self.fake = move_fails
+        self.run_main()
+        self.assertNotIn("posted", src)
 
 
 class TestDryRun(Base):
