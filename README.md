@@ -6,7 +6,7 @@ This repo holds the code and the run state:
 
 - `logs/` (gitignored) — never clean it out: `runs.log` is also runner state.
   - `runs.log` — `start` / `resume` / `end` lines per run (issue, session ID); the source for resuming and for the attempt cap. Pruned to 7 days each tick. Lost → nothing is resumed.
-  - `router.log` — each tick's decisions. `projects/<project>.log` — each run's launch line, claude output and end line. `promote.log` — promote's output (one line per action).
+  - `router.log` — each tick's decisions. `projects/<project>.log` — each run's launch line, claude output and end line. `promote.log` — promote's output (one line per action, or one `nothing to do` line per run).
 - `work/` — cwd of each `claude -p` run (gitignored).
 
 Code:

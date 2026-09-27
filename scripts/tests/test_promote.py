@@ -149,7 +149,7 @@ class TestPromote(Base):
             return out
         self.fake = stale
         self.run_main()
-        self.assertEqual(self.out, "")
+        self.assertIn("promote: nothing to do (1 in Handoff)", self.out)
         self.assertEqual(src["state"], "Handoff")
 
     def test_email_match_ignores_case(self):
@@ -338,6 +338,10 @@ class TestScopeAndConfig(Base):
         self.config = self.write_config(CONFIG.replace('next = "Product Design"', 'next = "Nowhere"'))
         with self.assertRaises(SystemExit):
             self.run_main()
+
+    def test_empty_run_logs_a_line(self):
+        self.run_main()
+        self.assertIn("promote: nothing to do (0 in Handoff)", self.out)
 
     def test_unknown_flag(self):
         self.assertEqual(self.run_main("--now"), 2)

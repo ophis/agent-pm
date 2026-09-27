@@ -66,9 +66,11 @@ class Promoter:
             raise SystemExit(f"not found in Linear: {', '.join(missing)}")
 
     def say(self, msg):
+        self.said = True
         print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
 
     def run(self):
+        self.said = False
         issues = self.gql(Q_HANDOFF, t=self.cfg["team"])["issues"]["nodes"]
         work = []
         for src in issues:
@@ -89,6 +91,8 @@ class Promoter:
                 self.say(f"handoff-error {src['identifier']}: {e}")
                 if self.now - parse_time(latest) > GRACE:
                     self.bounce_failed(src, e, found[0])
+        if not self.said:  # one line per run, so the log shows the job is alive
+            self.say(f"promote: nothing to do ({len(issues)} in Handoff)")
 
     def moves(self, src, detail):
         """(cutoff, first Handoff move after it, latest Handoff move), as API timestamps."""
