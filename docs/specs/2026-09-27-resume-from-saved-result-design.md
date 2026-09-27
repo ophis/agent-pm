@@ -1,6 +1,6 @@
 # Resume by reusing the interrupted run's work
 
-Status: design v4, reviewed (fitness, run-file facts, skill usability: all PASS). Replaces the SKILL resume rule 2 of `2026-09-27-auto-resume-design.md` (`resumeFromRunId`). A first version of the SKILL text is on main (~/.claude c9fa26e); this version supersedes it.
+Status: implemented (~/.claude merge 80eda85); design v4 reviewed (fitness, run-file facts, skill usability: all PASS); rehearsed on Opus against TASK-15. Replaces the SKILL resume rule 2 of `2026-09-27-auto-resume-design.md` (`resumeFromRunId`). A first version of the SKILL text is on main (~/.claude c9fa26e); this version supersedes it.
 
 ## Problem
 

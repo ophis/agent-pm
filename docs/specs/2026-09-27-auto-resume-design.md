@@ -53,11 +53,7 @@ Same cwd (`work/`), env (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`), model, effort,
 ## SKILL.md changes
 
 - Step 3 (too vague): comment the questions and set **In Review** (not Backlog). Board statuses: Backlog is no longer used by the agent; In Review means "needs the user" (report ready, questions, or stuck).
-- New resume rule, the one exception to steps 5–6, checked in order:
-  1. No Workflow call yet in this session → continue from step 5; it is still the single run.
-  2. The run's `…/<sid>/subagents/workflows/<runId>/journal.jsonl` shows agents that failed on rate_limit, or has no final result → `resumeFromRunId` once. Judge from the journal only, never `/private/tmp`.
-  3. Otherwise → Report, doing only what is missing: report committed and pushed, link on the issue, hand-off comment, In Review.
-  Never repeat the "research started" comment. Failures left after the resume → publish with Gaps.
+- Resume rule: see `2026-09-27-resume-from-saved-result-design.md` (reuse the interrupted run's work, re-run only missing agents; replaced the original `resumeFromRunId` rule).
 
 ## Code layout
 

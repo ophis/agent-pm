@@ -17,7 +17,8 @@ Skill files:
   - Scheduled hourly 01:00–06:00 by `~/Library/LaunchAgents/com.ophis.linear-research.plist`; source: `scripts/com.ophis.linear-research.plist` in the skill. launchd output goes to `~/Library/Logs/linear-research.log`.
   - Watch: `tmux attach -t linear-research`. Inspect a run: `cd work && claude --resume <session-id>`.
 - `scripts/tests/` — `python3 -m unittest discover -s scripts/tests` (no network, Keychain or Claude).
-- Design: `docs/specs/2026-09-27-auto-resume-design.md`, amended by `docs/specs/2026-09-27-resume-candidate-fix-design.md`.
+- Resuming: the runner resumes the same session (`claude -p --resume <sid>`) with a prompt to re-read `SKILL.md` and follow its resume rule. The resumed session reuses the interrupted deep-research run's saved result (or its journal if the run was killed) and re-runs only missing agents (e.g. 3 fresh votes for a claim with fewer than 2 valid votes); it never uses `resumeFromRunId` (that replays only the unchanged prefix of agent calls, so deep-research re-runs almost everything) and never moves the issue to Todo.
+- Design: `docs/specs/2026-09-27-auto-resume-design.md`, amended by `docs/specs/2026-09-27-resume-candidate-fix-design.md` and `docs/specs/2026-09-27-resume-from-saved-result-design.md`.
 - `review/` — unused draft (reuses one interactive tmux session); not wired into anything.
 
 Notes:
