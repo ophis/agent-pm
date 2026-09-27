@@ -12,6 +12,10 @@ add_dirs = ["~/playground/private_docs"]
 prefix = "PRD"                            # title prefix for issues created in this project
 next = "Engineering"
 require_instructions = false              # a PRD carries enough context; comments are optional
+instructions = "stages/product-design.md"
+model = "opus"
+effort = "high"
+add_dirs = ["~/playground/private_docs"]
 
 [projects.Engineering]
 prefix = "TDD"
