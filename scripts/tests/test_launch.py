@@ -21,6 +21,7 @@ add_dirs = ["~/playground/private_docs"]
 [projects."Product Design"]
 prefix = "PRD"
 """
+SID = "0f0f0f0f-1111-2222-3333-444444444444"
 FAKE_CLAUDE = """#!/bin/bash
 echo "claude says hi"
 echo "oops" >&2
@@ -42,21 +43,22 @@ class Launch(unittest.TestCase):
 
     def run_launch(self, *argv):
         err = io.StringIO()
-        with redirect_stderr(err):
+        with redirect_stderr(err), mock.patch.dict(os.environ):
             rc = launch.main(list(argv), sh=lambda cmd, **kw: self.calls.append(cmd), config=self.config,
                              runs=self.runs, logs=self.logs)
+            self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc
 
     def args(self, mode="new"):
-        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", "Deep Research", "--sid", "s1", "--mode", mode]
+        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", "Deep Research", "--sid", SID, "--mode", mode]
         return base + (["--k", "2"] if mode == "resume" else [])
 
     def claude_cmd(self, a):
         return launch.command(a, launch.runnable(pipeline.load_config(self.config))["Deep Research"])
 
     def parse(self, mode):
-        return argparse.Namespace(issue="TASK-1", url="https://l/TASK-1", project="Deep Research", sid="s1", mode=mode, k="2")
+        return argparse.Namespace(issue="TASK-1", url="https://l/TASK-1", project="Deep Research", sid=SID, mode=mode, k="2")
 
     def test_tmux_session_cwd_and_bash(self):
         self.assertEqual(self.run_launch(*self.args()), 0)
@@ -72,7 +74,7 @@ class Launch(unittest.TestCase):
         instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
         self.assertEqual(cmd[:3], ["claude", "-p", f"Follow {instructions} to handle TASK-1 (https://l/TASK-1). "
                                                   "The runner has already claimed it."])
-        self.assertEqual(cmd[3:], ["--session-id", "s1", "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
+        self.assertEqual(cmd[3:], ["--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
                                    "--add-dir", pipeline.ROOT, "--add-dir", os.path.expanduser("~/playground/private_docs")])
 
     def test_resume_prompt(self):
@@ -80,7 +82,7 @@ class Launch(unittest.TestCase):
         instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
         self.assertEqual(cmd[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {instructions} "
                                  "first (it may have changed since this session started) and follow its resume rule.")
-        self.assertEqual(cmd[3:5], ["--resume", "s1"])
+        self.assertEqual(cmd[3:5], ["--resume", SID])
 
     def test_unknown_or_non_runnable_project(self):
         for project in ("Nope", "Product Design"):
@@ -104,10 +106,21 @@ class Launch(unittest.TestCase):
             plog = f.read().splitlines()
         with open(self.runs) as f:
             runs = f.read().splitlines()
-        self.assertRegex(plog[0], r"^\S+ \S+ launch TASK-1 mode=new session=s1$")
+        self.assertRegex(plog[0], r"^\S+ \S+ launch TASK-1 mode=new session=0f0f0f0f-1111-2222-3333-444444444444$")
         self.assertEqual(sorted(plog[1:3]), ["claude says hi", "oops"])
-        self.assertRegex(plog[3], r"^\S+ \S+ end TASK-1 session=s1 exit=3$")
+        self.assertRegex(plog[3], r"^\S+ \S+ end TASK-1 session=0f0f0f0f-1111-2222-3333-444444444444 exit=3$")
         self.assertEqual(runs, [plog[3]])
+
+    def test_rejects_unsafe_issue_or_sid(self):
+        for i, bad in ((1, "TASK-1$(rm -rf ~)"), (7, "s1; ls")):
+            argv = self.args()
+            argv[i] = bad
+            self.assertEqual(self.run_launch(*argv), 2)
+        self.assertEqual(self.calls, [])
+
+    def test_sets_path_for_its_own_calls(self):
+        self.run_launch(*self.args())
+        self.assertEqual(self.path, pipeline.PATH)
 
     def test_env_not_inherited(self):
         with mock.patch.dict(os.environ, {"PATH": "/nowhere"}):

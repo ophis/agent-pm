@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (RUNS_LOG, SESSION, TRANSCRIPTS, WORK, load_config, linear_gql, log,  # noqa: E402
+from pipeline import (PATH, RUNS_LOG, SESSION, TRANSCRIPTS, WORK, load_config, linear_gql, log,  # noqa: E402
                       parse_time, runnable, stage_order)
 
 STALE = timedelta(hours=2)
@@ -158,10 +158,12 @@ class Board:
             teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { name } } } } }""", t=cfg["team"])
         self.me = setup["viewer"]["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
+        if not self.projects:
+            raise SystemExit(f"no runnable project in pipeline.toml{f' named {only!r}' if only else ''}")
         known = {p["name"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
         missing = [p for p in self.projects if p not in known]
-        if missing or not self.projects:
-            raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing) or only}")
+        if missing:
+            raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing)}")
 
     def issues(self, state, extra=None):
         flt = {"project": {"name": {"in": self.projects}}, "state": {"name": {"eq": state}}, **(extra or {})}
@@ -226,20 +228,29 @@ class Board:
                 self.comment_and_move(issue, INTERRUPTED, "Todo", assigneeId=None)
         return cand
 
-    def plan(self):
+    def next_run(self):
+        """("resume", issue, sid, k), ("new",) or None, after Recover."""
         cand = self.recover()
         if cand:
             issue, sid, k = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
+            return ("resume", issue, sid, k)
         todo = self.issues("Todo")
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
-            return "new"
+            return ("new",)
         log("plan: nothing to do")
         return None
 
-    def claim(self, only=None):
+    def plan(self):
+        run = self.next_run()
+        if run and run[0] == "resume":
+            _, issue, sid, k = run
+            return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
+        return run and "new"
+
+    def take(self, only=None):
+        """The claimed Todo issue, or None."""
         # Pick: highest priority first, then later stage, then oldest.
         queue = sorted(self.issues("Todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
@@ -259,9 +270,13 @@ class Board:
                 return None
             self.gql("mutation($i: String!, $s: String!, $a: String!) { issueUpdate(id: $i, input: { stateId: $s, assigneeId: $a }) { success } }",
                      i=issue["id"], s=self.states["In Progress"], a=self.me)
-            return f"{issue['identifier']} {issue['url']} {issue['project']['name']}"
-        log("pick: queue empty")
+            return issue
+        log(f"pick: {only} is not a Todo issue in a runnable project" if only else "pick: queue empty")
         return None
+
+    def claim(self, only=None):
+        issue = self.take(only)
+        return issue and f"{issue['identifier']} {issue['url']} {issue['project']['name']}"
 
 
 def append(path, line):
@@ -288,8 +303,9 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         except Exception as e:
             log(f"skip: prune failed: {e}")
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg)
-    plan = board.plan()
-    kind = plan.split()[0] if plan else None
+    # A requested issue is claimed even when another run could be resumed.
+    run = ("new",) if issue_id else board.next_run()
+    kind = run[0] if run else None
     if not kind and not dry:
         log("skip: nothing to do")
         return 0
@@ -298,26 +314,27 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
                cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     ok, usage = gate(kind or "new", probe.stdout.splitlines())
     if dry:
-        log(f"plan: {plan or 'nothing'}")
+        log(f"plan: {kind or 'nothing'}")
         log(f"usage: {usage} ({kind or 'new'} {'allowed' if ok else 'blocked'})")
         return 0
     if not ok:
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
     if kind == "resume":
-        _, ident, sid, k, url, project = plan.split(maxsplit=5)
-        append(runs, f"resume {ident} session={sid} n={k}")
-        mode = ["--mode", "resume", "--k", k]
+        _, issue, sid, k = run
+        append(runs, f"resume {issue['identifier']} session={sid} n={k}")
+        mode = ["--mode", "resume", "--k", str(k)]
     else:
-        picked = board.claim(issue_id)
-        if not picked:
-            log("skip: queue empty")
+        issue = board.take(issue_id)
+        if not issue:
+            log("skip: nothing claimed")
             return 0
-        ident, url, project = picked.split(maxsplit=2)
         sid = str(uuid.uuid4())
-        append(runs, f"start {ident} session={sid} transcript={os.path.join(tdir, sid + '.jsonl')}")
+        append(runs, f"start {issue['identifier']} session={sid} transcript={os.path.join(tdir, sid + '.jsonl')}")
         mode = ["--mode", "new"]
-    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", url, "--project", project, "--sid", sid] + mode).returncode
+    ident, project = issue["identifier"], issue["project"]["name"]
+    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project, "--sid", sid]
+            + mode).returncode
     log(f"launch {ident} ({project}) exit={rc}")
     return 0
 
@@ -336,6 +353,7 @@ def main(argv, gql=linear_gql, now=None, tdir=TRANSCRIPTS, stdin=sys.stdin, conf
         elif rest:
             print(USAGE, file=sys.stderr)
             return 2
+        os.environ["PATH"] = PATH
         return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour)
     if args[0] == "--pick":
         rest, only = args[1:], None

@@ -6,16 +6,16 @@ Exits 2 for an unknown or non-runnable project. Needs Python 3.11+.
 """
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import ROOT, RUNS_LOG, SESSION, WORK, load_config, project_log, runnable  # noqa: E402
+from pipeline import PATH, ROOT, RUNS_LOG, SESSION, WORK, load_config, project_log, runnable  # noqa: E402
 
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
-ENV = {"PATH": f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin",
-       "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
+ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 
 
 def prompt(a, instructions):
@@ -51,6 +51,11 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None):
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
     ap.add_argument("--k", default="1")
     a = ap.parse_args(argv)
+    # Issue and SID are interpolated into the tmux shell command.
+    if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", a.issue) or not re.fullmatch(r"[0-9a-f-]{36}", a.sid):
+        print(f"launch.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
+        return 2
+    os.environ["PATH"] = PATH
     projects = runnable(load_config(config) if config else load_config())
     if a.project not in projects:
         print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)

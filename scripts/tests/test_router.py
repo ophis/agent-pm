@@ -290,7 +290,7 @@ class Plan(Base):
         states = {i: fake.issues[i]["state"] for i in ("TASK-1", "TASK-3", "TASK-4", "TASK-5", "TASK-6")}
         self.assertEqual(states, {"TASK-1": "Todo", "TASK-3": "In Progress", "TASK-4": "In Review",
                                   "TASK-5": "In Review", "TASK-6": "In Progress"})
-        self.assertIn("interrupted", fake.issues["TASK-1"]["comments"][0])
+        self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
         self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_walk_moves_before_and_after_candidate(self):
@@ -333,7 +333,7 @@ class Plan(Base):
                            issue("TASK-2", "In Progress", ME, updated=ago(hours=1))])
         self.run_main(fake, "--plan")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
-        self.assertIn("interrupted", fake.issues["TASK-1"]["comments"][0])
+        self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
         self.assertEqual(fake.issues["TASK-2"]["state"], "In Progress")
 
     def test_stale_sid_goes_to_two_hour_rule(self):
@@ -534,7 +534,7 @@ class Claim(Base):
     def test_no_mode_recovers_then_claims(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3))])
         self.assertEqual(self.run_main(fake, "--pick")[1], "TASK-1 https://linear.app/x/TASK-1")
-        self.assertIn("interrupted", fake.issues["TASK-1"]["comments"][0])
+        self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
 
 
 class MultiProject(Base):
@@ -598,9 +598,10 @@ class Tick(Base):
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + ("\n" if self.lines else ""))
         err = io.StringIO()
-        with redirect_stderr(err):
+        with redirect_stderr(err), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
             rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
                              sh=self.sh, hour=hour)
+            self.path = os.environ["PATH"]
         self.err = err.getvalue()
         with open(self.log) as f:
             self.state = f.read()
@@ -611,6 +612,21 @@ class Tick(Base):
         self.assertEqual(self.tick(fake, hour=12), 0)
         self.assertIn("skip: outside hours", self.err)
         self.assertEqual(self.sh.calls, [])
+
+    def test_hours_boundaries(self):
+        for hour, runs in ((0, False), (1, True), (6, True), (7, False), (23, False)):
+            fake = FakeLinear([issue("TASK-1", "Todo")])
+            self.tick(fake, hour=hour)
+            self.assertEqual(len(self.sh.launches()), int(runs), hour)
+            self.assertEqual("skip: outside hours" in self.err, not runs, hour)
+
+    def test_launchd_path_replaced(self):
+        self.tick(FakeLinear([]))
+        self.assertEqual(self.path, router.PATH)
+        self.assertIn("/opt/homebrew/bin", self.path)
+
+    def test_interrupted_text(self):
+        self.assertEqual(router.INTERRUPTED, "The previous run was interrupted. Moving this issue back to the Todo queue.")
 
     def test_now_skips_hours_and_starts(self):
         fake = FakeLinear([issue("TASK-1", "Todo")])
@@ -649,6 +665,18 @@ class Tick(Base):
         self.assertEqual(launch[-4:], ["--mode", "resume", "--k", "1"])
         self.assertIn("--sid", launch)
         self.assertTrue(self.state.endswith("resume TASK-1 session=a n=1\n"))
+
+    def test_issue_flag_wins_over_resume(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", ME), issue("TASK-2", "Todo")], self.hist)
+        self.resumable("TASK-1", "a", 60)
+        self.tick(fake, "--now", "--issue", "TASK-2")
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[launch.index("--issue") + 1], "TASK-2")
+
+    def test_issue_flag_not_in_todo(self):
+        self.tick(FakeLinear([issue("TASK-1", "Todo")]), "--now", "--issue", "TASK-9")
+        self.assertIn("pick: TASK-9 is not a Todo issue in a runnable project", self.err)
+        self.assertEqual(self.sh.launches(), [])
 
     def test_issue_flag_claims_that_issue(self):
         fake = FakeLinear([issue("TASK-1", "Todo", priority=1), issue("TASK-2", "Todo", priority=4)])
