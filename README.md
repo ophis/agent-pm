@@ -12,6 +12,7 @@ This repo holds the code and the run state:
 Code:
 
 - `stages/<stage>.md` — the procedure Claude follows for a project; the launcher passes its path in the prompt. Each must define a resume rule.
+- `templates/` — document skeletons a stage fills in (`prd.md` for Product Design).
 - `scripts/router.py` — one tick: hours check (01:00–06:59; `--now` skips it), tmux lock (`agent-pm`), prune, Recover across runnable projects, plan, usage probe only when there is work, then resume an interrupted In Progress issue or claim a new one (priority, then later stage, then oldest) and call `launch.py`. Both need the probe not rejected, 5-hour usage < 90% and weekly windows not full (`MAX_5H`). `--dry-run` changes nothing and starts no run; `--now --issue ID` starts a specific Todo issue; `--pick [--project NAME]` = Recover + Pick + Claim (stage step 1). Unknown flags exit 2.
   - Scheduled hourly 01:00–06:00 by `~/Library/LaunchAgents/com.ophis.agent-pm.router.plist`; source: `scripts/com.ophis.agent-pm.router.plist`.
   - Watch: `tmux attach -t agent-pm`. Inspect a run: `cd work && claude --resume <session-id>`.
