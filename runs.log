@@ -1,0 +1,17 @@
+2026-09-26 12:59:37 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-125937.jsonl
+2026-09-26 12:59:37 skip: previous run still active
+2026-09-26 13:04:05 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-130405.jsonl
+2026-09-26 13:09:12 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-130912.jsonl
+2026-09-26 13:10:54 start run log=/Users/francis/.local/state/linear-research/20260926-131054.jsonl
+2026-09-26 13:21:40 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-132140.jsonl
+2026-09-26 13:22:47 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-132247.jsonl
+2026-09-26 13:23:29 start run log=/Users/francis/.local/state/linear-research/20260926-132329.jsonl
+2026-09-26 19:11:49 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-191149.jsonl
+2026-09-26 19:12:55 start run log=/Users/francis/.local/state/linear-research/20260926-191255.jsonl
+2026-09-26 19:14:17 start --dry-run log=/Users/francis/.local/state/linear-research/20260926-191417.jsonl
+2026-09-26 19:15:21 start run log=/Users/francis/.local/state/linear-research/20260926-191521.jsonl
+2026-09-26 19:28:00 start resume-task5 log=/Users/francis/.local/state/linear-research/resume-task5.jsonl
+pick: queue empty
+2026-09-26 20:45:59 skip: queue empty
+2026-09-26 20:59:04 skip: 5h usage 0.96 not below 0.30
+2026-09-26 20:59:56 skip: 5h usage 0.97 not below 0.30
