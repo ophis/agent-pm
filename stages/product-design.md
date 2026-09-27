@@ -6,7 +6,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 
 - Team `Frank's Agents`, project `Product Design`.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PRD ready, questions, or stuck) → Handoff / Done (user only). The agent never uses Backlog.
-- Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent. "The user" is any other commenter.
+- Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent. "The user" is a commenter whose email is in `human_members` (`pipeline.toml`).
 
 ## Inputs
 
@@ -26,7 +26,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
    - Sections: problem and goals; non-goals; users and scenarios; user flows; functional requirements (each testable) and non-functional requirements; success metrics; scope and phased delivery; assumptions, open questions, risks.
    - The user's instructions are hard constraints; state every inference of your own under Assumptions.
 6. **Review.** Spawn one fresh subagent with the PRD path and the brief and instructions text; it reviews for missing requirements, contradictions, untestable requirements and scope beyond the brief. Fix the findings that hold up against the brief, once; never add scope the user didn't ask for.
-7. **Publish.** Commit only that file (`git add <file>` then `git commit -m "Add <issue ID> PRD: <product name>" -- <file>`, or `Update …` when revising; leave any other changes in the repo alone) and `git push` (rejected → `git pull --rebase`, then push). With the `linear` skill: attach `https://github.com/ophis/private_docs/blob/main/Product%20Design/<file name>` as a link attachment (`attachmentLinkURL`) unless already attached, and set the title to `PRD: <product name>` (`issueUpdate` with `title`).
+7. **Publish.** Commit only that file (`git add <file>` then `git commit -m "Add <issue ID> PRD: <product name>" -- <file>`, or `Update …` when revising; leave any other changes in the repo alone) and `git push` (rejected → `git pull --rebase --autostash`, then push). With the `linear` skill: attach `https://github.com/ophis/private_docs/blob/main/Product%20Design/<file name>` as a link attachment (`attachmentLinkURL`) unless already attached, and set the title to `PRD: <product name>` (`issueUpdate` with `title`).
 8. **Hand off.** Comment a 3–5 line summary plus the GitHub link, set In Review, and end with the GitHub link as your final message. Handle one issue per invocation.
 
 If a step fails and you cannot finish (the push keeps failing, the file cannot be written), comment what failed, set In Review, and stop.
@@ -34,6 +34,6 @@ If a step fails and you cannot finish (the push keeps failing, the file cannot b
 ## Resume rule
 
 A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first, then use this session's history and the current state to find what is already done, and do only the rest:
-- Questions already posted (step 2) → set In Review if needed and stop; no "started" comment.
+- Questions posted in this session (step 2) → set In Review if needed and stop; no "started" comment.
 - The PRD file (`Product Design/<issue ID>-*.md`): incomplete or the step 6 review hasn't run → continue from it, never rewrite it; committed and pushed (`git status` not ahead of origin); link attached; title set; summary comment posted; status In Review.
 Never repeat the "started" comment and never move the issue to Todo.
