@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Plan, Recover, Pick and Claim for the Deep Research queue, via the Linear API.
+"""Router: decides what runs next across the runnable projects in pipeline.toml, then calls launch.py.
+docs/specs/2026-09-27-router-launcher-design.md
 
---plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url>", "new", or nothing.
---prune RUNS_LOG    Drop runs.log lines older than 7 days.
---claim [RUNS_LOG]  Pick + Claim: print "<ID> <url>" of the claimed issue, or nothing.
-no mode [RUNS_LOG]  Recover, then Pick + Claim (manual use).
+(no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
+  --now             Skip the 01:00-06:59 hours check.
+  --dry-run         Print the plan and the usage; change nothing, launch nothing.
+  --issue ID        With --now: claim this Todo issue instead of the top one.
+--pick [--project NAME]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
+--plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
+--claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
---dry-run           Change nothing.
-The API key is read from the macOS Keychain (service linear-api-key, account frank.agent.w).
+--prune RUNS_LOG    Drop runs.log lines older than 7 days.
+Needs Python 3.11+.
 """
 import json
 import os
@@ -15,11 +19,13 @@ import re
 import subprocess
 import sys
 import tempfile
-import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 
-TEAM = "Frank's Agents"
-PROJECT = "Deep Research"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pipeline import (RUNS_LOG, SESSION, TRANSCRIPTS, WORK, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, runnable, stage_order)
+
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
 CAP = 4
@@ -27,31 +33,12 @@ KEEP = timedelta(days=7)
 SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
-INTERRUPTED = "The previous research run was interrupted. Moving this issue back to the Todo queue."
-USAGE = "usage: pick.py [--plan | --claim] [--dry-run] [RUNS_LOG] | --gate resume|new | --prune RUNS_LOG"
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RUNS_LOG = os.path.join(ROOT, "logs", "runs.log")
-# claude keys transcripts by cwd, with "/" and "." replaced by "-".
-TRANSCRIPTS = os.path.expanduser("~/.claude/projects/" + os.path.join(ROOT, "work").replace("/", "-").replace(".", "-"))
+INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
+USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project NAME] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
+         " | --gate resume|new | --prune RUNS_LOG")
+LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)")
-
-
-def linear_gql(query, **variables):
-    key = subprocess.run(["security", "find-generic-password", "-a", "frank.agent.w", "-s", "linear-api-key", "-w"],
-                         capture_output=True, text=True, check=True).stdout.strip()
-    req = urllib.request.Request("https://api.linear.app/graphql",
-                                 data=json.dumps({"query": query, "variables": variables}).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": key})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = json.load(resp)
-    if body.get("errors"):
-        raise SystemExit(f"linear api error: {body['errors']}")
-    return body["data"]
-
-
-def log(msg):
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}", file=sys.stderr)
 
 
 def local_time(s):
@@ -134,10 +121,6 @@ def is_live(tdir, sid, now):
     return False
 
 
-def parse_time(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
-
-
 def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
@@ -165,17 +148,28 @@ def gate(kind, lines):
 
 
 class Board:
-    def __init__(self, gql, entries, tdir, now, dry):
+    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist = {}
-        self.me = gql("{ viewer { id } }")["viewer"]["id"]
-        self.states = {s["name"]: s["id"] for s in gql("""query($t: String!) {
-            workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }""", t=TEAM)["workflowStates"]["nodes"]}
+        self.projects = sorted(p for p in runnable(cfg) if only in (None, p))
+        self.stage = stage_order(cfg)
+        setup = gql("""query($t: String!) { viewer { id }
+            workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } }
+            teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { name } } } } }""", t=cfg["team"])
+        self.me = setup["viewer"]["id"]
+        self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
+        known = {p["name"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
+        missing = [p for p in self.projects if p not in known]
+        if missing or not self.projects:
+            raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing) or only}")
 
     def issues(self, state, extra=None):
-        flt = {"project": {"name": {"eq": PROJECT}}, "state": {"name": {"eq": state}}, **(extra or {})}
+        flt = {"project": {"name": {"in": self.projects}}, "state": {"name": {"eq": state}}, **(extra or {})}
         return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt state { name } } } }""", f=flt)["issues"]["nodes"]
+                    nodes { id identifier url priority createdAt updatedAt state { name } project { name } } } }""", f=flt)["issues"]["nodes"]
+
+    def later(self, issue):
+        return -self.stage.get(issue["project"]["name"], 0)
 
     def last_move(self, issue, state, by_user=False):
         """Latest time the issue was moved to state (by_user: by someone other than the agent)."""
@@ -210,7 +204,8 @@ class Board:
     def recover(self):
         """Walk our In Progress issues; returns the resume candidate (issue, sid, k) or None."""
         mine = [(i, self.current_sid(i)) for i in self.issues("In Progress", {"assignee": {"id": {"eq": self.me}}})]
-        mine.sort(key=lambda p: (p[1] is None, rank(p[0]), first_line_time(self.entries, p[1]) if p[1] else self.now))
+        mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
+                                 first_line_time(self.entries, p[1]) if p[1] else self.now))
         cand = None
         for issue, sid in mine:
             ident = issue["identifier"]
@@ -236,7 +231,7 @@ class Board:
         if cand:
             issue, sid, k = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return f"resume {issue['identifier']} {sid} {k} {issue['url']}"
+            return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
         todo = self.issues("Todo")
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
@@ -244,9 +239,11 @@ class Board:
         log("plan: nothing to do")
         return None
 
-    def claim(self):
-        # Pick: highest priority first, then oldest.
-        queue = sorted(self.issues("Todo"), key=lambda i: (rank(i), i["createdAt"]))
+    def claim(self, only=None):
+        # Pick: highest priority first, then later stage, then oldest.
+        queue = sorted(self.issues("Todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+        if only:
+            queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
             if self.attempts(issue) >= CAP:
                 log(f"pick: {issue['identifier']} reached {CAP} attempts; In Review")
@@ -262,7 +259,7 @@ class Board:
                 return None
             self.gql("mutation($i: String!, $s: String!, $a: String!) { issueUpdate(id: $i, input: { stateId: $s, assigneeId: $a }) { success } }",
                      i=issue["id"], s=self.states["In Progress"], a=self.me)
-            return f"{issue['identifier']} {issue['url']}"
+            return f"{issue['identifier']} {issue['url']} {issue['project']['name']}"
         log("pick: queue empty")
         return None
 
