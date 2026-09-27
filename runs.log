@@ -38,3 +38,7 @@ plan: new (6 in queue)
 2026-09-27 09:42:21 end TASK-15 session=1b48b9a1-d118-4319-a285-904b45200fb5 exit=1
 2026-09-27 10:07:28 resume TASK-15 session=1b48b9a1-d118-4319-a285-904b45200fb5 n=1
 2026-09-27 10:13:18 end TASK-15 session=1b48b9a1-d118-4319-a285-904b45200fb5 exit=killed
+2026-09-27 11:15:34 plan: new (6 in queue)
+2026-09-27 11:15:38 pick: TASK-17 (6 in queue)
+2026-09-27 11:15:39 start TASK-17 session=2fe5c3a8-3e98-49f0-b987-4574f1451375 transcript=/Users/francis/.claude/projects/-Users-francis-playground-linear-research-work/2fe5c3a8-3e98-49f0-b987-4574f1451375.jsonl
+2026-09-27 11:32:38 end TASK-17 session=2fe5c3a8-3e98-49f0-b987-4574f1451375 exit=0
