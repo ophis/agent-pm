@@ -137,7 +137,7 @@ class Promoter:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
                 "id": cid, "teamId": self.team, "projectId": self.projects[nxt], "stateId": self.states["Todo"],
                 "priority": src["priority"], "title": f"{self.cfg['projects'][nxt]['prefix']}: {one_line(src['title'])}",
-                "description": self.description(src, comments)}}), "issueCreate")["issue"]
+                "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
         if child["id"] not in related and not self.dry:
@@ -150,7 +150,7 @@ class Promoter:
         except (Exception, SystemExit) as e:
             self.say(f"handoff-error {src['identifier']}: promoted, but the comment failed: {e}")
 
-    def description(self, src, comments):
+    def description(self, src, comments, detail):
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
         attachments = src["attachments"]["nodes"]
         if attachments:
@@ -158,6 +158,12 @@ class Promoter:
         if comments:
             parts.append("## Instructions\n" + "\n\n".join(
                 f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
+        everything = sorted(detail["comments"]["nodes"], key=lambda c: parse_time(c["createdAt"]))
+        if everything:
+            # Quoted so agent-written text cannot pose as a section of this description.
+            parts.append("## Comments\n" + "\n".join(
+                f"- {(c['user'] or {}).get('name', 'integration')}, {c['createdAt']}:\n"
+                + "\n".join(f"  > {line}" for line in c["body"].splitlines()) for c in everything))
         return "\n\n".join(parts)
 
     def bounce_failed(self, src, error, child):
