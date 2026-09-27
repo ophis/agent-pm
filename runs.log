@@ -19,3 +19,4 @@ pick: TASK-9 (6 in queue)
 2026-09-26 22:20:22 start TASK-9 session=dbf0c729-381e-4da5-b4a2-5ebf5c66705c transcript=/Users/francis/.claude/projects/-Users-francis-playground-linear-research-work/dbf0c729-381e-4da5-b4a2-5ebf5c66705c.jsonl
 pick: TASK-8 (3 in queue)
 2026-09-26 23:39:23 start TASK-8 session=3f597305-673d-48a5-a7b6-4bf6d73ac2cb transcript=/Users/francis/.claude/projects/-Users-francis-playground-linear-research-work/3f597305-673d-48a5-a7b6-4bf6d73ac2cb.jsonl
+2026-09-26 23:59:10 skip: previous run still active
