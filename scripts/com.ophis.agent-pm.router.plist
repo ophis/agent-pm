@@ -5,16 +5,16 @@
 	<key>AbandonProcessGroup</key>
 	<true/>
 	<key>Label</key>
-	<string>com.ophis.linear-research</string>
+	<string>com.ophis.agent-pm.router</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/bash</string>
-		<string>/Users/francis/playground/agent-pm/scripts/linear-research.sh</string>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>/Users/francis/playground/agent-pm/scripts/router.py</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>/Users/francis/playground/agent-pm/logs/research.log</string>
+	<string>/Users/francis/playground/agent-pm/logs/router.log</string>
 	<key>StandardOutPath</key>
-	<string>/Users/francis/playground/agent-pm/logs/research.log</string>
+	<string>/Users/francis/playground/agent-pm/logs/router.log</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>

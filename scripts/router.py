@@ -6,7 +6,7 @@ docs/specs/2026-09-27-router-launcher-design.md
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one.
---pick [--project NAME]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
+--pick [--project NAME] [RUNS_LOG]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
@@ -34,7 +34,7 @@ SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
-USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project NAME] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
+USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project NAME] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
          " | --gate resume|new | --prune RUNS_LOG")
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
@@ -264,17 +264,99 @@ class Board:
         return None
 
 
-def main(argv, gql=linear_gql, now=None, tdir=TRANSCRIPTS, stdin=sys.stdin):
+def append(path, line):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
+
+
+def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
+    """One launchd tick. Returns the exit code."""
+    dry, issue_id = opts["dry"], opts["issue"]
+    if not opts["now"] and not 1 <= hour <= 6:
+        log("skip: outside hours")
+        if not dry:
+            return 0
+    # Checked before Recover: Recover assumes no run is active.
+    if sh(["tmux", "has-session", "-t", SESSION], capture_output=True).returncode == 0:
+        log("skip: previous run still active")
+        if not dry:
+            return 0
+    if not dry:
+        try:
+            prune(runs, now)
+        except Exception as e:
+            log(f"skip: prune failed: {e}")
+    board = Board(gql, parse_log(runs), tdir, now, dry, cfg)
+    plan = board.plan()
+    kind = plan.split()[0] if plan else None
+    if not kind and not dry:
+        log("skip: nothing to do")
+        return 0
+    os.makedirs(WORK, exist_ok=True)
+    probe = sh(["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose"],
+               cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    ok, usage = gate(kind or "new", probe.stdout.splitlines())
+    if dry:
+        log(f"plan: {plan or 'nothing'}")
+        log(f"usage: {usage} ({kind or 'new'} {'allowed' if ok else 'blocked'})")
+        return 0
+    if not ok:
+        log(f"skip: {kind} blocked by usage: {usage}")
+        return 0
+    if kind == "resume":
+        _, ident, sid, k, url, project = plan.split(maxsplit=5)
+        append(runs, f"resume {ident} session={sid} n={k}")
+        mode = ["--mode", "resume", "--k", k]
+    else:
+        picked = board.claim(issue_id)
+        if not picked:
+            log("skip: queue empty")
+            return 0
+        ident, url, project = picked.split(maxsplit=2)
+        sid = str(uuid.uuid4())
+        append(runs, f"start {ident} session={sid} transcript={os.path.join(tdir, sid + '.jsonl')}")
+        mode = ["--mode", "new"]
+    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", url, "--project", project, "--sid", sid] + mode).returncode
+    log(f"launch {ident} ({project}) exit={rc}")
+    return 0
+
+
+def main(argv, gql=linear_gql, now=None, tdir=TRANSCRIPTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
+         sh=subprocess.run, hour=None):
     args = [a for a in argv if a != "--dry-run"]
     dry = len(args) < len(argv)
+    now = now or datetime.now(timezone.utc)
+    cfg = lambda: load_config(config) if config else load_config()  # noqa: E731
+    if not args or args[0] in ("--now", "--issue"):
+        opts = {"dry": dry, "now": "--now" in args, "issue": None}
+        rest = [a for a in args if a != "--now"]
+        if rest[:1] == ["--issue"] and len(rest) == 2 and opts["now"]:
+            opts["issue"] = rest[1]
+        elif rest:
+            print(USAGE, file=sys.stderr)
+            return 2
+        return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour)
+    if args[0] == "--pick":
+        rest, only = args[1:], None
+        if rest[:1] == ["--project"] and len(rest) >= 2:
+            only, rest = rest[1], rest[2:]
+        if len(rest) > 1 or any(a.startswith("-") for a in rest):
+            print(USAGE, file=sys.stderr)
+            return 2
+        board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg(), only=only)
+        board.recover()
+        out = board.claim()
+        if out:
+            print(" ".join(out.split()[:2]))
+        return 0
     mode = args[0] if args[:1] in (["--plan"], ["--claim"], ["--gate"], ["--prune"]) else None
     rest = args[1:] if mode else args
-    if (len(rest) > 1 or any(a.startswith("-") for a in rest)
+    if (not mode or len(rest) > 1 or any(a.startswith("-") for a in rest)
             or mode == "--gate" and rest not in (["resume"], ["new"])
             or mode == "--prune" and (dry or not rest)):
         print(USAGE, file=sys.stderr)
         return 2
-    now = now or datetime.now(timezone.utc)
     if mode == "--gate":
         ok, summary = gate(rest[0], stdin)
         print(summary)
@@ -282,13 +364,8 @@ def main(argv, gql=linear_gql, now=None, tdir=TRANSCRIPTS, stdin=sys.stdin):
     if mode == "--prune":
         prune(rest[0], now)
         return 0
-    board = Board(gql, parse_log(rest[0] if rest else RUNS_LOG), tdir, now, dry)
-    if mode == "--plan":
-        out = board.plan()
-    else:
-        if mode is None:
-            board.recover()
-        out = board.claim()
+    board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg())
+    out = board.plan() if mode == "--plan" else board.claim()
     if out:
         print(out)
     return 0

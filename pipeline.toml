@@ -3,6 +3,10 @@ human_members = ["ophis.w@outlook.com"]   # only their comments count as Handoff
 
 [projects."Deep Research"]
 next = "Product Design"
+instructions = "stages/deep-research.md"   # makes the project runnable by the router
+model = "opus"
+effort = "xhigh"
+add_dirs = ["~/playground/private_docs"]
 
 [projects."Product Design"]
 prefix = "PRD"                            # title prefix for issues created in this project

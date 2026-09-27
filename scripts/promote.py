@@ -9,14 +9,12 @@ Needs Python 3.11+ (tomllib).
 import hashlib
 import os
 import sys
-import tomllib
 import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pick import linear_gql, parse_time  # noqa: E402
+from pipeline import CONFIG, linear_gql, load_config, parse_time  # noqa: E402
 
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline.toml")
 GRACE = timedelta(hours=1)
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 STATES = ("Todo", "In Review", "Handoff", "Done")
@@ -36,17 +34,6 @@ M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success
 M_RELATE = "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
 M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
 M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
-
-
-def load_config(path):
-    with open(path, "rb") as f:
-        cfg = tomllib.load(f)
-    projects = cfg.get("projects", {})
-    for name, p in projects.items():
-        nxt = p.get("next")
-        if nxt and "prefix" not in projects.get(nxt, {}):
-            raise SystemExit(f"pipeline.toml: next of {name!r} must name a [projects] entry with a prefix")
-    return cfg
 
 
 def child_id(source_id, project_id, handoff_at):
