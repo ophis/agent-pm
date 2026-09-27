@@ -78,3 +78,10 @@ Same cwd (`work/`), env (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`), model, effort,
 - Near-free real checks: `--session-id X` then `-p --resume X` with Haiku grows one .jsonl; the probe event has `status`, `utilization`, `unifiedWindows`.
 - Write-proof rehearsal of rule 3: `claude -p <resume prompt> --resume 3f597305-673d-48a5-a7b6-4bf6d73ac2cb --fork-session --model haiku --permission-mode dontAsk --allowedTools "Read,Grep,Glob,mcp__linear-server__get_issue,mcp__linear-server__list_comments"`; expect it to report everything done.
 - Rules 1–2 are verified on the first real resume by reviewing its transcript.
+
+## Implementation notes (as built, PR ophis/claude#1)
+
+- `pick.py --plan` prints `resume <ISSUE> <SID> <k> <url>`; the URL feeds the resume prompt.
+- The probe gates live in `pick.py --gate resume|new` (reads the probe's stream-json on stdin).
+- A `seven_day*` window without a utilization value passes the resume gate.
+- Known gaps (review, not fixed): a session without `<sid>.jsonl` is still resumable; the `new` gate ignores `rejected` and full weekly windows; `--dry-run` plan does not apply Recover.
