@@ -32,12 +32,16 @@ A research run that stops before handing off (usage limit, API error, crash, reb
 
 ## Resumable
 
+Amended by `2026-09-27-resume-candidate-fix-design.md` (every In Progress issue is considered; Recover skips all resumable issues).
+
 The SID of the latest `start`/`resume` line is resumable when all hold:
 - its issue is In Progress and assigned to the agent;
 - the SID has fewer than 2 `resume` lines and the issue is below the attempt cap;
 - no file under `<sid>.jsonl` or `<sid>/` in the runs' transcript folder changed in the last 30 min (a manual or still-running session is live).
 
 ## Recover (pick.py)
+
+Amended by `2026-09-27-resume-candidate-fix-design.md` (every In Progress issue is considered; Recover skips all resumable issues).
 
 For each agent-owned In Progress issue:
 - skip if its latest SID's files changed < 30 min ago, or it is the resume candidate;
@@ -83,4 +87,4 @@ Same cwd (`work/`), env (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`), model, effort,
 - `pick.py --plan` prints `resume <ISSUE> <SID> <k> <url>`; the URL feeds the resume prompt.
 - The probe gates live in `pick.py --gate resume|new` (reads the probe's stream-json on stdin).
 - A `seven_day*` window without a utilization value passes the resume gate.
-- Known gaps (review, not fixed): a session without `<sid>.jsonl` is still resumable; the `new` gate ignores `rejected` and full weekly windows; `--dry-run` plan does not apply Recover.
+- Known gaps (review, not fixed): a session without `<sid>.jsonl` is still resumable (fixed by the resume-candidate amendment); the `new` gate ignores `rejected` and full weekly windows; `--dry-run` plan does not apply Recover.
