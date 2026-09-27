@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Unattended agent pipeline driven by a Linear board: a router runs the runnable projects in `pipeline.toml` (today Deep Research), and promote hands issues between stages. README.md covers operations (schedule, Keychain, rescheduling); read it first.
+Unattended agent pipeline driven by a Linear board: a router runs the runnable projects in `pipeline.toml` (today Deep Research and Product Design), and promote hands issues between stages. README.md covers operations (schedule, Keychain, rescheduling); read it first.
 
 ## Commands
 
@@ -20,7 +20,7 @@ A router tick without `--dry-run` claims an issue and starts claude; `--pick` cl
 
 - **Router** (`scripts/router.py`, launchd `com.ophis.agent-pm.router`): hours → tmux lock (session `agent-pm`) → prune → Recover across runnable projects → plan → usage gate → resume or claim (priority, later stage first, oldest) → `start`/`resume` line → `launch.py`. Decisions go to `logs/router.log`.
 - **Launcher** (`scripts/launch.py`): looks the project up in `pipeline.toml` (instructions, model, effort, add_dirs) and starts `claude -p` in tmux; output and the `end` line go to `logs/projects/<project>.log`, the `end` line also to `runs.log`.
-- **Runner vs stage**: `scripts/` decides what runs; `stages/<stage>.md` is what the agent does, passed by absolute path in the prompt (not a skill). Every stage file must define a resume rule; resumed sessions re-read it mid-flight.
+- **Runner vs stage**: `scripts/` decides what runs; `stages/<stage>.md` is what the agent does (filling a skeleton from `templates/` where it has one), passed by absolute path in the prompt (not a skill). Every stage file must define a resume rule; resumed sessions re-read it mid-flight.
 - **State**: `logs/runs.log` (start/resume/end only) plus Linear issue history are the only memory between ticks. Recover derives liveness from transcript mtimes and the current SID from runs.log lines newer than the issue's last move to In Progress.
 - **Shared module** (`scripts/pipeline.py`): Linear access, config loading, paths. Runs use cwd `WORK` and Recover reads `TRANSCRIPTS`, both derived there from the repo location (Claude keys transcripts by cwd), so moving the repo or `work/` orphans any resumable session. The LaunchAgent plists hold absolute paths; reinstall them after a move.
 - **Handoff** (`scripts/promote.py`, its own LaunchAgent every 15 min, no LLM): Handoff issues → next stage per `pipeline.toml`. The child issue's id is derived from the source, target project and handoff time, which is what makes reruns idempotent.
