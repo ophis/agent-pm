@@ -1,6 +1,6 @@
 # Resume candidate fix
 
-Status: design v4, reviewed (spec fitness, architecture, scheduler edge cases: all PASS). Amends `2026-09-27-auto-resume-design.md`.
+Status: implemented (PR ophis/claude#3); design v4 reviewed (spec fitness, architecture, scheduler edge cases: all PASS). Amends `2026-09-27-auto-resume-design.md`.
 
 ## Problem
 
@@ -81,7 +81,7 @@ Setup rule: a resumable issue gets `<sid>.jsonl` older than 30 min and a Linear 
 - Stale SID: old SID with jsonl, issue moved to In Progress by hand 3h after that SID's last line → not resumed; handled by rule 5.
 - Tolerance: start line a few seconds before the Linear move → current; 6 min before → not current. No move to In Progress in the history → current.
 - An issue without a current SID and ≥ 4 old attempts, In Progress by hand → not moved to In Review.
-- Launch failure over several ticks: rule 4 → Todo → claimed again, until Pick's cap sends it to In Review after 4 starts.
+- Launch failure over several ticks: rule 4 → Todo → claimed again; on the 4th start Recover's rule 2 sends it to In Review (as built; Pick's cap is not reached first).
 - User reset: capped issue moved to Todo, claimed again → the new SID is resumed; the old SID is ignored in ordering and in `k`.
 - `k` counts only that SID's resume lines when an older SID of the same issue has resume lines.
 - SID with `resume` lines but no `start` line → sorted by its first line.
