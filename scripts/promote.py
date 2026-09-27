@@ -26,7 +26,7 @@ Q_SETUP = """query($t: String!) {
   workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
 Q_HANDOFF = """query($t: String!) { issues(filter: { team: { name: { eq: $t } }, state: { name: { eq: "Handoff" } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } attachments { nodes { title url } } } } }"""
-Q_DETAIL = """query($i: String!) { issue(id: $i) {
+Q_DETAIL = """query($i: String!) { issue(id: $i) { state { name }
   history(first: 250) { nodes { createdAt fromStateId toStateId } }
   comments(first: 250) { nodes { body createdAt user { email name } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
@@ -52,6 +52,11 @@ def load_config(path):
 def child_id(source_id, project_id, handoff_at):
     key = f"{source_id}/{project_id}/{handoff_at}".encode()
     return str(uuid.UUID(bytes=hashlib.sha256(key).digest()[:16], version=4))
+
+
+def one_line(s):
+    # Agent-written titles must not break out of their line and pose as the human Instructions section.
+    return " ".join(s.split())
 
 
 def ok(result, name):
@@ -84,6 +89,8 @@ class Promoter:
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
+                    if detail["state"]["name"] != "Handoff":  # the Handoff list can lag behind a just-made move
+                        continue
                     work.append((self.moves(src, detail), src, detail, nxt))
                 except (Exception, SystemExit) as e:
                     self.say(f"handoff-error {src['identifier']}: {e}")
@@ -107,8 +114,8 @@ class Promoter:
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
-        members = set(self.cfg["human_members"])
-        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and c["user"]["email"] in members
+        members = {m.lower() for m in self.cfg["human_members"]}
+        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and c["user"]["email"].lower() in members
                        and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
                       key=lambda c: parse_time(c["createdAt"]))
 
@@ -128,7 +135,7 @@ class Promoter:
         else:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
                 "id": cid, "teamId": self.team, "projectId": self.projects[nxt], "stateId": self.states["Todo"],
-                "priority": src["priority"], "title": f"{self.cfg['projects'][nxt]['prefix']}: {src['title']}",
+                "priority": src["priority"], "title": f"{self.cfg['projects'][nxt]['prefix']}: {one_line(src['title'])}",
                 "description": self.description(src, comments)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
@@ -146,13 +153,13 @@ class Promoter:
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
         attachments = src["attachments"]["nodes"]
         if attachments:
-            parts.append("## Source\n" + "\n".join(f"- {a['title']}: {a['url']}" for a in attachments))
+            parts.append("## Source\n" + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments))
         parts.append("## Instructions\n" + "\n\n".join(
             f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
         return "\n\n".join(parts)
 
     def bounce_failed(self, src, error, child):
-        body = f"Handoff failed: {error}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
+        body = f"Handoff failed: {str(error)[:300]}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
         try:
             self.comment_and_move(src, body, "In Review")
             self.say(f"handoff-failed {src['identifier']} moved to In Review")

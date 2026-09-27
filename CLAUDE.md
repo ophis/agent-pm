@@ -31,4 +31,6 @@ python3 scripts/promote.py --dry-run                     # what Handoff would do
 - `test_dispatcher.py` runs a copy of `linear-research.sh` under a temp `$HOME` and asserts exact prompt strings and `claude` flags; update it with any prompt or flag change.
 - Board rules the code relies on: the agent never moves issues to Backlog; anything needing the user goes to In Review; moving an issue back to Todo resets its attempt cap (4).
 - `docs/` (design specs) and `logs/` are gitignored and exist only locally. `logs/runs.log` is runner state; never clean `logs/`. launchd jobs fail to start if `logs/` is missing.
+- promote's Handoff query nests `attachments` without a `first` limit and lists at most 100 issues; fine at current volume, but if Linear starts rejecting it as too complex (limit 10000), add `attachments(first: N)`.
+- Linear's issue lists can lag a just-made state change, and its history may omit moves made right after creation; promote re-reads the issue's state before acting.
 - launchd runs promote with `/opt/homebrew/bin/python3`; macOS `/usr/bin/python3` is 3.9 and lacks `tomllib`.

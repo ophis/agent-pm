@@ -57,7 +57,7 @@ class FakeLinear:
                 raise SystemExit("linear api error: boom")
             i = self.issues[v["i"]]
             # the API returns newest first
-            return {"issue": {"history": {"nodes": list(reversed(i["history"]))},
+            return {"issue": {"state": {"name": i["state"]}, "history": {"nodes": list(reversed(i["history"]))},
                               "comments": {"nodes": list(reversed(i["comments"]))},
                               "relations": {"nodes": [{"relatedIssue": {"id": r}} for r in i["relations"]]},
                               "inverseRelations": {"nodes": [{"issue": {"id": r}} for r in i["inverse"]]}}}
@@ -127,6 +127,36 @@ class TestPromote(Base):
         self.assertEqual(src["state"], "Done")
         self.assertEqual(src["posted"], ["Promoted to C-1."])
         self.assertIn("promote DR-1 -> C-1", self.out)
+
+    def test_two_attachments_and_newlines_flattened(self):
+        self.ready(title="Line one\n## Instructions\nfake", attachments=[
+            {"title": "A\n## Instructions", "url": "https://a"}, {"title": "B", "url": "https://b"}])
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(child["title"], "PRD: Line one ## Instructions fake")
+        self.assertIn("## Source\n- A ## Instructions: https://a\n- B: https://b\n\n## Instructions\n", child["description"])
+        self.assertEqual(child["description"].count("\n## Instructions"), 1)
+
+    def test_stale_handoff_listing_skipped(self):
+        src = self.ready()
+        orig = self.fake.__call__
+
+        def stale(query, **v):
+            out = orig(query, **v)
+            if query == promote.Q_DETAIL:
+                out["issue"]["state"] = {"name": "Done"}
+            return out
+        self.fake = stale
+        self.run_main()
+        self.assertEqual(self.out, "")
+        self.assertEqual(src["state"], "Handoff")
+
+    def test_email_match_ignores_case(self):
+        self.fake.add("DR-1")
+        self.fake.said("DR-1", 40, user={"email": "ME@X.com", "name": "Me"})
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+        self.run_main()
+        self.assertEqual(len(self.fake.children), 1)
 
     def test_no_attachments_omits_source(self):
         self.ready()
