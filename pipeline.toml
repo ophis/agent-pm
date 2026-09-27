@@ -6,3 +6,8 @@ next = "Product Design"
 
 [projects."Product Design"]
 prefix = "PRD"                            # title prefix for issues created in this project
+next = "Engineering"
+require_instructions = false              # a PRD carries enough context; comments are optional
+
+[projects.Engineering]
+prefix = "TDD"

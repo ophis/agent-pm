@@ -121,7 +121,8 @@ class Promoter:
 
     def promote(self, src, detail, nxt, cutoff, first, found):
         comments = self.instructions(detail, cutoff)
-        if not comments:
+        required = self.cfg["projects"][src["project"]["name"]].get("require_instructions", True)
+        if not comments and required:
             self.comment_and_move(src, NO_INSTRUCTIONS, "In Review")
             self.say(f"handoff-bounce {src['identifier']} no instructions")
             return
@@ -154,8 +155,9 @@ class Promoter:
         attachments = src["attachments"]["nodes"]
         if attachments:
             parts.append("## Source\n" + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments))
-        parts.append("## Instructions\n" + "\n\n".join(
-            f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
+        if comments:
+            parts.append("## Instructions\n" + "\n\n".join(
+                f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
         return "\n\n".join(parts)
 
     def bounce_failed(self, src, error, child):

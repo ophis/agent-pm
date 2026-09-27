@@ -296,6 +296,26 @@ class TestScopeAndConfig(Base):
         (child,) = self.fake.children.values()
         self.assertEqual((child["projectId"], child["title"]), ("p-eng", "ENG: Title DR-1"))
 
+    def test_instructions_optional(self):
+        self.config = self.write_config(CONFIG + 'next = "Engineering"\nrequire_instructions = false\n'
+                                        '[projects.Engineering]\nprefix = "TDD"\n')
+        src = self.fake.add("PD-1", project="Product Design")
+        self.fake.moved("PD-1", 60, "In Review")
+        self.fake.moved("PD-1", 30, "Handoff", frm=STATES["In Review"])
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual((child["projectId"], child["title"]), ("p-eng", "TDD: Title PD-1"))
+        self.assertNotIn("## Instructions", child["description"])
+        self.assertEqual(src["state"], "Done")
+
+    def test_optional_instructions_still_copied(self):
+        self.config = self.write_config(CONFIG + 'next = "Engineering"\nrequire_instructions = false\n'
+                                        '[projects.Engineering]\nprefix = "TDD"\n')
+        self.ready("PD-1", project="Product Design")
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertIn("## Instructions\nMe, ", child["description"])
+
     def test_next_without_prefix_exits(self):
         self.config = self.write_config(CONFIG.replace('prefix = "PRD"\n', ""))
         with self.assertRaises(SystemExit):
