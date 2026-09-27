@@ -13,7 +13,24 @@
 	<string>/Users/francis/playground/agent-pm/logs/promote.log</string>
 	<key>StandardOutPath</key>
 	<string>/Users/francis/playground/agent-pm/logs/promote.log</string>
-	<key>StartInterval</key>
-	<integer>900</integer>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Minute</key>
+			<integer>5</integer>
+		</dict>
+		<dict>
+			<key>Minute</key>
+			<integer>20</integer>
+		</dict>
+		<dict>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+		<dict>
+			<key>Minute</key>
+			<integer>50</integer>
+		</dict>
+	</array>
 </dict>
 </plist>
