@@ -15,3 +15,5 @@ pick: queue empty
 2026-09-26 20:45:59 skip: queue empty
 2026-09-26 20:59:04 skip: 5h usage 0.96 not below 0.30
 2026-09-26 20:59:56 skip: 5h usage 0.97 not below 0.30
+pick: TASK-9 (6 in queue)
+2026-09-26 22:20:22 start TASK-9 session=dbf0c729-381e-4da5-b4a2-5ebf5c66705c transcript=/Users/francis/.claude/projects/-Users-francis-playground-linear-research-work/dbf0c729-381e-4da5-b4a2-5ebf5c66705c.jsonl

@@ -1,6 +1,6 @@
 # linear-research
 
-Runs the Deep Research queue on the Linear board (team Frank's Agents, project Deep Research): picks the next Todo issue, runs `/deep-research` once, and files the report under the project with a link on the issue.
+Runs the Deep Research queue on the Linear board (team Frank's Agents, project Deep Research): picks the next Todo issue, runs `/deep-research` once, pushes the report to `~/playground/private_docs/Deep Research/` (GitHub `ophis/private_docs`), and links it from the issue.
 
 Code lives in the skill `~/.claude/skills/linear-deep-research` (git repo `~/.claude`); this repo holds run state:
 
