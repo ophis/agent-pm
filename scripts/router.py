@@ -303,8 +303,9 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         except Exception as e:
             log(f"skip: prune failed: {e}")
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg)
-    # A requested issue is claimed even when another run could be resumed.
-    run = ("new",) if issue_id else board.next_run()
+    run = board.next_run()
+    if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
+        run = ("new",)
     kind = run[0] if run else None
     if not kind and not dry:
         log("skip: nothing to do")

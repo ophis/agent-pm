@@ -673,6 +673,13 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         self.assertEqual(launch[launch.index("--issue") + 1], "TASK-2")
 
+    def test_issue_flag_still_recovers(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3)), issue("TASK-2", "Todo")])
+        self.tick(fake, "--now", "--issue", "TASK-1")
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[launch.index("--issue") + 1], "TASK-1")
+
     def test_issue_flag_not_in_todo(self):
         self.tick(FakeLinear([issue("TASK-1", "Todo")]), "--now", "--issue", "TASK-9")
         self.assertIn("pick: TASK-9 is not a Todo issue in a runnable project", self.err)
