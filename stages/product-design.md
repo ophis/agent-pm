@@ -4,7 +4,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 
 ## Board
 
-- Team `Frank's Agents`, project `Product Design`.
+- Team `Frank's Agents`, the Product Design project (its id is the key in `../pipeline.toml`; the name may change).
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PRD ready, questions, or stuck) → Handoff / Done (user only). The agent never uses Backlog.
 - Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent. The user may write comments through an agent, so they share that account.
 

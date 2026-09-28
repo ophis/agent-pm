@@ -4,7 +4,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the user
 
 ## Board
 
-- Team `Frank's Agents`, project `Deep Research`.
+- Team `Frank's Agents`, the Deep Research project (its id is the key in `../pipeline.toml`; the name may change).
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: report ready, questions, or stuck) → Done (user only). The agent never uses Backlog.
 - Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent and its work shows under that name.
 
