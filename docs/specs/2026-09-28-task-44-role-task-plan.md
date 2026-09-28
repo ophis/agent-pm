@@ -1,6 +1,6 @@
 # TASK-44: Role + task restructure (phase 1) — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=db150ef8c9febd7f265d45d43f10ee2e7c31ce8f review_round=0 spec_file=docs/specs/2026-09-28-task-44-role-task-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=db150ef8c9febd7f265d45d43f10ee2e7c31ce8f review_round=0 spec_file=docs/specs/2026-09-28-task-44-role-task-design.md
 
 ## Implementation plan
 
@@ -861,3 +861,8 @@ From the worktree root:
 - S4: plan written (3 tasks: registry+layout, launcher, docs); execution: subagent-driven-development, per-task reviews kept, final review skipped (S7).
 - S5: tasks 1-3 done (27e48d7 registry+layout, c451c37 launcher, b1ee4b4 docs); per-task reviews clean; deferred minors in the SDD ledger. Ruling: launch.main names the runnable() result `jobs` (plan's `runs` shadowed the runs.log parameter).
 - S6: unittest 221 OK; router.py --now --dry-run rc 0 (plan: new, usage allowed); promote.py --dry-run rc 0; old-vs-new launch argv for the real config (new + resume) differ only in prompt text and stages->roles+tasks (NFR-1).
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[architecture,code-quality,test,security] (performance dropped: config loading only; security added: run permissions)
+- S7 reviewers: correctness=ad4071d692753d2ad requirement-fidelity=a21858c48d55b3ddf doc=a64c55bd57997745e architecture=abc3832f7fdbf8afb code-quality=a48a0193c54ad3872 test=a7ad9efe43505d8f4 security=adb29ce54d3ccdc5b
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS architecture=PASS code-quality=PASS test=PASS security=PASS -> converged.
+- S8: skipped by instruction (keep the build commits; the user squash-merges).
+- Residual NON-BLOCKING: memory may be an ancestor of ~/Library/LaunchAgents (e.g. ~/Library) - PROTECTED check is one-way; realpath overlap checks are case-sensitive on case-insensitive APFS; non-string read_only/memory/role/task raise TypeError instead of a pipeline.toml error; a non-engineer role paired with a repo_from_issue task would leave private_docs editable (no rule requires read_only there); read_only entries containing ")" are not rejected; Run exposes unused project/role raw dicts and mixes the {repo} sentinel into read_only; phase 2 will need runnable() keyed by (project, task); empty "## Memory" heading in charters; "stage" wording left in eng.py/promote.py docstrings; minor test polish (weak "em" fragment, untested brace branch, near-vacuous clone assertion, duplicated RealConfig helpers).
