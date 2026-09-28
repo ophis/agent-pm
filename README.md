@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs agent stages from the Linear board (team Frank's Agents), one project per stage. Runnable today: Deep Research (picks the next Todo issue, runs `/deep-research` once, pushes the report to `~/playground/private_docs/Deep Research/` (GitHub `ophis/private_docs`), links it from the issue). Promote hands reviewed issues to the next stage.
+Runs agent stages from the Linear board (team Frank's Agents), one project per stage. Runnable today: Deep Research (picks the next Todo issue, runs `/deep-research` once, pushes the report to `~/playground/private_docs/Research/` (GitHub `ophis/private_docs`), links it from the issue). Promote hands reviewed issues to the next stage.
 
 This repo holds the code and the run state:
 

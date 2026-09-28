@@ -2,7 +2,7 @@ team = "Frank's Agents"
 human_members = ["ophis.w@outlook.com"]   # the human users; not read by any script today
 
 # Projects are keyed by their Linear project id (a name or URL slug changes with a rename).
-[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Deep Research
+[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Research
 next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # 2-Product Design
 instructions = "stages/deep-research.md"   # makes the project runnable by the router
 model = "opus"
