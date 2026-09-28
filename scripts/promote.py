@@ -4,6 +4,7 @@
 For each issue in Handoff whose project has a `next` in pipeline.toml: create the next stage's issue
 in Todo with the source links and the human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
+--now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
 """
 import hashlib
@@ -62,8 +63,8 @@ def ok(result, name):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, now, dry):
-        self.gql, self.cfg, self.now, self.dry = gql, cfg, now, dry
+    def __init__(self, gql, cfg, now, dry, wait=True):
+        self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
         setup = gql(Q_SETUP, t=cfg["team"])
         team = setup["teams"]["nodes"][0]
         self.team = team["id"]
@@ -94,7 +95,7 @@ class Promoter:
                 except (Exception, SystemExit) as e:
                     self.say(f"handoff-error {src['identifier']}: {e}")
         for (cutoff, first, latest), src, detail, nxt in sorted(work, key=lambda w: w[0][2]):
-            if self.now - parse_time(latest) < MATURE:
+            if self.wait and self.now - parse_time(latest) < MATURE:
                 self.say(f"handoff-wait {src['identifier']} (in Handoff under {MATURE.seconds // 60} min)")
                 continue
             found = [None]
@@ -200,11 +201,11 @@ class Promoter:
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG):
-    if any(a != "--dry-run" for a in argv):
+    if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     cfg = load_config(config)
-    Promoter(gql, cfg, now or datetime.now(timezone.utc), "--dry-run" in argv).run()
+    Promoter(gql, cfg, now or datetime.now(timezone.utc), "--dry-run" in argv, wait="--now" not in argv).run()
     return 0
 
 

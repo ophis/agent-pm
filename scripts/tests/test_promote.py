@@ -187,6 +187,18 @@ class TestPromote(Base):
             self.assertIn(f"  > {body}", comments)
         self.assertIn(f"- integration, {ago(48)}:", comments)
 
+    def test_now_skips_the_wait(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 60, "In Review")
+        self.fake.said("DR-1", 45)
+        self.fake.moved("DR-1", 1, "Handoff", frm=STATES["In Review"])
+        self.run_main("--now")
+        self.assertEqual(src["state"], "Done")
+        self.assertEqual(len(self.fake.children), 1)
+
+    def test_unknown_flag_prints_usage(self):
+        self.assertEqual(self.run_main("--nope"), 2)
+
     def test_waits_ten_minutes_in_handoff(self):
         src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 60, "In Review")

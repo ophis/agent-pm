@@ -12,6 +12,7 @@ python3 -m unittest discover -s scripts/tests -k attempt # tests matching a name
 python3 scripts/router.py --now --dry-run               # one tick: plan + usage probe, changes nothing
 python3 scripts/router.py --plan --dry-run               # Linear side only
 python3 scripts/promote.py --dry-run                     # what Handoff would do
+python3 scripts/promote.py --now                         # promote now, skipping the 10-minute wait
 ```
 
 A router tick without `--dry-run` claims an issue and starts claude; `--pick` claims too.
