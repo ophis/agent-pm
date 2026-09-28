@@ -90,13 +90,13 @@ Keys:
 6. a `[roles.*]` entry has a key other than `read_only` / `memory`, or a `[tasks.*]` entry a key other than `model` / `effort` / `add_dirs` / `repo_from_issue` / `allowed_tools` (a misspelled `read_only` must not silently drop a deny rule);
 7. a `read_only` entry is neither exactly `{repo}` nor an absolute path after `~` expansion, or contains a `..` segment;
 8. a role whose `read_only` contains `{repo}` is paired (in some runnable project) with a task that lacks `repo_from_issue` or has `allowed_tools`;
-9. a role's `memory` is not an absolute path after `~` expansion, is not an existing directory, or, compared by `realpath`: is at or under `root` (this covers `roles/`, `tasks/`, `templates/`, `scripts/`, `pipeline.toml`, `logs/`, `work/`), is an ancestor of `root`, or is at, under or an ancestor of one of that role's non-`{repo}` `read_only` paths. A writable memory dir must never reach the runner or a read-only path.
+9. a role's `memory` is not an absolute path after `~` expansion, is not an existing directory, or, compared by `realpath`: is at or under `root` (this covers `roles/`, `tasks/`, `templates/`, `scripts/`, `pipeline.toml`, `logs/`, `work/`), is an ancestor of `root`, is at, under or an ancestor of one of that role's non-`{repo}` `read_only` paths, or is at or under `~/.claude` or `~/Library/LaunchAgents` (config the runs and launchd trust). A writable memory dir must never reach the runner or a read-only path.
 
 Checks 3–9 cover every declared `[roles]` / `[tasks]` entry, not only referenced ones, so a broken entry fails at deploy (NFR-2). `runnable` returns `{project_id: Run}` for projects with `role` + `task`. `Run` carries the project entry, the role and task names and entries, and the resolved absolute paths the launcher uses: `charter` (`root/roles/<role>.md`), `instructions` (`root/tasks/<task>.md`), `memory` (expanded, or None), and `read_only` (each non-`{repo}` entry expanded and `normpath`-normalized, `{repo}` kept as is). The launcher builds no role/task path itself, so it cannot drift from what was validated. The router uses only the keys, as today.
 
 ## Launcher (FR-6…FR-9)
 
-Router and log formats are unchanged; `launch.py --project` still selects the entry (FR-6). On resume, the project — hence role and task — is the same as at start.
+Router and log formats are unchanged; `launch.py --project` still selects the entry (FR-6). On resume, the project is the same as at start; role and task are read from the current registry.
 
 Paths: `P = ROOT/roles/principles.md`; `C`, `T`, `M` = the `Run`'s `charter`, `instructions`, `memory` (`M` absent when unset). All absolute.
 
