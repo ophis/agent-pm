@@ -4,6 +4,7 @@ Imports none of them. Needs Python 3.11+ (tomllib).
 import json
 import os
 import re
+import string
 import subprocess
 import sys
 import tomllib
@@ -13,8 +14,7 @@ from datetime import datetime
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "pipeline.toml")
 WORK = os.path.join(ROOT, "work")
-# claude keys transcripts by cwd, with "/" and "." replaced by "-"; must match the launcher's cwd (WORK).
-TRANSCRIPTS = os.path.expanduser("~/.claude/projects/" + WORK.replace("/", "-").replace(".", "-"))
+PROJECTS = os.path.expanduser("~/.claude/projects")
 LOGS = os.path.join(ROOT, "logs")
 RUNS_LOG = os.path.join(LOGS, "runs.log")
 SESSION = "agent-pm"
@@ -53,12 +53,68 @@ def project_log(name, logs=LOGS):
     return os.path.join(d, f"{slug(name)}.log")
 
 
+def escape(path):
+    """Claude Code's folder name for a cwd: every non-alphanumeric character becomes "-"."""
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def run_dir(issue):
+    return os.path.join(WORK, issue)
+
+
+SID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def transcript(issue, sid, projects=PROJECTS):
+    """Session file for a run; sid must be a UUID (untrusted input) or this returns None."""
+    if not SID_RE.fullmatch(sid):
+        return None
+    return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
+
+
+PLACEHOLDERS = {"worktree", "branch", "owner", "name", "default", "clone"}
+# make/npm/npx run repo-defined scripts whatever their arguments.
+INTERPRETER_RE = re.compile(r"\b(?:(?:python[\d.]*|bash|sh|zsh|node|ruby|perl)\s+\S*[/.]|(?:make|npm|npx)\b)")
+
+
+def _root_forms(root):
+    home = os.path.expanduser("~")
+    return [root, "~" + root[len(home):]] if root.startswith(home + os.sep) else [root]
+
+
+def _fields(name, rule):
+    try:
+        return [field for _, field, _, _ in string.Formatter().parse(rule) if field is not None]
+    except ValueError as e:
+        raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule is not a valid template ({e}): {rule!r}") from None
+
+
+def check_allowed_tools(name, p, root=ROOT):
+    """Trust model: no wildcards, no unknown placeholders, no ROOT, no interpreter-on-script, only with repo_from_issue."""
+    tools = p.get("allowed_tools")
+    if tools is None:
+        return
+    if not p.get("repo_from_issue"):
+        raise SystemExit(f"pipeline.toml: {name!r} has allowed_tools without repo_from_issue")
+    for rule in tools:
+        if "*" in rule:
+            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule has a wildcard: {rule!r}")
+        if any(r in rule for r in _root_forms(root)):
+            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule contains root: {rule!r}")
+        if INTERPRETER_RE.search(rule):
+            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule runs an interpreter on a script: {rule!r}")
+        for field in _fields(name, rule):
+            if field not in PLACEHOLDERS:
+                raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
+
+
 def load_config(path=CONFIG):
     """Checks every consumer needs; runnable-project checks are in runnable()."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     projects = cfg.setdefault("projects", {})
     for name, p in projects.items():
+        check_allowed_tools(name, p)
         nxt = p.get("next")
         if nxt and "prefix" not in projects.get(nxt, {}):
             raise SystemExit(f"pipeline.toml: next of {name!r} must name a [projects] entry with a prefix")

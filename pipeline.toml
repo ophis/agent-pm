@@ -20,3 +20,8 @@ add_dirs = ["~/playground/private_docs"]
 
 [projects."ddbff8bf-b633-4b8c-9272-d1d5ee923747"]  # 3-Engineering
 prefix = "ENG"
+instructions = "stages/engineering.md"
+model = "opus"
+effort = "xhigh"
+add_dirs = ["~/playground/private_docs"]   # read-only here: the PRDs
+repo_from_issue = true                    # the launcher resolves and clones the issue's target repo

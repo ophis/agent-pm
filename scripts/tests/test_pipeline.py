@@ -61,6 +61,29 @@ class Config(unittest.TestCase):
                                      'model = "opus"\neffort = "high"'))
         self.assertIn("Deep Research", cfg["projects"])
 
+    def test_load_config_rejects_bad_allowed_tools(self):
+        text = BASE.replace('[projects.Engineering]\nprefix = "TDD"\n',
+                             '[projects.Engineering]\nprefix = "TDD"\nallowed_tools = ["Bash(git push origin *)"]\n')
+        with self.assertRaises(SystemExit):
+            self.load(text)
+
+    def test_load_config_accepts_valid_allowed_tools(self):
+        text = BASE.replace(
+            '[projects.Engineering]\nprefix = "TDD"\n',
+            '[projects.Engineering]\nprefix = "TDD"\nrepo_from_issue = true\n'
+            'allowed_tools = ["Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u '
+            'git@github.com:{owner}/{name}.git {branch})"]\n')
+        cfg = self.load(text)
+        self.assertIn("Engineering", cfg["projects"])
+
+
+class RealConfig(unittest.TestCase):
+    def test_engineering_runnable(self):
+        p = pipeline.runnable(pipeline.load_config())["ddbff8bf-b633-4b8c-9272-d1d5ee923747"]
+        self.assertEqual((p["instructions"], p["prefix"], p["effort"], p.get("repo_from_issue")),
+                         ("stages/engineering.md", "ENG", "xhigh", True))
+        self.assertNotIn("allowed_tools", p)
+
 
 class Paths(unittest.TestCase):
     def test_slug_and_project_log(self):
@@ -70,9 +93,70 @@ class Paths(unittest.TestCase):
             self.assertEqual(path, os.path.join(d, "projects", "product-design.log"))
             self.assertTrue(os.path.isdir(os.path.dirname(path)))
 
-    def test_transcripts_follow_work(self):
+    def test_work_under_root(self):
         self.assertEqual(pipeline.WORK, os.path.join(pipeline.ROOT, "work"))
-        self.assertTrue(pipeline.TRANSCRIPTS.endswith("/" + pipeline.WORK.replace("/", "-").replace(".", "-")))
+
+    def test_escape(self):
+        self.assertEqual(pipeline.escape("/Users/a_b/x.y"), "-Users-a-b-x-y")
+
+    def test_run_dir(self):
+        self.assertTrue(pipeline.run_dir("TASK-9").endswith("/work/TASK-9"))
+
+    def test_transcript(self):
+        sid = "0f0f0f0f-1111-2222-3333-444444444444"
+        self.assertEqual(pipeline.transcript("TASK-9", sid, projects="/p"),
+                         "/p/" + pipeline.escape(pipeline.run_dir("TASK-9")) + f"/{sid}.jsonl")
+
+    def test_transcript_rejects_non_uuid(self):
+        self.assertIsNone(pipeline.transcript("TASK-9", "../x"))
+
+
+class AllowedTools(unittest.TestCase):
+    RULE = ("Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u "
+            "git@github.com:{owner}/{name}.git {branch})")
+
+    def check(self, allowed_tools, repo_from_issue=True):
+        p = {"allowed_tools": allowed_tools}
+        if repo_from_issue:
+            p["repo_from_issue"] = True
+        pipeline.check_allowed_tools("Engineering", p)
+
+    def test_accepts_exact_template(self):
+        self.check([self.RULE])
+
+    def test_rejects_wildcard(self):
+        with self.assertRaises(SystemExit):
+            self.check(["Bash(git push origin *)"])
+
+    def test_rejects_unknown_placeholder(self):
+        with self.assertRaises(SystemExit):
+            self.check(["Bash(git push {remote})"])
+
+    def test_rejects_root(self):
+        with self.assertRaises(SystemExit):
+            self.check([f"Bash(cat {pipeline.ROOT}/secret)"])
+
+    def test_rejects_root_in_tilde_form(self):
+        home = os.path.expanduser("~")
+        with self.assertRaises(SystemExit):
+            pipeline.check_allowed_tools("E", {"repo_from_issue": True, "allowed_tools": ["Bash(cat ~/x/agent-pm/secret)"]},
+                                         root=os.path.join(home, "x", "agent-pm"))
+
+    def test_rejects_interpreter_on_script(self):
+        for rule in ("Bash(python3 /tmp/x.py)", "Bash(bash ./do.sh)", "Bash(node x.js)", "Bash(python3.12 x.py)",
+                     "Bash(make)", "Bash(make -C {worktree} test)", "Bash(npm test)", "Bash(npx jest)"):
+            with self.assertRaises(SystemExit, msg=rule):
+                self.check([rule])
+
+    def test_malformed_template_is_config_error(self):
+        for rule in ("Bash(git -C {worktree push)", "Bash(git -C worktree} push)"):
+            with self.assertRaises(SystemExit) as cm:
+                self.check([rule])
+            self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
+
+    def test_rejects_without_repo_from_issue(self):
+        with self.assertRaises(SystemExit):
+            self.check(["Bash(git status)"], repo_from_issue=False)
 
 
 if __name__ == "__main__":
