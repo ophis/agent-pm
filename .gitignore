@@ -1,4 +1,4 @@
 work/
-docs/
+docs/specs/*.r[0-9]*.md
 logs/
 __pycache__/

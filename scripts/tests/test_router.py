@@ -6,11 +6,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pipeline  # noqa: E402
 import router  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
@@ -88,7 +90,19 @@ class Base(unittest.TestCase):
         self.log = os.path.join(self.tmp.name, "runs.log")
         self.lines = []
         self.hist = {}
+        self.names = {}
         self.config = self.write_config(CONFIG)
+
+    def sid(self, name):
+        """A UUID for a short session name (transcript() accepts UUIDs only); outputs map it back to the name."""
+        s = str(uuid.uuid5(uuid.NAMESPACE_OID, name))
+        self.names[s] = name
+        return s
+
+    def unmap(self, text):
+        for s, name in self.names.items():
+            text = text.replace(s, name)
+        return text
 
     def write_config(self, text):
         path = os.path.join(self.tmp.name, "cfg", "pipeline.toml")
@@ -107,15 +121,19 @@ class Base(unittest.TestCase):
         """A start line for sid, an old <sid>.jsonl, and a move to In Progress just before the start."""
         self.moved(ident, minutes_ago + 1)
         self.add("start", ident, sid, minutes_ago)
-        self.touch(f"{sid}.jsonl", 40)
+        self.touch(ident, sid, 40)
 
     def add(self, kind, ident, sid, minutes_ago):
         ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        extra = "n=1" if kind == "resume" else f"transcript={self.tdir}/{sid}.jsonl"
-        self.lines.append(f"{ts} {kind} {ident} session={sid} {extra}")
+        s = self.sid(sid)
+        extra = "n=1" if kind == "resume" else f"transcript={pipeline.transcript(ident, s, self.tdir)}"
+        self.lines.append(f"{ts} {kind} {ident} session={s} {extra}")
 
-    def touch(self, rel, minutes_ago):
-        p = os.path.join(self.tdir, rel)
+    def touch(self, ident, sid, minutes_ago, sub=None):
+        """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
+        p = pipeline.transcript(ident, self.sid(sid), self.tdir)
+        if sub:
+            p = os.path.join(p[:-len(".jsonl")], sub)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         open(p, "w").close()
         t = (NOW - timedelta(minutes=minutes_ago)).timestamp()
@@ -127,8 +145,8 @@ class Base(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             rc = router.main(list(argv) + [self.log], gql=fake, now=NOW, tdir=self.tdir, config=self.config)
-        self.err = err.getvalue()
-        return rc, out.getvalue().strip()
+        self.err = self.unmap(err.getvalue())
+        return rc, self.unmap(out.getvalue().strip())
 
 
 class ParseAndLiveness(Base):
@@ -141,20 +159,35 @@ class ParseAndLiveness(Base):
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + "\n")
         entries = router.parse_log(self.log)
-        self.assertEqual([(e[1], e[2], e[3]) for e in entries], [("start", "TASK-1", "a"), ("resume", "TASK-1", "a")])
+        self.assertEqual([(e[1], e[2], e[3]) for e in entries], [("start", "TASK-1", self.sid("a")), ("resume", "TASK-1", self.sid("a"))])
         self.assertAlmostEqual(entries[0][0].timestamp(), (NOW - timedelta(minutes=60)).timestamp())
 
     def test_missing_log_is_empty(self):
         self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])
 
     def test_liveness(self):
-        self.assertFalse(router.is_live(self.tdir, "s", NOW))
-        self.touch("s.jsonl", 40)
-        self.assertFalse(router.is_live(self.tdir, "s", NOW))
-        self.touch("s/subagents/workflows/r/journal.jsonl", 10)
-        self.assertTrue(router.is_live(self.tdir, "s", NOW))
-        self.touch("t.jsonl", 29)
-        self.assertTrue(router.is_live(self.tdir, "t", NOW))
+        s, t = self.sid("s"), self.sid("t")
+        self.assertFalse(router.is_live(self.tdir, "TASK-1", s, NOW))
+        self.touch("TASK-1", "s", 40)
+        self.assertFalse(router.is_live(self.tdir, "TASK-1", s, NOW))
+        self.touch("TASK-1", "s", 10, "subagents/workflows/r/journal.jsonl")
+        self.assertTrue(router.is_live(self.tdir, "TASK-1", s, NOW))
+        self.touch("TASK-1", "t", 29)
+        self.assertTrue(router.is_live(self.tdir, "TASK-1", t, NOW))
+        self.assertFalse(router.is_live(self.tdir, "TASK-2", t, NOW))
+        self.assertFalse(router.is_live(self.tdir, "TASK-1", "not-a-uuid", NOW))
+
+    def test_other_folders_ignored(self):
+        fake = self.fake(issue("TASK-1", "In Progress", ME, updated=ago(hours=3)))
+        self.add("start", "TASK-1", "a", 40)
+        self.touch("TASK-2", "a", 5)
+        legacy = os.path.join(self.tdir, pipeline.escape(pipeline.WORK), self.sid("a") + ".jsonl")
+        os.makedirs(os.path.dirname(legacy))
+        open(legacy, "w").close()
+        self.assertFalse(router.is_live(self.tdir, "TASK-1", self.sid("a"), NOW))
+        self.assertEqual(self.run_main(fake, "--plan")[1], "new")
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        self.assertIn("recover: TASK-1 session=a has no transcript", self.err)
 
 
 def event(status="allowed", five=0.1, **week):
@@ -227,7 +260,7 @@ class Plan(Base):
     def test_live_session_not_resumed_or_recovered(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME, updated=ago(hours=5)))
         self.add("start", "TASK-1", "sid1", 300)
-        self.touch("sid1/subagents/workflows/r/journal.jsonl", 5)
+        self.touch("TASK-1", "sid1", 5, "subagents/workflows/r/journal.jsonl")
         self.assertEqual(self.run_main(fake, "--plan"), (0, ""))
         self.assertEqual(fake.mutations, [])
 
@@ -235,12 +268,12 @@ class Plan(Base):
         a = issue("TASK-1", "In Progress", ME, updated=ago(hours=3))
         fake = self.fake(a, issue("TASK-2", "Todo"))
         self.resumable("TASK-1", "a", 200)
-        self.touch("a.jsonl", 5)
+        self.touch("TASK-1", "a", 5)
         self.assertEqual(self.run_main(fake, "--plan")[1], "new")
         self.assertEqual(fake.mutations, [])
         fake.issues["TASK-2"].update(state="In Progress", assignee=ME)
         self.resumable("TASK-2", "b", 60)
-        self.touch("a.jsonl", 40)
+        self.touch("TASK-1", "a", 40)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-1 a 1 https://linear.app/x/TASK-1 Deep Research")
         self.assertEqual(fake.mutations, [])
 
@@ -263,7 +296,7 @@ class Plan(Base):
     def test_no_current_sid_never_outranks(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME, priority=1), issue("TASK-2", "In Progress", ME, priority=4))
         self.add("start", "TASK-1", "old", 400)
-        self.touch("old.jsonl", 300)
+        self.touch("TASK-1", "old", 300)
         self.moved("TASK-1", 60, actor=USER)
         self.resumable("TASK-2", "b", 100)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-2 b 1 https://linear.app/x/TASK-2 Deep Research")
@@ -272,7 +305,7 @@ class Plan(Base):
         fake = self.fake(issue("TASK-1", "In Progress", ME, priority=2), issue("TASK-2", "In Progress", ME, priority=2))
         self.add("resume", "TASK-1", "a", 300)
         self.add("resume", "TASK-1", "a", 50)
-        self.touch("a.jsonl", 40)
+        self.touch("TASK-1", "a", 40)
         self.resumable("TASK-2", "b", 200)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-1 a 3 https://linear.app/x/TASK-1 Deep Research")
 
@@ -316,7 +349,7 @@ class Plan(Base):
     def test_live_issue_skipped_for_next(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME, priority=1), issue("TASK-3", "In Progress", ME, priority=3))
         self.resumable("TASK-1", "a", 300)
-        self.touch("a.jsonl", 5)
+        self.touch("TASK-1", "a", 5)
         self.resumable("TASK-3", "c", 100)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-3 c 1 https://linear.app/x/TASK-3 Deep Research")
         self.assertEqual(fake.mutations, [])
@@ -342,7 +375,7 @@ class Plan(Base):
     def test_stale_sid_goes_to_two_hour_rule(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME, updated=ago(minutes=220)))
         self.add("start", "TASK-1", "old", 400)
-        self.touch("old.jsonl", 400)
+        self.touch("TASK-1", "old", 400)
         self.moved("TASK-1", 220, actor=USER)
         self.assertEqual(self.run_main(fake, "--plan")[1], "new")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -353,14 +386,14 @@ class Plan(Base):
             fake = self.fake(issue("TASK-1", "In Progress", ME))
             self.moved("TASK-1", 100)
             self.add("start", "TASK-1", "a", start)
-            self.touch("a.jsonl", 40)
+            self.touch("TASK-1", "a", 40)
             self.assertEqual(self.run_main(fake, "--plan")[1].split(" ")[0], want)
 
     def test_no_move_in_history_is_current(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME))
         self.moved("TASK-1", 500, state="s-todo", actor=USER)
         self.add("start", "TASK-1", "a", 100)
-        self.touch("a.jsonl", 40)
+        self.touch("TASK-1", "a", 40)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-1 a 1 https://linear.app/x/TASK-1 Deep Research")
 
     def test_no_current_sid_never_capped(self):
@@ -444,7 +477,7 @@ class Plan(Base):
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3))], {"TASK-1": hist})
         for i, sid in enumerate("abcd"):
             self.add("start", "TASK-1", sid, 400 - i * 50)
-        self.touch("d.jsonl", 200)
+        self.touch("TASK-1", "d", 200)
         return fake, self.run_main(fake, "--plan")[1]
 
     def test_attempt_cap_reset_by_user(self):
@@ -630,9 +663,9 @@ class Tick(Base):
             rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
                              sh=self.sh, hour=hour)
             self.path = os.environ["PATH"]
-        self.err = err.getvalue()
+        self.err = self.unmap(err.getvalue())
         with open(self.log) as f:
-            self.state = f.read()
+            self.state = self.unmap(f.read())
         return rc
 
     def test_outside_hours(self):
@@ -664,7 +697,7 @@ class Tick(Base):
         self.assertEqual(launch[0], sys.executable)
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", IDS[DR],
                                       "--sid", sid, "--mode", "new"])
-        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(self.tdir)}/{sid}\.jsonl\n$")
+        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
     def test_lock_skips(self):

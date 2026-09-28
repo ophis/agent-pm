@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, RUNS_LOG, SESSION, TRANSCRIPTS, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, reviewer, runnable, stage_order)
+from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, reviewer, runnable, stage_order, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -107,10 +107,18 @@ def attempt_count(entries, issue, since=None):
     return sum(1 for e in entries if e[2] == issue and (since is None or e[0] > since))
 
 
-def is_live(tdir, sid, now):
+def has_transcript(tdir, issue, sid):
+    path = transcript(issue, sid, tdir)
+    return path is not None and os.path.exists(path)
+
+
+def is_live(tdir, issue, sid, now):
+    path = transcript(issue, sid, tdir)
+    if path is None:
+        return False
     cutoff = (now - LIVE).timestamp()
-    paths = [os.path.join(tdir, f"{sid}.jsonl")]
-    for root, _, files in os.walk(os.path.join(tdir, sid)):
+    paths = [path]
+    for root, _, files in os.walk(os.path.splitext(path)[0]):
         paths += [os.path.join(root, f) for f in files]
     for p in paths:
         try:
@@ -215,12 +223,12 @@ class Board:
         for issue, sid in mine:
             ident = issue["identifier"]
             latest = latest_sid(self.entries, ident)
-            if latest and is_live(self.tdir, latest, self.now):
+            if latest and is_live(self.tdir, ident, latest, self.now):
                 continue
             if sid and self.attempts(issue) >= CAP:
                 log(f"recover: {ident} reached {CAP} attempts; In Review")
                 self.comment_and_move(issue, CAP_COMMENT, "In Review")
-            elif sid and os.path.exists(os.path.join(self.tdir, f"{sid}.jsonl")):
+            elif sid and has_transcript(self.tdir, ident, sid):
                 cand = cand or (issue, sid, resume_count(self.entries, sid) + 1)
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
@@ -314,6 +322,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         log("skip: nothing to do")
         return 0
     os.makedirs(WORK, exist_ok=True)
+    # The usage probe's cwd only, not a run cwd: runs work in work/<ID>/ (launch.py).
     probe = sh(["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose"],
                cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     ok, usage = gate(kind or "new", probe.stdout.splitlines())
@@ -334,7 +343,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
             log("skip: nothing claimed")
             return 0
         sid = str(uuid.uuid4())
-        append(runs, f"start {issue['identifier']} session={sid} transcript={os.path.join(tdir, sid + '.jsonl')}")
+        append(runs, f"start {issue['identifier']} session={sid} transcript={transcript(issue['identifier'], sid, tdir)}")
         mode = ["--mode", "new"]
     ident, project = issue["identifier"], issue["project"]
     rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"], "--sid", sid]
@@ -343,7 +352,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
     return 0
 
 
-def main(argv, gql=linear_gql, now=None, tdir=TRANSCRIPTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
+def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
          sh=subprocess.run, hour=None):
     args = [a for a in argv if a != "--dry-run"]
     dry = len(args) < len(argv)
