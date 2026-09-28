@@ -326,6 +326,23 @@ class TestIdempotency(Base):
         self.assertEqual(a[14], "4")  # UUID v4 format
 
 
+class TestChildTitle(unittest.TestCase):
+    def test_strips_own_prefix_once(self):
+        for src, want in [("PRD: Session Registry", "TDD: Session Registry"),
+                          ("PRD: PRD: X", "TDD: PRD: X"),
+                          ("PRD:\nX", "TDD: X")]:
+            self.assertEqual(promote.child_title("TDD", "PRD", src), want)
+
+    def test_other_titles_kept(self):
+        for src in ["Fix: X", "PRD:X", "prd: X", "PRDs: X", "X PRD: Y"]:
+            self.assertEqual(promote.child_title("TDD", "PRD", src), f"TDD: {src}")
+        self.assertEqual(promote.child_title("TDD", "PRD", "PRD: "), "TDD: PRD:")
+
+    def test_no_source_prefix_strips_nothing(self):
+        for src_prefix in (None, ""):
+            self.assertEqual(promote.child_title("PRD", src_prefix, "PRD: X"), "PRD: PRD: X")
+
+
 class TestScopeAndConfig(Base):
     def test_project_without_next_untouched(self):
         src = self.ready(project="Product Design")
@@ -383,6 +400,13 @@ class TestScopeAndConfig(Base):
 
     def test_unknown_flag(self):
         self.assertEqual(self.run_main("--now"), 2)
+
+    def test_source_prefix_stripped(self):
+        self.config = self.write_config(CONFIG + 'next = "p-eng"\n[projects.p-eng]\nprefix = "TDD"\n')
+        self.ready("PD-1", project="Product Design", title="PRD: Session Registry")
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(child["title"], "TDD: Session Registry")
 
 
 class TestFailures(Base):

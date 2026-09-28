@@ -48,6 +48,13 @@ def one_line(s):
     return " ".join(s.split())
 
 
+def child_title(prefix, src_prefix, title):
+    title = one_line(title)
+    if src_prefix and title.startswith(f"{src_prefix}: "):
+        title = title[len(src_prefix) + 2:]
+    return f"{prefix}: {title}"
+
+
 def ok(result, name):
     if not result[name]["success"]:
         raise RuntimeError(f"{name} returned success: false")
@@ -119,7 +126,8 @@ class Promoter:
 
     def promote(self, src, detail, nxt, cutoff, first, found):
         comments = self.instructions(detail, cutoff)
-        required = self.cfg["projects"][src["project"]["id"]].get("require_instructions", True)
+        src_cfg = self.cfg["projects"][src["project"]["id"]]
+        required = src_cfg.get("require_instructions", True)
         if not comments and required:
             self.comment_and_move(src, NO_INSTRUCTIONS, "In Review")
             self.say(f"handoff-bounce {src['identifier']} no instructions")
@@ -134,7 +142,8 @@ class Promoter:
         else:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
                 "id": cid, "teamId": self.team, "projectId": nxt, "stateId": self.states["Todo"],
-                "priority": src["priority"], "title": f"{self.cfg['projects'][nxt]['prefix']}: {one_line(src['title'])}",
+                "priority": src["priority"],
+                "title": child_title(self.cfg["projects"][nxt]["prefix"], src_cfg.get("prefix"), src["title"]),
                 "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
