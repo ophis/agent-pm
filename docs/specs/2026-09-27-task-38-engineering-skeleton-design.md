@@ -93,19 +93,19 @@ For projects with `repo_from_issue`, before tmux: `resolve(ID)`:
 
 Board section as in the other stages, with the reviewer and project from the prompt line. Steps:
 
-1. **Read** the issue, its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`.
+1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. Agent comments are the stage's own (prefixes `Build started`, `Build docs:`, `Build ready:`, `Build failed:`, `Question:`); every other comment is the user's. Precedence: the user's over agent comments, newer over older, the user's comments over `## Instructions` and the PRD. No "comments since X" bookkeeping.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs. On `failed`, bounce and stop:
    - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review (reviewer assigned); on this issue comment the same and move it to Canceled.
-   - Otherwise → comment the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.
-3. **Start.** On a new (not resumed) run with no `Build started` comment since the latest `Build ready:` / `Build failed:` comment, comment `Build started`.
-4. **Status.** `eng.py status`.
-5. **Which build** (TASK-36 FR-10a, FR-11); this reads autopilot's plan doc and its `RESUME: phase=` line, a deliberate coupling to the skill's phase names:
-   - A plan doc in the worktree with phase before S9 → continue that build, with new requirement text since the latest `Build failed:` (or this build's first `Build started`) as added requirements.
-   - Else new requirement text since the agent's latest `Build ready:` / `Build failed:` comment — Linear comments on this issue (not the stage's own status comments) and `eng.py comments --since <that time>` → a new build with them as the requirement (new plan doc).
-   - Else a finished build and nothing new → comment a question, move to In Review, stop.
-   - No build yet → a new build of the PRD's first phase (or the phase `## Instructions` names), plus `## Instructions`.
+   - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.
+3. **Status.** `eng.py status`; with a PR, also `eng.py comments --since <issue creation time>` (kept comments count as the user's).
+4. **Which build** (TASK-36 FR-10a, FR-11); this reads autopilot's plan doc and its `RESUME: phase=` line, a deliberate coupling to the skill's phase names:
+   - A plan doc in the worktree with phase before S9 → continue that build, with the user's comments as requirements (update the spec and plan where they differ).
+   - Else a finished build and the latest comment (issue or PR) is the user's → a new build with the user's comments as the requirement (new plan doc).
+   - Else a finished build → `Question:` comment, move to In Review, stop.
+   - No build yet → a new build of the PRD's first phase (or the phase `## Instructions` names).
+5. **Start.** On a new (not resumed) run, comment `Build started`.
 6. **Build.** If `eng.py status` shows `worktrees_dir_ok: false`, fail (step 8) without building. Run `autopilot:build` with a requirement stating (this relies on the skill following requirement text over its own worktree setup — a second deliberate coupling to its internals, checked in the supervised run):
-   - the PRD path and `## Instructions` (or the send-back comments), and "read the target repo's `CLAUDE.md` / `AGENTS.md` in the worktree as its conventions";
+   - the PRD path, `## Instructions` and the user's comments, with step 1's precedence, and "read the target repo's `CLAUDE.md` / `AGENTS.md` in the worktree as its conventions";
    - "use the worktree `<worktree>` on branch `<branch>`: if it does not exist, `git -C <clone> fetch origin`, then `git -C <clone> worktree add -b <branch> <worktree> origin/<default>` for a new branch, `git -C <clone> worktree add <worktree> <branch>` for an existing local one, or `git -C <clone> worktree add --track -b <branch> <worktree> origin/<branch>` for a remote-only one; then work only there, with absolute paths; create no other worktree or branch";
    - "put the spec and plan doc where the target repo keeps design docs (e.g. an existing `docs/specs/`), else in `autopilot_docs/` at the repo root; commit them on the branch";
    - "skip S8: keep the commits"; "after each implementation task and each review round run exactly `git -C <worktree> push -u origin <branch>`"; "never force-push, never merge, never touch `<default>`".
