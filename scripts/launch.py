@@ -23,12 +23,16 @@ PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 
 
-
 def prompt(a, run):
+    docs = f"{PRINCIPLES}, your role charter {run.charter} and the task {run.instructions}"
     if a.mode == "resume":
-        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {PRINCIPLES} and {run.instructions} "
-                "first (they may have changed since this session started) and follow the stage's resume rule.")
-    return f"Follow {PRINCIPLES} and {run.instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
+        text = (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {docs} "
+                "first (they may have changed since this session started) and follow the task's resume rule.")
+    else:
+        text = f"Follow {docs} to handle {a.issue} ({a.url}). The runner has already claimed it."
+    if run.memory:
+        text += f" Your role memory: {run.memory}; your role charter says how to use it."
+    return text
 
 
 def deny(path):
@@ -36,17 +40,26 @@ def deny(path):
     return "Edit(//" + path.lstrip("/") + ")"
 
 
-def command(a, run, tail="", allowed=()):
-    t = run.task
-    dirs = [os.path.expanduser(d) for d in t.get("add_dirs", [])]
+def command(a, run, tail="", allowed=(), repo=None):
+    t, rd = run.task, run_dir(a.issue)
+    dirs = [os.path.join(ROOT, d) for d in ("roles", "tasks", "templates")]
+    dirs += [os.path.expanduser(d) for d in t.get("add_dirs", [])]
+    if run.memory:
+        dirs.append(run.memory)
     denied = [os.path.join(ROOT, d, "**") for d in ("roles", "tasks", "templates")]
-    denied.append(os.path.join(run_dir(a.issue), "worktrees", "*", ".git"))
-    denied += [os.path.join(p, "**") for p in run.read_only if p != REPO]
+    denied.append(os.path.join(rd, "worktrees", "*", ".git"))
+    for p in run.read_only:
+        if p != REPO:
+            denied.append(os.path.join(p, "**"))
+            continue
+        if isinstance(repo, eng.Ok):
+            denied.append(os.path.join(repo.clone, "**"))
+        denied.append(os.path.join(rd, "worktrees", "**"))
     cmd = ["claude", "-p", prompt(a, run) + tail,
            "--resume" if a.mode == "resume" else "--session-id", a.sid,
            "--model", t["model"], "--effort", t["effort"], "--permission-mode", "auto",
            "--setting-sources", "user", "--strict-mcp-config"]
-    for d in [os.path.join(ROOT, d) for d in ("roles", "tasks", "templates")] + dirs:
+    for d in dirs:
         cmd += ["--add-dir", d]
     cmd += ["--disallowedTools", *map(deny, denied)]
     if allowed:
@@ -72,8 +85,8 @@ def transient(plog, issue, reason):
     return 3
 
 
-def repo_step(a, p, gql, run):
-    """(prompt tail, extra env, allowed rules) for a repo_from_issue project, or a Transient."""
+def repo_step(a, task, gql, run):
+    """(prompt tail, extra env, allowed rules, repo result) for a repo_from_issue project, or a Transient."""
     try:
         r = eng.resolve(a.issue, gql, run)
     except Exception as e:  # a resolve bug must not crash the launcher: Transient lets Recover retry the issue
@@ -84,11 +97,11 @@ def repo_step(a, p, gql, run):
         return r
     cli = f" eng.py: python3 {shlex.quote(os.path.join(ROOT, 'scripts', 'eng.py'))}."
     if isinstance(r, eng.Invalid):
-        return f" Repo check failed: {r.reason}.{cli}", {}, []
+        return f" Repo check failed: {r.reason}.{cli}", {}, [], r
     tail = (f" Repo check: OK {r.owner}/{r.name}, clone {r.clone}, default branch {r.default}, branch {r.branch}, "
             f"worktree {r.worktree}.{cli}")
     values = {k: getattr(r, k) for k in PLACEHOLDERS}
-    return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in p.get("allowed_tools", [])]
+    return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
 
 
 def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS):
@@ -116,16 +129,16 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
             return transient(plog, a.issue, f"no transcript to resume at {path}")
     humans = cfg.get("human_members") or []
     tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
-    env, allowed = {}, []
+    env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run)
         if isinstance(step, eng.Transient):
             return transient(plog, a.issue, step.reason)
-        extra, env, allowed = step
+        extra, env, allowed, repo = step
         tail += extra
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
-    cmd = command(a, job, tail, allowed)
+    cmd = command(a, job, tail, allowed, repo)
     sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, **env}, plog, runs)],
        check=True)
     return 0

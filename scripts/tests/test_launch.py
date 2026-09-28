@@ -124,11 +124,13 @@ class Launch(unittest.TestCase):
 
     def test_new_prompt_and_flags(self):
         self.run_launch(*self.args())
+        self.assertEqual(launch.PRINCIPLES, os.path.join(pipeline.ROOT, "roles", "principles.md"))
         instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
+        charter = os.path.join(pipeline.ROOT, "roles/researcher.md")
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
-            "claude", "-p", f"Follow {launch.PRINCIPLES} and {instructions} to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-                            " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
+            "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
+                            "The runner has already claimed it. Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -168,8 +170,9 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.run_launch(*self.args("resume")), 0)
         argv = self.claude()
         instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
-        self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES} and {instructions} "
-                                  "first (they may have changed since this session started) and follow the stage's resume rule."
+        charter = os.path.join(pipeline.ROOT, "roles/researcher.md")
+        self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
+                                  f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
                                   " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
@@ -282,6 +285,129 @@ class Launch(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PATH": "/nowhere"}):
             self.run_launch(*self.args())
         self.assertNotIn("/nowhere", self.calls[0][9])
+
+    def with_memory(self):
+        mem = os.path.join(self.tmp, "mem")
+        os.makedirs(mem)
+        self.write_config(CONFIG.replace("[roles.researcher]\n", f'[roles.researcher]\nmemory = "{mem}"\n'))
+        return mem
+
+    def test_memory_prompt_and_dir(self):
+        mem = self.with_memory()
+        self.run_launch(*self.args())
+        argv = self.claude()
+        self.assertIn(f"The runner has already claimed it. Your role memory: {mem}; your role charter says how to use it."
+                      " Reviewer: me@x.com.", argv[2])
+        self.assertEqual([argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"][-1], mem)
+        self.assertFalse(any(mem in r for r in self.after(argv, "--disallowedTools")))
+
+    def test_memory_on_resume(self):
+        mem = self.with_memory()
+        self.make_transcript()
+        self.run_launch(*self.args("resume"))
+        self.assertIn(f"follow the task's resume rule. Your role memory: {mem}; your role charter says how to use it.", self.claude()[2])
+
+    def repo_config(self):
+        self.write_config(CONFIG.replace('read_only = ["~/playground/private_docs"]', 'read_only = ["{repo}"]'))
+
+    def test_repo_read_only_ok(self):
+        self.repo_config()
+        self.launch_eng(self.ok())
+        rules = self.after(self.claude(), "--disallowedTools")
+        rd = os.path.join(self.work, "TASK-1")
+        self.assertEqual(rules[-2:], [f"Edit({slashes(self.ok().clone)}/**)", f"Edit({slashes(rd)}/worktrees/**)"])
+        self.assertNotIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+
+    def test_repo_read_only_invalid(self):
+        self.repo_config()
+        self.launch_eng(eng.Invalid("no Repo: line"))
+        rules = self.after(self.claude(), "--disallowedTools")
+        rd = os.path.join(self.work, "TASK-1")
+        self.assertEqual(rules[-1], f"Edit({slashes(rd)}/worktrees/**)")
+        self.assertFalse(any("/u/playground/demo" in r for r in rules))
+
+    def test_log_named_after_task(self):
+        self.launch_eng(eng.Transient("x"))
+        self.assertIn("transient TASK-1: x", self.plog("engineering"))
+
+
+class RealConfig(unittest.TestCase):
+    """NFR-1: the three runs of the repo's pipeline.toml, command for command."""
+    DR, PD, ENG = ("03495382-48f7-4280-a11c-4375df80a561", "ba0738ba-ade7-4525-8d79-1b9944334e74",
+                   "ddbff8bf-b633-4b8c-9272-d1d5ee923747")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        self.work = os.path.join(self.tmp, "work")
+        patch = mock.patch.object(pipeline, "WORK", self.work)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.projects = os.path.join(self.tmp, "projects")
+        self.calls = []
+        self.humans = pipeline.load_config()["human_members"]
+
+    def launch(self, project, mode="new", repo=None):
+        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project, "--sid", SID, "--mode", mode]
+        if mode == "resume":
+            argv += ["--k", "2"]
+            path = pipeline.transcript("TASK-1", SID, self.projects)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").close()
+        with redirect_stderr(io.StringIO()), mock.patch.dict(os.environ), \
+                mock.patch.object(eng, "resolve", return_value=repo):
+            rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
+                             logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects)
+        self.assertEqual(rc, 0)
+        (cmd,) = self.calls
+        toks = shlex.split(cmd[9])
+        i = toks.index("claude")
+        return toks[i:toks.index("<", i)], cmd[9]
+
+    def expected(self, project, role, task, effort, extra_deny=(), tail=""):
+        root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
+        humans = self.humans
+        return [
+            "claude", "-p",
+            f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
+            " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
+            f" Reviewer: {humans[0]}. Humans: {', '.join(humans)}. Project: {project}." + tail,
+            "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
+            "--setting-sources", "user", "--strict-mcp-config",
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
+            "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
+            f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)", *extra_deny]
+
+    def test_deep_research(self):
+        argv, script = self.launch(self.DR)
+        self.assertEqual(argv, self.expected(self.DR, "researcher", "deep-research", "xhigh"))
+        self.assertIn(os.path.join(self.tmp, "logs", "projects", "deep-research.log"), script)
+
+    def test_product_design(self):
+        argv, script = self.launch(self.PD)
+        self.assertEqual(argv, self.expected(self.PD, "pm", "product-design", "high"))
+        self.assertIn(os.path.join(self.tmp, "logs", "projects", "product-design.log"), script)
+
+    def test_engineering(self):
+        wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
+        ok = eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", "/u/playground/demo", "main", "TASK-1-demo", wt)
+        argv, script = self.launch(self.ENG, repo=ok)
+        self.assertEqual(argv, self.expected(
+            self.ENG, "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(PRIVATE)}/**)"],
+            tail=" Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+                 f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
+        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
+        self.assertIn(os.path.join(self.tmp, "logs", "projects", "engineering.log"), script)
+
+    def test_real_config_resume_prompt(self):
+        argv, _ = self.launch(self.DR, mode="resume")
+        root = pipeline.ROOT
+        self.assertEqual(argv[2].split(" Reviewer:")[0],
+                         f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {root}/roles/principles.md,"
+                         f" your role charter {root}/roles/researcher.md and the task {root}/tasks/deep-research.md first"
+                         " (they may have changed since this session started) and follow the task's resume rule.")
+        self.assertEqual(argv[3:5], ["--resume", SID])
 
 
 if __name__ == "__main__":
