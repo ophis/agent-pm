@@ -29,16 +29,16 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
    - Else new requirement text since the agent's latest `Build ready:` / `Build failed:` comment — Linear comments on this issue (not this stage's own status comments) and `<eng> comments --since <that time>` → a new build with them as the requirement (new plan doc).
    - Else a finished build and nothing new → comment a question, move to In Review, stop.
    - No build yet → a new build of the PRD's first phase (or the phase `## Instructions` names), plus `## Instructions`.
-6. **Build.** If `eng.py status` shows `worktrees_dir_ok: false`, fail (step 8) without building. Run `autopilot:build` with a requirement stating, with the values filled in:
+6. **Build.** If `<eng> status` shows `worktrees_dir_ok: false`, fail (step 8) without building. Run `autopilot:build` with a requirement stating, with the values filled in:
    - the PRD path and `## Instructions` (or the send-back comments), and "read the target repo's `CLAUDE.md` / `AGENTS.md` in the worktree as its conventions";
    - "use the worktree `<worktree>` on branch `<branch>`: if it does not exist, `git -C <clone> fetch origin`, then `git -C <clone> worktree add -b <branch> <worktree> origin/<default>` for a new branch, `git -C <clone> worktree add <worktree> <branch>` for an existing local one, or `git -C <clone> worktree add --track -b <branch> <worktree> origin/<branch>` for a remote-only one; then work only there, with absolute paths; create no other worktree or branch";
    - "put the spec and plan doc where the target repo keeps design docs (e.g. an existing `docs/specs/`), else in `autopilot_docs/` at the repo root; commit them on the branch";
    - "skip S8: keep the commits"; "after each implementation task and each review round run exactly `git -C <worktree> push -u origin <branch>`"; "never force-push, never merge, never touch `<default>`".
 7. **PR** (build converged):
    - `git -C <worktree> push -u origin <branch>`.
-   - Comment `Build docs:` with the GitHub links of the build's spec and plan doc on the branch (`https://github.com/<owner>/<name>/blob/<branch>/<path>`, paths from `eng.py status`; the spec is the plan doc's `spec_file=`).
+   - Comment `Build docs:` with the GitHub links of the build's spec and plan doc on the branch (`https://github.com/<owner>/<name>/blob/<branch>/<path>`, paths from `<eng> status`; the spec is the plan doc's `spec_file=`).
    - Write `work/<ID>/pr.md`: what changed, PRD and spec links, how to verify, residual non-blocking items.
-   - If `eng.py status` shows no PR, `gh pr create --repo <owner>/<name> --head <branch> --base <default> --title '<pr_title>' --body-file work/<ID>/pr.md`, else `gh pr edit <number> --repo <owner>/<name> --body-file work/<ID>/pr.md`.
+   - If `<eng> status` shows no PR, `gh pr create --repo <owner>/<name> --head <branch> --base <default> --title '<pr_title>' --body-file work/<ID>/pr.md`, else `gh pr edit <number> --repo <owner>/<name> --body-file work/<ID>/pr.md`.
    - Attach the PR URL to the issue; comment `Build ready:` + 3–5 lines incl. how to verify; assign the reviewer.
    - The GitHub integration moves the issue to In Review when the PR opens, so do not move it: read its state and move it to In Review only if it is not there (e.g. the PR already existed, or the integration lagged).
    - Fallbacks: push denied → comment `Build failed:` "push not permitted" and move to In Review; PR creation denied → attach `https://github.com/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `Build ready:` that the user must open the PR.

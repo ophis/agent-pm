@@ -73,13 +73,17 @@ def transcript(issue, sid, projects=PROJECTS):
 
 
 PLACEHOLDERS = {"worktree", "branch", "owner", "name", "default", "clone"}
-# make/npm/npx run repo-defined scripts whatever their arguments.
-INTERPRETER_RE = re.compile(r"\b(?:(?:python[\d.]*|bash|sh|zsh|node|ruby|perl)\s+\S*[/.]|(?:make|npm|npx)\b)")
+# Build tools and runners execute repo-defined code whatever their arguments.
+INTERPRETER_RE = re.compile(r"\b(?:(?:python[\d.]*|bash|sh|zsh|node|ruby|perl)\s+\S*[/.]"
+                            r"|(?:make|npm|npx|pnpm|yarn|bun|cargo|go|pytest|uv)\b)")
 
 
 def _root_forms(root):
     home = os.path.expanduser("~")
-    return [root, "~" + root[len(home):]] if root.startswith(home + os.sep) else [root]
+    if not root.startswith(home + os.sep):
+        return [root]
+    rest = root[len(home):]
+    return [root, "~" + rest, "$HOME" + rest, "${HOME}" + rest]
 
 
 def _fields(name, rule):

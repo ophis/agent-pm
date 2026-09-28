@@ -289,7 +289,10 @@ def cmd_comments(ok, run, out, since):
     return 0
 
 def _command(a, issue, gql, run, out, err):
-    ok = resolve(issue, gql, run)
+    try:
+        ok = resolve(issue, gql, run)
+    except Exception as e:
+        raise TransientError(f"resolve: {e!r}") from None
     if isinstance(ok, Transient):
         raise TransientError(ok.reason)
     if isinstance(ok, Invalid):

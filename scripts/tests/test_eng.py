@@ -52,6 +52,11 @@ class ParseRepo(unittest.TestCase):
         self.assertEqual(eng.parse_repo("Repo: ophis/a\nrepo: OPHIS/A"), ("ophis", "a"))
         self.assertIsInstance(eng.parse_repo("Repo: ophis/a\nRepo: ophis/b"), eng.Invalid)
 
+    def test_name_starting_with_dot(self):
+        self.assertEqual(eng.parse_repo("Repo: ophis/.github"), ("ophis", ".github"))
+        self.assertEqual(eng.parse_repo("Repo: https://github.com/ophis/.github.git"), ("ophis", ".github"))
+        self.assertEqual(eng.parse_repo("Repo: ophis/..x"), ("ophis", "..x"))
+
     def test_bad_values(self):
         for v in ("", "ophis", "-ophis/a", "ophis/-a", "ophis/..", "ophis/.", "a b/c", "ophis/a;rm", "https://gitlab.com/ophis/a"):
             self.assertIsInstance(eng.parse_repo(f"Repo: {v}"), eng.Invalid, v)
@@ -227,6 +232,8 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.cli("comments", "--since", "2026-09-28T00:00:00Z",
                                   resolve_error=subprocess.TimeoutExpired("git", 60)), 3)
         self.assertTrue(self.err.startswith("eng.py: transient:"))
+        self.assertEqual(self.cli("status", resolve_error=KeyError("title")), 3)
+        self.assertEqual(self.err, "eng.py: transient: resolve: KeyError('title')\n")
 
     def test_setup_push_pr_commands_removed(self):
         for cmd in ("setup", "push", "pr"):

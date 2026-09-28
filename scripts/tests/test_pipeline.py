@@ -136,15 +136,18 @@ class AllowedTools(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.check([f"Bash(cat {pipeline.ROOT}/secret)"])
 
-    def test_rejects_root_in_tilde_form(self):
+    def test_rejects_root_in_home_forms(self):
         home = os.path.expanduser("~")
-        with self.assertRaises(SystemExit):
-            pipeline.check_allowed_tools("E", {"repo_from_issue": True, "allowed_tools": ["Bash(cat ~/x/agent-pm/secret)"]},
-                                         root=os.path.join(home, "x", "agent-pm"))
+        for form in ("~", "$HOME", "${HOME}"):
+            with self.assertRaises(SystemExit, msg=form):
+                pipeline.check_allowed_tools("E", {"repo_from_issue": True, "allowed_tools": [f"Bash(cat {form}/x/agent-pm/secret)"]},
+                                             root=os.path.join(home, "x", "agent-pm"))
 
     def test_rejects_interpreter_on_script(self):
         for rule in ("Bash(python3 /tmp/x.py)", "Bash(bash ./do.sh)", "Bash(node x.js)", "Bash(python3.12 x.py)",
-                     "Bash(make)", "Bash(make -C {worktree} test)", "Bash(npm test)", "Bash(npx jest)"):
+                     "Bash(make)", "Bash(make -C {worktree} test)", "Bash(npm test)", "Bash(npx jest)",
+                     "Bash(pnpm test)", "Bash(yarn build)", "Bash(bun run x)", "Bash(cargo test)", "Bash(go test ./...)",
+                     "Bash(pytest)", "Bash(uv run x)"):
             with self.assertRaises(SystemExit, msg=rule):
                 self.check([rule])
 
