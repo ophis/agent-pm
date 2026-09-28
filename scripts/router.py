@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import (PATH, RUNS_LOG, SESSION, TRANSCRIPTS, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, runnable, stage_order)
+                      parse_time, reviewer, runnable, stage_order)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -158,6 +158,7 @@ class Board:
             teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { id } } } } }""", t=cfg["team"])
         self.me = setup["viewer"]["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
+        self.reviewer = reviewer(gql, cfg)
         if not self.projects:
             raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
         known = {p["id"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
@@ -198,6 +199,8 @@ class Board:
     def comment_and_move(self, issue, body, state, **extra):
         if self.dry:
             return
+        if state == "In Review" and self.reviewer:
+            extra.setdefault("assigneeId", self.reviewer)
         self.gql("mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
                  i=issue["id"], b=body)
         self.gql("mutation($i: String!, $u: IssueUpdateInput!) { issueUpdate(id: $i, input: $u) { success } }",

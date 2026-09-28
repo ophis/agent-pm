@@ -1,5 +1,5 @@
 team = "Frank's Agents"
-human_members = ["ophis.w@outlook.com"]   # the human users; not read by any script today
+human_members = ["ophis.w@outlook.com"]   # the human users; the first is assigned issues that need human review (In Review)
 
 # Projects are keyed by their Linear project id (a name or URL slug changes with a rename).
 [projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Research

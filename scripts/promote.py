@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, linear_gql, load_config, parse_time  # noqa: E402
+from pipeline import CONFIG, linear_gql, load_config, parse_time, reviewer  # noqa: E402
 
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
@@ -35,6 +35,7 @@ M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success
 M_RELATE = "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
 M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
 M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
+M_REVIEW = "mutation($i: String!, $s: String!, $a: String!) { issueUpdate(id: $i, input: { stateId: $s, assigneeId: $a }) { success } }"
 
 
 def child_id(source_id, project_id, handoff_at):
@@ -61,6 +62,7 @@ class Promoter:
         self.team = team["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
         self.projects = {p["id"]: p["name"] for p in team["projects"]["nodes"]}
+        self.reviewer = reviewer(gql, cfg)
         missing = [s for s in STATES if s not in self.states]
         missing += [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
         if missing:
@@ -175,7 +177,11 @@ class Promoter:
             ok(self.gql(M_COMMENT, i=src["id"], b=body), "commentCreate")
 
     def move(self, src, state):
-        if not self.dry:
+        if self.dry:
+            return
+        if state == "In Review" and self.reviewer:
+            ok(self.gql(M_REVIEW, i=src["id"], s=self.states[state], a=self.reviewer), "issueUpdate")
+        else:
             ok(self.gql(M_STATE, i=src["id"], s=self.states[state]), "issueUpdate")
 
     def comment_and_move(self, src, body, state):

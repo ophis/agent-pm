@@ -48,6 +48,8 @@ class FakeLinear:
         if query == promote.Q_SETUP:
             return {"teams": {"nodes": [{"id": "team", "projects": {"nodes": [{"id": i, "name": n} for n, i in PROJECTS.items()]}}]},
                     "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]}}
+        if "users(filter" in query:
+            return {"users": {"nodes": [{"id": "u-human"}] if v["e"] == HUMAN["email"] else []}}
         if query == promote.Q_HANDOFF:
             return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]})
                                          for i in self.issues.values() if i["state"] == "Handoff"]}}
@@ -76,8 +78,10 @@ class FakeLinear:
         if query == promote.M_COMMENT:
             self.issues[v["i"]].setdefault("posted", []).append(v["b"])
             return {"commentCreate": {"success": True}}
-        if query == promote.M_STATE:
+        if query in (promote.M_STATE, promote.M_REVIEW):
             self.issues[v["i"]]["state"] = next(n for n, i in STATES.items() if i == v["s"])
+            if "a" in v:
+                self.issues[v["i"]]["assignee"] = v["a"]
             return {"issueUpdate": {"success": True}}
         raise AssertionError(query)
 
@@ -222,6 +226,21 @@ class TestPromote(Base):
         self.assertEqual(src["state"], "In Review")
         self.assertEqual(src["posted"], [promote.NO_INSTRUCTIONS])
         self.assertIn("handoff-bounce DR-1 no instructions", self.out)
+
+    def test_bounce_assigns_reviewer(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 60, "In Review")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+        self.run_main()
+        self.assertEqual((src["state"], src["assignee"]), ("In Review", "u-human"))
+
+    def test_promotion_leaves_assignee(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        src = self.ready()
+        self.run_main()
+        self.assertEqual(src["state"], "Done")
+        self.assertNotIn("assignee", src)
 
     def test_cutoff_skips_promote_bounce(self):
         src = self.fake.add("DR-1")

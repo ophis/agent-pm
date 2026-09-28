@@ -47,6 +47,8 @@ class FakeLinear:
             return {"viewer": {"id": ME},
                     "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]},
                     "teams": {"nodes": [{"projects": {"nodes": [{"id": IDS[p]} for p in PROJECTS]}}]}}
+        if "users(filter" in query:
+            return {"users": {"nodes": [{"id": USER}] if v["e"] == "me@x.com" else []}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if "mutation" in query:
@@ -418,6 +420,26 @@ class Plan(Base):
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
 
+    def test_attempt_cap_assigns_reviewer(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(minutes=40))])
+        for i, sid in enumerate(["a", "b", "c", "d"]):
+            self.add("start", "TASK-1", sid, 400 - i * 50)
+        self.run_main(fake, "--plan")
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]), ("In Review", USER))
+
+    def test_interrupted_unassigns_even_with_reviewer(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=5))])
+        self.run_main(fake, "--plan")
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]), ("Todo", None))
+
+    def test_unknown_reviewer_fails_loud(self):
+        self.config = self.write_config('human_members = ["nobody@x.com"]\n' + CONFIG)
+        with self.assertRaises(SystemExit) as e:
+            self.run_main(FakeLinear([]), "--plan")
+        self.assertIn("nobody@x.com", str(e.exception))
+
     def capped(self, hist):
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3))], {"TASK-1": hist})
         for i, sid in enumerate("abcd"):
@@ -464,7 +486,7 @@ class Prune(Base):
                     f"{self.stamp(hours=1)} start TASK-1 session=b transcript=x\n"])
         mode = os.stat(self.log).st_mode
         with mock.patch.object(router.os, "replace", wraps=os.replace) as rep:
-            self.assertEqual(router.main(["--prune", self.log]), 0)
+            self.assertEqual(router.main(["--prune", self.log], now=NOW), 0)
         [(src, dst), _] = rep.call_args
         self.assertEqual((os.path.dirname(src), dst), (self.tmp.name, self.log))
         with open(self.log) as f:
