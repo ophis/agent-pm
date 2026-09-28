@@ -21,8 +21,8 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 3. **Start.** The runner has already claimed the issue; comment that the PRD was started.
 4. **Research** only what the PRD needs, with web search. Anything needing deeper research goes under open questions; do not create issues.
 5. **Write** the PRD in Chinese; on first mention, follow each proper noun or acronym with its English original in parentheses.
-   - Existing PRD (a `Product Design/<issue ID>-*.md` file or a PRD link on the issue, e.g. after the user sent it back with feedback): revise that file in place, same path, addressing the user's newer comments; keep earlier decisions unless the user changed them.
-   - Else create `~/playground/private_docs/Product Design/<issue ID>-<english-kebab-slug>.md` (create the folder if missing) from the template `../templates/prd.md` (relative to this file), keeping its headings; the product name is a short name you choose from the brief and reuse unchanged in step 7.
+   - Existing PRD (a `Product Design/*-<issue ID>-*.md` file or a PRD link on the issue, e.g. after the user sent it back with feedback): revise that file in place, same path, addressing the user's newer comments; keep earlier decisions unless the user changed them.
+   - Else create `~/playground/private_docs/Product Design/<YYYY-MM-DD-HHMM>-<issue ID>-<english-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M`; create the folder if missing) from the template `../templates/prd.md` (relative to this file), keeping its headings; the product name is a short name you choose from the brief and reuse unchanged in step 7.
    - The user's instructions are hard constraints; state every inference of your own under Assumptions.
    - What the product already has goes under `已完成`, grouped by the section it belongs to, with where it is implemented; the other sections list only what is still to do. When revising, move newly finished items there.
 6. **Review.** Spawn one fresh subagent with the PRD path and the brief and instructions text; it reviews for missing requirements, contradictions, untestable requirements and scope beyond the brief. Fix the findings that hold up against the brief, once; never add scope the user didn't ask for.
@@ -35,5 +35,5 @@ If a step fails and you cannot finish (the push keeps failing, the file cannot b
 
 A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first, then use this session's history and the current state to find what is already done, and do only the rest:
 - Questions posted in this session (step 2) → set In Review if needed and stop; no "started" comment.
-- The PRD file (`Product Design/<issue ID>-*.md`): incomplete or the step 6 review hasn't run → continue from it, never rewrite it; committed and pushed (`git status` not ahead of origin); link attached; title set; summary comment posted; status In Review.
+- The PRD file (`Product Design/*-<issue ID>-*.md`): incomplete or the step 6 review hasn't run → continue from it, never rewrite it; committed and pushed (`git status` not ahead of origin); link attached; title set; summary comment posted; status In Review.
 Never repeat the "started" comment and never move the issue to Todo.
