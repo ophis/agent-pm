@@ -16,6 +16,7 @@ HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
 CONFIG = """team = "T"
+human_members = ["me@x.com"]
 [projects.p-dr]
 next = "p-pd"
 [projects.p-pd]
@@ -181,7 +182,7 @@ class TestPromote(Base):
         self.run_main()
         (child,) = self.fake.children.values()
         instructions = child["description"].split("## Instructions\n")[1].split("\n\n## Comments")[0]
-        self.assertEqual(instructions, f"agent@x.com, {ago(50)}:\nagent\n\nOther, {ago(49)}:\nother\n\nMe, {ago(46)}:\nmine")
+        self.assertEqual(instructions, f"Me, {ago(46)}:\nmine")
         comments = child["description"].split("## Comments\n")[1]
         for body in ("before cutoff", "agent", "other", "bot", "mine"):
             self.assertIn(f"  > {body}", comments)
@@ -237,7 +238,6 @@ class TestPromote(Base):
         self.assertIn("handoff-bounce DR-1 no instructions", self.out)
 
     def test_bounce_assigns_reviewer(self):
-        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 60, "In Review")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
@@ -245,7 +245,6 @@ class TestPromote(Base):
         self.assertEqual((src["state"], src["assignee"]), ("In Review", "u-human"))
 
     def test_promotion_leaves_assignee(self):
-        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         src = self.ready()
         self.run_main()
         self.assertEqual(src["state"], "Done")
@@ -498,7 +497,7 @@ class TestPartialFailures(Base):
         orig = self.fake.__call__
 
         def move_fails(query, **v):
-            if query == promote.M_STATE:
+            if query in (promote.M_STATE, promote.M_REVIEW):
                 raise SystemExit("linear api error: move failed")
             return orig(query, **v)
         self.fake = move_fails

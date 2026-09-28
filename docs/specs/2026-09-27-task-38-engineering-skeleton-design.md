@@ -78,7 +78,7 @@ For every project:
 - cwd `run_dir(ID)` (created if missing); tmux `-c` it.
 - `--setting-sources user --strict-mcp-config`.
 - `--add-dir <ROOT>/stages --add-dir <ROOT>/templates` (instead of `--add-dir <ROOT>`) plus the registry's `add_dirs`; `--disallowedTools` Edit rules (in `//<absolute path>` form) for `<ROOT>/stages/**`, `<ROOT>/templates/**` and `work/<ID>/worktrees/*/.git`; for `repo_from_issue` projects also for each `add_dirs` entry (`private_docs`).
-- The prompt gains `Reviewer: <first human_members email>. Humans: <all human_members emails>. Project: <project id>.` (stages no longer read `../pipeline.toml`).
+- The prompt gains `Reviewer: <first human_members email>. Humans: <all human_members emails>. Project: <project id>.`, and names `stages/principles.md` (rules every stage shares, incl. whose comments count and their precedence) beside the stage file (stages no longer read `../pipeline.toml`).
 - Resume: same cwd; the session must exist at `transcript(ID, sid)`, else exit 3 (`Transient`).
 
 For projects with `repo_from_issue`, before tmux: `resolve(ID)`:
@@ -93,7 +93,7 @@ For projects with `repo_from_issue`, before tmux: `resolve(ID)`:
 
 Board section as in the other stages, with the reviewer and project from the prompt line. Steps:
 
-1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. The user's comments are those by a `Humans:` user; all others are agent comments. Precedence: the user's over agent comments, newer over older, the user's comments over `## Instructions` and the PRD. No "comments since X" bookkeeping.
+1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. The user's comments outrank `## Instructions` and the PRD (`principles.md` covers user vs agent and newer vs older). No "comments since X" bookkeeping.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs. On `failed`, bounce and stop:
    - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review (reviewer assigned); on this issue comment the same and move it to Canceled.
    - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.

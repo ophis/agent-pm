@@ -18,15 +18,17 @@ import eng  # noqa: E402
 from pipeline import (PATH, PLACEHOLDERS, PROJECTS, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
                       project_log, run_dir, runnable, transcript)
 
+PRINCIPLES = os.path.join(ROOT, "stages", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 
 
+
 def prompt(a, instructions):
     if a.mode == "resume":
-        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {instructions} first "
-                "(it may have changed since this session started) and follow its resume rule.")
-    return f"Follow {instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
+        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {PRINCIPLES} and {instructions} "
+                "first (they may have changed since this session started) and follow the stage's resume rule.")
+    return f"Follow {PRINCIPLES} and {instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
 
 
 def deny(path):

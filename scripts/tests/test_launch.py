@@ -120,7 +120,7 @@ class Launch(unittest.TestCase):
         instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
-            "claude", "-p", f"Follow {instructions} to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
+            "claude", "-p", f"Follow {launch.PRINCIPLES} and {instructions} to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
                             " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
@@ -160,8 +160,8 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.run_launch(*self.args("resume")), 0)
         argv = self.claude()
         instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
-        self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {instructions} "
-                                  "first (it may have changed since this session started) and follow its resume rule."
+        self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES} and {instructions} "
+                                  "first (they may have changed since this session started) and follow the stage's resume rule."
                                   " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))

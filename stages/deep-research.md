@@ -4,10 +4,8 @@ Turns one Deep Research issue into a verified Markdown report pushed to the user
 
 ## Board
 
-- Team `Frank's Agents`, the Deep Research project (its id is the prompt's `Project:` value; the name may change).
-- Statuses: Todo (queue) → In Progress → In Review (needs the user: report ready, questions, or stuck) → Done (user only). The agent never uses Backlog.
-- Every move to In Review also assigns the issue to the reviewer, the Linear user whose email is the prompt's `Reviewer:` value (one `issueUpdate` with `stateId` and `assigneeId`); if it is `none`, move without assigning; if the email isn't found, comment that and move without assigning.
-- Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent and its work shows under that name.
+- The Deep Research project; `principles.md` beside this file holds the rules every stage shares.
+- Statuses: Todo (queue) → In Progress → In Review (needs the user: report ready, questions, or stuck) → Done (user only).
 
 ## Steps
 

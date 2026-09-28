@@ -4,10 +4,8 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 ## Board
 
-- Team `Frank's Agents`, the Engineering project (its id is the prompt's `Project:` value; the name may change).
-- Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line) → Done (user only). Canceled only as in step 2. The agent never uses Backlog.
-- Every move to In Review also assigns the issue to the reviewer, the Linear user whose email is the prompt's `Reviewer:` value (one `issueUpdate` with `stateId` and `assigneeId`); if it is `none`, move without assigning; if the email isn't found, comment that and move without assigning.
-- Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent. The user's comments are those by a user whose email is in the prompt's `Humans:` list; all others (including any posted through the agent account) are agent comments.
+- The Engineering project; `principles.md` beside this file holds the rules every stage shares.
+- Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line) → Done (user only). Canceled only as in step 2.
 
 ## Inputs
 
@@ -18,7 +16,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 ## Steps
 
-1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. Precedence: the user's comments over agent comments, newer over older, and the user's comments over `## Instructions` and the PRD.
+1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. The user's comments outrank `## Instructions` and the PRD.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs (the cwd, `<clone>`, `<worktree>`, `~/playground/private_docs`). On `Repo check failed: <reason>`, bounce and stop:
    - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review (reviewer assigned); on this issue comment the same and move it to Canceled.
    - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.

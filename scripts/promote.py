@@ -71,6 +71,7 @@ class Promoter:
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
         self.projects = {p["id"]: p["name"] for p in team["projects"]["nodes"]}
         self.reviewer = reviewer(gql, cfg)
+        self.humans = {e.lower() for e in cfg.get("human_members") or []}
         missing = [s for s in STATES if s not in self.states]
         missing += [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
         if missing:
@@ -119,9 +120,8 @@ class Promoter:
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
-        """Comments after the cutoff by any user (the user may have an agent write them), minus promote's own."""
-        own = (NO_INSTRUCTIONS, "Handoff failed:", "Promoted to ")
-        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and not c["body"].startswith(own)
+        """Comments after the cutoff by `human_members` users."""
+        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and (c["user"].get("email") or "").lower() in self.humans
                        and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
                       key=lambda c: parse_time(c["createdAt"]))
 
