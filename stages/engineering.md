@@ -25,7 +25,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 3. **Start.** On a new (not resumed) run with no `Build started` comment since the latest `Build ready:` / `Build failed:` comment, comment `Build started`.
 4. **Status.** `<eng> status`.
 5. **Which build.** From `plan_docs` (autopilot's plan doc and its `RESUME: phase=` line) and the comments:
-   - A plan doc in the worktree with phase before S9 → continue that build (step 6; `autopilot:build` resumes from its plan doc).
+   - A plan doc in the worktree with phase before S9 → continue that build (step 6; `autopilot:build` resumes from its plan doc). New requirement text (next bullet's sources) since the latest `Build failed:` comment, or without one since this build's first `Build started`, goes to it as added requirements: update the spec and plan with them before continuing.
    - Else new requirement text since the agent's latest `Build ready:` / `Build failed:` comment — Linear comments on this issue (not this stage's own status comments) and `<eng> comments --since <that time>` → a new build with them as the requirement (new plan doc).
    - Else a finished build and nothing new → comment a question, move to In Review, stop.
    - No build yet → a new build of the PRD's first phase (or the phase `## Instructions` names), plus `## Instructions`.
@@ -42,7 +42,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
    - Attach the PR URL to the issue; comment `Build ready:` + 3–5 lines incl. how to verify; assign the reviewer.
    - The GitHub integration moves the issue to In Review when the PR opens, so do not move it: read its state and move it to In Review only if it is not there (e.g. the PR already existed, or the integration lagged).
    - Fallbacks: push denied → comment `Build failed:` "push not permitted" and move to In Review; PR creation denied → attach `https://github.com/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `Build ready:` that the user must open the PR.
-8. **Failure** (build stopped or capped): push the branch (`git -C <worktree> push -u origin <branch>`); comment `Build docs:` with the spec and plan links as in step 7 (whatever exists); comment `Build failed:` with the failing tests or open blockers and the branch URL (`https://github.com/<owner>/<name>/tree/<branch>`); move to In Review.
+8. **Failure** (build stopped or capped, or an action it needs was denied by the permission classifier): push the branch (`git -C <worktree> push -u origin <branch>`); comment `Build docs:` with the spec and plan links as in step 7 (whatever exists); comment `Build failed:` with the failing tests, open blockers or denied action, and the branch URL (`https://github.com/<owner>/<name>/tree/<branch>`); move to In Review.
 
 ## Resume rule
 
