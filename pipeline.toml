@@ -1,4 +1,5 @@
 team = "Frank's Agents"
+human_members = ["ophis.w@outlook.com"]   # the human users; not read by any script today
 
 [projects."Deep Research"]
 next = "Product Design"
