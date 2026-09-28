@@ -6,7 +6,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 
 - Team `Frank's Agents`, the Product Design project (its id is the key in `../pipeline.toml`; the name may change).
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PRD ready, questions, or stuck) → Handoff / Done (user only). The agent never uses Backlog.
-- Every move to In Review also assigns the issue to the reviewer, the Linear user whose email is the first entry of `human_members` in `../pipeline.toml` (one `issueUpdate` with `stateId` and `assigneeId`).
+- Every move to In Review also assigns the issue to the reviewer, the Linear user whose email is the first entry of `human_members` in `../pipeline.toml` (one `issueUpdate` with `stateId` and `assigneeId`); if `human_members` is empty, move without assigning; if the email isn't found, comment that and move without assigning.
 - Linear access: the `linear` skill. Its API key belongs to the agent account `frank.agent.w`, so `viewer` is the agent. The user may write comments through an agent, so they share that account.
 
 ## Inputs

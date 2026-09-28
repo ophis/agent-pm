@@ -91,7 +91,7 @@ def reviewer(gql, cfg):
     emails = cfg.get("human_members") or []
     if not emails:
         return None
-    nodes = gql("query($e: String!) { users(filter: { email: { eq: $e } }) { nodes { id } } }", e=emails[0])["users"]["nodes"]
+    nodes = gql("query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }", e=emails[0])["users"]["nodes"]
     if not nodes:
         raise SystemExit(f"pipeline.toml: human_members {emails[0]!r} not found in Linear")
     return nodes[0]["id"]
