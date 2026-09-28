@@ -2,21 +2,21 @@ team = "Frank's Agents"
 human_members = ["ophis.w@outlook.com"]   # the human users; not read by any script today
 
 # Projects are keyed by their Linear project id (a name or URL slug changes with a rename).
-[projects."03495382-48f7-4280-a11c-4375df80a561"]  # Deep Research
-next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # Product Design
+[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Deep Research
+next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # 2-Product Design
 instructions = "stages/deep-research.md"   # makes the project runnable by the router
 model = "opus"
 effort = "xhigh"
 add_dirs = ["~/playground/private_docs"]
 
-[projects."ba0738ba-ade7-4525-8d79-1b9944334e74"]  # Product Design
+[projects."ba0738ba-ade7-4525-8d79-1b9944334e74"]  # 2-Product Design
 prefix = "PRD"                            # title prefix for issues created in this project
-next = "ddbff8bf-b633-4b8c-9272-d1d5ee923747"  # Engineering
+next = "ddbff8bf-b633-4b8c-9272-d1d5ee923747"  # 3-Engineering
 require_instructions = false              # a PRD carries enough context; comments are optional
 instructions = "stages/product-design.md"
 model = "opus"
 effort = "high"
 add_dirs = ["~/playground/private_docs"]
 
-[projects."ddbff8bf-b633-4b8c-9272-d1d5ee923747"]  # Engineering
+[projects."ddbff8bf-b633-4b8c-9272-d1d5ee923747"]  # 3-Engineering
 prefix = "TDD"
