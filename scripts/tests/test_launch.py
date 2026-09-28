@@ -125,9 +125,8 @@ class Launch(unittest.TestCase):
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/stages", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
-            "--disallowedTools", f"Edit({slashes(root)}/stages/**)", f"Write({slashes(root)}/stages/**)",
-            f"Edit({slashes(root)}/templates/**)", f"Write({slashes(root)}/templates/**)",
-            f"Edit({slashes(rd)}/worktrees/*/.git)", f"Write({slashes(rd)}/worktrees/*/.git)"])
+            "--disallowedTools", f"Edit({slashes(root)}/stages/**)",
+            f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
     def test_every_project_locked_down(self):
         for project in ("p-dr", "p-eng"):
@@ -139,12 +138,12 @@ class Launch(unittest.TestCase):
             self.assertEqual(self.after(argv, "--setting-sources"), ["user"])
             self.assertNotIn(pipeline.ROOT, argv)
             rules = self.after(argv, "--disallowedTools")
-            self.assertTrue(rules and all(r.startswith(("Edit(//", "Write(//")) for r in rules), rules)
+            self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/stages/**)", rules)
-            self.assertEqual(f"Write({slashes(PRIVATE)}/**)" in rules, project == "p-eng")
+            self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, project == "p-eng")
 
     def test_deny(self):
-        self.assertEqual(launch.deny("/a b/c/**"), ["Edit(//a b/c/**)", "Write(//a b/c/**)"])
+        self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
 
     def test_reviewer_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
@@ -200,7 +199,6 @@ class Launch(unittest.TestCase):
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
         self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
-        self.assertIn(f"Write({slashes(PRIVATE)}/**)", rules)
 
     def test_engineering_ok_fills_allowed_tools(self):
         self.write_config(CONFIG + f"allowed_tools = [{PUSH_RULE!r}]\n".replace("'", '"'))

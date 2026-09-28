@@ -30,7 +30,7 @@ A router tick without `--dry-run` claims an issue and starts claude; `--pick` cl
 
 ## Gotchas
 
-- A `claude -p` run can't touch anything outside its cwd `work/<ID>/` unless it is added with `--add-dir`: it stops for a permission nobody can grant. Runs get `--setting-sources user --strict-mcp-config` (this file does not load in runs), `--add-dir` for `stages/`, `templates/` and `add_dirs` only, and Edit/Write deny rules (`//<absolute path>`) for `stages/`, `templates/`, worktree `.git` files and, for Engineering, `private_docs`; any new path a stage needs goes in its `add_dirs`. Even so, auto mode held a `python3 ../scripts/...` call for approval in a test run.
+- A `claude -p` run can't touch anything outside its cwd `work/<ID>/` unless it is added with `--add-dir`: it stops for a permission nobody can grant. Runs get `--setting-sources user --strict-mcp-config` (this file does not load in runs), `--add-dir` for `stages/`, `templates/` and `add_dirs` only, and Edit deny rules (`//<absolute path>`) for `stages/`, `templates/`, worktree `.git` files and, for Engineering, `private_docs`; any new path a stage needs goes in its `add_dirs`. Even so, auto mode held a `python3 ../scripts/...` call for approval in a test run.
 - `test_launch.py` asserts exact prompt strings and `claude` flags; update it with any prompt or flag change.
 - `pipeline.toml` keys projects (and `next`) by Linear project id, so renaming a project needs no change; the team is still matched by name.
 - Board rules the code relies on: the agent never moves issues to Backlog; anything needing the user goes to In Review, assigned to the first `human_members` user (Recover only touches In Progress issues assigned to the agent); moving an issue back to Todo resets its attempt cap (4).

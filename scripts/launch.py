@@ -30,9 +30,8 @@ def prompt(a, instructions):
 
 
 def deny(path):
-    """Edit/Write deny rules for an absolute path; a single leading "/" would be relative to the project root."""
-    p = "//" + path.lstrip("/")
-    return [f"Edit({p})", f"Write({p})"]
+    """Edit deny rule (covers every file-editing tool) for an absolute path; a single leading "/" would be relative to the project root."""
+    return "Edit(//" + path.lstrip("/") + ")"
 
 
 def command(a, p, tail="", allowed=()):
@@ -48,7 +47,7 @@ def command(a, p, tail="", allowed=()):
            "--add-dir", os.path.join(ROOT, "stages"), "--add-dir", os.path.join(ROOT, "templates")]
     for d in dirs:
         cmd += ["--add-dir", d]
-    cmd += ["--disallowedTools", *[r for d in denied for r in deny(d)]]
+    cmd += ["--disallowedTools", *map(deny, denied)]
     if allowed:
         cmd += ["--allowedTools", *allowed]
     return cmd
