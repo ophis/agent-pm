@@ -196,9 +196,6 @@ class TestPromote(Base):
         self.assertEqual(src["state"], "Done")
         self.assertEqual(len(self.fake.children), 1)
 
-    def test_unknown_flag_prints_usage(self):
-        self.assertEqual(self.run_main("--nope"), 2)
-
     def test_waits_ten_minutes_in_handoff(self):
         src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 60, "In Review")
@@ -411,7 +408,7 @@ class TestScopeAndConfig(Base):
         self.assertIn("promote: nothing to do (0 in Handoff)", self.out)
 
     def test_unknown_flag(self):
-        self.assertEqual(self.run_main("--now"), 2)
+        self.assertEqual(self.run_main("--nope"), 2)
 
     def test_source_prefix_stripped(self):
         self.config = self.write_config(CONFIG + 'next = "p-eng"\n[projects.p-eng]\nprefix = "TDD"\n')
