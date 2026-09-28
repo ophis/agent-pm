@@ -1,27 +1,46 @@
 team = "Frank's Agents"
 human_members = ["ophis.w@outlook.com"]   # the human users; the first is assigned issues that need human review (In Review)
 
-# Projects are keyed by their Linear project id (a name or URL slug changes with a rename).
-[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Research
-next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # 2-Product Design
-instructions = "stages/deep-research.md"   # makes the project runnable by the router
+# Roles: identity. Charter roles/<role>.md; read_only = paths the role's runs must not edit ({repo} = the issue's clone and worktrees);
+# memory = the role's writable memory dir (unset = off).
+[roles.researcher]
+
+[roles.pm]
+
+[roles.engineer]
+read_only = ["~/playground/private_docs"]   # the PRDs
+
+# Tasks: procedure. Instructions tasks/<task>.md; the log is logs/projects/<task>.log.
+[tasks.deep-research]
 model = "opus"
 effort = "xhigh"
 add_dirs = ["~/playground/private_docs"]
+
+[tasks.product-design]
+model = "opus"
+effort = "high"
+add_dirs = ["~/playground/private_docs"]
+
+[tasks.engineering]
+model = "opus"
+effort = "xhigh"
+add_dirs = ["~/playground/private_docs"]
+repo_from_issue = true                    # the launcher resolves and clones the issue's target repo
+
+# Projects are keyed by their Linear project id (a name or URL slug changes with a rename); role + task make one runnable.
+[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Research
+next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # 2-Product Design
+role = "researcher"
+task = "deep-research"
 
 [projects."ba0738ba-ade7-4525-8d79-1b9944334e74"]  # 2-Product Design
 prefix = "PRD"                            # title prefix for issues created in this project
 next = "ddbff8bf-b633-4b8c-9272-d1d5ee923747"  # 3-Engineering
 require_instructions = false              # a PRD carries enough context; comments are optional
-instructions = "stages/product-design.md"
-model = "opus"
-effort = "high"
-add_dirs = ["~/playground/private_docs"]
+role = "pm"
+task = "product-design"
 
 [projects."ddbff8bf-b633-4b8c-9272-d1d5ee923747"]  # 3-Engineering
 prefix = "ENG"
-instructions = "stages/engineering.md"
-model = "opus"
-effort = "xhigh"
-add_dirs = ["~/playground/private_docs"]   # read-only here: the PRDs
-repo_from_issue = true                    # the launcher resolves and clones the issue's target repo
+role = "engineer"
+task = "engineering"

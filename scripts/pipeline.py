@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,13 +113,38 @@ def check_allowed_tools(name, p, root=ROOT):
                 raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
+MOVED = ("instructions", "model", "effort", "add_dirs", "repo_from_issue", "allowed_tools")
+ROLE_KEYS = {"read_only", "memory"}
+TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools"}
+NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+REPO = "{repo}"
+# Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
+PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
+
+
+@dataclass(frozen=True)
+class Run:
+    """A runnable project resolved against [roles] and [tasks]; every path is absolute."""
+    project: dict
+    role_name: str
+    role: dict
+    task_name: str
+    task: dict
+    charter: str
+    instructions: str
+    memory: str | None
+    read_only: tuple
+
+
 def load_config(path=CONFIG):
     """Checks every consumer needs; runnable-project checks are in runnable()."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     projects = cfg.setdefault("projects", {})
+    cfg.setdefault("roles", {})
+    for name, t in cfg.setdefault("tasks", {}).items():
+        check_allowed_tools(name, t)
     for name, p in projects.items():
-        check_allowed_tools(name, p)
         nxt = p.get("next")
         if nxt and "prefix" not in projects.get(nxt, {}):
             raise SystemExit(f"pipeline.toml: next of {name!r} must name a [projects] entry with a prefix")
@@ -131,18 +157,77 @@ def load_config(path=CONFIG):
     return cfg
 
 
+def _under(path, base):
+    return os.path.commonpath([path, base]) == base
+
+
+def _role(name, r, root):
+    """(read_only, memory) of a [roles] entry, normalized; a broken entry stops the caller."""
+    where = f"pipeline.toml: role {name!r}"
+    if not NAME_RE.fullmatch(name) or name == "principles":
+        raise SystemExit(f"{where}: names are lowercase-kebab and not 'principles'")
+    if extra := sorted(set(r) - ROLE_KEYS):
+        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
+    if not os.path.isfile(os.path.join(root, "roles", f"{name}.md")):
+        raise SystemExit(f"{where}: charter not found: roles/{name}.md")
+    if not isinstance(r.get("read_only", []), list):
+        raise SystemExit(f"{where}: read_only must be a list")
+    read_only = []
+    for entry in r.get("read_only", []):
+        path = os.path.expanduser(entry)
+        if entry != REPO and (not os.path.isabs(path) or ".." in path.split(os.sep) or "{" in path or "}" in path):
+            raise SystemExit(f"{where}: read_only entries are absolute paths or {REPO}: {entry!r}")
+        read_only.append(entry if entry == REPO else os.path.normpath(path))
+    memory = r.get("memory")
+    if memory is None:
+        return tuple(read_only), None
+    memory = os.path.normpath(os.path.expanduser(memory))
+    if not os.path.isabs(memory) or not os.path.isdir(memory):
+        raise SystemExit(f"{where}: memory must be an existing absolute directory: {r['memory']!r}")
+    real = os.path.realpath(memory)
+    near = [os.path.realpath(root)] + [os.path.realpath(p) for p in read_only if p != REPO]
+    if any(_under(real, b) or _under(b, real) for b in near) or \
+            any(_under(real, os.path.realpath(os.path.expanduser(p))) for p in PROTECTED):
+        raise SystemExit(f"{where}: memory must not overlap the repo root, a read_only path or {', '.join(PROTECTED)}: {r['memory']!r}")
+    return tuple(read_only), memory
+
+
+def _task(name, t, root):
+    where = f"pipeline.toml: task {name!r}"
+    if not NAME_RE.fullmatch(name):
+        raise SystemExit(f"{where}: names are lowercase-kebab")
+    if extra := sorted(set(t) - TASK_KEYS):
+        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
+    if missing := [k for k in ("model", "effort") if not t.get(k)]:
+        raise SystemExit(f"{where} has no {', '.join(missing)}")
+    if not os.path.isfile(os.path.join(root, "tasks", f"{name}.md")):
+        raise SystemExit(f"{where}: instructions not found: tasks/{name}.md")
+
+
 def runnable(cfg, root=ROOT):
-    """{name: entry} of projects with `instructions`; a broken entry stops the caller (fail loud)."""
+    """{name: Run} of projects with role + task; a broken entry anywhere in the registry stops the caller (fail loud)."""
+    roles = {name: _role(name, r, root) for name, r in cfg["roles"].items()}
+    for name, t in cfg["tasks"].items():
+        _task(name, t, root)
     out = {}
     for name, p in cfg["projects"].items():
-        if "instructions" not in p:
+        if moved := [k for k in MOVED if k in p]:
+            raise SystemExit(f"pipeline.toml: {name!r} has {', '.join(moved)}: these keys moved to [tasks]; a project names a role and a task")
+        if "role" not in p and "task" not in p:
             continue
-        missing = [k for k in ("model", "effort") if not p.get(k)]
-        if missing:
-            raise SystemExit(f"pipeline.toml: {name!r} has instructions but no {', '.join(missing)}")
-        if not os.path.isfile(os.path.join(root, p["instructions"])):
-            raise SystemExit(f"pipeline.toml: {name!r} instructions not found: {p['instructions']}")
-        out[name] = p
+        if "role" not in p or "task" not in p:
+            raise SystemExit(f"pipeline.toml: {name!r} needs both role and task")
+        role, task = p["role"], p["task"]
+        if role not in roles:
+            raise SystemExit(f"pipeline.toml: {name!r} role {role!r} has no [roles.{role}] entry")
+        if task not in cfg["tasks"]:
+            raise SystemExit(f"pipeline.toml: {name!r} task {task!r} has no [tasks.{task}] entry")
+        read_only, memory = roles[role]
+        t = cfg["tasks"][task]
+        if REPO in read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
+            raise SystemExit(f"pipeline.toml: {name!r}: role {role!r} has read_only {REPO}, so task {task!r} needs repo_from_issue and no allowed_tools")
+        out[name] = Run(p, role, cfg["roles"][role], task, t, os.path.join(root, "roles", f"{role}.md"),
+                        os.path.join(root, "tasks", f"{task}.md"), memory, read_only)
     return out
 
 

@@ -4,7 +4,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 
 ## Board
 
-- The Product Design project; `principles.md` beside this file holds the rules every stage shares.
+- The Product Design project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PRD ready, questions, or stuck) → Handoff / Done (user only).
 
 ## Inputs

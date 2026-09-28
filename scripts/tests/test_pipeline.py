@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pipeline  # noqa: E402
@@ -42,47 +43,185 @@ class Config(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.load(BASE.replace('prefix = "TDD"\n', ""))
 
-    def test_runnable(self):
-        cfg = self.load(BASE.replace('next = "Product Design"', 'next = "Product Design"\ninstructions = "stages/x.md"\n'
-                                     'model = "opus"\neffort = "high"'))
-        os.makedirs(os.path.join(self.dir, "stages"))
-        with self.assertRaises(SystemExit):  # instructions file missing
-            pipeline.runnable(cfg, root=self.dir)
-        open(os.path.join(self.dir, "stages", "x.md"), "w").close()
-        self.assertEqual(list(pipeline.runnable(cfg, root=self.dir)), ["Deep Research"])
 
-    def test_runnable_needs_model_and_effort(self):
-        cfg = self.load(BASE.replace('next = "Product Design"', 'next = "Product Design"\ninstructions = "stages/x.md"'))
+REGISTRY = """team = "T"
+[roles.researcher]
+[roles.engineer]
+read_only = ["~/playground/private_docs"]
+[tasks.deep-research]
+model = "opus"
+effort = "xhigh"
+add_dirs = ["~/playground/private_docs"]
+[tasks.engineering]
+model = "opus"
+effort = "high"
+repo_from_issue = true
+[projects.dr]
+next = "eng"
+role = "researcher"
+task = "deep-research"
+[projects.eng]
+prefix = "ENG"
+role = "engineer"
+task = "engineering"
+[projects.idle]
+prefix = "I"
+"""
+
+
+class Runnable(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.join(tmp.name, "root")
+        self.outside = os.path.join(tmp.name, "outside")
+        os.makedirs(self.outside)
+        for d, names in (("roles", ("principles", "researcher", "engineer")), ("tasks", ("deep-research", "engineering"))):
+            os.makedirs(os.path.join(self.root, d))
+            for n in names:
+                open(os.path.join(self.root, d, f"{n}.md"), "w").close()
+        os.makedirs(os.path.join(self.root, "templates"))
+
+    def load(self, text):
+        path = os.path.join(self.outside, "pipeline.toml")
+        with open(path, "w") as f:
+            f.write(text)
+        return pipeline.load_config(path)
+
+    def runs(self, text):
+        return pipeline.runnable(self.load(text), root=self.root)
+
+    def rejects(self, text, fragment):
+        with self.assertRaises(SystemExit) as cm:
+            self.runs(text)
+        self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
+        self.assertIn(fragment, str(cm.exception.code))
+
+    def test_runs(self):
+        runs = self.runs(REGISTRY)
+        self.assertEqual(sorted(runs), ["dr", "eng"])
+        dr, eng = runs["dr"], runs["eng"]
+        self.assertEqual((dr.role_name, dr.task_name, dr.task["effort"], dr.memory, dr.read_only),
+                         ("researcher", "deep-research", "xhigh", None, ()))
+        self.assertEqual(dr.charter, os.path.join(self.root, "roles", "researcher.md"))
+        self.assertEqual(dr.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
+        self.assertEqual(eng.read_only, (os.path.expanduser("~/playground/private_docs"),))
+        self.assertEqual(eng.project["prefix"], "ENG")
+
+    def test_read_only_normalized(self):
+        runs = self.runs(REGISTRY.replace('"~/playground/private_docs"]\n[tasks', '"~/playground/private_docs/"]\n[tasks'))
+        self.assertEqual(runs["eng"].read_only, (os.path.expanduser("~/playground/private_docs"),))
+
+    def test_moved_keys_rejected(self):
+        for key, value in (("instructions", '"tasks/x.md"'), ("model", '"opus"'), ("effort", '"high"'),
+                           ("add_dirs", "[]"), ("repo_from_issue", "true"), ("allowed_tools", "[]")):
+            self.rejects(REGISTRY.replace('[projects.idle]\nprefix = "I"\n', f'[projects.idle]\nprefix = "I"\n{key} = {value}\n'), key)
+
+    def test_load_config_ignores_moved_keys(self):
+        cfg = self.load(REGISTRY + 'instructions = "stages/gone.md"\n')
+        self.assertIn("idle", cfg["projects"])
+
+    def test_role_and_task_together(self):
+        self.rejects(REGISTRY.replace('role = "engineer"\n', ""), "both role and task")
+        self.rejects(REGISTRY.replace('task = "engineering"\n[projects.idle]', "[projects.idle]"), "both role and task")
+
+    def test_unknown_role_or_task(self):
+        self.rejects(REGISTRY.replace('role = "engineer"\n', 'role = "em"\n'), "em")
+        self.rejects(REGISTRY.replace('task = "engineering"\n[projects.idle]', 'task = "work-breakdown"\n[projects.idle]'), "work-breakdown")
+
+    def test_missing_files(self):
+        os.remove(os.path.join(self.root, "roles", "engineer.md"))
+        self.rejects(REGISTRY, "engineer.md")
+        open(os.path.join(self.root, "roles", "engineer.md"), "w").close()
+        os.remove(os.path.join(self.root, "tasks", "engineering.md"))
+        self.rejects(REGISTRY, "engineering.md")
+
+    def test_unused_entries_checked(self):
+        self.rejects(REGISTRY + "[tasks.light-research]\nmodel = \"opus\"\neffort = \"high\"\n", "light-research")
+
+    def test_bad_names(self):
+        open(os.path.join(self.root, "roles", "Researcher.md"), "w").close()
+        self.rejects(REGISTRY.replace("[roles.researcher]", "[roles.Researcher]").replace('role = "researcher"', 'role = "Researcher"'), "Researcher")
+        self.rejects(REGISTRY + "[roles.principles]\n", "principles")
+        self.rejects(REGISTRY + '[tasks.deep_research]\nmodel = "opus"\neffort = "high"\n', "deep_research")
+
+    def test_task_needs_model_and_effort(self):
+        self.rejects(REGISTRY.replace('effort = "xhigh"\n', ""), "effort")
+        self.rejects(REGISTRY.replace('model = "opus"\neffort = "xhigh"', 'effort = "xhigh"'), "model")
+
+    def test_unknown_keys(self):
+        self.rejects(REGISTRY.replace('read_only = ["~/playground/private_docs"]', 'readonly = ["~/playground/private_docs"]'), "readonly")
+        self.rejects(REGISTRY.replace('repo_from_issue = true\n', 'repo_from_issue = true\ninstructions = "x"\n'), "instructions")
+
+    def test_read_only_paths(self):
+        for bad in ('"playground/private_docs"', '"~/playground/../private_docs"', '"{repo}/x"'):
+            self.rejects(REGISTRY.replace('read_only = ["~/playground/private_docs"]', f"read_only = [{bad}]"), "read_only")
+        self.rejects(REGISTRY.replace('read_only = ["~/playground/private_docs"]', 'read_only = "/"'), "read_only")
+
+    def test_repo_read_only(self):
+        repo = REGISTRY.replace('read_only = ["~/playground/private_docs"]', 'read_only = ["{repo}"]')
+        self.assertEqual(self.runs(repo)["eng"].read_only, ("{repo}",))
+        self.rejects(repo.replace('role = "researcher"', 'role = "engineer"'), "{repo}")
+        self.rejects(repo.replace("repo_from_issue = true\n", "repo_from_issue = true\nallowed_tools = []\n"), "{repo}")
+
+    def memory(self, path, read_only="~/playground/private_docs"):
+        return REGISTRY.replace('read_only = ["~/playground/private_docs"]',
+                                f'read_only = ["{read_only}"]\nmemory = "{path}"')
+
+    def test_memory_ok(self):
+        mem = os.path.join(self.outside, "engineer")
+        os.makedirs(mem)
+        self.assertEqual(self.runs(self.memory(mem))["eng"].memory, mem)
+
+    def test_memory_rejected(self):
+        ro = os.path.join(self.outside, "docs")
+        for d in (ro, os.path.join(ro, "sub"), os.path.join(self.root, "notes"), os.path.join(self.root, "roles")):
+            os.makedirs(d, exist_ok=True)
+        cases = [("relative", "mem"), ("missing", os.path.join(self.outside, "nope")),
+                 ("under root", os.path.join(self.root, "notes")), ("root itself", self.root),
+                 ("roles", os.path.join(self.root, "roles")), ("ancestor of root", os.path.dirname(self.root)),
+                 ("at read_only", ro), ("under read_only", os.path.join(ro, "sub")), ("ancestor of read_only", self.outside)]
+        for label, path in cases:
+            with self.subTest(label):
+                self.rejects(self.memory(path, read_only=ro), "memory")
+
+    def test_memory_symlink_into_root_rejected(self):
+        link = os.path.join(self.outside, "link")
+        os.symlink(os.path.join(self.root, "templates"), link)
+        self.rejects(self.memory(link), "memory")
+
+    def test_memory_under_claude_config_rejected(self):
+        home = os.path.join(self.outside, "home")
+        for d in (".claude/mem", "Library/LaunchAgents/mem"):
+            os.makedirs(os.path.join(home, d))
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            for d in (".claude/mem", "Library/LaunchAgents/mem"):
+                self.rejects(self.memory(os.path.join(home, d)), "memory")
+
+    def test_load_config_checks_task_allowed_tools(self):
         with self.assertRaises(SystemExit):
-            pipeline.runnable(cfg, root=self.dir)
+            self.load(REGISTRY.replace("repo_from_issue = true\n", 'repo_from_issue = true\nallowed_tools = ["Bash(git push origin *)"]\n'))
+        cfg = self.load(REGISTRY.replace("repo_from_issue = true\n", "repo_from_issue = true\nallowed_tools = "
+                                         '["Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"]\n'))
+        self.assertIn("allowed_tools", cfg["tasks"]["engineering"])
 
-    def test_missing_stage_file_does_not_break_load_config(self):
-        cfg = self.load(BASE.replace('next = "Product Design"', 'next = "Product Design"\ninstructions = "stages/gone.md"\n'
-                                     'model = "opus"\neffort = "high"'))
-        self.assertIn("Deep Research", cfg["projects"])
-
-    def test_load_config_rejects_bad_allowed_tools(self):
-        text = BASE.replace('[projects.Engineering]\nprefix = "TDD"\n',
-                             '[projects.Engineering]\nprefix = "TDD"\nallowed_tools = ["Bash(git push origin *)"]\n')
-        with self.assertRaises(SystemExit):
-            self.load(text)
-
-    def test_load_config_accepts_valid_allowed_tools(self):
-        text = BASE.replace(
-            '[projects.Engineering]\nprefix = "TDD"\n',
-            '[projects.Engineering]\nprefix = "TDD"\nrepo_from_issue = true\n'
-            'allowed_tools = ["Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u '
-            'git@github.com:{owner}/{name}.git {branch})"]\n')
-        cfg = self.load(text)
-        self.assertIn("Engineering", cfg["projects"])
+    def test_load_config_does_not_need_files(self):
+        os.remove(os.path.join(self.root, "tasks", "engineering.md"))
+        self.assertIn("eng", self.load(REGISTRY)["projects"])
 
 
 class RealConfig(unittest.TestCase):
-    def test_engineering_runnable(self):
-        p = pipeline.runnable(pipeline.load_config())["ddbff8bf-b633-4b8c-9272-d1d5ee923747"]
-        self.assertEqual((p["instructions"], p["prefix"], p["effort"], p.get("repo_from_issue")),
-                         ("stages/engineering.md", "ENG", "xhigh", True))
-        self.assertNotIn("allowed_tools", p)
+    def test_three_runs(self):
+        runs = pipeline.runnable(pipeline.load_config())
+        got = {k: (r.role_name, r.task_name, r.task["model"], r.task["effort"], bool(r.task.get("repo_from_issue")), r.read_only, r.memory)
+               for k, r in runs.items()}
+        private = os.path.expanduser("~/playground/private_docs")
+        self.assertEqual(got, {
+            "03495382-48f7-4280-a11c-4375df80a561": ("researcher", "deep-research", "opus", "xhigh", False, (), None),
+            "ba0738ba-ade7-4525-8d79-1b9944334e74": ("pm", "product-design", "opus", "high", False, (), None),
+            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("engineer", "engineering", "opus", "xhigh", True, (private,), None),
+        })
+        self.assertNotIn("allowed_tools", runs["ddbff8bf-b633-4b8c-9272-d1d5ee923747"].task)
 
 
 class Paths(unittest.TestCase):

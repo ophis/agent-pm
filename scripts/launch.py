@@ -15,20 +15,20 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (PATH, PLACEHOLDERS, PROJECTS, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
+from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
                       project_log, run_dir, runnable, transcript)
 
-PRINCIPLES = os.path.join(ROOT, "stages", "principles.md")
+PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 
 
 
-def prompt(a, instructions):
+def prompt(a, run):
     if a.mode == "resume":
-        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {PRINCIPLES} and {instructions} "
+        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {PRINCIPLES} and {run.instructions} "
                 "first (they may have changed since this session started) and follow the stage's resume rule.")
-    return f"Follow {PRINCIPLES} and {instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
+    return f"Follow {PRINCIPLES} and {run.instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
 
 
 def deny(path):
@@ -36,18 +36,17 @@ def deny(path):
     return "Edit(//" + path.lstrip("/") + ")"
 
 
-def command(a, p, tail="", allowed=()):
-    dirs = [os.path.expanduser(d) for d in p.get("add_dirs", [])]
-    denied = [os.path.join(ROOT, "stages", "**"), os.path.join(ROOT, "templates", "**"),
-              os.path.join(run_dir(a.issue), "worktrees", "*", ".git")]
-    if p.get("repo_from_issue"):
-        denied += [os.path.join(d, "**") for d in dirs]
-    cmd = ["claude", "-p", prompt(a, os.path.join(ROOT, p["instructions"])) + tail,
+def command(a, run, tail="", allowed=()):
+    t = run.task
+    dirs = [os.path.expanduser(d) for d in t.get("add_dirs", [])]
+    denied = [os.path.join(ROOT, d, "**") for d in ("roles", "tasks", "templates")]
+    denied.append(os.path.join(run_dir(a.issue), "worktrees", "*", ".git"))
+    denied += [os.path.join(p, "**") for p in run.read_only if p != REPO]
+    cmd = ["claude", "-p", prompt(a, run) + tail,
            "--resume" if a.mode == "resume" else "--session-id", a.sid,
-           "--model", p["model"], "--effort", p["effort"], "--permission-mode", "auto",
-           "--setting-sources", "user", "--strict-mcp-config",
-           "--add-dir", os.path.join(ROOT, "stages"), "--add-dir", os.path.join(ROOT, "templates")]
-    for d in dirs:
+           "--model", t["model"], "--effort", t["effort"], "--permission-mode", "auto",
+           "--setting-sources", "user", "--strict-mcp-config"]
+    for d in [os.path.join(ROOT, d) for d in ("roles", "tasks", "templates")] + dirs:
         cmd += ["--add-dir", d]
     cmd += ["--disallowedTools", *map(deny, denied)]
     if allowed:
@@ -105,13 +104,12 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         return 2
     os.environ["PATH"] = PATH
     cfg = load_config(config) if config else load_config()
-    stages = runnable(cfg)
-    if a.project not in stages:
+    jobs = runnable(cfg)
+    if a.project not in jobs:
         print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)
         return 2
-    p = stages[a.project]
-    name = os.path.splitext(os.path.basename(p["instructions"]))[0]  # log named after the stage
-    plog = project_log(name, logs) if logs else project_log(name)
+    job = jobs[a.project]
+    plog = project_log(job.task_name, logs) if logs else project_log(job.task_name)
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
@@ -119,15 +117,15 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     humans = cfg.get("human_members") or []
     tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
     env, allowed = {}, []
-    if p.get("repo_from_issue"):
-        step = repo_step(a, p, gql or linear_gql, run)
+    if job.task.get("repo_from_issue"):
+        step = repo_step(a, job.task, gql or linear_gql, run)
         if isinstance(step, eng.Transient):
             return transient(plog, a.issue, step.reason)
         extra, env, allowed = step
         tail += extra
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
-    cmd = command(a, p, tail, allowed)
+    cmd = command(a, job, tail, allowed)
     sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, **env}, plog, runs)],
        check=True)
     return 0

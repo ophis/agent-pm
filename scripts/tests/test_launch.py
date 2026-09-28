@@ -15,20 +15,27 @@ import pipeline  # noqa: E402
 
 CONFIG = """team = "T"
 human_members = ["me@x.com"]
-[projects.p-dr]
-instructions = "stages/deep-research.md"
+[roles.researcher]
+[roles.engineer]
+read_only = ["~/playground/private_docs"]
+[tasks.deep-research]
 model = "opus"
 effort = "xhigh"
 add_dirs = ["~/playground/private_docs"]
-[projects.p-pd]
-prefix = "PRD"
-[projects.p-eng]
-prefix = "ENG"
-instructions = "stages/deep-research.md"
+[tasks.engineering]
 model = "opus"
 effort = "high"
 add_dirs = ["~/playground/private_docs"]
 repo_from_issue = true
+[projects.p-dr]
+role = "researcher"
+task = "deep-research"
+[projects.p-pd]
+prefix = "PRD"
+[projects.p-eng]
+prefix = "ENG"
+role = "engineer"
+task = "engineering"
 """
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -95,8 +102,8 @@ class Launch(unittest.TestCase):
         j = next((k for k in range(i, len(argv)) if argv[k].startswith("--")), len(argv))
         return argv[i:j]
 
-    def plog(self):
-        with open(os.path.join(self.logs, "projects", "deep-research.log")) as f:
+    def plog(self, name="deep-research"):
+        with open(os.path.join(self.logs, "projects", f"{name}.log")) as f:
             return f.read()
 
     def make_transcript(self):
@@ -117,15 +124,15 @@ class Launch(unittest.TestCase):
 
     def test_new_prompt_and_flags(self):
         self.run_launch(*self.args())
-        instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
+        instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES} and {instructions} to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
                             " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", f"{root}/stages", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
-            "--disallowedTools", f"Edit({slashes(root)}/stages/**)",
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
+            "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
     def test_every_project_locked_down(self):
@@ -139,7 +146,8 @@ class Launch(unittest.TestCase):
             self.assertNotIn(pipeline.ROOT, argv)
             rules = self.after(argv, "--disallowedTools")
             self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
-            self.assertIn(f"Edit({slashes(pipeline.ROOT)}/stages/**)", rules)
+            self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
+            self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
             self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, project == "p-eng")
 
     def test_deny(self):
@@ -159,7 +167,7 @@ class Launch(unittest.TestCase):
         self.make_transcript()
         self.assertEqual(self.run_launch(*self.args("resume")), 0)
         argv = self.claude()
-        instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
+        instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES} and {instructions} "
                                   "first (they may have changed since this session started) and follow the stage's resume rule."
                                   " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
@@ -206,7 +214,7 @@ class Launch(unittest.TestCase):
         self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
 
     def test_engineering_ok_fills_allowed_tools(self):
-        self.write_config(CONFIG + f"allowed_tools = [{PUSH_RULE!r}]\n".replace("'", '"'))
+        self.write_config(CONFIG.replace("repo_from_issue = true\n", "repo_from_issue = true\n" + f"allowed_tools = [{PUSH_RULE!r}]\n".replace("'", '"')))
         self.launch_eng(self.ok())
         wt = self.ok().worktree
         self.assertEqual(self.after(self.claude(), "--allowedTools"),
@@ -220,18 +228,18 @@ class Launch(unittest.TestCase):
     def test_engineering_resolve_error_is_transient(self):
         self.assertEqual(self.launch_eng(KeyError("title")), 3)
         self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog(), r"^\S+ \S+ transient TASK-1: resolve: KeyError: 'title'\n$")
+        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: resolve: KeyError: 'title'\n$")
 
     def test_engineering_invalid_on_resume_is_transient(self):
         self.make_transcript()
         self.assertEqual(self.launch_eng(eng.Invalid("no Repo: line"), mode="resume"), 3)
         self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog(), r"^\S+ \S+ transient TASK-1: no Repo: line\n$")
+        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: no Repo: line\n$")
 
     def test_engineering_transient(self):
         self.assertEqual(self.launch_eng(eng.Transient("gh api: TimeoutExpired")), 3)
         self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog(), r"^\S+ \S+ transient TASK-1: gh api: TimeoutExpired\n$")
+        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: gh api: TimeoutExpired\n$")
         self.assertIn("transient TASK-1: gh api: TimeoutExpired", self.err)
 
     def test_unknown_or_non_runnable_project(self):

@@ -4,7 +4,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the user
 
 ## Board
 
-- The Deep Research project; `principles.md` beside this file holds the rules every stage shares.
+- The Deep Research project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: report ready, questions, or stuck) → Done (user only).
 
 ## Steps

@@ -4,7 +4,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 ## Board
 
-- The Engineering project; `principles.md` beside this file holds the rules every stage shares.
+- The Engineering project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line) → Done (user only). Canceled only as in step 2.
 
 ## Inputs
