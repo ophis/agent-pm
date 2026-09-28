@@ -28,7 +28,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
    - What the product already has goes under `已完成`, grouped by the section it belongs to, with where it is implemented; the other sections list only what is still to do. When revising, move newly finished items there.
 6. **Review.** Spawn one fresh subagent with the PRD path and the brief and instructions text; it reviews for missing requirements, contradictions, untestable requirements and scope beyond the brief. Fix the findings that hold up against the brief, once; never add scope the user didn't ask for.
 7. **Publish.** Commit only that file (`git add <file>` then `git commit -m "Add <issue ID> PRD: <product name>" -- <file>`, or `Update …` when revising; leave any other changes in the repo alone) and `git push` (rejected → `git pull --rebase --autostash`, then push). With the `linear` skill: attach `https://github.com/ophis/private_docs/blob/main/Product%20Design/<file name>` as a link attachment (`attachmentLinkURL`) unless already attached, and set the title to `PRD: <product name>` (`issueUpdate` with `title`).
-8. **Hand off.** Comment a 3–5 line summary plus the GitHub link, set In Review, and end with the GitHub link as your final message. Handle one issue per invocation.
+8. **Hand off.** Comment a 3–5 line summary plus the GitHub link, ending with: "To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo." Set In Review, and end with the GitHub link as your final message. Handle one issue per invocation.
 
 If a step fails and you cannot finish (the push keeps failing, the file cannot be written), comment what failed, set In Review, and stop.
 
