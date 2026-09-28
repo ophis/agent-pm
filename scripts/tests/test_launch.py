@@ -121,7 +121,7 @@ class Launch(unittest.TestCase):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {instructions} to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-                            " Reviewer: me@x.com. Project: p-dr.",
+                            " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/stages", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -148,7 +148,12 @@ class Launch(unittest.TestCase):
     def test_reviewer_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Reviewer: none. Project: p-dr."))
+        self.assertTrue(self.claude()[2].endswith(" Reviewer: none. Humans: none. Project: p-dr."))
+
+    def test_humans_lists_every_member(self):
+        self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
+        self.run_launch(*self.args())
+        self.assertTrue(self.claude()[2].endswith(" Reviewer: me@x.com. Humans: me@x.com, b@x.com. Project: p-dr."))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -157,7 +162,7 @@ class Launch(unittest.TestCase):
         instructions = os.path.join(pipeline.ROOT, "stages/deep-research.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {instructions} "
                                   "first (it may have changed since this session started) and follow its resume rule."
-                                  " Reviewer: me@x.com. Project: p-dr.")
+                                  " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
 
@@ -194,7 +199,7 @@ class Launch(unittest.TestCase):
         argv = self.claude()
         wt = self.ok().worktree
         self.assertTrue(argv[2].endswith(
-            " Reviewer: me@x.com. Project: p-eng. Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+            " Reviewer: me@x.com. Humans: me@x.com. Project: p-eng. Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")

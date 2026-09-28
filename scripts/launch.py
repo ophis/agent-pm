@@ -114,7 +114,9 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
             return transient(plog, a.issue, f"no transcript to resume at {path}")
-    tail, env, allowed = f" Reviewer: {(cfg.get('human_members') or ['none'])[0]}. Project: {a.project}.", {}, []
+    humans = cfg.get("human_members") or []
+    tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
+    env, allowed = {}, []
     if p.get("repo_from_issue"):
         step = repo_step(a, p, gql or linear_gql, run)
         if isinstance(step, eng.Transient):
