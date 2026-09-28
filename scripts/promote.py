@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import CONFIG, linear_gql, load_config, parse_time  # noqa: E402
 
 GRACE = timedelta(hours=1)
+MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 STATES = ("Todo", "In Review", "Handoff", "Done")
 
@@ -84,6 +85,9 @@ class Promoter:
                 except (Exception, SystemExit) as e:
                     self.say(f"handoff-error {src['identifier']}: {e}")
         for (cutoff, first, latest), src, detail, nxt in sorted(work, key=lambda w: w[0][2]):
+            if self.now - parse_time(latest) < MATURE:
+                self.say(f"handoff-wait {src['identifier']} (in Handoff under {MATURE.seconds // 60} min)")
+                continue
             found = [None]
             try:
                 self.promote(src, detail, nxt, cutoff, first, found)
@@ -105,8 +109,9 @@ class Promoter:
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
-        members = {m.lower() for m in self.cfg["human_members"]}
-        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and c["user"]["email"].lower() in members
+        """Comments after the cutoff by any user (the user may have an agent write them), minus promote's own."""
+        own = (NO_INSTRUCTIONS, "Handoff failed:", "Promoted to ")
+        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and not c["body"].startswith(own)
                        and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
                       key=lambda c: parse_time(c["createdAt"]))
 
