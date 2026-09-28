@@ -10,7 +10,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the user
 
 ## Steps
 
-1. **Pick.** If the invocation names an issue, use it. Otherwise run `python3 ../scripts/router.py --pick --project "Deep Research"` (relative to this file): it returns issues left by dead runs to Todo, then claims the next Todo issue and prints `<ID> <url>`. No output → queue empty; stop.
+1. **Pick.** If the invocation names an issue, use it. Otherwise run `python3 ../scripts/router.py --pick --project 03495382-48f7-4280-a11c-4375df80a561` (relative to this file): it returns issues left by dead runs to Todo, then claims the next Todo issue and prints `<ID> <url>`. No output → queue empty; stop.
 2. **Read** the issue and its comments.
 3. **Too vague?** If the question, scope or deliverable is missing, comment 2–4 numbered questions, move the issue to In Review, and stop.
 4. **Claim.** If `router.py --pick` or the runner already claimed it, only comment that research started. Otherwise re-read the status right before claiming: not Todo anymore → another session has it; stop. Else set In Progress, assignee `viewer`, and comment that research started.

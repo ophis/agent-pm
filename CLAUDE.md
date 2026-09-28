@@ -30,6 +30,7 @@ A router tick without `--dry-run` claims an issue and starts claude; `--pick` cl
 
 - A `claude -p` run can't touch anything outside its cwd `work/` unless it is added with `--add-dir`: it stops for a permission nobody can grant. Runs get `--add-dir <repo root> --add-dir ~/playground/private_docs`; any new path a stage needs goes in its `add_dirs`. Even so, auto mode held a `python3 ../scripts/...` call for approval in a test run.
 - `test_launch.py` asserts exact prompt strings and `claude` flags; update it with any prompt or flag change.
+- `pipeline.toml` keys projects (and `next`) by Linear project id, so renaming a project needs no change; the team is still matched by name.
 - Board rules the code relies on: the agent never moves issues to Backlog; anything needing the user goes to In Review; moving an issue back to Todo resets its attempt cap (4).
 - `docs/` (design specs) and `logs/` are gitignored and exist only locally. `logs/runs.log` is runner state; never clean `logs/`. launchd jobs fail to start if `logs/` is missing.
 - promote's Handoff query nests `attachments` without a `first` limit and lists at most 100 issues; fine at current volume, but if Linear starts rejecting it as too complex (limit 10000), add `attachments(first: N)`.

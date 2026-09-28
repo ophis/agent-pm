@@ -13,12 +13,12 @@ import launch  # noqa: E402
 import pipeline  # noqa: E402
 
 CONFIG = """team = "T"
-[projects."Deep Research"]
+[projects.p-dr]
 instructions = "stages/deep-research.md"
 model = "opus"
 effort = "xhigh"
 add_dirs = ["~/playground/private_docs"]
-[projects."Product Design"]
+[projects.p-pd]
 prefix = "PRD"
 """
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -51,14 +51,14 @@ class Launch(unittest.TestCase):
         return rc
 
     def args(self, mode="new"):
-        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", "Deep Research", "--sid", SID, "--mode", mode]
+        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", "p-dr", "--sid", SID, "--mode", mode]
         return base + (["--k", "2"] if mode == "resume" else [])
 
     def claude_cmd(self, a):
-        return launch.command(a, launch.runnable(pipeline.load_config(self.config))["Deep Research"])
+        return launch.command(a, launch.runnable(pipeline.load_config(self.config))["p-dr"])
 
     def parse(self, mode):
-        return argparse.Namespace(issue="TASK-1", url="https://l/TASK-1", project="Deep Research", sid=SID, mode=mode, k="2")
+        return argparse.Namespace(issue="TASK-1", url="https://l/TASK-1", project="p-dr", sid=SID, mode=mode, k="2")
 
     def test_tmux_session_cwd_and_bash(self):
         self.assertEqual(self.run_launch(*self.args()), 0)
@@ -85,7 +85,7 @@ class Launch(unittest.TestCase):
         self.assertEqual(cmd[3:5], ["--resume", SID])
 
     def test_unknown_or_non_runnable_project(self):
-        for project in ("Nope", "Product Design"):
+        for project in ("p-nope", "p-pd"):
             argv = self.args()
             argv[argv.index("--project") + 1] = project
             self.assertEqual(self.run_launch(*argv), 2)

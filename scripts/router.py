@@ -6,7 +6,7 @@ docs/specs/2026-09-27-router-launcher-design.md
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one.
---pick [--project NAME] [RUNS_LOG]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
+--pick [--project ID] [RUNS_LOG]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
@@ -34,7 +34,7 @@ SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
-USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project NAME] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
+USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project ID] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
          " | --gate resume|new | --prune RUNS_LOG")
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
@@ -155,23 +155,23 @@ class Board:
         self.stage = stage_order(cfg)
         setup = gql("""query($t: String!) { viewer { id }
             workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } }
-            teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { name } } } } }""", t=cfg["team"])
+            teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { id } } } } }""", t=cfg["team"])
         self.me = setup["viewer"]["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
         if not self.projects:
-            raise SystemExit(f"no runnable project in pipeline.toml{f' named {only!r}' if only else ''}")
-        known = {p["name"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
+            raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
+        known = {p["id"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
         missing = [p for p in self.projects if p not in known]
         if missing:
             raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing)}")
 
     def issues(self, state, extra=None):
-        flt = {"project": {"name": {"in": self.projects}}, "state": {"name": {"eq": state}}, **(extra or {})}
+        flt = {"project": {"id": {"in": self.projects}}, "state": {"name": {"eq": state}}, **(extra or {})}
         return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt state { name } project { name } } } }""", f=flt)["issues"]["nodes"]
+                    nodes { id identifier url priority createdAt updatedAt state { name } project { id name } } } }""", f=flt)["issues"]["nodes"]
 
     def later(self, issue):
-        return -self.stage.get(issue["project"]["name"], 0)
+        return -self.stage.get(issue["project"]["id"], 0)
 
     def last_move(self, issue, state, by_user=False):
         """Latest time the issue was moved to state (by_user: by someone other than the agent)."""
@@ -333,10 +333,10 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         sid = str(uuid.uuid4())
         append(runs, f"start {issue['identifier']} session={sid} transcript={os.path.join(tdir, sid + '.jsonl')}")
         mode = ["--mode", "new"]
-    ident, project = issue["identifier"], issue["project"]["name"]
-    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project, "--sid", sid]
+    ident, project = issue["identifier"], issue["project"]
+    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"], "--sid", sid]
             + mode).returncode
-    log(f"launch {ident} ({project}) exit={rc}")
+    log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
 
 

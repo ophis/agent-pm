@@ -16,9 +16,9 @@ HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
 CONFIG = """team = "T"
-[projects."Deep Research"]
-next = "Product Design"
-[projects."Product Design"]
+[projects.p-dr]
+next = "p-pd"
+[projects.p-pd]
 prefix = "PRD"
 """
 
@@ -315,15 +315,15 @@ class TestScopeAndConfig(Base):
         self.assertEqual(src["state"], "Handoff")
 
     def test_config_only_extension(self):
-        self.config = self.write_config(CONFIG + 'next = "Engineering"\n[projects.Engineering]\nprefix = "ENG"\n')
+        self.config = self.write_config(CONFIG + 'next = "p-eng"\n[projects.p-eng]\nprefix = "ENG"\n')
         self.ready(project="Product Design")
         self.run_main()
         (child,) = self.fake.children.values()
         self.assertEqual((child["projectId"], child["title"]), ("p-eng", "ENG: Title DR-1"))
 
     def test_instructions_optional(self):
-        self.config = self.write_config(CONFIG + 'next = "Engineering"\nrequire_instructions = false\n'
-                                        '[projects.Engineering]\nprefix = "TDD"\n')
+        self.config = self.write_config(CONFIG + 'next = "p-eng"\nrequire_instructions = false\n'
+                                        '[projects.p-eng]\nprefix = "TDD"\n')
         src = self.fake.add("PD-1", project="Product Design")
         self.fake.moved("PD-1", 60, "In Review")
         self.fake.moved("PD-1", 30, "Handoff", frm=STATES["In Review"])
@@ -334,12 +334,19 @@ class TestScopeAndConfig(Base):
         self.assertEqual(src["state"], "Done")
 
     def test_optional_instructions_still_copied(self):
-        self.config = self.write_config(CONFIG + 'next = "Engineering"\nrequire_instructions = false\n'
-                                        '[projects.Engineering]\nprefix = "TDD"\n')
+        self.config = self.write_config(CONFIG + 'next = "p-eng"\nrequire_instructions = false\n'
+                                        '[projects.p-eng]\nprefix = "TDD"\n')
         self.ready("PD-1", project="Product Design")
         self.run_main()
         (child,) = self.fake.children.values()
         self.assertIn("## Instructions\nMe, ", child["description"])
+
+    def test_renamed_projects_still_match(self):
+        src = self.ready()
+        src["project"]["name"] = "Research (renamed)"
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(child["projectId"], "p-pd")
 
     def test_next_without_prefix_exits(self):
         self.config = self.write_config(CONFIG.replace('prefix = "PRD"\n', ""))
@@ -347,7 +354,7 @@ class TestScopeAndConfig(Base):
             self.run_main()
 
     def test_next_without_projects_entry_exits(self):
-        self.config = self.write_config(CONFIG.replace('next = "Product Design"', 'next = "Nowhere"'))
+        self.config = self.write_config(CONFIG.replace('next = "p-pd"', 'next = "p-nowhere"'))
         with self.assertRaises(SystemExit):
             self.run_main()
 

@@ -60,7 +60,7 @@ class Promoter:
         team = setup["teams"]["nodes"][0]
         self.team = team["id"]
         self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
-        self.projects = {p["name"]: p["id"] for p in team["projects"]["nodes"]}
+        self.projects = {p["id"]: p["name"] for p in team["projects"]["nodes"]}
         missing = [s for s in STATES if s not in self.states]
         missing += [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
         if missing:
@@ -75,7 +75,7 @@ class Promoter:
         issues = self.gql(Q_HANDOFF, t=self.cfg["team"])["issues"]["nodes"]
         work = []
         for src in issues:
-            nxt = self.cfg.get("projects", {}).get((src["project"] or {}).get("name"), {}).get("next")
+            nxt = self.cfg.get("projects", {}).get((src["project"] or {}).get("id"), {}).get("next")
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
@@ -117,21 +117,21 @@ class Promoter:
 
     def promote(self, src, detail, nxt, cutoff, first, found):
         comments = self.instructions(detail, cutoff)
-        required = self.cfg["projects"][src["project"]["name"]].get("require_instructions", True)
+        required = self.cfg["projects"][src["project"]["id"]].get("require_instructions", True)
         if not comments and required:
             self.comment_and_move(src, NO_INSTRUCTIONS, "In Review")
             self.say(f"handoff-bounce {src['identifier']} no instructions")
             return
-        cid = child_id(src["id"], self.projects[nxt], first)
+        cid = child_id(src["id"], nxt, first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
         if existing:
             child = found[0] = existing[0]
         elif self.dry:
-            self.say(f"promote {src['identifier']} -> new {nxt} issue")
+            self.say(f"promote {src['identifier']} -> new {self.projects[nxt]} issue")
             return
         else:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
-                "id": cid, "teamId": self.team, "projectId": self.projects[nxt], "stateId": self.states["Todo"],
+                "id": cid, "teamId": self.team, "projectId": nxt, "stateId": self.states["Todo"],
                 "priority": src["priority"], "title": f"{self.cfg['projects'][nxt]['prefix']}: {one_line(src['title'])}",
                 "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}

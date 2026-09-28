@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launcher: starts one claude run for an issue the router already claimed (or resumes it), per pipeline.toml.
 
-launch.py --issue ID --url URL --project NAME --sid SID --mode new|resume [--k K]
+launch.py --issue ID --url URL --project PROJECT_ID --sid SID --mode new|resume [--k K]
 Exits 2 for an unknown or non-runnable project. Needs Python 3.11+.
 """
 import argparse
@@ -60,7 +60,8 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None):
     if a.project not in projects:
         print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)
         return 2
-    plog = project_log(a.project, logs) if logs else project_log(a.project)
+    name = os.path.splitext(os.path.basename(projects[a.project]["instructions"]))[0]  # log named after the stage
+    plog = project_log(name, logs) if logs else project_log(name)
     os.makedirs(WORK, exist_ok=True)
     sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", WORK, "bash", "-c", script(a, projects[a.project], plog, runs)],
        check=True)

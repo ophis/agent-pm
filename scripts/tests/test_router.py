@@ -18,14 +18,15 @@ ME, USER = "agent", "user"
 STATES = {"Todo": "s-todo", "In Progress": "s-prog", "In Review": "s-review"}
 DR, PD = "Deep Research", "Product Design"
 PROJECTS = (DR, PD, "Engineering")
+IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 # Instructions paths must exist under the repo root; both stages reuse the Deep Research file here.
 CONFIG = """team = "T"
-[projects."Deep Research"]
-next = "Product Design"
+[projects.p-dr]
+next = "p-pd"
 instructions = "stages/deep-research.md"
 model = "opus"
 effort = "xhigh"
-[projects."Product Design"]
+[projects.p-pd]
 prefix = "PRD"
 """
 PD_RUNNABLE = 'instructions = "stages/deep-research.md"\nmodel = "opus"\neffort = "high"\n'
@@ -45,7 +46,7 @@ class FakeLinear:
         if "viewer" in query:
             return {"viewer": {"id": ME},
                     "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]},
-                    "teams": {"nodes": [{"projects": {"nodes": [{"name": p} for p in PROJECTS]}}]}}
+                    "teams": {"nodes": [{"projects": {"nodes": [{"id": IDS[p]} for p in PROJECTS]}}]}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if "mutation" in query:
@@ -64,7 +65,7 @@ class FakeLinear:
             want = f.get("assignee", {}).get("id", {}).get("eq")
             return {"issues": {"nodes": [dict(i, state={"name": i["state"]}) for i in self.issues.values()
                                          if i["state"] == f["state"]["name"]["eq"] and (want is None or i["assignee"] == want)
-                                         and i["project"]["name"] in f["project"]["name"]["in"]]}}
+                                         and i["project"]["id"] in f["project"]["id"]["in"]]}}
         if "state { name }" in query:
             return {"issue": {"state": {"name": self.issues[v["i"]]["state"]}}}
         raise AssertionError(query)
@@ -72,7 +73,7 @@ class FakeLinear:
 
 def issue(ident, state, assignee=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR):
     # id == identifier so mutations and history can be keyed by either
-    return {"id": ident, "identifier": ident, "url": f"https://linear.app/x/{ident}", "state": state, "project": {"name": project},
+    return {"id": ident, "identifier": ident, "url": f"https://linear.app/x/{ident}", "state": state, "project": {"id": IDS[project], "name": project},
             "assignee": assignee, "priority": priority, "createdAt": created, "updatedAt": updated or ago(minutes=5)}
 
 
@@ -564,13 +565,18 @@ class MultiProject(Base):
         self.assertEqual(self.run_main(fake, "--plan"), (0, ""))
         self.assertEqual(fake.mutations, [])
 
+    def test_renamed_project_still_matches(self):
+        fake = FakeLinear([issue("TASK-1", "Todo")])
+        fake.issues["TASK-1"]["project"]["name"] = "Research (renamed)"
+        self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-1 https://linear.app/x/TASK-1 Research (renamed)")
+
     def test_pick_project_filter(self):
         fake = FakeLinear([issue("TASK-1", "Todo", priority=1, project=PD), issue("TASK-2", "Todo", priority=3)])
-        self.assertEqual(self.run_main(fake, "--pick", "--project", DR)[1], "TASK-2 https://linear.app/x/TASK-2")
+        self.assertEqual(self.run_main(fake, "--pick", "--project", IDS[DR])[1], "TASK-2 https://linear.app/x/TASK-2")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
 
     def test_runnable_project_missing_in_linear_exits(self):
-        self.config = self.write_config(CONFIG + "[projects.Ghost]\n" + PD_RUNNABLE)
+        self.config = self.write_config(CONFIG + "[projects.p-ghost]\n" + PD_RUNNABLE)
         with self.assertRaises(SystemExit):
             self.run_main(FakeLinear([]), "--plan")
 
@@ -634,7 +640,7 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         sid = launch[launch.index("--sid") + 1]
         self.assertEqual(launch[0], sys.executable)
-        self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", DR,
+        self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", IDS[DR],
                                       "--sid", sid, "--mode", "new"])
         self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(self.tdir)}/{sid}\.jsonl\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
