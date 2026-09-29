@@ -1,6 +1,6 @@
 # TASK-66: reference the Linear team and workflow states by id — plan
 
-RESUME: phase=S5 worktree=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s branch=TASK-66-reference-the-linear-team-and-workflow-s base_ref=b5473cec0fe9b27b79d319dfa6ea9ac350197d01 review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s/docs/specs/2026-09-29-task-66-ids-not-names-design.md
+RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s branch=TASK-66-reference-the-linear-team-and-workflow-s base_ref=b5473cec0fe9b27b79d319dfa6ea9ac350197d01 review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s/docs/specs/2026-09-29-task-66-ids-not-names-design.md
 
 ## Implementation plan
 
@@ -425,3 +425,5 @@ and the check with `if not issue or issue["state"]["id"] not in finished:`. Modu
 - decision(team in prompt): tail also passes `Team: <id>` so principles.md's team line is rename-proof like the states; solo.
 - S3 panel: core=[architecture,spec-fitness] +optional=[] (security dropped: config ids only, no untrusted input) transport=Workflow
 - S3 r0: architecture=PASS spec-fitness=PASS -> converged. Folded non-blockers: eng.py not a load_config caller; Pruner takes promote's Team (no duplicate query); launcher-only cfg["states"] read; test fixtures get the new keys.
+- S5: 4 tasks via subagent-driven-development, each task review clean (commits a0af2c4, dfdaead, f98936a, 3b1f8cd); deferred minors in the SDD ledger.
+- S6: 255 tests OK; grep gate clean; live `router.py --plan --dry-run` and `promote.py --dry-run` OK; live `team()` stops on a foreign state id / unknown team with the spec'd messages.
