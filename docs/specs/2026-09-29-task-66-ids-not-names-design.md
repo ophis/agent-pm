@@ -65,16 +65,17 @@ canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 - `moves`, `promote` (child `stateId`), `bounce_failed`, `move`, `comment_and_move`: logical keys.
 
 **prune.py** (`Pruner.run`):
-- After the no-worktree early return (Linear is still only queried when a worktree exists): `states = team(self.gql, self.cfg).states`; `finished = {states["done"], states["canceled"]}`. `Q_SETUP` and `FINISHED` go.
+- `Pruner(gql, cfg, now, dry, run, work, team=None)`: promote's `run_prune` passes the `Promoter`'s `Team` (no second `team()` query per promote tick); standalone `prune.py` resolves it itself.
+- After the no-worktree early return (Linear is still only queried when a worktree exists): `states = (self.team or team(self.gql, self.cfg)).states`; `finished = {states["done"], states["canceled"]}`. `Q_SETUP` and `FINISHED` go.
 - `Q_ISSUE` selects `state { id }`; the finished check is `issue["state"]["id"] in finished`.
 
 Grep gate: no `name: { eq` on a team or state, no `workflowStates(`, no `state { name }` left in `scripts/*.py`.
 
 ## G3 — Where validation runs
 
-- `load_config` shape check: router, launcher, promote, prune, `eng.py` (whatever loads config).
+- `load_config` shape check: router, launcher, promote, prune (every `load_config` caller).
 - `team()` Linear check: router `Board.__init__`, `Promoter.__init__`, `Pruner.run` (only when it would query Linear). A bad id stops that tick with the message; promote's `run_prune` already logs a prune `SystemExit` as `prune-error`.
-- The launcher does not query Linear for this: the router validated the same `pipeline.toml` seconds before in the same tick, and the launcher only passes the ids on.
+- Consumers holding a `Team` read states from it; only the launcher reads `cfg["states"]` directly, and it does not query Linear for this: the router validated the same `pipeline.toml` seconds before in the same tick, and the launcher only passes the ids on.
 - prune's `main` treats only `linear api error` SystemExits as transient (exit 3); a `pipeline.toml:` SystemExit propagates (loud), as today for other config errors.
 
 ## G4 — Sessions
@@ -84,11 +85,11 @@ Grep gate: no `name: { eq` on a team or state, no `workflowStates(`, no `state {
 
 ## G5 — Tests and docs
 
-Tests (no network; existing fakes updated to the new queries):
+Tests (no network; existing fakes and every test `pipeline.toml` fixture updated to the new queries and keys, incl. the minimal fixtures in `test_pipeline.py`):
 - `test_pipeline.py`: shape errors (team missing / non-UUID; `states` missing, missing key, unknown key, non-UUID value) with their messages; the real `pipeline.toml` loads and has all six keys; `team()` returns `Team` on success, stops on no team, stops listing every state id outside the team, and sends the configured team id as `$t`.
 - `test_router.py`: fake Linear serves `teams(filter: { id })` and `issues` filtered by `state.id`; a test asserts the issue queries filter `state: { id: { eq: <configured id> } }` and that no query filters by name; claim re-check by id; existing behavior tests pass with ids.
 - `test_promote.py`: Handoff query sent with `t` = team id and `s` = handoff id; child `stateId` = todo id and `teamId` = team id; bad config (state not in team) stops before any mutation.
-- `test_prune.py`: finished by `state.id` (Done id, Canceled id) with renamed state names in the fake still pruning; no Linear query without worktrees (unchanged).
+- `test_prune.py`: finished by `state.id` (Done id, Canceled id) with renamed state names in the fake still pruning; no Linear query without worktrees (unchanged); a passed `Team` means no `team()` query; `run_prune` passes the Promoter's `Team`.
 - `test_launch.py`: exact tail with `Team:` and `States:` for new and resume.
 
 Docs:
