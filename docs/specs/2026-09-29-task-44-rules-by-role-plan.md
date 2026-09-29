@@ -1,6 +1,6 @@
 # TASK-44: Rules by role (round 3) — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=0e1a758504afbee39131b6f091256c5f2c4829ba review_round=0 spec_file=docs/specs/2026-09-29-task-44-rules-by-role-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=0e1a758504afbee39131b6f091256c5f2c4829ba review_round=0 spec_file=docs/specs/2026-09-29-task-44-rules-by-role-design.md
 
 ## Implementation plan
 
@@ -130,3 +130,8 @@ From the worktree, everything committed: `python3 -m unittest discover -s script
 - S4: plan written (3 tasks: revert guard + its docs, instruction files + G2, CLAUDE.md/README); execution: subagent-driven-development, per-task reviews kept, final review skipped (S7).
 - S5: tasks 1-3 done (dae81f5 revert b26e99d + 677304a docs; a38f45a rules by role + G2; 8827343 CLAUDE.md/README); per-task reviews approved. Deferred minors: pm.md `templates/prd.md` pointer root-relative; engineering step 6 "git boundary" wording; earlier pairs design/plan still describe the guard (history).
 - S6: unittest 229 OK; router.py --now --dry-run rc 0 (plan: new); promote.py --dry-run rc 0; grep checks all 1, "claims to verify" in researcher.md + deep-research.md only; no check_registry/uncommitted in scripts/.
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[architecture,test] +adhoc=[instruction-fidelity] (code-quality/performance dropped: the only Python change is a pure revert)
+- S7 reviewers: correctness=a351ad8cbc86146f7 requirement-fidelity=a1592f455c15747ef doc=aef9d301e90ee8b35 architecture=a602408e69574ba7f test=aeeb544abab6d449f instruction-fidelity=a89f0d29f984eae68
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS architecture=PASS test=PASS instruction-fidelity=PASS -> converged.
+- S8: skipped by instruction (keep the build commits; the user squash-merges).
+- Residual NON-BLOCKING: roles/pm.md's `templates/prd.md` pointer is root-relative (tasks use `../templates/…` relative to the file), and the 已完成 layout detail now sits only in the template; researcher synthesis rule drops "from the single run"; the whole charter now outranks task steps, so a target-repo convention on docs/commits could in theory outrank engineering step 6 (no current conflict); engineering step 6 names "the charter's conventions standard and git boundary" by description; charters name template headings literally (a heading rename must update them); step 4's condition is undefined if a finished build has no `Build started` comment; a user comment posted between step 1 and `Build started` is older than it; principles' private_docs link rule and "unless already attached" newly reach deep-research (harmless); CLAUDE.md "Where a rule goes" bullet and three extra rules lifted to principles go slightly beyond the listed items (fit item 3's test); report headings are now fixed Chinese headings; the earlier pairs design/plan still describe the guard (history).
