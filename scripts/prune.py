@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Prune worktrees of finished issues (TASK-49).
+
+For every issue in Done or Canceled for at least 24 hours (an undo window for
+reopens): for each worktree under work/<ID>/worktrees/, if the worktree has no
+uncommitted changes and its branch has no unpushed commits, remove the worktree
+(`git worktree remove`, never --force) and delete the local branch, which was
+already pushed. Remote branches and every repo's main workspace are never
+touched. work/<ID>/ itself is kept: `cd work/<ID> && claude --resume <sid>`
+(TASK-26) depends on it, as do the session logs.
+
+--dry-run   Print the plan; change nothing.
+Needs Python 3.11+ (tomllib).
+Exit 0 = done (skips are normal), 2 = bad arguments, 3 = a top-level transient
+failure (Linear or git unusable). A worktree that fails transiently is logged
+and left for the next run.
+"""
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pipeline import CONFIG, PATH, WORK, linear_gql, load_config, parse_time  # noqa: E402
+
+QUARANTINE = timedelta(hours=24)
+FINISHED = ("Done", "Canceled")
+SHORT = 60
+IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
+REF_RE = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
+
+Q_SETUP = """query($t: String!) {
+  teams(filter: { name: { eq: $t } }) { nodes { id } }
+  workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
+Q_FINISHED = """query($t: String!) { issues(filter: { team: { name: { eq: $t } },
+  state: { name: { in: ["Done", "Canceled"] } } }, first: 100, includeArchived: true) {
+  nodes { id identifier } } }"""
+Q_DETAIL = """query($i: String!) { issue(id: $i) { identifier createdAt
+  history(first: 100) { nodes { createdAt toStateId } } } }"""
+
+
+class TransientError(Exception):
+    """A git call failed unexpectedly: the worktree is left for the next run."""
+
+
+def sh_run(argv, timeout):
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                          env={**os.environ, "PATH": PATH})
+
+
+def _stderr(res):
+    return (res.stderr or "").strip()[:200]
+
+
+class Pruner:
+    def __init__(self, gql, cfg, now, dry, run=sh_run, work=WORK):
+        self.gql, self.cfg, self.now, self.dry = gql, cfg, now, dry
+        self.git_run, self.work = run, work
+        setup = gql(Q_SETUP, t=cfg["team"])
+        self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
+        missing = [s for s in FINISHED if s not in self.states]
+        if missing:
+            raise SystemExit(f"not found in Linear: {', '.join(missing)}")
+        self.finished_ids = {self.states[s] for s in FINISHED}
+
+    def say(self, msg):
+        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
+
+    def _git(self, wt, *args):
+        """Run git in wt; raise TransientError unless it exits 0. Returns stdout."""
+        argv = ["git", "-C", wt, *args]
+        try:
+            res = self.git_run(argv, SHORT)
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            raise TransientError(f"{' '.join(argv)[:120]}: {type(e).__name__}") from None
+        if res.returncode != 0:
+            raise TransientError(f"{' '.join(argv)[:120]}: {_stderr(res)}")
+        return res.stdout
+
+    def _git_ok(self, wt, *args):
+        """True if the git command exits 0; never raises."""
+        try:
+            res = self.git_run(["git", "-C", wt, *args], SHORT)
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+        return res.returncode == 0
+
+    def finished_since(self, detail):
+        """When the issue last entered Done/Canceled; falls back to creation."""
+        hist = sorted((h for h in detail["history"]["nodes"] if h["toStateId"] in self.finished_ids),
+                      key=lambda h: parse_time(h["createdAt"]))
+        return parse_time(hist[-1]["createdAt"]) if hist else parse_time(detail["createdAt"])
+
+    def worktree_dirs(self, ident):
+        """Absolute worktree dirs under work/<ID>/worktrees/, sorted; [] if none."""
+        if not IDENT_RE.fullmatch(ident):
+            return []
+        base = os.path.join(self.work, ident, "worktrees")
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            return []
+        return [os.path.join(base, n) for n in names
+                if os.path.isdir(os.path.join(base, n)) and not n.startswith(".")]
+
+    def inspect(self, wt):
+        """("ok", branch, clone) if the worktree may be removed, else ("skip", reason)."""
+        real = os.path.realpath(wt)
+        base = os.path.realpath(os.path.join(self.work))
+        if not real.startswith(base + os.sep):
+            return "skip", "worktree path escapes the work dir"
+        if self._git(wt, "rev-parse", "--is-inside-work-tree").strip() != "true":
+            return "skip", "not a git worktree"
+        listed = [line.split(" ", 1)[1] for line in
+                  self._git(wt, "worktree", "list", "--porcelain").splitlines()
+                  if line.startswith("worktree ")]
+        if real not in [os.path.realpath(p) for p in listed]:
+            return "skip", "not a registered worktree"
+        branch = self._git(wt, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        if branch == "HEAD" or not REF_RE.fullmatch(branch):
+            return "skip", "detached HEAD or unsafe branch name"
+        if self._git(wt, "status", "--porcelain").strip():
+            return "skip", "uncommitted changes"
+        if not self._git_ok(wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"):
+            return "skip", "no upstream: cannot verify the branch was pushed"
+        if self._git(wt, "rev-list", "--count", "@{u}..HEAD").strip() != "0":
+            return "skip", "unpushed commits"
+        clone = os.path.dirname(self._git(wt, "rev-parse", "--git-common-dir").strip())
+        return "ok", branch, clone
+
+    def remove(self, wt, branch, clone):
+        self._git(clone, "worktree", "remove", os.path.realpath(wt))
+        self._git(clone, "branch", "-d", branch)
+
+    def prune_issue(self, ident):
+        """(cleaned, skipped, errors) for one finished issue."""
+        cleaned, skipped, errors = 0, 0, 0
+        for wt in self.worktree_dirs(ident):
+            name = os.path.basename(wt)
+            try:
+                state, *rest = self.inspect(wt)
+            except TransientError as e:
+                self.say(f"prune-error {ident}/{name}: {e}")
+                errors += 1
+                continue
+            if state == "skip":
+                self.say(f"prune-skip {ident}/{name}: {rest[0]}")
+                skipped += 1
+                continue
+            branch, clone = rest
+            if self.dry:
+                self.say(f"prune-plan {ident}/{name}: remove worktree, delete local branch {branch}")
+                cleaned += 1
+                continue
+            try:
+                self.remove(wt, branch, clone)
+            except TransientError as e:
+                self.say(f"prune-error {ident}/{name}: {e}")
+                errors += 1
+                continue
+            self.say(f"prune-removed {ident}/{name}: worktree removed, local branch {branch} deleted")
+            cleaned += 1
+        return cleaned, skipped, errors
+
+    def run(self):
+        issues = self.gql(Q_FINISHED, t=self.cfg["team"])["issues"]["nodes"]
+        cleaned, skipped, errors, young = 0, 0, 0, 0
+        for src in issues:
+            ident = src["identifier"]
+            try:
+                detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
+            except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
+                self.say(f"prune-error {ident}: Linear: {e}")
+                errors += 1
+                continue
+            if self.now - self.finished_since(detail) < QUARANTINE:
+                young += 1
+                continue
+            c, s, e = self.prune_issue(ident)
+            cleaned, skipped, errors = cleaned + c, skipped + s, errors + e
+        if not (cleaned or skipped or errors):
+            self.say(f"prune: nothing to do ({len(issues)} finished issues, {young} still in quarantine)")
+        else:
+            self.say(f"prune: done (cleaned {cleaned}, skipped {skipped}, errors {errors})")
+        return 3 if errors else 0
+
+
+def main(argv, gql=None, run=sh_run, work=WORK, now=None):
+    import argparse
+    ap = argparse.ArgumentParser(prog="prune.py")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args(argv)
+    if gql is None:
+        gql = linear_gql
+    try:
+        pruner = Pruner(gql, load_config(), now or datetime.now().astimezone(), a.dry_run,
+                        run=run, work=work)
+        return pruner.run()
+    except SystemExit as e:
+        if str(e).startswith("linear api error"):
+            print(f"prune.py: transient: {e}", file=sys.stderr)
+            return 3
+        raise
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"prune.py: transient: {e}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

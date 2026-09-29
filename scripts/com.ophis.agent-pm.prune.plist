@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.ophis.agent-pm.prune</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>/Users/francis/playground/agent-pm/scripts/prune.py</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/francis/playground/agent-pm/logs/prune.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/francis/playground/agent-pm/logs/prune.log</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>5</integer>
+		</dict>
+	</array>
+</dict>
+</plist>
