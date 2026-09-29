@@ -1,0 +1,3 @@
+model = "opus"
+effort = "xhigh"
+add_dirs = ["~/playground/private_docs"]

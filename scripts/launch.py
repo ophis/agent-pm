@@ -2,8 +2,9 @@
 """Launcher: starts one claude run for an issue the router already claimed (or resumes it), per pipeline.toml.
 
 launch.py --issue ID --url URL --project PROJECT_ID --sid SID --mode new|resume [--k K]
-Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project, 3 when the run cannot start yet
-(transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
+Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project or a config error (a role memory
+overlapping the issue's repo; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the
+Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -15,20 +16,24 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (PATH, PLACEHOLDERS, PROJECTS, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
-                      project_log, run_dir, runnable, transcript)
+from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
+                      overlaps, project_log, run_dir, runnable, transcript)
 
-PRINCIPLES = os.path.join(ROOT, "stages", "principles.md")
+PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 
 
-
-def prompt(a, instructions):
+def prompt(a, run):
+    docs = f"{PRINCIPLES}, your role charter {run.charter} and the task {run.instructions}"
     if a.mode == "resume":
-        return (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {PRINCIPLES} and {instructions} "
-                "first (they may have changed since this session started) and follow the stage's resume rule.")
-    return f"Follow {PRINCIPLES} and {instructions} to handle {a.issue} ({a.url}). The runner has already claimed it."
+        text = (f"Resumed run {a.k} for {a.issue} ({a.url}) after an interruption. Re-read {docs} "
+                "first (they may have changed since this session started) and follow the task's resume rule.")
+    else:
+        text = f"Follow {docs} to handle {a.issue} ({a.url}). The runner has already claimed it."
+    if run.memory:
+        text += f" Your role memory: {run.memory}; your role charter says how to use it."
+    return text
 
 
 def deny(path):
@@ -36,17 +41,25 @@ def deny(path):
     return "Edit(//" + path.lstrip("/") + ")"
 
 
-def command(a, p, tail="", allowed=()):
-    dirs = [os.path.expanduser(d) for d in p.get("add_dirs", [])]
-    denied = [os.path.join(ROOT, "stages", "**"), os.path.join(ROOT, "templates", "**"),
-              os.path.join(run_dir(a.issue), "worktrees", "*", ".git")]
-    if p.get("repo_from_issue"):
-        denied += [os.path.join(d, "**") for d in dirs]
-    cmd = ["claude", "-p", prompt(a, os.path.join(ROOT, p["instructions"])) + tail,
+def command(a, run, tail="", allowed=(), repo=None):
+    t, rd = run.task, run_dir(a.issue)
+    dirs = [os.path.join(ROOT, d) for d in ("roles", "tasks", "templates")]
+    dirs += [os.path.expanduser(d) for d in t.get("add_dirs", [])]
+    if run.memory:
+        dirs.append(run.memory)
+    denied = [os.path.join(ROOT, d, "**") for d in ("roles", "tasks", "templates")]
+    denied.append(os.path.join(rd, "worktrees", "*", ".git"))
+    for p in run.read_only:
+        if p != REPO:
+            denied.append(os.path.join(p, "**"))
+            continue
+        if isinstance(repo, eng.Ok):
+            denied.append(os.path.join(repo.clone, "**"))
+        denied.append(os.path.join(rd, "worktrees", "**"))
+    cmd = ["claude", "-p", prompt(a, run) + tail,
            "--resume" if a.mode == "resume" else "--session-id", a.sid,
-           "--model", p["model"], "--effort", p["effort"], "--permission-mode", "auto",
-           "--setting-sources", "user", "--strict-mcp-config",
-           "--add-dir", os.path.join(ROOT, "stages"), "--add-dir", os.path.join(ROOT, "templates")]
+           "--model", t["model"], "--effort", t["effort"], "--permission-mode", "auto",
+           "--setting-sources", "user", "--strict-mcp-config"]
     for d in dirs:
         cmd += ["--add-dir", d]
     cmd += ["--disallowedTools", *map(deny, denied)]
@@ -65,16 +78,17 @@ def script(a, cmd, env, plog, runs):
             f'ts=$(date "+%F %T"); echo {end} >> {q(plog)}; echo {end} >> {q(runs)}')
 
 
-def transient(plog, issue, reason):
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} transient {issue}: {reason}"
+def fail(plog, issue, kind, reason, rc):
+    """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {kind} {issue}: {reason}"
     with open(plog, "a") as f:
         f.write(line + "\n")
     print(line, file=sys.stderr)
-    return 3
+    return rc
 
 
-def repo_step(a, p, gql, run):
-    """(prompt tail, extra env, allowed rules) for a repo_from_issue project, or a Transient."""
+def repo_step(a, task, gql, run):
+    """(prompt tail, extra env, allowed rules, repo result) for a repo_from_issue project, or a Transient."""
     try:
         r = eng.resolve(a.issue, gql, run)
     except Exception as e:  # a resolve bug must not crash the launcher: Transient lets Recover retry the issue
@@ -85,14 +99,14 @@ def repo_step(a, p, gql, run):
         return r
     cli = f" eng.py: python3 {shlex.quote(os.path.join(ROOT, 'scripts', 'eng.py'))}."
     if isinstance(r, eng.Invalid):
-        return f" Repo check failed: {r.reason}.{cli}", {}, []
+        return f" Repo check failed: {r.reason}.{cli}", {}, [], r
     tail = (f" Repo check: OK {r.owner}/{r.name}, clone {r.clone}, default branch {r.default}, branch {r.branch}, "
             f"worktree {r.worktree}.{cli}")
     values = {k: getattr(r, k) for k in PLACEHOLDERS}
-    return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in p.get("allowed_tools", [])]
+    return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
 
 
-def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS):
+def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT):
     ap = argparse.ArgumentParser(prog="launch.py")
     for f in ("--issue", "--url", "--project", "--sid"):
         ap.add_argument(f, required=True)
@@ -105,29 +119,32 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         return 2
     os.environ["PATH"] = PATH
     cfg = load_config(config) if config else load_config()
-    stages = runnable(cfg)
-    if a.project not in stages:
+    jobs = runnable(cfg, root)
+    if a.project not in jobs:
         print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)
         return 2
-    p = stages[a.project]
-    name = os.path.splitext(os.path.basename(p["instructions"]))[0]  # log named after the stage
-    plog = project_log(name, logs) if logs else project_log(name)
+    job = jobs[a.project]
+    plog = project_log(job.task_name, logs) if logs else project_log(job.task_name)
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
-            return transient(plog, a.issue, f"no transcript to resume at {path}")
+            return fail(plog, a.issue, "transient", f"no transcript to resume at {path}", 3)
     humans = cfg.get("human_members") or []
     tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
-    env, allowed = {}, []
-    if p.get("repo_from_issue"):
-        step = repo_step(a, p, gql or linear_gql, run)
+    env, allowed, repo = {}, [], None
+    if job.task.get("repo_from_issue"):
+        step = repo_step(a, job.task, gql or linear_gql, run)
         if isinstance(step, eng.Transient):
-            return transient(plog, a.issue, step.reason)
-        extra, env, allowed = step
+            return fail(plog, a.issue, "transient", step.reason, 3)
+        extra, env, allowed, repo = step
         tail += extra
+        if job.memory:
+            paths = [os.path.join(run_dir(a.issue), "worktrees")] + ([repo.clone] if isinstance(repo, eng.Ok) else [])
+            if hit := next((p for p in paths if overlaps(job.memory, p)), None):
+                return fail(plog, a.issue, "config-error", f"role memory {job.memory} overlaps the issue's repo {hit}", 2)
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
-    cmd = command(a, p, tail, allowed)
+    cmd = command(a, job, tail, allowed, repo)
     sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, **env}, plog, runs)],
        check=True)
     return 0

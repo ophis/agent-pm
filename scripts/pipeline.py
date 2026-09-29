@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -86,30 +87,52 @@ def _root_forms(root):
     return [root, "~" + rest, "$HOME" + rest, "${HOME}" + rest]
 
 
-def _fields(name, rule):
+def _fields(where, rule):
     try:
         return [field for _, field, _, _ in string.Formatter().parse(rule) if field is not None]
     except ValueError as e:
-        raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule is not a valid template ({e}): {rule!r}") from None
+        raise SystemExit(f"{where}: allowed_tools rule is not a valid template ({e}): {rule!r}") from None
 
 
-def check_allowed_tools(name, p, root=ROOT):
+def check_allowed_tools(where, p, root=ROOT):
     """Trust model: no wildcards, no unknown placeholders, no ROOT, no interpreter-on-script, only with repo_from_issue."""
     tools = p.get("allowed_tools")
     if tools is None:
         return
     if not p.get("repo_from_issue"):
-        raise SystemExit(f"pipeline.toml: {name!r} has allowed_tools without repo_from_issue")
+        raise SystemExit(f"{where}: allowed_tools without repo_from_issue")
     for rule in tools:
         if "*" in rule:
-            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule has a wildcard: {rule!r}")
+            raise SystemExit(f"{where}: allowed_tools rule has a wildcard: {rule!r}")
         if any(r in rule for r in _root_forms(root)):
-            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule contains root: {rule!r}")
+            raise SystemExit(f"{where}: allowed_tools rule contains root: {rule!r}")
         if INTERPRETER_RE.search(rule):
-            raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule runs an interpreter on a script: {rule!r}")
-        for field in _fields(name, rule):
+            raise SystemExit(f"{where}: allowed_tools rule runs an interpreter on a script: {rule!r}")
+        for field in _fields(where, rule):
             if field not in PLACEHOLDERS:
-                raise SystemExit(f"pipeline.toml: {name!r} allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
+                raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
+
+
+TOP_KEYS = {"team", "human_members", "projects"}
+PROJECT_KEYS = {"next", "prefix", "require_instructions", "role", "task"}
+ROLE_KEYS = {"read_only", "memory"}
+TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools"}
+SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
+NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+REPO = "{repo}"
+# Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
+PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
+
+
+@dataclass(frozen=True)
+class Run:
+    """A runnable project's task and role, resolved from roles/ and tasks/; every path is absolute."""
+    task_name: str
+    task: dict
+    charter: str
+    instructions: str
+    memory: str | None
+    read_only: tuple
 
 
 def load_config(path=CONFIG):
@@ -118,7 +141,6 @@ def load_config(path=CONFIG):
         cfg = tomllib.load(f)
     projects = cfg.setdefault("projects", {})
     for name, p in projects.items():
-        check_allowed_tools(name, p)
         nxt = p.get("next")
         if nxt and "prefix" not in projects.get(nxt, {}):
             raise SystemExit(f"pipeline.toml: next of {name!r} must name a [projects] entry with a prefix")
@@ -131,18 +153,108 @@ def load_config(path=CONFIG):
     return cfg
 
 
+def _under(path, base):
+    return os.path.commonpath([path, base]) == base
+
+
+def overlaps(a, b):
+    """True when one path is at or under the other, compared by realpath."""
+    a, b = os.path.realpath(a), os.path.realpath(b)
+    return _under(a, b) or _under(b, a)
+
+
+def _pairs(root, kind):
+    """{name: parsed <kind>/<name>.toml} for every .md + .toml pair in root/<kind>; other files are ignored."""
+    d = os.path.join(root, kind)
+    found = {}
+    for f in sorted(os.listdir(d)):
+        stem, ext = os.path.splitext(f)
+        if ext in (".md", ".toml") and os.path.isfile(os.path.join(d, f)):
+            found.setdefault(stem, set()).add(ext)
+    if kind == "roles" and ".toml" in found.pop("principles", set()):
+        raise SystemExit("roles/principles.toml: principles.md is not a role and has no .toml")
+    out = {}
+    for name, exts in found.items():
+        where = f"{kind}/{name}{min(exts)}"
+        if not NAME_RE.fullmatch(name):
+            raise SystemExit(f"{where}: names are lowercase-kebab")
+        if len(exts) == 1:
+            (ext,) = exts
+            raise SystemExit(f"{kind}/{name}{ext}: has no {kind}/{name}{'.toml' if ext == '.md' else '.md'}")
+        try:
+            with open(os.path.join(d, f"{name}.toml"), "rb") as f:
+                out[name] = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            raise SystemExit(f"{kind}/{name}.toml: {e}") from None
+    return out
+
+
+def _role(name, r, root):
+    """(read_only, memory) of roles/<name>.toml, normalized; a broken file stops the caller."""
+    where = f"roles/{name}.toml"
+    if extra := sorted(set(r) - ROLE_KEYS):
+        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
+    if not isinstance(r.get("read_only", []), list):
+        raise SystemExit(f"{where}: read_only must be a list")
+    read_only = []
+    for entry in r.get("read_only", []):
+        path = os.path.expanduser(entry)
+        if entry != REPO and (not os.path.isabs(path) or ".." in path.split(os.sep) or "{" in path or "}" in path):
+            raise SystemExit(f"{where}: read_only entries are absolute paths or {REPO}: {entry!r}")
+        read_only.append(entry if entry == REPO else os.path.normpath(path))
+    memory = r.get("memory")
+    if memory is None:
+        return tuple(read_only), None
+    memory = os.path.normpath(os.path.expanduser(memory))
+    if not os.path.isabs(memory) or not os.path.isdir(memory):
+        raise SystemExit(f"{where}: memory must be an existing absolute directory: {r['memory']!r}")
+    near = [root] + [p for p in read_only if p != REPO] + [os.path.expanduser(p) for p in PROTECTED]
+    if any(overlaps(memory, b) for b in near):
+        raise SystemExit(f"{where}: memory must not overlap the repo root, a read_only path or {', '.join(PROTECTED)}: {r['memory']!r}")
+    return tuple(read_only), memory
+
+
+def _task(name, t):
+    where = f"tasks/{name}.toml"
+    if extra := sorted(set(t) - TASK_KEYS):
+        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
+    if missing := [k for k in ("model", "effort") if not t.get(k)]:
+        raise SystemExit(f"{where} has no {', '.join(missing)}")
+    check_allowed_tools(where, t)
+
+
+def registry(root=ROOT):
+    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: (read_only, memory)}, {name: task table}."""
+    roles = {name: _role(name, r, root) for name, r in _pairs(root, "roles").items()}
+    tasks = _pairs(root, "tasks")
+    for name, t in tasks.items():
+        _task(name, t)
+    return roles, tasks
+
+
 def runnable(cfg, root=ROOT):
-    """{name: entry} of projects with `instructions`; a broken entry stops the caller (fail loud)."""
+    """{project id: Run} of projects with role + task; a broken pipeline.toml, role or task stops the caller (fail loud)."""
+    if extra := sorted(set(cfg) - TOP_KEYS):
+        raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
+    roles, tasks = registry(root)
     out = {}
     for name, p in cfg["projects"].items():
-        if "instructions" not in p:
+        if extra := sorted(set(p) - PROJECT_KEYS):
+            raise SystemExit(f"pipeline.toml: {name!r} has unknown keys: {', '.join(extra)}; {SETTINGS}")
+        if "role" not in p and "task" not in p:
             continue
-        missing = [k for k in ("model", "effort") if not p.get(k)]
-        if missing:
-            raise SystemExit(f"pipeline.toml: {name!r} has instructions but no {', '.join(missing)}")
-        if not os.path.isfile(os.path.join(root, p["instructions"])):
-            raise SystemExit(f"pipeline.toml: {name!r} instructions not found: {p['instructions']}")
-        out[name] = p
+        if "role" not in p or "task" not in p:
+            raise SystemExit(f"pipeline.toml: {name!r} needs both role and task")
+        role, task = p["role"], p["task"]
+        if role not in roles:
+            raise SystemExit(f"pipeline.toml: {name!r} role {role!r} has no roles/<role>.md + .toml pair")
+        if task not in tasks:
+            raise SystemExit(f"pipeline.toml: {name!r} task {task!r} has no tasks/<task>.md + .toml pair")
+        read_only, memory = roles[role]
+        t = tasks[task]
+        if REPO in read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
+            raise SystemExit(f"pipeline.toml: {name!r}: role {role!r} has read_only {REPO}, so task {task!r} needs repo_from_issue and no allowed_tools")
+        out[name] = Run(task, t, os.path.join(root, "roles", f"{role}.md"), os.path.join(root, "tasks", f"{task}.md"), memory, read_only)
     return out
 
 

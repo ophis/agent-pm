@@ -21,17 +21,16 @@ STATES = {"Todo": "s-todo", "In Progress": "s-prog", "In Review": "s-review"}
 DR, PD = "Deep Research", "Product Design"
 PROJECTS = (DR, PD, "Engineering")
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
-# Instructions paths must exist under the repo root; both stages reuse the Deep Research file here.
+# Role and task files must exist under the repo root.
 CONFIG = """team = "T"
 [projects.p-dr]
 next = "p-pd"
-instructions = "stages/deep-research.md"
-model = "opus"
-effort = "xhigh"
+role = "researcher"
+task = "deep-research"
 [projects.p-pd]
 prefix = "PRD"
 """
-PD_RUNNABLE = 'instructions = "stages/deep-research.md"\nmodel = "opus"\neffort = "high"\n'
+PD_RUNNABLE = 'role = "researcher"\ntask = "product-design"\n'
 
 
 def ago(**kw):
