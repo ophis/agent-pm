@@ -8,8 +8,11 @@ the issue is skipped): for each real directory under work/<ID>/worktrees/
 if the worktree has no uncommitted changes and the actual remote is confirmed
 (via ls-remote, never the cached remote-tracking ref) to contain its commits,
 remove the worktree (`git worktree remove`, never --force) and delete the
-local branch. Remote branches and every repo's main workspace are never
-touched. work/<ID>/ itself is kept: `cd work/<ID> && claude --resume <sid>`
+local branch. Before removing, the tracking ref is synced with `git fetch`,
+because `branch -d` judges "fully merged" against it — a stale ref would
+otherwise strand the branch after the worktree is gone. Remote branches and
+every repo's main workspace are never touched. work/<ID>/ itself is kept:
+`cd work/<ID> && claude --resume <sid>`
 (TASK-26) depends on it, as do the session logs.
 
 Runs at the end of promote's tick (every 15 minutes); a prune failure is logged
@@ -176,9 +179,15 @@ class Pruner:
         if not self._git_ok(wt, "merge-base", "--is-ancestor", "HEAD", tips[0]):
             return "skip", "unpushed commits"
         clone = os.path.dirname(self._git(wt, "rev-parse", "--git-common-dir").strip())
-        return "ok", branch, clone
+        return "ok", branch, clone, remote, rbranch
 
-    def remove(self, wt, branch, clone):
+    def remove(self, wt, branch, clone, remote, rbranch):
+        # Sync the remote-tracking ref with the remote state verified above:
+        # `branch -d` judges "fully merged" against the local tracking ref, which
+        # may be stale. Fetch first so a stale ref can't strand the branch after
+        # the worktree is already gone. A failed fetch aborts before anything is
+        # removed; the worktree is retried on the next run.
+        self._git(clone, "fetch", remote, rbranch)
         self._git(clone, "worktree", "remove", os.path.realpath(wt))
         self._git(clone, "branch", "-d", branch)
 
@@ -199,13 +208,13 @@ class Pruner:
                 self.say(f"prune-skip {ident}/{name}: {rest[0]}")
                 skipped += 1
                 continue
-            branch, clone = rest
+            branch, clone, remote, rbranch = rest
             if self.dry:
                 self.say(f"prune-plan {ident}/{name}: remove worktree, delete local branch {branch}")
                 cleaned += 1
                 continue
             try:
-                self.remove(wt, branch, clone)
+                self.remove(wt, branch, clone, remote, rbranch)
             except TransientError as e:
                 self.say(f"prune-error {ident}/{name}: {e}")
                 errors += 1

@@ -84,6 +84,7 @@ def git_table(wt, branch="TASK-49-x", dirty="", upstream=True, registered=True,
         (("git", "-C", wt, "ls-remote", "origin", f"refs/heads/{branch}"), ls_res),
         (("git", "-C", wt, "merge-base", "--is-ancestor", "HEAD", remote_sha), mb_res),
         (("git", "-C", wt, "rev-parse", "--git-common-dir"), ok("/pg/repo/.git\n")),
+        (("git", "-C", "/pg/repo", "fetch", "origin", branch), ok("")),
         (("git", "-C", "/pg/repo", "worktree", "remove"), ok("")),
         (("git", "-C", "/pg/repo", "branch", "-d"), ok("")),
     ]
@@ -122,6 +123,36 @@ class PruneTest(unittest.TestCase):
         argv = [c[0] for c in run.calls]
         self.assertIn(("git", "-C", "/pg/repo", "worktree", "remove", os.path.realpath(wt)), argv)
         self.assertIn(("git", "-C", "/pg/repo", "branch", "-d", "TASK-49-x"), argv)
+
+    def test_fetch_runs_before_remove(self):
+        # `branch -d` judges "fully merged" against the local tracking ref, which
+        # may be stale even though ls-remote verified the remote. The fetch must
+        # come first or a stale ref strands the branch after the worktree is gone.
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        run = FakeRun(git_table(wt))
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        argv = [c[0] for c in run.calls]
+        i_fetch = argv.index(("git", "-C", "/pg/repo", "fetch", "origin", "TASK-49-x"))
+        i_rm = argv.index(("git", "-C", "/pg/repo", "worktree", "remove", os.path.realpath(wt)))
+        i_br = argv.index(("git", "-C", "/pg/repo", "branch", "-d", "TASK-49-x"))
+        self.assertLess(i_fetch, i_rm)
+        self.assertLess(i_rm, i_br)
+
+    def test_fetch_failure_aborts_before_remove(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        table = git_table(wt)
+        table[8] = (("git", "-C", "/pg/repo", "fetch", "origin", "TASK-49-x"), OSError("net down"))
+        run = FakeRun(table)
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 3)
+        self.assertIn("prune-error TASK-49/TASK-49-x", out)
+        argv = [c[0] for c in run.calls]
+        self.assertNotIn(("git", "-C", "/pg/repo", "worktree", "remove", os.path.realpath(wt)), argv)
 
     def test_canceled_old_cleaned(self):
         wt = self.mkw("TASK-37", "TASK-37-x")
