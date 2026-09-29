@@ -3,22 +3,24 @@
 
 For each issue Done or Canceled for at least 24 hours (by its history; unknown
 means skip), removes each worktree under work/<ID>/worktrees/ with `git worktree
-remove` (never --force) and deletes its local branch, but only if the worktree is
-registered with a clone outside work/, has no uncommitted, untracked or ignored
-files (regenerable CACHES aside), and its commits are on its upstream branch on
-the remote. Anything else is skipped and logged. Remote branches, main
-workspaces and work/<ID>/ itself are never touched.
+remove` (never --force) and deletes its local branch, but only if it has no
+uncommitted changes (untracked files count), no unpushed commits, and is
+registered with a clone directly in ~/playground (eng.py's layout). Ignored
+files (build output, .env) are deleted with the worktree. Anything else is
+skipped and logged, once per reason (logs/prune-skips.json). Remote branches,
+main workspaces and work/<ID>/ itself are never touched.
 
 Runs at the end of promote's tick (every 15 minutes); a prune failure is logged
 and never breaks promote. Linear is only queried when a worktree exists on
 disk, so an idle tick costs nothing.
 
---dry-run   Print the plan; change nothing (not even a fetch).
+--dry-run   Print the plan and every skip; change nothing. It never fetches, so a
+            worktree whose remote tip is not in the clone yet shows as not comparable.
 Needs Python 3.11+ (tomllib).
 Exit 0 = done (skips are normal), 2 = bad arguments, 3 = a transient failure
 (Linear, git or the network); it is retried on the next run.
 """
-import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -27,16 +29,19 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eng import REF, SHORT, TransientError, _stderr, sh_run  # noqa: E402
-from pipeline import WORK, linear_gql, load_config, parse_time  # noqa: E402
+from eng import PLAYGROUND, REF, SHORT, TransientError, _stderr, in_playground, sh_run  # noqa: E402
+from pipeline import LOGS, WORK, linear_gql, load_config, parse_time  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
 FINISHED = ("Done", "Canceled")
 IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
-# The only ignored files `worktree remove` may delete; any other (.env, notes) keeps the worktree.
-CACHES = ("__pycache__", "*.pyc", ".pytest_cache", "node_modules", ".venv", ".DS_Store")
-# Config may name programs git runs (fsmonitor, hooks); prune runs none of them.
-SAFE = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
+SKIPS = os.path.join(LOGS, "prune-skips.json")
+# Config may name programs git runs (fsmonitor, hooks, ext:: URLs); prune runs none of them.
+# quotePath: a non-UTF-8 path prints escaped, not as bytes text mode can't decode.
+SAFE = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never",
+        "-c", "core.quotePath=true")
+# For ls-remote/fetch; `-c remote.<name>.uploadpack` would not do: git uses that key's first value.
+UPLOAD_PACK = "--upload-pack=git-upload-pack"
 
 Q_SETUP = """query($t: String!) {
   workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
@@ -54,8 +59,8 @@ class Plan(NamedTuple):
     branch: str
 
 
-def regenerable(path):
-    return any(fnmatch.fnmatchcase(part, c) for part in path.rstrip("/").split("/") for c in CACHES)
+def _cmd(cwd, args):
+    return f"git -C {cwd} {' '.join(args)}"[:120]
 
 
 def _read(path):
@@ -69,10 +74,19 @@ def _read(path):
     return ""
 
 
+def _load(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 class Pruner:
-    def __init__(self, gql, cfg, now, dry, run=sh_run, work=WORK):
+    def __init__(self, gql, cfg, now, dry, run=sh_run, work=WORK, playground=PLAYGROUND, skips=SKIPS):
         self.gql, self.cfg, self.now, self.dry = gql, cfg, now, dry
-        self.git_run, self.work = run, work
+        self.git_run, self.work, self.playground, self.skips_path = run, work, playground, skips
+        self.skips, self.seen, self.logged = {}, {}, False
 
     def setup(self):
         nodes = self.gql(Q_SETUP, t=self.cfg["team"])["workflowStates"]["nodes"]
@@ -83,20 +97,27 @@ class Pruner:
         self.finished_ids = {states[s] for s in FINISHED}
 
     def say(self, msg):
+        self.logged = True
         print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
 
+    def skip(self, key, reason):
+        """Log a skip only if it is new or its reason changed since the last run."""
+        self.skips[key] = reason
+        if self.seen.get(key) != reason:
+            self.say(f"prune-skip {key}: {reason}")
+
     def _run(self, cwd, *args):
-        """The git result; TransientError if git cannot run at all."""
+        """The git result; TransientError if git cannot run or its output cannot be decoded."""
         try:
             return self.git_run(["git", *SAFE, "-C", cwd, *args], SHORT)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            raise TransientError(f"git -C {cwd} {' '.join(args)}"[:120] + f": {type(e).__name__}") from None
+        except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError) as e:
+            raise TransientError(f"{_cmd(cwd, args)}: {type(e).__name__}") from None
 
     def _git(self, cwd, *args):
         """stdout; TransientError unless git exits 0."""
         res = self._run(cwd, *args)
         if res.returncode != 0:
-            raise TransientError(f"git -C {cwd} {' '.join(args)}"[:120] + f": {_stderr(res)}")
+            raise TransientError(f"{_cmd(cwd, args)}: {_stderr(res)}")
         return res.stdout
 
     def finished_since(self, detail):
@@ -109,47 +130,47 @@ class Pruner:
                     if h["toStateId"] in self.finished_ids), default=None)
 
     def worktree_dirs(self, ident):
-        """(dirs, rejected): real worktree dirs under work/<ID>/worktrees/, sorted.
+        """Real worktree dirs under work/<ID>/worktrees/, sorted.
 
         Symlinks are never followed and the directory must genuinely belong to
         this issue: worktrees/ itself may not be a symlink, and its real path
         must resolve inside work/<ID>/. The same holds per entry. Anything
-        else is rejected and logged, never touched.
+        else is skipped, never touched.
         """
         if not IDENT_RE.fullmatch(ident):
-            return [], 0
+            return []
         work_real = os.path.realpath(self.work)
         base = os.path.join(self.work, ident, "worktrees")
         if os.path.islink(base):
-            self.say(f"prune-skip {ident}: worktrees/ is a symlink, refusing to touch")
-            return [], 1
+            self.skip(ident, "worktrees/ is a symlink, refusing to touch")
+            return []
         base_real = os.path.realpath(base)
         if base_real != os.path.join(work_real, ident, "worktrees"):
-            self.say(f"prune-skip {ident}: worktrees/ does not resolve inside {ident}/, refusing to touch")
-            return [], 1
+            self.skip(ident, f"worktrees/ does not resolve inside {ident}/, refusing to touch")
+            return []
         try:
             names = sorted(os.listdir(base))
         except OSError:
-            return [], 0
-        dirs, rejected = [], 0
+            return []
+        dirs = []
         for n in names:
             if n.startswith("."):
                 continue
             p = os.path.join(base, n)
             if os.path.islink(p) or not os.path.isdir(p) or \
                     os.path.realpath(p) != os.path.join(base_real, n):
-                self.say(f"prune-skip {ident}/{n}: not a real directory inside {ident}/, refusing to touch")
-                rejected += 1
+                self.skip(f"{ident}/{n}", f"not a real directory inside {ident}/, refusing to touch")
                 continue
             dirs.append(p)
-        return dirs, rejected
+        return dirs
 
     def clone_of(self, path):
         """The clone that path is a linked worktree of, read from files only.
 
         A repository under work/ could be planted (its config can run programs),
         so path must not vouch for itself: its .git file must name
-        <clone>/.git/worktrees/<n> of a clone outside work/, which points back.
+        <clone>/.git/worktrees/<n> of a clone directly in the playground dir,
+        which points back.
         """
         dotgit = os.path.join(path, ".git")
         text = "" if os.path.islink(dotgit) else _read(dotgit)
@@ -157,12 +178,11 @@ class Pruner:
             raise Skip("not a linked worktree (.git is not a gitdir file)")
         gitdir = os.path.realpath(os.path.join(path, text[len("gitdir: "):]))
         common = os.path.dirname(os.path.dirname(gitdir))
-        clone = os.path.dirname(common)
-        work_real = os.path.realpath(self.work)
         if os.path.basename(os.path.dirname(gitdir)) != "worktrees" or os.path.basename(common) != ".git":
             raise Skip("gitdir is not <clone>/.git/worktrees/<name>")
-        if clone == work_real or clone.startswith(work_real + os.sep):
-            raise Skip("its clone is inside work/")
+        clone = os.path.dirname(common)
+        if not in_playground(clone, self.playground):
+            raise Skip(f"its clone {clone} is not directly in {self.playground}")
         back = _read(os.path.join(gitdir, "gitdir"))
         if not back or os.path.realpath(os.path.join(gitdir, back)) != dotgit:
             raise Skip("the clone does not point back to this worktree")
@@ -170,6 +190,7 @@ class Pruner:
 
     def registered_branch(self, clone, path):
         """The branch checked out at path, from the clone's own worktree list."""
+        # -z: fields ("worktree <path>", "HEAD <sha>", "branch <ref>" or "detached", ...) end in NUL, records in two.
         for rec in self._git(clone, "worktree", "list", "--porcelain", "-z").split("\0\0"):
             fields = rec.split("\0")
             if fields[0].startswith("worktree ") and os.path.realpath(fields[0][len("worktree "):]) == path:
@@ -191,26 +212,20 @@ class Pruner:
         branch = self.registered_branch(clone, path)
         if not REF.fullmatch(branch):
             raise Skip("unsafe branch name")
-        status = self._git(path, "status", "--porcelain", "-z", "--ignored", "--untracked-files=all")
-        entries = [e for e in status.split("\0") if e]
-        if any(not e.startswith("!! ") for e in entries):
+        if self._git(path, "status", "--porcelain", "--untracked-files=all").strip():
             raise Skip("uncommitted changes")
-        kept = [e[3:] for e in entries if not regenerable(e[3:])]
-        if kept:
-            raise Skip(f"{len(kept)} ignored file(s) would be lost, e.g. {kept[0]}")
-        try:
-            upstream = self._git(path, "rev-parse", "--symbolic-full-name", "@{u}").strip()
-        except TransientError:
-            raise Skip("no upstream: cannot verify the branch was pushed") from None
-        m = re.fullmatch(r"refs/remotes/([^/]+)/(.+)", upstream)
-        if not m:
-            raise Skip(f"cannot parse upstream {upstream}")
-        remote, rbranch = m.groups()
-        if not (REF.fullmatch(remote) and REF.fullmatch(rbranch)):
+        fields = self._git(clone, "for-each-ref", "--format=%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)",
+                           f"refs/heads/{branch}").rstrip("\n").split("\0")
+        if len(fields) != 3 or not fields[0]:
+            raise Skip("no upstream: cannot verify the branch was pushed")
+        upstream, remote, merge = fields
+        if not (upstream.startswith("refs/remotes/") and merge.startswith("refs/heads/")):
+            raise Skip(f"upstream {upstream} is not a remote branch")
+        if not all(REF.fullmatch(s) for s in (upstream, remote, merge[len("refs/heads/"):])):
             raise Skip(f"unsafe upstream {upstream}")
         # Never trust the cached tracking ref: ask the actual remote.
         try:
-            ls = self._git(path, "ls-remote", "--", remote, f"refs/heads/{rbranch}")
+            ls = self._git(clone, "ls-remote", UPLOAD_PACK, "--", remote, merge)
         except TransientError:
             raise Skip(f"cannot reach the remote to confirm {upstream}") from None
         tips = [ln.split()[0] for ln in ls.splitlines() if ln.split()]
@@ -218,7 +233,7 @@ class Pruner:
             raise Skip(f"cannot confirm {upstream} on the remote")
         tip = tips[0]
         if not self.dry:
-            self._git(clone, "fetch", "--", remote, f"+refs/heads/{rbranch}:{upstream}")
+            self._git(clone, "fetch", UPLOAD_PACK, "--", remote, f"+{merge}:{upstream}")
             tip = upstream
         res = self._run(path, "merge-base", "--is-ancestor", "HEAD", tip)
         if res.returncode == 1:
@@ -235,26 +250,24 @@ class Pruner:
         self._git(plan.clone, "branch", "-d", plan.branch)
 
     def prune_issue(self, ident):
-        """(cleaned, skipped, errors) for one finished issue."""
+        """(cleaned, errors) for one finished issue."""
         cleaned, errors = 0, 0
-        wts, skipped = self.worktree_dirs(ident)
-        for wt in wts:
-            name = os.path.basename(wt)
+        for wt in self.worktree_dirs(ident):
+            key = f"{ident}/{os.path.basename(wt)}"
             try:
                 plan = self.inspect(wt)
                 if self.dry:
-                    self.say(f"prune-plan {ident}/{name}: remove worktree, delete local branch {plan.branch}")
+                    self.say(f"prune-plan {key}: remove worktree, delete local branch {plan.branch}")
                 else:
                     self.remove(wt, plan)
-                    self.say(f"prune-removed {ident}/{name}: worktree removed, local branch {plan.branch} deleted")
+                    self.say(f"prune-removed {key}: worktree removed, local branch {plan.branch} deleted")
                 cleaned += 1
             except Skip as e:
-                self.say(f"prune-skip {ident}/{name}: {e}")
-                skipped += 1
+                self.skip(key, str(e))
             except TransientError as e:
-                self.say(f"prune-error {ident}/{name}: {e}")
+                self.say(f"prune-error {key}: {e}")
                 errors += 1
-        return cleaned, skipped, errors
+        return cleaned, errors
 
     def worktree_idents(self):
         """Sorted issue identifiers with a non-empty work/<ID>/worktrees/ dir."""
@@ -275,12 +288,13 @@ class Pruner:
                 out.append(n)
         return out
 
-    def run(self):
+    def prune_all(self):
+        """(cleaned, errors) over the finished issues with worktrees on disk."""
         idents = self.worktree_idents()
-        if not idents:  # the common case: no Linear query, no log line
-            return 0
+        if not idents:  # the common case: no Linear query
+            return 0, 0
         self.setup()
-        cleaned, skipped, errors = 0, 0, 0
+        cleaned, errors = 0, 0
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
@@ -292,26 +306,34 @@ class Pruner:
                 continue
             since = self.finished_since(issue)
             if since is None:
-                self.say(f"prune-skip {ident}: finish time unknown, refusing to prune")
-                skipped += 1
+                self.skip(ident, "finish time unknown, refusing to prune")
                 continue
             if self.now - since < QUARANTINE:
                 continue
-            c, s, e = self.prune_issue(ident)
-            cleaned, skipped, errors = cleaned + c, skipped + s, errors + e
-        if cleaned or skipped or errors:
-            self.say(f"prune: done (cleaned {cleaned}, skipped {skipped}, errors {errors})")
+            c, e = self.prune_issue(ident)
+            cleaned, errors = cleaned + c, errors + e
+        return cleaned, errors
+
+    def run(self):
+        if not self.dry:  # a dry run logs every skip and records none
+            self.seen = _load(self.skips_path)
+        cleaned, errors = self.prune_all()
+        if not self.dry and self.skips != self.seen:
+            with open(self.skips_path, "w") as f:
+                json.dump(self.skips, f)
+        if self.logged:
+            self.say(f"prune: done (cleaned {cleaned}, skipped {len(self.skips)}, errors {errors})")
         return 3 if errors else 0
 
 
-def main(argv, gql=linear_gql, run=sh_run, work=WORK, now=None):
+def main(argv, gql=linear_gql, run=sh_run, work=WORK, now=None, playground=PLAYGROUND, skips=SKIPS):
     import argparse
     ap = argparse.ArgumentParser(prog="prune.py")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     try:
         pruner = Pruner(gql, load_config(), now or datetime.now().astimezone(), a.dry_run,
-                        run=run, work=work)
+                        run=run, work=work, playground=playground, skips=skips)
         return pruner.run()
     except SystemExit as e:
         if str(e).startswith("linear api error"):

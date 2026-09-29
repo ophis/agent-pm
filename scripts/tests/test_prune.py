@@ -1,4 +1,4 @@
-import io, os, re, shutil, sys, tempfile, unittest
+import io, json, os, shutil, sys, tempfile, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -35,8 +35,7 @@ class FakeRun:
 
     def ran(self, *args):
         """Calls whose git arguments (after -C <dir>) start with args."""
-        n = len(g(""))
-        return [c for c in self.calls if c[n:n + len(args)] == args]
+        return [c for c in self.calls if c[c.index("-C") + 2:][:len(args)] == args]
 
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
@@ -87,8 +86,11 @@ class PruneTest(unittest.TestCase):
     def setUp(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root)
+        self.root = root
         self.work = os.path.join(root, "work")
-        self.clone = os.path.realpath(os.path.join(root, "clone"))
+        self.playground = os.path.join(root, "playground")
+        self.clone = os.path.realpath(os.path.join(self.playground, "clone"))
+        self.skips = os.path.join(root, "prune-skips.json")
         os.makedirs(self.work)
         self.cfg = {"team": "Frank's Agents"}
         self.listed = []  # the clone's worktree list: (real path, branch or None if detached)
@@ -112,16 +114,16 @@ class PruneTest(unittest.TestCase):
                  for p, b in self.listed]
         return ok("".join(r + "\0" for r in recs))
 
-    def table(self, wt, branch=None, status="", upstream=None, remote="ok"):
-        """remote: ok | diverged (lacks our commits) | missing (no such branch) |
+    def table(self, wt, branch=None, status="", up=None, remote="ok"):
+        """up: (tracking ref, remote, merge ref) of the branch, () for none.
+        remote: ok | diverged (lacks our commits) | missing (no such branch) |
         down (unreachable) | unfetched (ahead, with commits not yet in the clone)."""
         path = os.path.realpath(wt)
         branch = branch or os.path.basename(wt)
-        upstream = f"refs/remotes/origin/{branch}" if upstream is None else upstream
-        m = re.fullmatch(r"refs/remotes/([^/]+)/(.+)", upstream)
-        rname, rbranch = m.groups() if m else ("?", "?")
-        fetch = g(self.clone, "fetch", "--", rname, f"+refs/heads/{rbranch}:{upstream}")
-        listed = ok(f"{SHA}\trefs/heads/{rbranch}\n")
+        upstream, rname, merge = (f"refs/remotes/origin/{branch}", "origin", f"refs/heads/{branch}") if up is None \
+            else up or ("", "", "")
+        fetch = g(self.clone, "fetch", prune.UPLOAD_PACK, "--", rname, f"+{merge}:{upstream}")
+        listed = ok(f"{SHA}\t{merge}\n")
         ls, at_tip, at_ref = {
             "ok": (listed, ok(), ok()),
             "diverged": (listed, ok(code=1), ok(code=1)),
@@ -131,10 +133,10 @@ class PruneTest(unittest.TestCase):
         }[remote]
         return {
             g(self.clone, "worktree", "list", "--porcelain", "-z"): lambda calls: self.listing(),
-            g(path, "status", "--porcelain", "-z", "--ignored", "--untracked-files=all"): ok(status),
-            g(path, "rev-parse", "--symbolic-full-name", "@{u}"):
-                ok(upstream + "\n") if upstream else ok(code=128, stderr="fatal: no upstream configured"),
-            g(path, "ls-remote", "--", rname, f"refs/heads/{rbranch}"): ls,
+            g(path, "status", "--porcelain", "--untracked-files=all"): ok(status),
+            g(self.clone, "for-each-ref", "--format=%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)",
+              f"refs/heads/{branch}"): ok(f"{upstream}\0{rname}\0{merge}\n"),
+            g(self.clone, "ls-remote", prune.UPLOAD_PACK, "--", rname, merge): ls,
             fetch: ok(),
             g(path, "merge-base", "--is-ancestor", "HEAD", SHA): at_tip,
             # The tracking ref is stale until fetched, and `branch -d` judges against it.
@@ -148,7 +150,7 @@ class PruneTest(unittest.TestCase):
         return gql_for({i: (state, hist((age, state))) for i in idents})
 
     def pruner(self, gql, run, dry=False):
-        p = prune.Pruner(gql, self.cfg, NOW, dry, run=run, work=self.work)
+        p = prune.Pruner(gql, self.cfg, NOW, dry, run=run, work=self.work, playground=self.playground, skips=self.skips)
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = p.run()
@@ -157,7 +159,8 @@ class PruneTest(unittest.TestCase):
     def main(self, *argv, gql, run):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            code = prune.main(list(argv), gql=gql, run=run, work=self.work, now=NOW)
+            code = prune.main(list(argv), gql=gql, run=run, work=self.work, now=NOW,
+                              playground=self.playground, skips=self.skips)
         return code, out.getvalue(), err.getvalue()
 
     def assert_untouched(self, run):
@@ -173,7 +176,10 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-removed TASK-49/TASK-49-x", out)
         self.assertIn(g(self.clone, "worktree", "remove", os.path.realpath(wt)), run.calls)
         self.assertIn(g(self.clone, "branch", "-d", "TASK-49-x"), run.calls)
-        self.assertTrue(all(c[:5] == ("git", *prune.SAFE) for c in run.calls))
+        self.assertTrue(all(c[:1 + len(prune.SAFE)] == ("git", *prune.SAFE) for c in run.calls))
+        self.assertFalse([c for c in run.calls if "--ignored" in c])  # ignored files go with the worktree
+        self.assertTrue(run.ran("ls-remote", "--upload-pack=git-upload-pack", "--"))
+        self.assertTrue(run.ran("fetch", "--upload-pack=git-upload-pack", "--"))
 
     def test_fetch_before_ancestry_check_and_remove(self):
         # The fake's tracking ref is stale until fetched: without the fetch first,
@@ -184,7 +190,7 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("prune-removed TASK-49/TASK-49-x", out)
         order = [run.calls.index(run.ran(*a)[0]) for a in
-                 (("fetch", "--", "origin", "+refs/heads/TASK-49-x:refs/remotes/origin/TASK-49-x"),
+                 (("fetch", prune.UPLOAD_PACK, "--", "origin", "+refs/heads/TASK-49-x:refs/remotes/origin/TASK-49-x"),
                   ("merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/TASK-49-x"),
                   ("worktree", "remove"), ("branch", "-d"))]
         self.assertEqual(order, sorted(order))
@@ -275,23 +281,6 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-skip TASK-49/TASK-49-x: uncommitted changes", out)
         self.assert_untouched(run)
 
-    def test_ignored_file_skipped(self):
-        wt = self.mkw("TASK-49", "TASK-49-x")
-        run = FakeRun(self.table(wt, status="!! __pycache__/a.pyc\0!! .env\0"))
-        code, out = self.pruner(self.finished("TASK-49"), run)
-        self.assertEqual(code, 0)
-        self.assertIn("prune-skip TASK-49/TASK-49-x: 1 ignored file(s) would be lost, e.g. .env", out)
-        self.assert_untouched(run)
-
-    def test_regenerable_caches_do_not_block(self):
-        wt = self.mkw("TASK-49", "TASK-49-x")
-        caches = ["__pycache__/a.cpython-311.pyc", "src/b.pyc", ".pytest_cache/v/x", "node_modules/p/i.js",
-                  ".venv/bin/python", ".DS_Store", "docs/.DS_Store"]
-        run = FakeRun(self.table(wt, status="".join(f"!! {c}\0" for c in caches)))
-        code, out = self.pruner(self.finished("TASK-49"), run)
-        self.assertEqual(code, 0)
-        self.assertIn("prune-removed TASK-49/TASK-49-x", out)
-
     def test_unpushed_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
         run = FakeRun(self.table(wt, remote="diverged"))
@@ -316,33 +305,36 @@ class PruneTest(unittest.TestCase):
         self.assertIn("cannot reach the remote", out)
         self.assert_untouched(run)
 
-    def test_non_origin_remote(self):
+    def test_remote_name_with_slash(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
-        run = FakeRun(self.table(wt, upstream="refs/remotes/fork/feature/x"))
+        run = FakeRun(self.table(wt, up=("refs/remotes/fork/x/feature", "fork/x", "refs/heads/feature")))
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 0)
         self.assertIn("prune-removed TASK-49/TASK-49-x", out)
-        self.assertTrue(run.ran("fetch", "--", "fork", "+refs/heads/feature/x:refs/remotes/fork/feature/x"))
+        self.assertTrue(run.ran("fetch", prune.UPLOAD_PACK, "--", "fork/x", "+refs/heads/feature:refs/remotes/fork/x/feature"))
 
     def test_unsafe_upstream_never_reaches_the_remote(self):
         a = self.mkw("TASK-49", "a")
         b = self.mkw("TASK-49", "b")
         c = self.mkw("TASK-49", "c")
-        run = FakeRun({**self.table(a, upstream="refs/remotes/origin/--upload-pack=/tmp/evil.sh"),
-                       **self.table(b, upstream="refs/remotes/-c/x"),
-                       **self.table(c, upstream="refs/remotes/origin/a..b")})
+        d = self.mkw("TASK-49", "d")
+        evil = "--upload-pack=/tmp/evil.sh"
+        run = FakeRun({**self.table(a, up=(f"refs/remotes/origin/{evil}", "origin", f"refs/heads/{evil}")),
+                       **self.table(b, up=("refs/remotes/-c/x", "-c", "refs/heads/x")),
+                       **self.table(c, up=("refs/remotes/origin/a..b", "origin", "refs/heads/a..b")),
+                       **self.table(d, up=("refs/remotes/origin/-x", "origin", "refs/heads/-x"))})
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 0)
-        self.assertEqual(out.count("unsafe upstream"), 3)
+        self.assertEqual(out.count("unsafe upstream"), 4)
         self.assertFalse(run.ran("ls-remote"))
         self.assert_untouched(run)
 
-    def test_unparseable_upstream_skipped(self):
+    def test_local_upstream_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
-        run = FakeRun(self.table(wt, upstream="refs/heads/main"))
+        run = FakeRun(self.table(wt, up=("refs/heads/main", ".", "refs/heads/main")))
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 0)
-        self.assertIn("cannot parse upstream refs/heads/main", out)
+        self.assertIn("upstream refs/heads/main is not a remote branch", out)
         self.assert_untouched(run)
 
     def test_unsafe_branch_skipped(self):
@@ -383,12 +375,31 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-skip TASK-49/evil: the clone does not point back to this worktree", out)
         self.assertEqual(run.calls, [])
 
-    def test_clone_inside_work_refused(self):
-        self.mkw("TASK-49", "TASK-49-x", clone=os.path.join(self.work, "TASK-49", "planted"))
+    def test_clone_outside_playground_refused(self):
+        for name, clone in (("a", os.path.join(self.work, "TASK-49", "planted")),
+                            ("b", os.path.join(self.root, "tmp", "planted")),
+                            ("c", os.path.join(self.playground, "nested", "planted"))):
+            self.mkw("TASK-49", name, clone=clone)
         run = FakeRun({})
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 0)
-        self.assertIn("prune-skip TASK-49/TASK-49-x: its clone is inside work/", out)
+        self.assertEqual(out.count("is not directly in"), 3)
+        self.assertEqual(run.calls, [])
+
+    def test_dotgit_symlink_or_fifo_refused(self):
+        real = self.mkw("TASK-50", "TASK-50-x")
+        a = os.path.join(self.work, "TASK-49", "worktrees", "a")
+        b = os.path.join(self.work, "TASK-49", "worktrees", "b")
+        os.makedirs(a)
+        os.makedirs(b)
+        os.symlink(os.path.join(real, ".git"), os.path.join(a, ".git"))
+        os.mkfifo(os.path.join(b, ".git"))  # reading it would block the tick
+        run = FakeRun({})
+        gql = gql_for({"TASK-49": (DONE, hist((30, DONE))), "TASK-50": (PROG, hist((30, PROG)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("prune-skip TASK-49/a: not a linked worktree", out)
+        self.assertIn("prune-skip TASK-49/b: not a linked worktree", out)
         self.assertEqual(run.calls, [])
 
     def test_swapped_for_symlink_before_remove_refused(self):
@@ -447,7 +458,7 @@ class PruneTest(unittest.TestCase):
 
     def test_no_upstream_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
-        run = FakeRun(self.table(wt, upstream=""))
+        run = FakeRun(self.table(wt, up=()))
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 0)
         self.assertIn("no upstream", out)
@@ -493,6 +504,36 @@ class PruneTest(unittest.TestCase):
         code, out = self.pruner(self.finished("TASK-49"), run)
         self.assertEqual(code, 3)
         self.assertIn("prune-error TASK-49/TASK-49-x", out)
+
+    def test_undecodable_git_output_is_an_error_not_an_abort(self):
+        bad = self.mkw("TASK-49", "a")
+        good = self.mkw("TASK-49", "b")
+        table = {**self.table(bad), **self.table(good)}
+        (key,) = [k for k in table if "for-each-ref" in k and "refs/heads/a" in k]
+        table[key] = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        run = FakeRun(table)
+        code, out = self.pruner(self.finished("TASK-49"), run)
+        self.assertEqual(code, 3)
+        self.assertIn("prune-error TASK-49/a", out)
+        self.assertIn("prune-removed TASK-49/b", out)
+
+    def test_repeated_skip_logged_once(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        gql = self.finished("TASK-49")
+        _, first = self.pruner(gql, FakeRun(self.table(wt, status=" M x.py\n")))
+        _, again = self.pruner(gql, FakeRun(self.table(wt, status=" M x.py\n")))
+        _, dry = self.pruner(gql, FakeRun(self.table(wt, status=" M x.py\n")), dry=True)
+        _, changed = self.pruner(gql, FakeRun(self.table(wt, remote="diverged")))
+        self.assertIn("prune-skip TASK-49/TASK-49-x: uncommitted changes", first)
+        self.assertEqual(again, "")
+        self.assertIn("dry-run: prune-skip TASK-49/TASK-49-x: uncommitted changes", dry)
+        self.assertIn("prune-skip TASK-49/TASK-49-x: unpushed commits", changed)
+        with open(self.skips) as f:
+            self.assertEqual(json.load(f), {"TASK-49/TASK-49-x": "unpushed commits"})
+        _, cleaned = self.pruner(gql, FakeRun(self.table(wt)))
+        self.assertIn("prune-removed TASK-49/TASK-49-x", cleaned)
+        with open(self.skips) as f:
+            self.assertEqual(json.load(f), {})
 
     def test_linear_failure_is_per_issue(self):
         self.mkw("TASK-48", "TASK-48-x")
