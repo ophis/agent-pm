@@ -635,14 +635,11 @@ class MultiProject(Base):
             self.run_main(FakeLinear([]), "--plan")
 
 class FakeShell:
-    def __init__(self, active=False, probe_five=0.2, prune_fails=False, registry="", git_rc=0):
+    def __init__(self, active=False, probe_five=0.2, prune_fails=False):
         self.calls, self.active, self.five = [], active, probe_five
-        self.registry, self.git_rc = registry, git_rc
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
-        if cmd[0] == "git":
-            return subprocess.CompletedProcess(cmd, self.git_rc, stdout=self.registry, stderr="fatal: not a git repository")
         if cmd[:2] == ["tmux", "has-session"]:
             return subprocess.CompletedProcess(cmd, 0 if self.active else 1)
         if cmd[0] == "claude":
@@ -754,53 +751,6 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         self.assertEqual(launch[launch.index("--issue") + 1], "TASK-2")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
-
-    def test_dirty_registry_stops_before_anything(self):
-        for argv in ((), ("--dry-run",)):
-            with self.subTest(argv):
-                fake = FakeLinear([issue("TASK-1", "Todo")])
-                with self.assertRaises(SystemExit) as cm:
-                    self.tick(fake, *argv, shell=FakeShell(registry=" M roles/engineer.toml\0?? tasks/x.toml\0"))
-                self.assertIn("roles/ or tasks/ has uncommitted changes: roles/engineer.toml, tasks/x.toml", str(cm.exception.code))
-                self.assertEqual(fake.mutations, [])
-                self.assertEqual([c[0] for c in self.sh.calls], ["tmux", "git"])
-
-    def test_registry_git_failure_stops(self):
-        fake = FakeLinear([issue("TASK-1", "Todo")])
-        with self.assertRaises(SystemExit) as cm:
-            self.tick(fake, shell=FakeShell(git_rc=128))
-        self.assertIn("git status", str(cm.exception.code))
-        self.assertEqual(self.sh.launches(), [])
-
-    def test_ds_store_alone_ticks(self):
-        fake = FakeLinear([issue("TASK-1", "Todo")])
-        self.tick(fake, shell=FakeShell(registry="?? roles/.DS_Store\0"))
-        self.assertEqual(len(self.sh.launches()), 1)
-
-    def test_registry_git_call(self):
-        self.tick(FakeLinear([]))
-        self.assertIn(["git", "-C", router.ROOT, "status", "--porcelain", "-z", "--ignored", "-uall", "--", "roles", "tasks"],
-                      self.sh.calls)
-
-    def test_check_registry_real_git(self):
-        repo = os.path.join(self.tmp.name, "repo")
-        for rel in ("roles/engineer.md", "tasks/x.md", ".gitignore"):
-            os.makedirs(os.path.dirname(os.path.join(repo, rel)), exist_ok=True)
-            with open(os.path.join(repo, rel), "w") as f:
-                f.write("roles/hidden.md\n.DS_Store\n" if rel == ".gitignore" else "x\n")
-        git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
-        subprocess.run(["git", "init", "-q", repo], check=True)
-        subprocess.run(git + ["add", "-A"], check=True)
-        subprocess.run(git + ["commit", "-qm", "init"], check=True)
-        router.check_registry(subprocess.run, repo)
-        for rel, text in (("roles/hidden.md", "x"), ("roles/.DS_Store", "x"), ("tasks/x.md", "changed\n")):
-            with open(os.path.join(repo, rel), "w") as f:
-                f.write(text)
-        with self.assertRaises(SystemExit) as cm:
-            router.check_registry(subprocess.run, repo)
-        self.assertIn("roles/hidden.md", str(cm.exception.code))
-        self.assertIn("tasks/x.md", str(cm.exception.code))
-        self.assertNotIn(".DS_Store", str(cm.exception.code))
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)

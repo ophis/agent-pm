@@ -258,22 +258,6 @@ def runnable(cfg, root=ROOT):
     return out
 
 
-def uncommitted(porcelain):
-    """Registry paths in `git status --porcelain -z --ignored -uall` output: every tracked change,
-    and untracked or ignored files only when they are .md or .toml (what registry() scans)."""
-    out, entries = [], iter(porcelain.split("\0"))
-    for entry in entries:
-        if not entry:
-            continue
-        code, path = entry[:2], entry[3:]
-        if "R" in code or "C" in code:
-            next(entries, None)  # -z puts a rename's or copy's source path in the next entry
-        if code in ("??", "!!") and not path.endswith((".md", ".toml")):
-            continue
-        out.append(path)
-    return out
-
-
 def reviewer(gql, cfg):
     """Linear user id of the first `human_members` email, who is assigned issues that need human review; None if unset."""
     emails = cfg.get("human_members") or []

@@ -260,18 +260,6 @@ class Runnable(unittest.TestCase):
         self.assertIn("eng", self.load()["projects"])
 
 
-class Uncommitted(unittest.TestCase):
-    def test_uncommitted_parse(self):
-        out = "\0".join([" M roles/engineer.md", "?? tasks/new.toml", "!! roles/hidden.md", "?? roles/.DS_Store",
-                         "!! tasks/.x.toml.swp", "R  roles/b.toml", "roles/a.toml", "?? roles/with space.toml",
-                         "D  tasks/old.md", "?? roles/notes.txt"]) + "\0"
-        self.assertEqual(pipeline.uncommitted(out), ["roles/engineer.md", "tasks/new.toml", "roles/hidden.md",
-                                                     "roles/b.toml", "roles/with space.toml", "tasks/old.md"])
-
-    def test_clean(self):
-        self.assertEqual(pipeline.uncommitted(""), [])
-
-
 class RealConfig(unittest.TestCase):
     def test_three_runs(self):
         runs = pipeline.runnable(pipeline.load_config())
