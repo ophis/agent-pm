@@ -105,18 +105,21 @@ class Pruner:
     def worktree_dirs(self, ident):
         """(dirs, rejected): real worktree dirs under work/<ID>/worktrees/, sorted.
 
-        Symlinks are never followed and nothing may escape the issue's own
-        directory: an entry must be a real directory whose real path sits
-        directly inside work/<ID>/worktrees/. Anything else is rejected and
-        logged, never touched.
+        Symlinks are never followed and the directory must genuinely belong to
+        this issue: worktrees/ itself may not be a symlink, and its real path
+        must resolve inside work/<ID>/. The same holds per entry. Anything
+        else is rejected and logged, never touched.
         """
         if not IDENT_RE.fullmatch(ident):
             return [], 0
         work_real = os.path.realpath(self.work)
         base = os.path.join(self.work, ident, "worktrees")
+        if os.path.islink(base):
+            self.say(f"prune-skip {ident}: worktrees/ is a symlink, refusing to touch")
+            return [], 1
         base_real = os.path.realpath(base)
-        if not base_real.startswith(work_real + os.sep):
-            self.say(f"prune-skip {ident}: worktrees dir escapes the work dir, refusing to touch")
+        if base_real != os.path.join(work_real, ident, "worktrees"):
+            self.say(f"prune-skip {ident}: worktrees/ does not resolve inside {ident}/, refusing to touch")
             return [], 1
         try:
             names = sorted(os.listdir(base))
@@ -220,8 +223,6 @@ class Pruner:
         out = []
         for n in names:
             if not IDENT_RE.fullmatch(n):
-                continue
-            if os.path.islink(os.path.join(self.work, n)):
                 continue
             wt = os.path.join(self.work, n, "worktrees")
             try:

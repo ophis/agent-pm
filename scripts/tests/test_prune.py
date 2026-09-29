@@ -222,6 +222,39 @@ class PruneTest(unittest.TestCase):
         self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "worktree", "remove")])
         self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "branch", "-d")])
 
+    def test_symlinked_worktrees_dir_rejected(self):
+        victim = self.mkw("TASK-50", "TASK-50-x")  # must survive untouched
+        link = os.path.join(self.work, "TASK-49", "worktrees")
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(os.path.dirname(victim), link)  # work/TASK-49/worktrees -> work/TASK-50/worktrees
+        run = FakeRun(git_table(victim, branch="TASK-50-x"))
+        gql = gql_for([("TASK-49", "TASK-49"), ("TASK-50", "TASK-50")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40))),
+                       "TASK-50": (PROG, self.hist((30, PROG)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("prune-skip TASK-49: worktrees/ is a symlink, refusing to touch", out)
+        argv = [c[0] for c in run.calls]
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "worktree", "remove")])
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "branch", "-d")])
+        self.assertTrue(os.path.isdir(victim))
+
+    def test_symlinked_issue_dir_rejected(self):
+        victim = self.mkw("TASK-50", "TASK-50-x")  # must survive untouched
+        link = os.path.join(self.work, "TASK-49")
+        os.symlink(os.path.join(self.work, "TASK-50"), link)  # work/TASK-49 -> work/TASK-50
+        run = FakeRun(git_table(victim, branch="TASK-50-x"))
+        gql = gql_for([("TASK-49", "TASK-49"), ("TASK-50", "TASK-50")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40))),
+                       "TASK-50": (PROG, self.hist((30, PROG)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("prune-skip TASK-49: worktrees/ does not resolve inside TASK-49/, refusing to touch", out)
+        argv = [c[0] for c in run.calls]
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "worktree", "remove")])
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "branch", "-d")])
+        self.assertTrue(os.path.isdir(victim))
+
     def test_no_upstream_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
         run = FakeRun(git_table(wt, upstream=False))
