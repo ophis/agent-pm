@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import HEADER  # noqa: E402
 import pipeline  # noqa: E402
 import router  # noqa: E402
 
@@ -22,8 +23,7 @@ DR, PD = "Deep Research", "Product Design"
 PROJECTS = (DR, PD, "Engineering")
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 # Role and task files must exist under the repo root.
-CONFIG = """team = "T"
-[projects.p-dr]
+CONFIG = HEADER + """[projects.p-dr]
 next = "p-pd"
 role = "researcher"
 task = "deep-research"

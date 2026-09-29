@@ -63,12 +63,12 @@ def run_dir(issue):
     return os.path.join(WORK, issue)
 
 
-SID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def transcript(issue, sid, projects=PROJECTS):
     """Session file for a run; sid must be a UUID (untrusted input) or this returns None."""
-    if not SID_RE.fullmatch(sid):
+    if not UUID_RE.fullmatch(sid):
         return None
     return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
 
@@ -113,7 +113,10 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "human_members", "projects"}
+TOP_KEYS = {"team", "states", "human_members", "projects"}
+# Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
+STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
+          "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
 PROJECT_KEYS = {"next", "prefix", "require_instructions", "role", "task"}
 ROLE_KEYS = {"read_only", "memory"}
 TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools"}
@@ -122,6 +125,25 @@ NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REPO = "{repo}"
 # Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
 PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
+
+
+def _uuid(v):
+    return isinstance(v, str) and bool(UUID_RE.fullmatch(v))
+
+
+def _check_ids(cfg):
+    if not _uuid(cfg.get("team")):
+        raise SystemExit(f"pipeline.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}")
+    states = cfg.get("states")
+    if not isinstance(states, dict):
+        states = {}
+    if missing := [k for k in STATES if k not in states]:
+        raise SystemExit(f"pipeline.toml: [states] is missing: {', '.join(missing)}")
+    if extra := sorted(set(states) - set(STATES)):
+        raise SystemExit(f"pipeline.toml: [states] has unknown keys: {', '.join(extra)}")
+    for k in STATES:
+        if not _uuid(states[k]):
+            raise SystemExit(f"pipeline.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
 
 
 @dataclass(frozen=True)
@@ -139,6 +161,7 @@ def load_config(path=CONFIG):
     """Checks every consumer needs; runnable-project checks are in runnable()."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
+    _check_ids(cfg)
     projects = cfg.setdefault("projects", {})
     for name, p in projects.items():
         nxt = p.get("next")
@@ -267,6 +290,31 @@ def reviewer(gql, cfg):
     if not nodes:
         raise SystemExit(f"pipeline.toml: human_members {emails[0]!r} not found in Linear")
     return nodes[0]["id"]
+
+
+@dataclass(frozen=True)
+class Team:
+    """The pipeline.toml team as checked by team(): {project id: name}, {logical state: state id}."""
+    id: str
+    name: str
+    projects: dict
+    states: dict
+
+
+Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
+  states(first: 100) { nodes { id } } projects(first: 50) { nodes { id name } } } } }"""
+
+
+def team(gql, cfg):
+    """The pipeline.toml team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
+    nodes = gql(Q_TEAM, t=cfg["team"])["teams"]["nodes"]
+    if not nodes:
+        raise SystemExit(f"pipeline.toml: team {cfg['team']} not found in Linear")
+    t = nodes[0]
+    ids = {s["id"] for s in t["states"]["nodes"]}
+    if bad := [f"{k} {cfg['states'][k]}" for k in STATES if cfg["states"][k] not in ids]:
+        raise SystemExit(f"pipeline.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}")
+    return Team(t["id"], t["name"], {p["id"]: p["name"] for p in t["projects"]["nodes"]}, {k: cfg["states"][k] for k in STATES})
 
 
 def stage_order(cfg):

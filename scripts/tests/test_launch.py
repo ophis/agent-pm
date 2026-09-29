@@ -10,12 +10,12 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import HEADER  # noqa: E402
 import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
 
-CONFIG = """team = "T"
-human_members = ["me@x.com"]
+CONFIG = HEADER + """human_members = ["me@x.com"]
 [projects.p-dr]
 role = "researcher"
 task = "deep-research"

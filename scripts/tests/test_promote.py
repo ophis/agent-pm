@@ -8,6 +8,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import HEADER  # noqa: E402
 import promote  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
@@ -16,8 +17,7 @@ PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd", "Engineering": "p
 HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
-CONFIG = """team = "T"
-human_members = ["me@x.com"]
+CONFIG = HEADER + """human_members = ["me@x.com"]
 [projects.p-dr]
 next = "p-pd"
 [projects.p-pd]
