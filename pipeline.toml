@@ -1,5 +1,14 @@
-team = "Frank's Agents"
+team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents; Linear ids, since names change with a rename
 human_members = ["ophis.w@outlook.com"]   # the human users; the first is assigned issues that need human review (In Review)
+
+# The team's workflow states the code uses, by Linear state id.
+[states]
+todo        = "717e27f7-c97e-43d8-aa47-13d513ad8ec6"
+in_progress = "cda9dcfe-c2ab-4853-8e17-8d6ad76b0795"
+in_review   = "5efb3bbc-ea0b-4982-a3d5-31338c9bade3"
+handoff     = "6d876dc6-7732-4473-a0b2-30041d93d0aa"
+done        = "414a4381-7260-46e7-8057-d8cec9d4b11f"
+canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 
 # Projects are keyed by their Linear project id (a name or URL slug changes with a rename). role + task make one runnable:
 # the pairs roles/<role>.md + roles/<role>.toml and tasks/<task>.md + tasks/<task>.toml.

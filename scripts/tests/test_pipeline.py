@@ -6,10 +6,10 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import HEADER, STATES, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 
-BASE = """team = "T"
-[projects."Deep Research"]
+BASE = HEADER + """[projects."Deep Research"]
 next = "Product Design"
 [projects."Product Design"]
 prefix = "PRD"
@@ -44,9 +44,26 @@ class Config(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.load(BASE.replace('prefix = "TDD"\n', ""))
 
+    def test_ids_required(self):
+        states = "states = { " + ", ".join(f'{k} = "{v}"' for k, v in STATES.items()) + " }\n"
+        body = BASE[BASE.index("[projects"):]
+        cases = {
+            "team must be a Linear team id (UUID): \"Frank's Agents\"": 'team = "Frank\'s Agents"\n' + states + body,
+            "team must be a Linear team id (UUID): None": states + body,
+            "[states] is missing: todo, in_progress, in_review, handoff, done, canceled": f'team = "{TEAM}"\n' + body,
+            "[states] is missing: canceled": f'team = "{TEAM}"\n' + states.replace(f', canceled = "{STATES["canceled"]}"', "") + body,
+            "[states] has unknown keys: backlog": f'team = "{TEAM}"\n' + states.replace(" }", ', backlog = "x" }') + body,
+            "states.done must be a Linear workflow state id (UUID): 'Done'": f'team = "{TEAM}"\n' + states.replace(STATES["done"], "Done") + body,
+        }
+        for fragment, text in cases.items():
+            with self.subTest(fragment):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(text)
+                self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
+                self.assertIn(fragment, str(cm.exception.code))
 
-PROJECTS = """team = "T"
-[projects.dr]
+
+PROJECTS = HEADER + """[projects.dr]
 next = "eng"
 role = "researcher"
 task = "deep-research"
@@ -129,6 +146,10 @@ class Runnable(unittest.TestCase):
                            ("repo_from_issue", "true"), ("allowed_tools", "[]"), ("prefx", '"I"')):
             with self.subTest(key):
                 self.rejects(key, text=PROJECTS.replace('prefix = "I"\n', f'prefix = "I"\n{key} = {value}\n'))
+
+    def test_states_is_a_top_key(self):
+        self.assertEqual(list(self.load()["states"]), list(pipeline.STATES))
+        self.assertEqual(sorted(self.runs()), ["dr", "eng"])
 
     def test_load_config_ignores_old_tables(self):
         cfg = self.load(PROJECTS + '[roles.researcher]\n[projects.old]\ninstructions = "stages/gone.md"\n')
@@ -273,6 +294,45 @@ class RealConfig(unittest.TestCase):
             "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
         })
         self.assertNotIn("allowed_tools", runs["ddbff8bf-b633-4b8c-9272-d1d5ee923747"].task)
+
+    def test_real_config_ids(self):
+        cfg = pipeline.load_config()
+        self.assertEqual(list(cfg["states"]), list(pipeline.STATES))
+        self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
+
+
+class TeamCheck(unittest.TestCase):
+    def cfg(self):
+        return {"team": TEAM, "states": dict(STATES)}
+
+    def gql(self, nodes):
+        calls = []
+
+        def gql(query, **v):
+            calls.append((query, v))
+            return {"teams": {"nodes": nodes}}
+        gql.calls = calls
+        return gql
+
+    def test_ok(self):
+        gql = self.gql([team_node(projects=[("p1", "One")])])
+        t = pipeline.team(gql, self.cfg())
+        self.assertEqual(t, pipeline.Team(TEAM, "Team", {"p1": "One"}, dict(STATES)))
+        (query, v), = gql.calls
+        self.assertEqual((query, v), (pipeline.Q_TEAM, {"t": TEAM}))
+        self.assertIn("teams(filter: { id: { eq: $t } })", query)
+
+    def test_team_not_found(self):
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.team(self.gql([]), self.cfg())
+        self.assertEqual(str(cm.exception.code), f"pipeline.toml: team {TEAM} not found in Linear")
+
+    def test_states_outside_team(self):
+        other = [i for k, i in STATES.items() if k not in ("handoff", "done")]
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.team(self.gql([team_node(other)]), self.cfg())
+        self.assertEqual(str(cm.exception.code), "pipeline.toml: [states] not workflow states of team 'Team': "
+                         f"handoff {STATES['handoff']}, done {STATES['done']}")
 
 
 class Paths(unittest.TestCase):

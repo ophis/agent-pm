@@ -18,19 +18,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, linear_gql, load_config, parse_time, reviewer  # noqa: E402
+from pipeline import CONFIG, linear_gql, load_config, parse_time, reviewer, team  # noqa: E402
 
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
-STATES = ("Todo", "In Review", "Handoff", "Done")
 
-Q_SETUP = """query($t: String!) {
-  teams(filter: { name: { eq: $t } }) { nodes { id projects(first: 50) { nodes { id name } } } }
-  workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
-Q_HANDOFF = """query($t: String!) { issues(filter: { team: { name: { eq: $t } }, state: { name: { eq: "Handoff" } } }, first: 100) {
+Q_HANDOFF = """query($t: ID, $s: ID) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } attachments { nodes { title url } } } } }"""
-Q_DETAIL = """query($i: String!) { issue(id: $i) { state { name }
+Q_DETAIL = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250) { nodes { createdAt fromStateId toStateId } }
   comments(first: 250) { nodes { body createdAt user { email name } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
@@ -69,15 +65,11 @@ def ok(result, name):
 class Promoter:
     def __init__(self, gql, cfg, now, dry, wait=True):
         self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
-        setup = gql(Q_SETUP, t=cfg["team"])
-        team = setup["teams"]["nodes"][0]
-        self.team = team["id"]
-        self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
-        self.projects = {p["id"]: p["name"] for p in team["projects"]["nodes"]}
+        self.team = team(gql, cfg)
+        self.states, self.projects = self.team.states, self.team.projects
         self.reviewer = reviewer(gql, cfg)
         self.humans = {e.lower() for e in cfg.get("human_members") or []}
-        missing = [s for s in STATES if s not in self.states]
-        missing += [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
+        missing = [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
         if missing:
             raise SystemExit(f"not found in Linear: {', '.join(missing)}")
 
@@ -87,14 +79,14 @@ class Promoter:
 
     def run(self):
         self.said = False
-        issues = self.gql(Q_HANDOFF, t=self.cfg["team"])["issues"]["nodes"]
+        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"])["issues"]["nodes"]
         work = []
         for src in issues:
             nxt = self.cfg.get("projects", {}).get((src["project"] or {}).get("id"), {}).get("next")
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
-                    if detail["state"]["name"] != "Handoff":  # the Handoff list can lag behind a just-made move
+                    if detail["state"]["id"] != self.states["handoff"]:  # the Handoff list can lag behind a just-made move
                         continue
                     work.append((self.moves(src, detail), src, detail, nxt))
                 except (Exception, SystemExit) as e:
@@ -116,9 +108,9 @@ class Promoter:
     def moves(self, src, detail):
         """(cutoff, first Handoff move after it, latest Handoff move), as API timestamps."""
         hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
-        cutoff = max((h["createdAt"] for h in hist if h["toStateId"] == self.states["In Review"]
-                      and h["fromStateId"] != self.states["Handoff"]), key=parse_time, default=None)
-        handoffs = [h["createdAt"] for h in hist if h["toStateId"] == self.states["Handoff"]
+        cutoff = max((h["createdAt"] for h in hist if h["toStateId"] == self.states["in_review"]
+                      and h["fromStateId"] != self.states["handoff"]), key=parse_time, default=None)
+        handoffs = [h["createdAt"] for h in hist if h["toStateId"] == self.states["handoff"]
                     and (cutoff is None or parse_time(h["createdAt"]) > parse_time(cutoff))]
         first = handoffs[0] if handoffs else src["createdAt"]
         return cutoff, first, handoffs[-1] if handoffs else first
@@ -134,7 +126,7 @@ class Promoter:
         src_cfg = self.cfg["projects"][src["project"]["id"]]
         required = src_cfg.get("require_instructions", True)
         if not comments and required:
-            self.comment_and_move(src, NO_INSTRUCTIONS, "In Review")
+            self.comment_and_move(src, NO_INSTRUCTIONS, "in_review")
             self.say(f"handoff-bounce {src['identifier']} no instructions")
             return
         cid = child_id(src["id"], nxt, first)
@@ -146,7 +138,7 @@ class Promoter:
             return
         else:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
-                "id": cid, "teamId": self.team, "projectId": nxt, "stateId": self.states["Todo"],
+                "id": cid, "teamId": self.team.id, "projectId": nxt, "stateId": self.states["todo"],
                 "priority": src["priority"],
                 "title": child_title(self.cfg["projects"][nxt]["prefix"], src_cfg.get("prefix"), src["title"]),
                 "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
@@ -155,7 +147,7 @@ class Promoter:
         if child["id"] not in related and not self.dry:
             ok(self.gql(M_RELATE, **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}}),
                "issueRelationCreate")
-        self.move(src, "Done")
+        self.move(src, "done")
         self.say(f"promote {src['identifier']} -> {child['identifier']}")
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
@@ -181,7 +173,7 @@ class Promoter:
     def bounce_failed(self, src, error, child):
         body = f"Handoff failed: {str(error)[:300]}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
         try:
-            self.comment_and_move(src, body, "In Review")
+            self.comment_and_move(src, body, "in_review")
             self.say(f"handoff-failed {src['identifier']} moved to In Review")
         except (Exception, SystemExit) as e:
             self.say(f"handoff-error {src['identifier']}: could not move to In Review: {e}")
@@ -193,7 +185,7 @@ class Promoter:
     def move(self, src, state):
         if self.dry:
             return
-        if state == "In Review" and self.reviewer:
+        if state == "in_review" and self.reviewer:
             ok(self.gql(M_REVIEW, i=src["id"], s=self.states[state], a=self.reviewer), "issueUpdate")
         else:
             ok(self.gql(M_STATE, i=src["id"], s=self.states[state]), "issueUpdate")
@@ -204,12 +196,12 @@ class Promoter:
         self.comment(src, body)
 
 
-def run_prune(gql, cfg, now, dry, pruner=None):
+def run_prune(gql, cfg, now, dry, pruner=None, team=None):
     """Prune finished issues' worktrees; a prune failure, even an ImportError, is logged and never breaks promote."""
     try:
         if pruner is None:
             from prune import Pruner as pruner
-        pruner(gql, cfg, now, dry).run()
+        pruner(gql, cfg, now, dry, team=team).run()
     except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
         print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
 
@@ -221,8 +213,9 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     cfg = load_config(config)
     now = now or datetime.now(timezone.utc)
     dry = "--dry-run" in argv
-    Promoter(gql, cfg, now, dry, wait="--now" not in argv).run()
-    run_prune(gql, cfg, now, dry, pruner)
+    promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
+    promoter.run()
+    run_prune(gql, cfg, now, dry, pruner, promoter.team)
     return 0
 
 

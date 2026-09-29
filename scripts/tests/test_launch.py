@@ -10,12 +10,12 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E402
 import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
 
-CONFIG = """team = "T"
-human_members = ["me@x.com"]
+CONFIG = HEADER + """human_members = ["me@x.com"]
 [projects.p-dr]
 role = "researcher"
 task = "deep-research"
@@ -38,6 +38,7 @@ PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@gith
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
 PRIVATE = os.path.expanduser("~/playground/private_docs")
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
+IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
 FAKE_CLAUDE = """#!/bin/bash
 echo "claude says hi"
 echo "oops" >&2
@@ -137,7 +138,7 @@ class Launch(unittest.TestCase):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
-                            "The runner has already claimed it. Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.",
+                            "The runner has already claimed it. Reviewer: me@x.com. Humans: me@x.com. Project: p-dr." + IDS,
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -165,12 +166,12 @@ class Launch(unittest.TestCase):
     def test_reviewer_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Reviewer: none. Humans: none. Project: p-dr."))
+        self.assertTrue(self.claude()[2].endswith(" Reviewer: none. Humans: none. Project: p-dr." + IDS))
 
     def test_humans_lists_every_member(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Reviewer: me@x.com. Humans: me@x.com, b@x.com. Project: p-dr."))
+        self.assertTrue(self.claude()[2].endswith(" Reviewer: me@x.com. Humans: me@x.com, b@x.com. Project: p-dr." + IDS))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -180,9 +181,12 @@ class Launch(unittest.TestCase):
         charter = os.path.join(self.root, "roles/researcher.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
                                   f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
-                                  " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
+                                  " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr." + IDS)
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
+        self.calls = []
+        self.run_launch(*self.args())
+        self.assertTrue(self.claude()[2].endswith(IDS))
 
     def test_resume_without_transcript(self):
         legacy = os.path.join(self.projects, pipeline.escape(self.work), f"{SID}.jsonl")
@@ -217,7 +221,7 @@ class Launch(unittest.TestCase):
         argv = self.claude()
         wt = self.ok().worktree
         self.assertTrue(argv[2].endswith(
-            " Reviewer: me@x.com. Humans: me@x.com. Project: p-eng. Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+            " Reviewer: me@x.com. Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
@@ -232,7 +236,7 @@ class Launch(unittest.TestCase):
 
     def test_engineering_invalid_starts_run_to_bounce(self):
         self.assertEqual(self.launch_eng(eng.Invalid("no Repo: line")), 0)
-        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng. Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
+        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{IDS} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("AGENT_PM_ISSUE", self.exports())
 
     def test_engineering_resolve_error_is_transient(self):
@@ -427,12 +431,13 @@ class RealConfig(unittest.TestCase):
 
     def expected(self, project, role, task, effort, extra_deny=(), tail=""):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
-        humans = self.humans
+        humans, cfg = self.humans, pipeline.load_config()
+        real = f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
         return [
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
             " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-            f" Reviewer: {humans[0]}. Humans: {', '.join(humans)}. Project: {project}." + tail,
+            f" Reviewer: {humans[0]}. Humans: {', '.join(humans)}. Project: {project}." + real + tail,
             "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,

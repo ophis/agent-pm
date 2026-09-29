@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, reviewer, runnable, stage_order, transcript)
+                      parse_time, reviewer, runnable, stage_order, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -161,23 +161,20 @@ class Board:
         self.hist = {}
         self.projects = sorted(p for p in runnable(cfg) if only in (None, p))
         self.stage = stage_order(cfg)
-        setup = gql("""query($t: String!) { viewer { id }
-            workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } }
-            teams(filter: { name: { eq: $t } }) { nodes { projects(first: 50) { nodes { id } } } } }""", t=cfg["team"])
-        self.me = setup["viewer"]["id"]
-        self.states = {s["name"]: s["id"] for s in setup["workflowStates"]["nodes"]}
+        self.me = gql("query { viewer { id } }")["viewer"]["id"]
+        t = team(gql, cfg)
+        self.states = t.states
         self.reviewer = reviewer(gql, cfg)
         if not self.projects:
             raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
-        known = {p["id"] for t in setup["teams"]["nodes"] for p in t["projects"]["nodes"]}
-        missing = [p for p in self.projects if p not in known]
+        missing = [p for p in self.projects if p not in t.projects]
         if missing:
             raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing)}")
 
     def issues(self, state, extra=None):
-        flt = {"project": {"id": {"in": self.projects}}, "state": {"name": {"eq": state}}, **(extra or {})}
+        flt = {"project": {"id": {"in": self.projects}}, "state": {"id": {"eq": self.states[state]}}, **(extra or {})}
         return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt state { name } project { id name } } } }""", f=flt)["issues"]["nodes"]
+                    nodes { id identifier url priority createdAt updatedAt project { id name } } } }""", f=flt)["issues"]["nodes"]
 
     def later(self, issue):
         return -self.stage.get(issue["project"]["id"], 0)
@@ -194,20 +191,20 @@ class Board:
 
     def attempts(self, issue):
         n = attempt_count(self.entries, issue["identifier"])
-        return n if n < CAP else attempt_count(self.entries, issue["identifier"], self.last_move(issue, "Todo", by_user=True))
+        return n if n < CAP else attempt_count(self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True))
 
     def current_sid(self, issue):
         """The issue's latest SID, unless it began before the issue's latest move to In Progress (minus SKEW)."""
         sid = latest_sid(self.entries, issue["identifier"])
         if not sid:
             return None
-        moved = self.last_move(issue, "In Progress")
+        moved = self.last_move(issue, "in_progress")
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
     def comment_and_move(self, issue, body, state, **extra):
         if self.dry:
             return
-        if state == "In Review" and self.reviewer:
+        if state == "in_review" and self.reviewer:
             extra.setdefault("assigneeId", self.reviewer)
         self.gql("mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
                  i=issue["id"], b=body)
@@ -216,7 +213,7 @@ class Board:
 
     def recover(self):
         """Walk our In Progress issues; returns the resume candidate (issue, sid, k) or None."""
-        mine = [(i, self.current_sid(i)) for i in self.issues("In Progress", {"assignee": {"id": {"eq": self.me}}})]
+        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress", {"assignee": {"id": {"eq": self.me}}})]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
         cand = None
@@ -227,16 +224,16 @@ class Board:
                 continue
             if sid and self.attempts(issue) >= CAP:
                 log(f"recover: {ident} reached {CAP} attempts; In Review")
-                self.comment_and_move(issue, CAP_COMMENT, "In Review")
+                self.comment_and_move(issue, CAP_COMMENT, "in_review")
             elif sid and has_transcript(self.tdir, ident, sid):
                 cand = cand or (issue, sid, resume_count(self.entries, sid) + 1)
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
-                    self.comment_and_move(issue, INTERRUPTED, "Todo", assigneeId=None)
+                    self.comment_and_move(issue, INTERRUPTED, "todo", assigneeId=None)
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
-                self.comment_and_move(issue, INTERRUPTED, "Todo", assigneeId=None)
+                self.comment_and_move(issue, INTERRUPTED, "todo", assigneeId=None)
         return cand
 
     def next_run(self):
@@ -246,7 +243,7 @@ class Board:
             issue, sid, k = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
             return ("resume", issue, sid, k)
-        todo = self.issues("Todo")
+        todo = self.issues("todo")
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
             return ("new",)
@@ -263,24 +260,24 @@ class Board:
     def take(self, only=None):
         """The claimed Todo issue, or None."""
         # Pick: highest priority first, then later stage, then oldest.
-        queue = sorted(self.issues("Todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+        queue = sorted(self.issues("todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
             queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
             if self.attempts(issue) >= CAP:
                 log(f"pick: {issue['identifier']} reached {CAP} attempts; In Review")
-                self.comment_and_move(issue, CAP_COMMENT, "In Review")
+                self.comment_and_move(issue, CAP_COMMENT, "in_review")
                 continue
             log(f"pick: {issue['identifier']} ({len(queue)} in queue)")
             if self.dry:
                 return None
             # Claim: re-check right before claiming so a concurrent change isn't overwritten.
-            current = self.gql("query($i: String!) { issue(id: $i) { state { name } } }", i=issue["id"])["issue"]["state"]["name"]
-            if current != "Todo":
-                log(f"claim: {issue['identifier']} is now {current}; skipping")
+            current = self.gql("query($i: String!) { issue(id: $i) { state { id } } }", i=issue["id"])["issue"]["state"]["id"]
+            if current != self.states["todo"]:
+                log(f"claim: {issue['identifier']} is no longer Todo; skipping")
                 return None
             self.gql("mutation($i: String!, $s: String!, $a: String!) { issueUpdate(id: $i, input: { stateId: $s, assigneeId: $a }) { success } }",
-                     i=issue["id"], s=self.states["In Progress"], a=self.me)
+                     i=issue["id"], s=self.states["in_progress"], a=self.me)
             return issue
         log(f"pick: {only} is not a Todo issue in a runnable project" if only else "pick: queue empty")
         return None

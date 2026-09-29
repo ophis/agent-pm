@@ -16,8 +16,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
-                      overlaps, project_log, run_dir, runnable, transcript)
+from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, STATES, linear_gql,  # noqa: E402
+                      load_config, overlaps, project_log, run_dir, runnable, transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
@@ -130,7 +130,9 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         if path is None or not os.path.exists(path):
             return fail(plog, a.issue, "transient", f"no transcript to resume at {path}", 3)
     humans = cfg.get("human_members") or []
-    tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
+    states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
+    tail = (f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
+            f" Team: {cfg['team']}. States: {states}.")
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run)
