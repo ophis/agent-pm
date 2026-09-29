@@ -104,7 +104,7 @@ def repo_step(a, task, gql, run):
     return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
 
 
-def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS):
+def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT):
     ap = argparse.ArgumentParser(prog="launch.py")
     for f in ("--issue", "--url", "--project", "--sid"):
         ap.add_argument(f, required=True)
@@ -117,7 +117,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         return 2
     os.environ["PATH"] = PATH
     cfg = load_config(config) if config else load_config()
-    jobs = runnable(cfg)
+    jobs = runnable(cfg, root)
     if a.project not in jobs:
         print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)
         return 2

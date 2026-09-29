@@ -23,13 +23,6 @@ PROJECTS = (DR, PD, "Engineering")
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 # Role and task files must exist under the repo root.
 CONFIG = """team = "T"
-[roles.researcher]
-[tasks.deep-research]
-model = "opus"
-effort = "xhigh"
-[tasks.product-design]
-model = "opus"
-effort = "high"
 [projects.p-dr]
 next = "p-pd"
 role = "researcher"

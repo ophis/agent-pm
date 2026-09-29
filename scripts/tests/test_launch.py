@@ -15,18 +15,6 @@ import pipeline  # noqa: E402
 
 CONFIG = """team = "T"
 human_members = ["me@x.com"]
-[roles.researcher]
-[roles.engineer]
-read_only = ["~/playground/private_docs"]
-[tasks.deep-research]
-model = "opus"
-effort = "xhigh"
-add_dirs = ["~/playground/private_docs"]
-[tasks.engineering]
-model = "opus"
-effort = "high"
-add_dirs = ["~/playground/private_docs"]
-repo_from_issue = true
 [projects.p-dr]
 role = "researcher"
 task = "deep-research"
@@ -37,6 +25,14 @@ prefix = "ENG"
 role = "engineer"
 task = "engineering"
 """
+REGISTRY = {
+    "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": "",
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n',
+    "tasks/deep-research.md": "",
+    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
+    "tasks/engineering.md": "",
+    "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["~/playground/private_docs"]\nrepo_from_issue = true\n',
+}
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
 PRIVATE = os.path.expanduser("~/playground/private_docs")
@@ -62,11 +58,20 @@ class Launch(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         self.projects = os.path.join(self.tmp, "projects")
+        self.root = os.path.join(self.tmp, "registry")
+        for rel, text in REGISTRY.items():
+            self.write(rel, text)
         self.write_config(CONFIG)
         self.runs = os.path.join(self.tmp, "logs", "runs.log")
         self.logs = os.path.join(self.tmp, "logs")
         self.calls = []
         self.gql, self.run = object(), object()
+
+    def write(self, rel, text):
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
 
     def write_config(self, text):
         self.config = os.path.join(self.tmp, "pipeline.toml")
@@ -77,7 +82,8 @@ class Launch(unittest.TestCase):
         err = io.StringIO()
         with redirect_stderr(err), mock.patch.dict(os.environ):
             rc = launch.main(list(argv), sh=lambda cmd, **kw: self.calls.append(cmd), config=self.config,
-                             runs=self.runs, logs=self.logs, gql=self.gql, run=self.run, projects=self.projects)
+                             runs=self.runs, logs=self.logs, gql=self.gql, run=self.run, projects=self.projects,
+                             root=self.root)
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc
@@ -125,8 +131,8 @@ class Launch(unittest.TestCase):
     def test_new_prompt_and_flags(self):
         self.run_launch(*self.args())
         self.assertEqual(launch.PRINCIPLES, os.path.join(pipeline.ROOT, "roles", "principles.md"))
-        instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
-        charter = os.path.join(pipeline.ROOT, "roles/researcher.md")
+        instructions = os.path.join(self.root, "tasks/deep-research.md")
+        charter = os.path.join(self.root, "roles/researcher.md")
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
@@ -169,8 +175,8 @@ class Launch(unittest.TestCase):
         self.make_transcript()
         self.assertEqual(self.run_launch(*self.args("resume")), 0)
         argv = self.claude()
-        instructions = os.path.join(pipeline.ROOT, "tasks/deep-research.md")
-        charter = os.path.join(pipeline.ROOT, "roles/researcher.md")
+        instructions = os.path.join(self.root, "tasks/deep-research.md")
+        charter = os.path.join(self.root, "roles/researcher.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
                                   f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
                                   " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr.")
@@ -217,7 +223,7 @@ class Launch(unittest.TestCase):
         self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
 
     def test_engineering_ok_fills_allowed_tools(self):
-        self.write_config(CONFIG.replace("repo_from_issue = true\n", "repo_from_issue = true\n" + f"allowed_tools = [{PUSH_RULE!r}]\n".replace("'", '"')))
+        self.write("tasks/engineering.toml", REGISTRY["tasks/engineering.toml"] + f'allowed_tools = ["{PUSH_RULE}"]\n')
         self.launch_eng(self.ok())
         wt = self.ok().worktree
         self.assertEqual(self.after(self.claude(), "--allowedTools"),
@@ -289,7 +295,7 @@ class Launch(unittest.TestCase):
     def with_memory(self):
         mem = os.path.join(self.tmp, "mem")
         os.makedirs(mem)
-        self.write_config(CONFIG.replace("[roles.researcher]\n", f'[roles.researcher]\nmemory = "{mem}"\n'))
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
         return mem
 
     def test_memory_prompt_and_dir(self):
@@ -308,7 +314,7 @@ class Launch(unittest.TestCase):
         self.assertIn(f"follow the task's resume rule. Your role memory: {mem}; your role charter says how to use it.", self.claude()[2])
 
     def repo_config(self):
-        self.write_config(CONFIG.replace('read_only = ["~/playground/private_docs"]', 'read_only = ["{repo}"]'))
+        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n')
 
     def test_repo_read_only_ok(self):
         self.repo_config()
