@@ -22,15 +22,12 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eng import LONG, REF, SHORT, TransientError, _stderr, sh_run  # noqa: E402
-from pipeline import WORK, linear_gql, load_config, parse_time  # noqa: E402
+from pipeline import WORK, linear_gql, load_config, parse_time, team as linear_team  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
-FINISHED = ("Done", "Canceled")
 IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
 
-Q_SETUP = """query($t: String!) {
-  workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
-Q_ISSUE = """query($i: String!) { issue(id: $i) { state { name }
+Q_ISSUE = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250, orderBy: createdAt) { nodes { createdAt toStateId } } } }"""
 
 
@@ -66,8 +63,8 @@ def locate(path):
 
 
 class Pruner:
-    def __init__(self, gql, cfg, now, dry, run=sh_run, work=WORK):
-        self.gql, self.cfg, self.now, self.dry, self.git_run, self.work = gql, cfg, now, dry, run, work
+    def __init__(self, gql, cfg, now, dry, run=sh_run, work=WORK, team=None):
+        self.gql, self.cfg, self.now, self.dry, self.git_run, self.work, self.team = gql, cfg, now, dry, run, work, team
         self.errors = 0
 
     def say(self, msg):
@@ -122,15 +119,15 @@ class Pruner:
             return 0
         if not idents:  # the common case: no Linear query
             return 0
-        states = self.gql(Q_SETUP, t=self.cfg["team"])["workflowStates"]["nodes"]
-        finished = {s["id"] for s in states if s["name"] in FINISHED}
+        states = (self.team or linear_team(self.gql, self.cfg)).states
+        finished = {states["done"], states["canceled"]}
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
                 self.error(ident, f"Linear: {e}")
                 continue
-            if not issue or issue["state"]["name"] not in FINISHED:
+            if not issue or issue["state"]["id"] not in finished:
                 continue
             # Never the creation time: an old issue that only just finished must not look finished long ago.
             since = max((parse_time(h["createdAt"]) for h in issue["history"]["nodes"]

@@ -3,23 +3,25 @@ from contextlib import redirect_stdout
 from datetime import timedelta
 from functools import partial
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import promote, prune  # noqa: E402
+from board_ids import STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
+import pipeline, promote, prune  # noqa: E402
 import test_promote as tp  # noqa: E402
 
 NOW = tp.NOW
-STATE_IDS = {"Done": "s-done", "Canceled": "s-canceled", "In Progress": "s-prog"}
+STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
 
 
 def gql_for(issues):
     """issues: {identifier: (state name, [(hours ago, state name moved to)])}."""
     def gql(query, **v):
         gql.calls.append(query)
-        if query == prune.Q_SETUP:
-            return {"workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATE_IDS.items()]}}
+        if query == pipeline.Q_TEAM:
+            return {"teams": {"nodes": [team_node()]}}
         state, moves = issues[v["i"]]
-        return {"issue": {"state": {"name": state}, "history": {"nodes": [
+        return {"issue": {"state": {"id": STATE_IDS[state]}, "history": {"nodes": [
             {"createdAt": (NOW - timedelta(hours=h)).isoformat(), "toStateId": STATE_IDS[s]} for h, s in moves]}}}
     gql.calls = []
     return gql
@@ -62,10 +64,11 @@ class PruneTest(unittest.TestCase):
         calls = [("git", "-C", self.clone, "worktree", "remove", "--force", "--force", "--", wt)]
         return calls + ([("git", "-C", self.clone, "branch", "-D", "--", branch)] if branch else [])
 
-    def prune(self, gql):
+    def prune(self, gql, team=None):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = prune.Pruner(gql, {"team": "T"}, NOW, False, run=self.git, work=self.work).run()
+            code = prune.Pruner(gql, {"team": TEAM, "states": dict(IDS_BY_KEY)}, NOW, False, run=self.git, work=self.work,
+                                team=team).run()
         return code, out.getvalue()
 
     def test_done_24h_force_deleted_even_dirty_or_unpushed(self):
@@ -119,7 +122,8 @@ class PruneTest(unittest.TestCase):
     def test_dry_run_changes_nothing(self):
         self.mkw("TASK-49", "TASK-49-x")
         out = io.StringIO()
-        with redirect_stdout(out):
+        cfg = {"team": TEAM, "states": dict(IDS_BY_KEY)}
+        with redirect_stdout(out), mock.patch.object(prune, "load_config", return_value=cfg):
             code = prune.main(["--dry-run"], gql=gql_for({"TASK-49": ("Done", [(30, "Done")])}),
                               run=self.git, work=self.work, now=NOW)
         self.assertEqual(code, 0)
@@ -133,6 +137,21 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertEqual(gql.calls, [])
 
+    def test_given_team_skips_team_query(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+        given = pipeline.Team(TEAM, "Team", {}, dict(IDS_BY_KEY))
+        self.assertEqual(self.prune(gql, team=given)[0], 0)
+        self.assertNotIn(pipeline.Q_TEAM, gql.calls)
+        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
+
+    def test_resolves_team_itself(self):
+        self.mkw("TASK-49", "TASK-49-x")
+        gql = gql_for({"TASK-49": ("Canceled", [(30, "Canceled")])})
+        self.prune(gql)
+        self.assertEqual(gql.calls[0], pipeline.Q_TEAM)
+        self.assertIn("state { id }", prune.Q_ISSUE)
+
     def tick(self, prune_gql):
         """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output)."""
         linear = tp.FakeLinear()
@@ -144,7 +163,7 @@ class PruneTest(unittest.TestCase):
         write(config, tp.CONFIG)
 
         def gql(query, **v):
-            return (prune_gql if query in (prune.Q_SETUP, prune.Q_ISSUE) else linear)(query, **v)
+            return (prune_gql if query == prune.Q_ISSUE else linear)(query, **v)
         out = io.StringIO()
         with redirect_stdout(out):
             code = promote.main([], gql=gql, now=NOW, config=config,
@@ -163,7 +182,7 @@ class PruneTest(unittest.TestCase):
             raise SystemExit("linear api error: down")
         code, state, out = self.tick(down)
         self.assertEqual((code, state), (0, "Done"))
-        self.assertIn("prune-error: linear api error: down", out)
+        self.assertIn("prune-error TASK-49: Linear: linear api error: down", out)
         self.assertEqual(self.git.calls, [])
 
 

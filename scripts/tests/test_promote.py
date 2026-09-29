@@ -8,11 +8,13 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER  # noqa: E402
+from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
+import pipeline  # noqa: E402
 import promote  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
-STATES = {"Todo": "s-todo", "In Progress": "s-prog", "In Review": "s-review", "Handoff": "s-hand", "Done": "s-done"}
+STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
+          "Handoff": IDS_BY_KEY["handoff"], "Done": IDS_BY_KEY["done"]}
 PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd", "Engineering": "p-eng"}
 HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
@@ -32,6 +34,7 @@ def ago(minutes):
 class FakeLinear:
     def __init__(self):
         self.issues, self.children, self.mutations, self.fail = {}, {}, [], set()
+        self.state_ids = None
 
     def add(self, ident, project="Deep Research", state="Handoff", **kw):
         self.issues[ident] = dict(id=ident, identifier=ident, url=f"https://l/{ident}", title=f"Title {ident}",
@@ -40,19 +43,20 @@ class FakeLinear:
         self.issues[ident].update(kw)
         return self.issues[ident]
 
-    def moved(self, ident, minutes, to, frm="s-prog"):
-        self.issues[ident]["history"].append({"createdAt": ago(minutes), "fromStateId": frm, "toStateId": STATES[to]})
+    def moved(self, ident, minutes, to, frm=None):
+        self.issues[ident]["history"].append({"createdAt": ago(minutes), "fromStateId": frm or STATES["In Progress"],
+                                              "toStateId": STATES[to]})
 
     def said(self, ident, minutes, user=HUMAN, body="build X"):
         self.issues[ident]["comments"].append({"body": body, "createdAt": ago(minutes), "user": user})
 
     def __call__(self, query, **v):
-        if query == promote.Q_SETUP:
-            return {"teams": {"nodes": [{"id": "team", "projects": {"nodes": [{"id": i, "name": n} for n, i in PROJECTS.items()]}}]},
-                    "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]}}
+        if query == pipeline.Q_TEAM:
+            return {"teams": {"nodes": [team_node(self.state_ids, [(i, n) for n, i in PROJECTS.items()])]}}
         if "users(filter" in query:
             return {"users": {"nodes": [{"id": "u-human"}] if v["e"] == HUMAN["email"] else []}}
         if query == promote.Q_HANDOFF:
+            self.handoff_vars = v
             return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]})
                                          for i in self.issues.values() if i["state"] == "Handoff"]}}
         if query == promote.Q_DETAIL:
@@ -60,7 +64,7 @@ class FakeLinear:
                 raise SystemExit("linear api error: boom")
             i = self.issues[v["i"]]
             # the API returns newest first
-            return {"issue": {"state": {"name": i["state"]}, "history": {"nodes": list(reversed(i["history"]))},
+            return {"issue": {"state": {"id": STATES[i["state"]]}, "history": {"nodes": list(reversed(i["history"]))},
                               "comments": {"nodes": list(reversed(i["comments"]))},
                               "relations": {"nodes": [{"relatedIssue": {"id": r}} for r in i["relations"]]},
                               "inverseRelations": {"nodes": [{"issue": {"id": r}} for r in i["inverse"]]}}}
@@ -92,8 +96,8 @@ class FakePruner:
     """Stands in for prune.Pruner; records its constructor args."""
     calls = []
 
-    def __init__(self, gql, cfg, now, dry):
-        FakePruner.calls.append((gql, cfg, now, dry))
+    def __init__(self, gql, cfg, now, dry, team=None):
+        FakePruner.calls.append((gql, cfg, now, dry, team))
 
     def run(self):
         return 0
@@ -136,7 +140,7 @@ class TestPromote(Base):
         (child,) = self.fake.children.values()
         self.assertEqual(child["id"], promote.child_id("DR-1", "p-pd", ago(30)))
         self.assertEqual((child["projectId"], child["stateId"], child["priority"], child["teamId"]),
-                         ("p-pd", "s-todo", 2, "team"))
+                         ("p-pd", STATES["Todo"], 2, TEAM))
         self.assertEqual(child["title"], "PRD: Title DR-1")
         self.assertEqual(child["description"], "Handoff from DR-1: https://l/DR-1\n\n## Source\n- Report: https://gh/r.md"
                                                f"\n\n## Instructions\nMe, {ago(45)}:\nbuild X"
@@ -162,7 +166,7 @@ class TestPromote(Base):
         def stale(query, **v):
             out = orig(query, **v)
             if query == promote.Q_DETAIL:
-                out["issue"]["state"] = {"name": "Done"}
+                out["issue"]["state"] = {"id": STATES["Done"]}
             return out
         self.fake = stale
         self.run_main()
@@ -175,6 +179,21 @@ class TestPromote(Base):
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
         self.assertEqual(len(self.fake.children), 1)
+
+    def test_handoff_query_by_id(self):
+        self.ready()
+        self.run_main()
+        self.assertEqual(self.fake.handoff_vars, {"t": TEAM, "s": IDS_BY_KEY["handoff"]})
+        self.assertIn("state: { id: { eq: $s } }", promote.Q_HANDOFF)
+        self.assertIn("team: { id: { eq: $t } }", promote.Q_HANDOFF)
+
+    def test_bad_state_id_stops_before_changes(self):
+        self.ready()
+        self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main()
+        self.assertIn("[states] not workflow states of team 'Team': done", str(cm.exception.code))
+        self.assertEqual(self.fake.mutations, [])
 
     def test_no_attachments_omits_source(self):
         self.ready()
@@ -533,10 +552,11 @@ class TestPruneHook(Base):
     def test_prune_runs_each_tick(self):
         self.run_main("--dry-run")
         self.assertEqual(len(FakePruner.calls), 1)
-        gql, cfg, now, dry = FakePruner.calls[0]
+        gql, cfg, now, dry, team = FakePruner.calls[0]
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)
+        self.assertEqual(team, pipeline.Team(TEAM, "Team", {i: n for n, i in PROJECTS.items()}, dict(IDS_BY_KEY)))
 
     def test_prune_real_run(self):
         self.run_main()
@@ -552,7 +572,7 @@ class TestPruneHook(Base):
 
     def test_prune_failure_does_not_break_promote(self):
         class Boom:
-            def __init__(self, *a):
+            def __init__(self, *a, **kw):
                 pass
 
             def run(self):
