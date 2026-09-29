@@ -2,10 +2,13 @@
 """Prune worktrees of finished issues (TASK-49).
 
 For every issue in Done or Canceled for at least 24 hours (an undo window for
-reopens): for each worktree under work/<ID>/worktrees/, if the worktree has no
-uncommitted changes and its branch has no unpushed commits, remove the worktree
-(`git worktree remove`, never --force) and delete the local branch, which was
-already pushed. Remote branches and every repo's main workspace are never
+reopens; the finish time must be confirmed from the issue history, otherwise
+the issue is skipped): for each real directory under work/<ID>/worktrees/
+(symlinks are never followed, nothing may escape the issue's own directory),
+if the worktree has no uncommitted changes and the actual remote is confirmed
+(via ls-remote, never the cached remote-tracking ref) to contain its commits,
+remove the worktree (`git worktree remove`, never --force) and delete the
+local branch. Remote branches and every repo's main workspace are never
 touched. work/<ID>/ itself is kept: `cd work/<ID> && claude --resume <sid>`
 (TASK-26) depends on it, as do the session logs.
 
@@ -88,22 +91,49 @@ class Pruner:
         return res.returncode == 0
 
     def finished_since(self, detail):
-        """When the issue last entered Done/Canceled; falls back to creation."""
-        hist = sorted((h for h in detail["history"]["nodes"] if h["toStateId"] in self.finished_ids),
-                      key=lambda h: parse_time(h["createdAt"]))
-        return parse_time(hist[-1]["createdAt"]) if hist else parse_time(detail["createdAt"])
+        """When the issue last entered Done/Canceled, or None if it cannot be confirmed.
+
+        Never falls back to creation time: an old issue that only just finished
+        must not look finished-24h-ago.
+        """
+        hist = [h for h in detail["history"]["nodes"] if h["toStateId"] in self.finished_ids]
+        if not hist:
+            return None
+        hist = sorted(hist, key=lambda h: parse_time(h["createdAt"]))
+        return parse_time(hist[-1]["createdAt"])
 
     def worktree_dirs(self, ident):
-        """Absolute worktree dirs under work/<ID>/worktrees/, sorted; [] if none."""
+        """(dirs, rejected): real worktree dirs under work/<ID>/worktrees/, sorted.
+
+        Symlinks are never followed and nothing may escape the issue's own
+        directory: an entry must be a real directory whose real path sits
+        directly inside work/<ID>/worktrees/. Anything else is rejected and
+        logged, never touched.
+        """
         if not IDENT_RE.fullmatch(ident):
-            return []
+            return [], 0
+        work_real = os.path.realpath(self.work)
         base = os.path.join(self.work, ident, "worktrees")
+        base_real = os.path.realpath(base)
+        if not base_real.startswith(work_real + os.sep):
+            self.say(f"prune-skip {ident}: worktrees dir escapes the work dir, refusing to touch")
+            return [], 1
         try:
             names = sorted(os.listdir(base))
         except OSError:
-            return []
-        return [os.path.join(base, n) for n in names
-                if os.path.isdir(os.path.join(base, n)) and not n.startswith(".")]
+            return [], 0
+        dirs, rejected = [], 0
+        for n in names:
+            if n.startswith("."):
+                continue
+            p = os.path.join(base, n)
+            if os.path.islink(p) or not os.path.isdir(p) or \
+                    os.path.realpath(p) != os.path.join(base_real, n):
+                self.say(f"prune-skip {ident}/{n}: not a real directory inside {ident}/, refusing to touch")
+                rejected += 1
+                continue
+            dirs.append(p)
+        return dirs, rejected
 
     def inspect(self, wt):
         """("ok", branch, clone) if the worktree may be removed, else ("skip", reason)."""
@@ -123,9 +153,24 @@ class Pruner:
             return "skip", "detached HEAD or unsafe branch name"
         if self._git(wt, "status", "--porcelain").strip():
             return "skip", "uncommitted changes"
-        if not self._git_ok(wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"):
+        # Never trust the cached remote-tracking ref: ask the actual remote
+        # whether it contains our commits. Anything unconfirmable is skipped.
+        try:
+            upstream = self._git(wt, "rev-parse", "--symbolic-full-name", "@{u}").strip()
+        except TransientError:
             return "skip", "no upstream: cannot verify the branch was pushed"
-        if self._git(wt, "rev-list", "--count", "@{u}..HEAD").strip() != "0":
+        m = re.fullmatch(r"refs/remotes/([^/]+)/(.+)", upstream)
+        if not m:
+            return "skip", f"cannot parse upstream {upstream}"
+        remote, rbranch = m.group(1), m.group(2)
+        try:
+            ls = self._git(wt, "ls-remote", remote, f"refs/heads/{rbranch}")
+        except TransientError:
+            return "skip", f"cannot reach the remote to confirm {upstream}"
+        tips = [ln.split()[0] for ln in ls.splitlines() if ln.split()]
+        if not tips:
+            return "skip", f"cannot confirm {upstream} on the remote"
+        if not self._git_ok(wt, "merge-base", "--is-ancestor", "HEAD", tips[0]):
             return "skip", "unpushed commits"
         clone = os.path.dirname(self._git(wt, "rev-parse", "--git-common-dir").strip())
         return "ok", branch, clone
@@ -137,7 +182,9 @@ class Pruner:
     def prune_issue(self, ident):
         """(cleaned, skipped, errors) for one finished issue."""
         cleaned, skipped, errors = 0, 0, 0
-        for wt in self.worktree_dirs(ident):
+        wts, rejected = self.worktree_dirs(ident)
+        skipped += rejected
+        for wt in wts:
             name = os.path.basename(wt)
             try:
                 state, *rest = self.inspect(wt)
@@ -174,6 +221,8 @@ class Pruner:
         for n in names:
             if not IDENT_RE.fullmatch(n):
                 continue
+            if os.path.islink(os.path.join(self.work, n)):
+                continue
             wt = os.path.join(self.work, n, "worktrees")
             try:
                 entries = os.listdir(wt)
@@ -198,7 +247,12 @@ class Pruner:
                 continue
             if issue is None or (issue.get("state") or {}).get("name") not in FINISHED:
                 continue
-            if self.now - self.finished_since(issue) < QUARANTINE:
+            since = self.finished_since(issue)
+            if since is None:
+                self.say(f"prune-skip {ident}: finish time unknown, refusing to prune")
+                skipped += 1
+                continue
+            if self.now - since < QUARANTINE:
                 young += 1
                 continue
             c, s, e = self.prune_issue(ident)

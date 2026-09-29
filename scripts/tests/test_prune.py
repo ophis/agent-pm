@@ -54,9 +54,22 @@ def gql_for(issues, details):
     return gql
 
 
-def git_table(wt, branch="TASK-49-x", dirty="", unpushed="0", upstream=True,
-              registered=True, head="ref"):
+def git_table(wt, branch="TASK-49-x", dirty="", upstream=True, registered=True,
+              head="ref", ls_remote="ok"):
+    """ls_remote: ok | diverged (remote lacks our commits) | missing (branch not
+    on remote) | down (ls-remote raises)."""
     wt_real = os.path.realpath(wt)
+    remote_sha = "def456"
+    if ls_remote == "ok":
+        ls_res, mb_res = ok(f"{remote_sha}\trefs/heads/{branch}\n"), ok("")
+    elif ls_remote == "diverged":
+        ls_res, mb_res = ok(f"{remote_sha}\trefs/heads/{branch}\n"), ok("", code=1)
+    elif ls_remote == "missing":
+        ls_res, mb_res = ok(""), ok("")
+    elif ls_remote == "down":
+        ls_res, mb_res = OSError("net down"), ok("")
+    else:
+        raise ValueError(ls_remote)
     table = [
         (("git", "-C", wt, "rev-parse", "--is-inside-work-tree"), ok("true\n")),
         (("git", "-C", wt, "worktree", "list", "--porcelain"),
@@ -66,9 +79,10 @@ def git_table(wt, branch="TASK-49-x", dirty="", unpushed="0", upstream=True,
         (("git", "-C", wt, "rev-parse", "--abbrev-ref", "HEAD"),
          ok("HEAD\n" if head == "detached" else f"{branch}\n")),
         (("git", "-C", wt, "status", "--porcelain"), ok(dirty)),
-        (("git", "-C", wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
-         ok(f"origin/{branch}\n") if upstream else ok("", code=128, stderr="no upstream")),
-        (("git", "-C", wt, "rev-list", "--count", "@{u}..HEAD"), ok(f"{unpushed}\n")),
+        (("git", "-C", wt, "rev-parse", "--symbolic-full-name", "@{u}"),
+         ok(f"refs/remotes/origin/{branch}\n") if upstream else ok("", code=128, stderr="no upstream")),
+        (("git", "-C", wt, "ls-remote", "origin", f"refs/heads/{branch}"), ls_res),
+        (("git", "-C", wt, "merge-base", "--is-ancestor", "HEAD", remote_sha), mb_res),
         (("git", "-C", wt, "rev-parse", "--git-common-dir"), ok("/pg/repo/.git\n")),
         (("git", "-C", "/pg/repo", "worktree", "remove"), ok("")),
         (("git", "-C", "/pg/repo", "branch", "-d"), ok("")),
@@ -151,12 +165,62 @@ class PruneTest(unittest.TestCase):
 
     def test_unpushed_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
-        run = FakeRun(git_table(wt, unpushed="2"))
+        run = FakeRun(git_table(wt, ls_remote="diverged"))
         gql = gql_for([("TASK-49", "TASK-49")],
                       {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
         code, out = self.pruner(gql, run)
         self.assertEqual(code, 0)
         self.assertIn("prune-skip TASK-49/TASK-49-x: unpushed commits", out)
+        argv = [c[0][:5] for c in run.calls]
+        self.assertNotIn(("git", "-C", "/pg/repo", "worktree", "remove"), argv)
+
+    def test_remote_branch_missing_skipped(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        run = FakeRun(git_table(wt, ls_remote="missing"))
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("cannot confirm refs/remotes/origin/TASK-49-x on the remote", out)
+        argv = [c[0][:5] for c in run.calls]
+        self.assertNotIn(("git", "-C", "/pg/repo", "worktree", "remove"), argv)
+
+    def test_remote_unreachable_skipped(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        run = FakeRun(git_table(wt, ls_remote="down"))
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("cannot reach the remote", out)
+        argv = [c[0][:5] for c in run.calls]
+        self.assertNotIn(("git", "-C", "/pg/repo", "worktree", "remove"), argv)
+
+    def test_unknown_finish_time_skipped(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        run = FakeRun(git_table(wt))
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (DONE, [], iso(NOW - timedelta(hours=400)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertEqual(run.calls, [])
+        self.assertIn("finish time unknown", out)
+
+    def test_symlink_worktree_rejected(self):
+        victim = self.mkw("TASK-50", "TASK-50-x")  # must survive untouched
+        link = os.path.join(self.work, "TASK-49", "worktrees", "evil")
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(victim, link)
+        run = FakeRun(git_table(victim, branch="TASK-50-x"))
+        gql = gql_for([("TASK-49", "TASK-49"), ("TASK-50", "TASK-50")],
+                      {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40))),
+                       "TASK-50": (PROG, self.hist((30, PROG)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertIn("prune-skip TASK-49/evil: not a real directory inside TASK-49/, refusing to touch", out)
+        argv = [c[0] for c in run.calls]
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "worktree", "remove")])
+        self.assertFalse([a for a in argv if a[:4] == ("git", "-C", "/pg/repo", "branch", "-d")])
 
     def test_no_upstream_skipped(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
