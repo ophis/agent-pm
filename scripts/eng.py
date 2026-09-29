@@ -118,6 +118,10 @@ def _existing_branches(ident, clone, run):
         return Transient(f"git ls-remote: {_stderr(res)}")
     return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
 
+def in_playground(clone, playground=PLAYGROUND):
+    """True if clone is a real (non-symlink) entry directly in playground, where the repo step keeps clones."""
+    return not os.path.islink(clone) and os.path.dirname(os.path.realpath(clone)) == os.path.realpath(playground)
+
 def resolve(issue_id, gql, run, playground=PLAYGROUND):
     try:
         issue = gql(Q_ISSUE, i=issue_id)["issue"]
@@ -140,7 +144,7 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND):
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{owner}/{name}: unsafe default branch name")
     clone = os.path.join(playground, name)
-    if os.path.islink(clone) or not os.path.realpath(clone).startswith(os.path.realpath(playground) + os.sep):
+    if not in_playground(clone, playground):
         return Invalid(f"{clone} is a symlink or outside {playground}")
     want = f"github.com/{owner}/{name}".lower()
     if os.path.exists(clone):

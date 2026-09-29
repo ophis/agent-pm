@@ -6,6 +6,10 @@ in Todo with the source links and the human instructions, relate it, and move th
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
+
+At the end of every tick, scripts/prune.py's Pruner removes the worktrees of
+finished issues (TASK-49); a prune failure is logged and never breaks the
+Handoff work.
 """
 import hashlib
 import os
@@ -200,12 +204,25 @@ class Promoter:
         self.comment(src, body)
 
 
-def main(argv, gql=linear_gql, now=None, config=CONFIG):
+def run_prune(gql, cfg, now, dry, pruner=None):
+    """Prune finished issues' worktrees; a prune failure, even an ImportError, is logged and never breaks promote."""
+    try:
+        if pruner is None:
+            from prune import Pruner as pruner
+        pruner(gql, cfg, now, dry).run()
+    except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
+        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
+
+
+def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     cfg = load_config(config)
-    Promoter(gql, cfg, now or datetime.now(timezone.utc), "--dry-run" in argv, wait="--now" not in argv).run()
+    now = now or datetime.now(timezone.utc)
+    dry = "--dry-run" in argv
+    Promoter(gql, cfg, now, dry, wait="--now" not in argv).run()
+    run_prune(gql, cfg, now, dry, pruner)
     return 0
 
 
