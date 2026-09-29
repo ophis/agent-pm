@@ -87,6 +87,17 @@ class FakeLinear:
         raise AssertionError(query)
 
 
+class FakePruner:
+    """Stands in for prune.Pruner; records its constructor args."""
+    calls = []
+
+    def __init__(self, gql, cfg, now, dry):
+        FakePruner.calls.append((gql, cfg, now, dry))
+
+    def run(self):
+        return 0
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -100,10 +111,11 @@ class Base(unittest.TestCase):
             f.write(text)
         return path
 
-    def run_main(self, *argv):
+    def run_main(self, *argv, pruner=FakePruner):
+        FakePruner.calls.clear()
         out = io.StringIO()
         with redirect_stdout(out):
-            rc = promote.main(list(argv), gql=self.fake, now=NOW, config=self.config)
+            rc = promote.main(list(argv), gql=self.fake, now=NOW, config=self.config, pruner=pruner)
         self.out = out.getvalue()
         return rc
 
@@ -514,6 +526,30 @@ class TestDryRun(Base):
         self.assertEqual(self.fake.mutations, [])
         self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
         self.assertIn("dry-run: handoff-bounce DR-2", self.out)
+
+
+class TestPruneHook(Base):
+    def test_prune_runs_each_tick(self):
+        self.run_main("--dry-run")
+        self.assertEqual(len(FakePruner.calls), 1)
+        gql, cfg, now, dry = FakePruner.calls[0]
+        self.assertIs(gql, self.fake)
+        self.assertEqual(now, NOW)
+        self.assertTrue(dry)
+
+    def test_prune_failure_does_not_break_promote(self):
+        class Boom:
+            def __init__(self, *a):
+                pass
+
+            def run(self):
+                raise RuntimeError("boom")
+
+        self.ready("DR-1")
+        rc = self.run_main("--dry-run", pruner=Boom)
+        self.assertEqual(rc, 0)
+        self.assertIn("prune-error", self.out)
+        self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
 
 
 if __name__ == "__main__":

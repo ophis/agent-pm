@@ -36,6 +36,8 @@ def iso(dt):
 
 def gql_for(issues, details):
     """issues: [(id, identifier)]; details: {id: (state_id, [(createdAt, toStateId)], createdAt)}."""
+    names = {DONE: "Done", CANCELED: "Canceled", PROG: "In Progress"}
+
     def gql(query, **v):
         if "workflowStates" in query:
             return {"teams": {"nodes": [{"id": "team"}]},
@@ -45,6 +47,7 @@ def gql_for(issues, details):
         if "history" in query:
             sid, hist, created = details[v["i"]]
             return {"issue": {"identifier": v["i"], "createdAt": created,
+                              "state": {"name": names[sid]},
                               "history": {"nodes": [{"createdAt": c, "toStateId": s}
                                                     for c, s in hist]}}}
         return {"issues": {"nodes": [{"id": i, "identifier": n} for i, n in issues]}}
@@ -209,6 +212,29 @@ class PruneTest(unittest.TestCase):
         run = FakeRun([])
         gql = gql_for([("TASK-49", "TASK-49")],
                       {"TASK-49": (DONE, self.hist((30, DONE)), iso(NOW - timedelta(hours=40)))})
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertEqual(run.calls, [])
+        self.assertIn("nothing to do", out)
+
+    def test_no_worktrees_no_linear_queries(self):
+        run = FakeRun([])
+        inner = gql_for([], {})
+        calls = []
+
+        def gql(query, **v):
+            calls.append(query)
+            return inner(query, **v)
+
+        code, out = self.pruner(gql, run)
+        self.assertEqual(code, 0)
+        self.assertFalse([q for q in calls if "history" in q])  # only the setup query runs
+
+    def test_unfinished_issue_untouched(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        run = FakeRun(git_table(wt))
+        gql = gql_for([("TASK-49", "TASK-49")],
+                      {"TASK-49": (PROG, self.hist((30, PROG)), iso(NOW - timedelta(hours=40)))})
         code, out = self.pruner(gql, run)
         self.assertEqual(code, 0)
         self.assertEqual(run.calls, [])

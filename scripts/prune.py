@@ -9,6 +9,10 @@ already pushed. Remote branches and every repo's main workspace are never
 touched. work/<ID>/ itself is kept: `cd work/<ID> && claude --resume <sid>`
 (TASK-26) depends on it, as do the session logs.
 
+Runs at the end of promote's tick (every 15 minutes); a prune failure is logged
+and never breaks promote. Linear is only queried when a worktree exists on
+disk, so an idle tick costs nothing.
+
 --dry-run   Print the plan; change nothing.
 Needs Python 3.11+ (tomllib).
 Exit 0 = done (skips are normal), 2 = bad arguments, 3 = a top-level transient
@@ -33,10 +37,7 @@ REF_RE = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 Q_SETUP = """query($t: String!) {
   teams(filter: { name: { eq: $t } }) { nodes { id } }
   workflowStates(filter: { team: { name: { eq: $t } } }) { nodes { id name } } }"""
-Q_FINISHED = """query($t: String!) { issues(filter: { team: { name: { eq: $t } },
-  state: { name: { in: ["Done", "Canceled"] } } }, first: 100, includeArchived: true) {
-  nodes { id identifier } } }"""
-Q_DETAIL = """query($i: String!) { issue(id: $i) { identifier createdAt
+Q_ISSUE = """query($i: String!) { issue(id: $i) { identifier state { name } createdAt
   history(first: 100) { nodes { createdAt toStateId } } } }"""
 
 
@@ -163,24 +164,47 @@ class Pruner:
             cleaned += 1
         return cleaned, skipped, errors
 
-    def run(self):
-        issues = self.gql(Q_FINISHED, t=self.cfg["team"])["issues"]["nodes"]
-        cleaned, skipped, errors, young = 0, 0, 0, 0
-        for src in issues:
-            ident = src["identifier"]
+    def worktree_idents(self):
+        """Sorted issue identifiers with a non-empty work/<ID>/worktrees/ dir."""
+        try:
+            names = sorted(os.listdir(self.work))
+        except OSError:
+            return []
+        out = []
+        for n in names:
+            if not IDENT_RE.fullmatch(n):
+                continue
+            wt = os.path.join(self.work, n, "worktrees")
             try:
-                detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
+                entries = os.listdir(wt)
+            except OSError:
+                continue
+            if any(not e.startswith(".") and os.path.isdir(os.path.join(wt, e)) for e in entries):
+                out.append(n)
+        return out
+
+    def run(self):
+        idents = self.worktree_idents()
+        if not idents:  # the common case: Linear is not queried at all
+            self.say("prune: nothing to do (no worktrees on disk)")
+            return 0
+        cleaned, skipped, errors, young = 0, 0, 0, 0
+        for ident in idents:
+            try:
+                issue = self.gql(Q_ISSUE, i=ident)["issue"]
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
                 self.say(f"prune-error {ident}: Linear: {e}")
                 errors += 1
                 continue
-            if self.now - self.finished_since(detail) < QUARANTINE:
+            if issue is None or (issue.get("state") or {}).get("name") not in FINISHED:
+                continue
+            if self.now - self.finished_since(issue) < QUARANTINE:
                 young += 1
                 continue
             c, s, e = self.prune_issue(ident)
             cleaned, skipped, errors = cleaned + c, skipped + s, errors + e
         if not (cleaned or skipped or errors):
-            self.say(f"prune: nothing to do ({len(issues)} finished issues, {young} still in quarantine)")
+            self.say(f"prune: nothing to do ({len(idents)} with worktrees on disk, {young} still in quarantine)")
         else:
             self.say(f"prune: done (cleaned {cleaned}, skipped {skipped}, errors {errors})")
         return 3 if errors else 0
