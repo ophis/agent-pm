@@ -1,6 +1,6 @@
 # TASK-44: Role and task file pairs (change request) — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=124a7b7802c1e68922489d61d478398870853632 review_round=0 spec_file=docs/specs/2026-09-29-task-44-role-task-pairs-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-44/worktrees/TASK-44-role-task branch=TASK-44-role-task base_ref=124a7b7802c1e68922489d61d478398870853632 review_round=0 spec_file=docs/specs/2026-09-29-task-44-role-task-pairs-design.md
 
 ## Implementation plan
 
@@ -791,3 +791,8 @@ From the worktree, with everything committed: `python3 -m unittest discover -s s
 - S4: plan written (4 tasks: pairs+loader+fixtures, launcher memory-vs-repo, router registry guard, docs); execution: subagent-driven-development, per-task reviews kept, final review skipped (S7).
 - S5: tasks 1-4 done (315394c pairs+loader, 7050a49 launcher memory-vs-repo, b26e99d router registry guard, c073c4b docs); per-task reviews approved; minors in the SDD ledger. Ruling: test_bad_names fixture renamed roles/Reviewer.* (case-insensitive APFS clobbered roles/researcher.*).
 - S6: unittest 236 OK; router.py --now --dry-run rc 0 (guard passed; plan: new, usage blocked at 94%); promote.py --dry-run rc 0; untracked tasks/zz-probe.toml -> router dry-run rc 1 "roles/ or tasks/ has uncommitted changes: tasks/zz-probe.toml".
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[architecture,code-quality,test,security] (performance dropped: config loading + one git call per tick; security added: run permissions)
+- S7 reviewers: correctness=a74bf0a9d39294177 requirement-fidelity=a66fcd30b814a1fb0 doc=aa15d875d6c65ab8f architecture=a6854eda9296b9218 code-quality=a4392079ccc32d0b2 test=a89f12582dfcbc141 security=a4b39268dea413ecb
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS architecture=PASS code-quality=PASS test=PASS security=PASS -> converged.
+- S8: skipped by instruction (keep the build commits; the user squash-merges).
+- Residual NON-BLOCKING: a missing roles/ or tasks/ dir, a non-UTF-8 .toml, or a non-string memory/read_only raise a raw error instead of a file-prefixed SystemExit (still loud); allowed_tools/add_dirs/repo_from_issue types unchecked (e.g. a string allowed_tools); `git update-index --assume-unchanged/--skip-worktree` in the live clone hides a tracked edit from the registry guard (same residual class as committing there); ~/.local/bin not in the memory protected set; the launcher's config error fires after eng.resolve may have cloned the repo; the .md/.toml extension set is duplicated in _pairs and uncommitted; registry() returns roles normalized but tasks raw; CLAUDE.md gotcha says ".md/.toml changes" though any tracked change under roles/ or tasks/ counts; README roles/tasks bullets are long and repeat some CLAUDE.md detail; minor test gaps (guard-before-prune not discriminated, config-error path not pinned, no C/ R porcelain unit cases).
