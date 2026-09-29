@@ -1,6 +1,6 @@
 # TASK-66: reference the Linear team and workflow states by id — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s branch=TASK-66-reference-the-linear-team-and-workflow-s base_ref=b5473cec0fe9b27b79d319dfa6ea9ac350197d01 review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s/docs/specs/2026-09-29-task-66-ids-not-names-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s branch=TASK-66-reference-the-linear-team-and-workflow-s base_ref=b5473cec0fe9b27b79d319dfa6ea9ac350197d01 review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-66/worktrees/TASK-66-reference-the-linear-team-and-workflow-s/docs/specs/2026-09-29-task-66-ids-not-names-design.md
 
 ## Implementation plan
 
@@ -427,3 +427,7 @@ and the check with `if not issue or issue["state"]["id"] not in finished:`. Modu
 - S3 r0: architecture=PASS spec-fitness=PASS -> converged. Folded non-blockers: eng.py not a load_config caller; Pruner takes promote's Team (no duplicate query); launcher-only cfg["states"] read; test fixtures get the new keys.
 - S5: 4 tasks via subagent-driven-development, each task review clean (commits a0af2c4, dfdaead, f98936a, 3b1f8cd); deferred minors in the SDD ledger.
 - S6: 255 tests OK; grep gate clean; live `router.py --plan --dry-run` and `promote.py --dry-run` OK; live `team()` stops on a foreign state id / unknown team with the spec'd messages.
+- S7 panel: core=[correctness,doc,requirement-fidelity] +optional=[code-quality,test] (architecture: design passed S3, performance: one query per tick - dropped as marginal) transport=Workflow
+- S7 r0: correctness=PASS doc=PASS requirement-fidelity=PASS code-quality=PASS test=PASS -> converged. Spec G2 `take` log wording amended to the built line (requirement-fidelity spec-drift note).
+- S7 residual NON-BLOCKING: README/CLAUDE.md say router, promote and prune check ids "at start" (prune: only when it queries Linear, or reuses promote's Team); `run_prune` param `team` shadows the imported function; launch.py and test_launch RealConfig build the Team/States string twice; test_real_config_ids hard-codes the production team id; Team (frozen, dict fields) is unhashable; prune in promote's tick logs a Linear outage per issue; router makes a separate viewer query.
+- S8: skipped per the Engineering task (keep the commits).

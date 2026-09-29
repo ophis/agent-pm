@@ -56,7 +56,7 @@ canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 - `__init__`: `viewer { id }` in its own query; `t = team(gql, cfg)`; `self.states = t.states`; runnable projects are checked against `t.projects` (same message as today). `reviewer()` stays.
 - `issues(state, extra)` takes a logical key; filter `"state": {"id": {"eq": self.states[state]}}`. The unused `state { name }` is dropped from the returned nodes.
 - `last_move`, `attempts`, `current_sid`, `comment_and_move`, `recover`, `next_run`, `take`: logical keys (`"todo"`, `"in_progress"`, `"in_review"`) everywhere a state name was used; `comment_and_move` assigns the reviewer when the key is `"in_review"`.
-- `take` claim re-check: query `state { id }`, skip unless it equals `self.states["todo"]`; its log line names the state by id.
+- `take` claim re-check: query `state { id }`, skip unless it equals `self.states["todo"]`; its log line says the issue is no longer Todo.
 
 **promote.py** (`Promoter`):
 - `__init__`: `t = team(gql, cfg)`; `self.team = t.id`, `self.states = t.states`, `self.projects = t.projects`. `Q_SETUP` and the `STATES` name tuple go (G3 validates all states); the `next`-project check against `self.projects` stays.
