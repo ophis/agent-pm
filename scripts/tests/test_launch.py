@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -335,6 +336,59 @@ class Launch(unittest.TestCase):
     def test_log_named_after_task(self):
         self.launch_eng(eng.Transient("x"))
         self.assertIn("transient TASK-1: x", self.plog("engineering"))
+
+    def eng_memory(self, mem):
+        os.makedirs(mem, exist_ok=True)
+        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n')
+
+    def ok_at(self, clone):
+        wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
+        return eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", clone, "main", "TASK-1-demo", wt)
+
+    def assert_config_error(self, mem):
+        self.assertEqual(self.calls, [])
+        last = self.plog("engineering").splitlines()[-1]
+        self.assertRegex(last, rf"^\S+ \S+ config-error TASK-1: role memory {re.escape(mem)} overlaps the issue's repo \S+$")
+        self.assertIn("config-error TASK-1: role memory", self.err)
+
+    def test_memory_overlapping_repo_is_config_error(self):
+        playground = os.path.join(self.tmp, "playground")
+        clone = os.path.join(playground, "demo")
+        os.makedirs(clone)
+        worktrees = os.path.join(self.work, "TASK-1", "worktrees")
+        cases = [("at clone", clone, self.ok_at(clone)), ("under clone", os.path.join(clone, "mem"), self.ok_at(clone)),
+                 ("ancestor of clone", playground, self.ok_at(clone)),
+                 ("under worktrees", os.path.join(worktrees, "mem"), self.ok_at(clone)),
+                 ("under worktrees, invalid repo", os.path.join(worktrees, "mem"), eng.Invalid("no Repo: line"))]
+        for label, mem, result in cases:
+            with self.subTest(label):
+                self.calls = []
+                self.eng_memory(mem)
+                self.assertEqual(self.launch_eng(result), 2)
+                self.assert_config_error(mem)
+
+    def test_memory_overlapping_repo_on_resume(self):
+        clone = os.path.join(self.tmp, "playground", "demo")
+        os.makedirs(clone)
+        self.eng_memory(clone)
+        self.make_transcript()
+        self.assertEqual(self.launch_eng(self.ok_at(clone), mode="resume"), 2)
+        self.assert_config_error(clone)
+
+    def test_memory_apart_from_repo_starts(self):
+        clone = os.path.join(self.tmp, "playground", "demo")
+        os.makedirs(clone)
+        mem = os.path.join(self.tmp, "engmem")
+        self.eng_memory(mem)
+        self.assertEqual(self.launch_eng(self.ok_at(clone)), 0)
+        self.assertIn(f"Your role memory: {mem};", self.claude()[2])
+
+    def test_memory_check_skipped_without_repo_step(self):
+        mem = os.path.join(self.work, "TASK-1", "worktrees", "mem")
+        os.makedirs(mem)
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
+        self.assertEqual(self.run_launch(*self.args()), 0)
+        self.assertEqual(len(self.calls), 1)
 
 
 class RealConfig(unittest.TestCase):

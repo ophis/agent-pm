@@ -2,8 +2,9 @@
 """Launcher: starts one claude run for an issue the router already claimed (or resumes it), per pipeline.toml.
 
 launch.py --issue ID --url URL --project PROJECT_ID --sid SID --mode new|resume [--k K]
-Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project, 3 when the run cannot start yet
-(transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
+Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project or a config error (a role memory
+overlapping the issue's repo; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the
+Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -16,7 +17,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
 from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, linear_gql, load_config,  # noqa: E402
-                      project_log, run_dir, runnable, transcript)
+                      overlaps, project_log, run_dir, runnable, transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
@@ -77,12 +78,13 @@ def script(a, cmd, env, plog, runs):
             f'ts=$(date "+%F %T"); echo {end} >> {q(plog)}; echo {end} >> {q(runs)}')
 
 
-def transient(plog, issue, reason):
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} transient {issue}: {reason}"
+def fail(plog, issue, kind, reason, rc):
+    """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {kind} {issue}: {reason}"
     with open(plog, "a") as f:
         f.write(line + "\n")
     print(line, file=sys.stderr)
-    return 3
+    return rc
 
 
 def repo_step(a, task, gql, run):
@@ -126,16 +128,20 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
-            return transient(plog, a.issue, f"no transcript to resume at {path}")
+            return fail(plog, a.issue, "transient", f"no transcript to resume at {path}", 3)
     humans = cfg.get("human_members") or []
     tail = f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run)
         if isinstance(step, eng.Transient):
-            return transient(plog, a.issue, step.reason)
+            return fail(plog, a.issue, "transient", step.reason, 3)
         extra, env, allowed, repo = step
         tail += extra
+        if job.memory:
+            paths = [os.path.join(run_dir(a.issue), "worktrees")] + ([repo.clone] if isinstance(repo, eng.Ok) else [])
+            if hit := next((p for p in paths if overlaps(job.memory, p)), None):
+                return fail(plog, a.issue, "config-error", f"role memory {job.memory} overlaps the issue's repo {hit}", 2)
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo)
