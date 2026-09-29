@@ -3,7 +3,7 @@
 docs/specs/2026-09-27-router-launcher-design.md
 
 (no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
-  --now             Skip the 02:00-06:59 hours check.
+  --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one.
 --pick [--project ID] [RUNS_LOG]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
@@ -299,7 +299,7 @@ def append(path, line):
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
     """One launchd tick. Returns the exit code."""
     dry, issue_id = opts["dry"], opts["issue"]
-    if not opts["now"] and not 2 <= hour <= 6:
+    if not opts["now"] and not 1 <= hour <= 6:
         log("skip: outside hours")
         if not dry:
             return 0

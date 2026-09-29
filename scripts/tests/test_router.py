@@ -675,7 +675,7 @@ class Tick(Base):
         self.assertEqual(self.sh.calls, [])
 
     def test_hours_boundaries(self):
-        for hour, runs in ((0, False), (1, False), (2, True), (6, True), (7, False), (23, False)):
+        for hour, runs in ((0, False), (1, True), (6, True), (7, False), (23, False)):
             fake = FakeLinear([issue("TASK-1", "Todo")])
             self.tick(fake, hour=hour)
             self.assertEqual(len(self.sh.launches()), int(runs), hour)
