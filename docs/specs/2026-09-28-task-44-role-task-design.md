@@ -1,5 +1,7 @@
 # TASK-44: Role + task restructure (phase 1) — design
 
+Amended by `2026-09-29-task-44-role-task-pairs-design.md`: role and task settings live in `roles/<role>.toml` / `tasks/<task>.toml`, not `pipeline.toml`.
+
 Source: PRD `private_docs/Product Design/2026-09-28-1201-TASK-32-role-capability-restructure.md`, phase 1 = FR-1…FR-12 with NFR-1…NFR-3. Out of scope: phase 2 (FR-13…FR-16, `Type`-label routing), the dispatcher rename (A4), the capability layer (D1), memory mechanics (TASK-33), and running the deployment itself (FR-11 is delivered as documented steps).
 
 ## Goal
