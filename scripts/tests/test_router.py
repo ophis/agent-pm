@@ -12,13 +12,14 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER  # noqa: E402
+from board_ids import HEADER, STATES as IDS_BY_KEY, team_node  # noqa: E402
 import pipeline  # noqa: E402
 import router  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
 ME, USER = "agent", "user"
-STATES = {"Todo": "s-todo", "In Progress": "s-prog", "In Review": "s-review"}
+STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"]}
+NAMES = {i: n for n, i in STATES.items()}
 DR, PD = "Deep Research", "Product Design"
 PROJECTS = (DR, PD, "Engineering")
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
@@ -42,12 +43,15 @@ class FakeLinear:
         self.issues = {i["identifier"]: i for i in issues}
         self.history = {} if history is None else history
         self.mutations = []
+        self.queries = []
+        self.state_ids = None
 
     def __call__(self, query, **v):
+        self.queries.append((query, v))
         if "viewer" in query:
-            return {"viewer": {"id": ME},
-                    "workflowStates": {"nodes": [{"id": i, "name": n} for n, i in STATES.items()]},
-                    "teams": {"nodes": [{"projects": {"nodes": [{"id": IDS[p]} for p in PROJECTS]}}]}}
+            return {"viewer": {"id": ME}}
+        if query == pipeline.Q_TEAM:
+            return {"teams": {"nodes": [team_node(self.state_ids, [(IDS[p], p) for p in PROJECTS])]}}
         if "users(filter" in query:
             return {"users": {"nodes": [{"id": USER}] if v["e"] == "me@x.com" else []}}
         if "history" in query:
@@ -59,18 +63,18 @@ class FakeLinear:
                 issue.setdefault("comments", []).append(v["b"])
             else:
                 upd = v.get("u") or {"stateId": v["s"], "assigneeId": v["a"]}
-                issue["state"] = next(n for n, i in STATES.items() if i == upd["stateId"])
+                issue["state"] = NAMES[upd["stateId"]]
                 if "assigneeId" in upd:
                     issue["assignee"] = upd["assigneeId"]
             return {}
         if "issues(filter" in query:
             f = v["f"]
             want = f.get("assignee", {}).get("id", {}).get("eq")
-            return {"issues": {"nodes": [dict(i, state={"name": i["state"]}) for i in self.issues.values()
-                                         if i["state"] == f["state"]["name"]["eq"] and (want is None or i["assignee"] == want)
+            return {"issues": {"nodes": [{k: x for k, x in i.items() if k != "state"} for i in self.issues.values()
+                                         if i["state"] == NAMES[f["state"]["id"]["eq"]] and (want is None or i["assignee"] == want)
                                          and i["project"]["id"] in f["project"]["id"]["in"]]}}
-        if "state { name }" in query:
-            return {"issue": {"state": {"name": self.issues[v["i"]]["state"]}}}
+        if "state { id }" in query:
+            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         raise AssertionError(query)
 
 
@@ -113,7 +117,7 @@ class Base(unittest.TestCase):
     def fake(self, *issues):
         return FakeLinear(issues, self.hist)
 
-    def moved(self, ident, minutes_ago, state="s-prog", actor=ME):
+    def moved(self, ident, minutes_ago, state=STATES["In Progress"], actor=ME):
         self.hist.setdefault(ident, []).insert(0, {"createdAt": ago(minutes=minutes_ago), "actorId": actor, "toStateId": state})
 
     def resumable(self, ident, sid, minutes_ago):
@@ -390,7 +394,7 @@ class Plan(Base):
 
     def test_no_move_in_history_is_current(self):
         fake = self.fake(issue("TASK-1", "In Progress", ME))
-        self.moved("TASK-1", 500, state="s-todo", actor=USER)
+        self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
         self.add("start", "TASK-1", "a", 100)
         self.touch("TASK-1", "a", 40)
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-1 a 1 https://linear.app/x/TASK-1 Deep Research")
@@ -421,7 +425,7 @@ class Plan(Base):
         self.add("start", "TASK-1", "old", 699)
         for m in (650, 600, 550):
             self.add("resume", "TASK-1", "old", m)
-        self.moved("TASK-1", 500, state="s-todo", actor=USER)
+        self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
         self.resumable("TASK-1", "new", 100)
         self.add("resume", "TASK-1", "new", 60)
 
@@ -480,14 +484,14 @@ class Plan(Base):
         return fake, self.run_main(fake, "--plan")[1]
 
     def test_attempt_cap_reset_by_user(self):
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": USER, "toStateId": "s-todo"}])
+        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": USER, "toStateId": STATES["Todo"]}])
         self.assertEqual(out, "resume TASK-1 d 1 https://linear.app/x/TASK-1 Deep Research")
         self.assertEqual(fake.mutations, [])
 
     def test_attempt_cap_not_reset_by_agent_or_other_moves(self):
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": ME, "toStateId": "s-todo"},
-                                 {"createdAt": ago(minutes=370), "actorId": USER, "toStateId": "s-prog"},
-                                 {"createdAt": ago(minutes=360), "actorId": None, "toStateId": "s-todo"}])
+        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": ME, "toStateId": STATES["Todo"]},
+                                 {"createdAt": ago(minutes=370), "actorId": USER, "toStateId": STATES["In Progress"]},
+                                 {"createdAt": ago(minutes=360), "actorId": None, "toStateId": STATES["Todo"]}])
         self.assertEqual(out, "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
 
@@ -572,11 +576,45 @@ class Claim(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
 
     def test_capped_todo_reset_by_user(self):
-        hist = {"TASK-1": [{"createdAt": ago(minutes=200), "actorId": USER, "toStateId": "s-todo"}]}
+        hist = {"TASK-1": [{"createdAt": ago(minutes=200), "actorId": USER, "toStateId": STATES["Todo"]}]}
         fake = FakeLinear([issue("TASK-1", "Todo")], hist)
         for sid in "abcd":
             self.add("start", "TASK-1", sid, 300)
         self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-1 https://linear.app/x/TASK-1 Deep Research")
+
+    def test_queries_by_id(self):
+        fake = self.fake(issue("TASK-1", "In Progress", ME, updated=ago(hours=5)), issue("TASK-2", "Todo"))
+        self.run_main(fake, "--claim")
+        flts = [v["f"] for q, v in fake.queries if "issues(filter" in q]
+        self.assertTrue(flts)
+        self.assertTrue(all(set(f["state"]) == {"id"} and f["state"]["id"]["eq"] in STATES.values() for f in flts))
+        text = " ".join(q for q, _ in fake.queries)
+        self.assertNotIn("name: { eq", text)
+        self.assertNotIn("workflowStates", text)
+        self.assertNotIn("state { name }", text)
+        self.assertEqual(fake.issues["TASK-2"]["state"], "In Progress")
+
+    def test_state_outside_team_stops_before_changes(self):
+        fake = self.fake(issue("TASK-1", "Todo"))
+        fake.state_ids = [i for i in IDS_BY_KEY.values() if i != IDS_BY_KEY["in_review"]]
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main(fake, "--claim")
+        self.assertIn("[states] not workflow states of team", str(cm.exception.code))
+        self.assertEqual(fake.mutations, [])
+
+    def test_claim_skipped_when_no_longer_todo(self):
+        class Racy(FakeLinear):
+            def __call__(self, query, **v):
+                out = super().__call__(query, **v)
+                if "issues(filter" in query:
+                    for i in self.issues.values():
+                        i["state"] = "In Review"
+                return out
+
+        fake = Racy([issue("TASK-1", "Todo")])
+        self.assertEqual(self.run_main(fake, "--claim"), (0, ""))
+        self.assertIn("claim: TASK-1 is no longer Todo; skipping", self.err)
+        self.assertEqual(fake.mutations, [])
 
     def test_empty_queue(self):
         self.assertEqual(self.run_main(FakeLinear([]), "--claim"), (0, ""))
