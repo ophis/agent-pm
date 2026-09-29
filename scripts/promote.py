@@ -19,7 +19,6 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import CONFIG, linear_gql, load_config, parse_time, reviewer  # noqa: E402
-from prune import Pruner  # noqa: E402
 
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
@@ -205,23 +204,25 @@ class Promoter:
         self.comment(src, body)
 
 
-def run_prune(gql, cfg, now, dry, pruner=Pruner):
-    """Prune finished issues' worktrees; a prune failure is logged and never breaks promote."""
+def run_prune(gql, cfg, now, dry, pruner=None):
+    """Prune finished issues' worktrees; a prune failure, even an ImportError, is logged and never breaks promote."""
     try:
+        if pruner is None:
+            from prune import Pruner as pruner
         pruner(gql, cfg, now, dry).run()
     except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
         print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
 
 
-def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=Pruner):
+def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     cfg = load_config(config)
-    now_ = now or datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     dry = "--dry-run" in argv
-    Promoter(gql, cfg, now_, dry, wait="--now" not in argv).run()
-    run_prune(gql, cfg, now_, dry, pruner)
+    Promoter(gql, cfg, now, dry, wait="--now" not in argv).run()
+    run_prune(gql, cfg, now, dry, pruner)
     return 0
 
 

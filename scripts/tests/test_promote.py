@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -536,6 +537,18 @@ class TestPruneHook(Base):
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)
+
+    def test_prune_real_run(self):
+        self.run_main()
+        self.assertEqual([c[3] for c in FakePruner.calls], [False])
+
+    def test_prune_import_error_does_not_break_promote(self):
+        self.ready("DR-1")
+        with mock.patch.dict(sys.modules, {"prune": None}):  # None makes `import prune` raise ImportError
+            rc = self.run_main("--dry-run", pruner=None)
+        self.assertEqual(rc, 0)
+        self.assertIn("prune-error", self.out)
+        self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
 
     def test_prune_failure_does_not_break_promote(self):
         class Boom:
