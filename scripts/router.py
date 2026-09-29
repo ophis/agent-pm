@@ -2,7 +2,7 @@
 """Router: decides what runs next across the runnable projects in pipeline.toml, then calls launch.py.
 docs/specs/2026-09-27-router-launcher-design.md
 
-(no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
+(no mode)           One tick (launchd): hours, lock, registry guard, prune, Recover, plan, usage gate, resume or claim, launch.
   --now             Skip the 02:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one.
@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, reviewer, runnable, stage_order, transcript)
+from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, reviewer, runnable, stage_order, transcript, uncommitted)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -296,6 +296,16 @@ def append(path, line):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
 
 
+def check_registry(sh, root=ROOT):
+    """Runs trust roles/ and tasks/ but can reach them by Bash, so a tick never starts on uncommitted registry changes."""
+    res = sh(["git", "-C", root, "status", "--porcelain", "-z", "--ignored", "-uall", "--", "roles", "tasks"],
+             capture_output=True, text=True)
+    if res.returncode != 0:
+        raise SystemExit(f"git status of roles/ and tasks/ failed: {res.stderr.strip()}")
+    if paths := uncommitted(res.stdout):
+        raise SystemExit(f"roles/ or tasks/ has uncommitted changes: {', '.join(paths)}")
+
+
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
     """One launchd tick. Returns the exit code."""
     dry, issue_id = opts["dry"], opts["issue"]
@@ -308,6 +318,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         log("skip: previous run still active")
         if not dry:
             return 0
+    check_registry(sh)
     if not dry:
         try:
             prune(runs, now)
