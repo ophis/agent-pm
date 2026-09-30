@@ -43,6 +43,8 @@ class FakeLinear:
         self.queries = []
         self.state_ids = None
         self.missing = set()
+        self.todo_error = False     # the Todo read with relations raises SystemExit
+        self.unreadable = set()     # identifiers whose per-issue relations query raises SystemExit
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
@@ -71,10 +73,17 @@ class FakeLinear:
             if "id" in f:
                 i = self.issues.get(f["id"]["eq"]) if f["team"]["id"]["eq"] == TEAM else None
                 return {"issues": {"nodes": [{"assignee": i["assignee"]}] if i else []}}
-            return {"issues": {"nodes": [{k: x for k, x in i.items() if k != "state"} for i in self.issues.values()
+            if self.todo_error and "inverseRelations" in query:
+                raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
+            drop = {"state"} if "inverseRelations" in query else {"state", "inverseRelations"}
+            return {"issues": {"nodes": [{k: x for k, x in i.items() if k not in drop} for i in self.issues.values()
                                          if f["team"]["id"]["eq"] == TEAM and f["project"] == {"null": False} and i["project"]
                                          and i["assignee"] and i["assignee"]["id"] in f["assignee"]["id"]["in"]
                                          and i["state"] == NAMES[f["state"]["id"]["eq"]]]}}
+        if "issue(id:" in query and "inverseRelations" in query:
+            if v["i"] in self.unreadable:
+                raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
+            return {"issue": {"inverseRelations": self.issues[v["i"]]["inverseRelations"]}}
         if "state { id }" in query:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         raise AssertionError(query)
@@ -84,11 +93,17 @@ def ops(fake):
     return [re.search(r"\{ (\w+)\(", q).group(1) for q, _ in fake.mutations]
 
 
-def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR):
+def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR, inverse=()):
     # id == identifier so mutations and history can be keyed by either
     return {"id": ident, "identifier": ident, "url": f"https://linear.app/x/{ident}", "state": state,
             "project": project and {"id": IDS[project], "name": project},
-            "assignee": who(role), "priority": priority, "createdAt": created, "updatedAt": updated or ago(minutes=5)}
+            "assignee": who(role), "priority": priority, "createdAt": created, "updatedAt": updated or ago(minutes=5),
+            "inverseRelations": {"nodes": list(inverse)}}
+
+
+def blocker(ident, state="started", kind="blocks"):
+    """An inverse relation node: ident (None = unreadable) relates to the issue by kind; state is ident's state type."""
+    return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
 
 
 class Base(unittest.TestCase):
@@ -157,6 +172,10 @@ class Base(unittest.TestCase):
             rc = router.main(list(argv) + [self.log], gql=fake, now=NOW, tdir=self.tdir, config=self.config)
         self.err = self.unmap(err.getvalue())
         return rc, self.unmap(out.getvalue().strip())
+
+    def said(self):
+        """The logged messages, without timestamps."""
+        return [line.split(" ", 2)[2] for line in self.err.splitlines()]
 
 
 class ParseAndLiveness(Base):
@@ -728,6 +747,92 @@ class MultiRole(Base):
         self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-2 b 1 https://linear.app/x/TASK-2 Product Design")
 
 
+class Blockers(Base):
+    def test_blocked_skipped_for_next_ready(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, inverse=[
+                               blocker("TASK-7"), blocker("TASK-8", "completed"), blocker("TASK-9", "unstarted")]),
+                           issue("TASK-2", "Todo", "researcher", priority=2), issue("TASK-3", "Todo", "researcher", priority=3)])
+        self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-2 https://linear.app/x/TASK-2 Deep Research")
+        self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7, TASK-9", "pick: TASK-2 (2 in queue)"])
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+
+    def test_done_blockers(self):
+        for states, blocked in ((["completed"], False), (["canceled"], False), (["duplicate"], False),
+                                (["completed", "started"], True)):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker(f"TASK-{n}", s) for n, s in enumerate(states, 7)])])
+            self.run_main(fake, "--claim")
+            self.assertEqual(fake.issues["TASK-1"]["state"], "Todo" if blocked else "In Progress", states)
+            self.assertEqual([m for m in self.said() if m.startswith("blocked:")], ["blocked: TASK-1 by TASK-8"] if blocked else [], states)
+
+    def test_capped_blocked_stays_todo(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])])
+        for sid in "abcd":
+            self.add("start", "TASK-1", sid, 300)
+        self.assertEqual(self.run_main(fake, "--claim"), (0, ""))
+        self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7", "pick: queue empty"])
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("Todo", []))
+        self.assertNotIn("comments", fake.issues["TASK-1"])
+
+    def test_only_inverse_blocks_block(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=2,
+                                 inverse=[blocker("TASK-5", kind="related"), blocker("TASK-6", kind="duplicate")]),
+                           issue("TASK-2", "Todo", "researcher", priority=1, inverse=[blocker("TASK-1", "unstarted")])])
+        self.assertEqual(self.run_main(fake, "--claim")[1].split()[0], "TASK-1")
+        self.assertEqual(self.said(), ["blocked: TASK-2 by TASK-1", "pick: TASK-1 (1 in queue)"])
+        self.assertFalse(any(re.search(r"\brelations\b", q) for q, _ in fake.queries))
+
+    def test_null_blocker_unreadable(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker(None), blocker("TASK-7", "completed")])])
+        self.assertEqual(self.run_main(fake, "--claim"), (0, ""))
+        self.assertEqual(self.said(), ["blocked: TASK-1 by (unreadable)", "pick: queue empty"])
+
+    def test_blocker_query_error_reads_per_issue(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
+                           issue("TASK-2", "Todo", "researcher", priority=2, inverse=[blocker("TASK-7")]),
+                           issue("TASK-3", "Todo", "researcher", priority=3, inverse=[blocker("TASK-8", "canceled")])])
+        fake.todo_error, fake.unreadable = True, {"TASK-1"}
+        self.assertEqual(self.run_main(fake, "--claim"), (0, "TASK-3 https://linear.app/x/TASK-3 Deep Research"))
+        said = self.said()
+        self.assertRegex(said[0], r"^todo: blocker query failed, reading blockers per issue: linear api error: ")
+        self.assertEqual(said[1:], ["blocked: TASK-1 by (unreadable)", "blocked: TASK-2 by TASK-7", "pick: TASK-3 (1 in queue)"])
+        todo = [q for q, v in fake.queries if "issues(filter" in q and v["f"]["state"] == {"id": {"eq": STATES["Todo"]}}]
+        self.assertEqual(["inverseRelations" in q for q in todo], [True, False])
+        self.assertEqual([v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q], ["TASK-1", "TASK-2", "TASK-3"])
+
+    def test_one_todo_read_with_relations(self):
+        for argv in (("--claim",), ("--plan",), ("--pick",)):
+            fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher")])
+            self.run_main(fake, *argv)
+            reads = {s: [q for q, v in fake.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES[s]}}]
+                     for s in ("Todo", "In Progress")}
+            self.assertEqual(len(reads["Todo"]), 1, argv)
+            self.assertIn("inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }", reads["Todo"][0], argv)
+            self.assertEqual(len(reads["In Progress"]), 0 if argv == ("--claim",) else 1, argv)
+            self.assertFalse(any("inverseRelations" in q for q in reads["In Progress"]), argv)
+            self.assertFalse(any("issue(id:" in q and "inverseRelations" in q for q, _ in fake.queries), argv)
+
+    def test_todo_memoized(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")]), issue("TASK-2", "Todo", "researcher")])
+        board = router.Board(fake, [], self.tdir, NOW, True, pipeline.load_config(self.config))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertTrue(board.is_blocked("TASK-1"))
+            self.assertEqual([i["identifier"] for i in board.todo()], ["TASK-2"])
+            self.assertFalse(board.is_blocked("TASK-2"))
+        self.assertEqual(err.getvalue().count("blocked: TASK-1 by TASK-7"), 1)
+        self.assertEqual(sum("inverseRelations" in q for q, _ in fake.queries), 1)
+
+    def test_dry_run_logs_blocked(self):
+        for argv, out, last in ((("--claim", "--dry-run"), "", "pick: TASK-2 (1 in queue)"),
+                                (("--plan", "--dry-run"), "new", "plan: new (1 in queue)")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")]),
+                               issue("TASK-2", "Todo", "pm", project=PD)])
+            self.assertEqual(self.run_main(fake, *argv), (0, out), argv)
+            self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7, TASK-8", last], argv)
+            self.assertEqual(fake.mutations, [], argv)
+
+
 class FakeShell:
     """active: the busy roles; has-session finds only the exact target =agent-pm-<role> of one."""
     def __init__(self, active=(), probe_five=0.2):
@@ -762,10 +867,6 @@ class Tick(Base):
         with open(self.log) as f:
             self.state = self.unmap(f.read())
         return rc
-
-    def said(self):
-        """The logged messages, without timestamps."""
-        return [line.split(" ", 2)[2] for line in self.err.splitlines()]
 
     def launched(self):
         (launch,) = self.sh.launches()

@@ -40,6 +40,10 @@ LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
+DONE = {"completed", "canceled", "duplicate"}
+UNREADABLE = "(unreadable)"
+RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
+Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
 
 
 def local_time(s):
@@ -145,6 +149,13 @@ def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
 
+def blockers(issue):
+    """Identifiers of the issue's unfinished direct blockers in API order, UNREADABLE for a null one; empty = ready."""
+    nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
+    return [n["issue"]["identifier"] if n.get("issue") else UNREADABLE for n in nodes
+            if not n.get("issue") or n["issue"]["state"]["type"] not in DONE]
+
+
 def gate(kind, lines):
     """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
     info = None
@@ -170,7 +181,7 @@ def gate(kind, lines):
 class Board:
     def __init__(self, gql, entries, tdir, now, dry, cfg, only=None):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
-        self.hist = {}
+        self.hist, self.ready, self.blocked = {}, None, {}
         runs = runnable(cfg)
         if only is not None:
             if not only:
@@ -184,12 +195,35 @@ class Board:
         self.emails = cfg.get("human_members") or []
         self.roles = role_ids(gql, {r: run for r, run in runs.items() if only is None or r in only})
 
-    def issues(self, state):
+    def issues(self, state, fields=""):
         flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
                "assignee": {"id": {"in": list(self.roles)}}, "state": {"id": {"eq": self.states[state]}}}
         return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt project { id name } assignee { id email } } } }""",
-                        f=flt)["issues"]["nodes"]
+                    nodes { id identifier url priority createdAt updatedAt project { id name } assignee { id email } """
+                        + fields + " } } }", f=flt)["issues"]["nodes"]
+
+    def todo(self):
+        """The ready Todo issues (direct blockers all done), read once per run; logs each blocked one on the first call."""
+        if self.ready is None:
+            try:
+                issues = self.issues("todo", RELATIONS)
+            except SystemExit as e:
+                log(f"todo: blocker query failed, reading blockers per issue: {e}")
+                issues = self.issues("todo")
+                for i in issues:
+                    try:
+                        i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
+                    except SystemExit:
+                        i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
+            self.blocked = {i["identifier"]: b for i in issues if (b := blockers(i))}
+            for ident, b in self.blocked.items():
+                log(f"blocked: {ident} by {', '.join(b)}")
+            self.ready = [i for i in issues if i["identifier"] not in self.blocked]
+        return self.ready
+
+    def is_blocked(self, ident):
+        self.todo()
+        return ident in self.blocked
 
     def later(self, issue):
         return -self.stage.get(self.roles[issue["assignee"]["id"]], 0)
@@ -260,7 +294,7 @@ class Board:
             issue, sid, k = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
             return ("resume", issue, sid, k)
-        todo = self.issues("todo")
+        todo = self.todo()
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
             return ("new",)
@@ -277,7 +311,7 @@ class Board:
     def take(self, only=None):
         """The claimed Todo issue, or None."""
         # Pick: highest priority first, then later role, then oldest.
-        queue = sorted(self.issues("todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+        queue = sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
             queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
