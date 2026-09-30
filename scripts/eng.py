@@ -2,14 +2,17 @@
 """Engineering runs: resolve an issue's target repo, and a CLI for the stage (spec docs/specs/2026-09-27-task-38-…-design.md)."""
 import json, os, re, subprocess, sys
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, NAME, OWNER, PATH, load_config, parse_time, repo_slug, run_dir  # noqa: E402
+from pipeline import CONFIG, NAME, OWNER, PATH, ROOT, load_config, parse_time, registry, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description project { id } } }"
+Q_COMMENTS = ("query($i: String!, $c: String) { issue(id: $i) { createdAt comments(first: 250, after: $c) "
+              "{ nodes { body createdAt user { email } } pageInfo { hasNextPage endCursor } } } }")
 MAPPED = "project mapping "
+BUILD_STARTED = re.compile(r"Build started\b")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 SHORT, LONG = 60, 600
 
@@ -279,32 +282,72 @@ def _pages(run, path):
         raise Malformed(f"{path}: not a JSON array of pages")
     return _rows([r for p in pages for r in p], path)
 
-def cmd_comments(ok, run, out, since):
+@dataclass(frozen=True)
+class Note:
+    at: datetime; raw: str; email: str | None; body: str
+
+def _note(n):
+    email = None if n["user"] is None else n["user"]["email"]
+    if not isinstance(n["body"], str) or not isinstance(email, (str, type(None))):
+        raise TypeError("comment body or author email is not a string")
+    return Note(iso(n["createdAt"]), n["createdAt"], email, n["body"])
+
+def _linear(gql, issue):
+    """(the issue's createdAt, every comment as a Note); a failure or a missing field is Transient."""
+    try:
+        notes, cursor, seen = [], None, set()
+        while True:
+            page = gql(Q_COMMENTS, i=issue, c=cursor)["issue"]
+            conn = page["comments"]
+            notes += [_note(n) for n in conn["nodes"]]
+            if not conn["pageInfo"]["hasNextPage"]:
+                return iso(page["createdAt"]), notes
+            cursor = conn["pageInfo"]["endCursor"]
+            if not cursor or cursor in seen:
+                raise ValueError(f"page cursor {cursor!r}")
+            seen.add(cursor)
+    except (SystemExit, Exception) as e:
+        raise TransientError(f"Linear: {e!r}") from None
+
+def _pr_entries(ok, run, pr, since):
+    """[(instant, entry)] of the PR's comments, reviews and inline comments after since; a pending review (no submitted_at) is skipped."""
+    base, found = f"repos/{ok.owner}/{ok.name}", []
+    for path, key, kind in ((f"{base}/issues/{pr['number']}/comments", "created_at", "comment"), (f"{base}/pulls/{pr['number']}/reviews", "submitted_at", "review"),
+                            (f"{base}/pulls/{pr['number']}/comments", "created_at", "review_comment")):
+        for c in _pages(run, path):
+            if c.get(key) is None:
+                continue
+            try:
+                at = iso(c[key])
+            except (AttributeError, ValueError):
+                raise Malformed(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
+            if at > since:
+                e = {"at": c[key], "source": "pr", "kind": kind, "author": _author(c, "user"), "body": c.get("body") or ""}
+                if kind == "review":
+                    e["state"] = c.get("state")
+                if kind == "review_comment":
+                    e["path"], e["line"] = c.get("path"), c.get("line") or c.get("original_line")
+                found.append((at, e))
+    return found
+
+def cmd_comments(ok, run, out, gql, humans, markers):
+    """The comments after the latest `Build started` by a marker account (else the issue's creation), the user's apart from the others'."""
+    created, notes = _linear(gql, ok.issue)
+    who = lambda n: (n.email or "").lower()
+    since = max((n.at for n in notes if who(n) in markers and BUILD_STARTED.match(n.body.strip())), default=created)
     login = _login(run)
     pr = _pr(ok, run, login)
-    kept, dropped = [], 0
-    if pr:
-        base = f"repos/{ok.owner}/{ok.name}"
-        for path, key in ((f"{base}/issues/{pr['number']}/comments", "created_at"), (f"{base}/pulls/{pr['number']}/reviews", "submitted_at"),
-                          (f"{base}/pulls/{pr['number']}/comments", "created_at")):
-            for c in _pages(run, path):
-                if c.get(key) is None:  # a pending review has no submitted_at
-                    continue
-                try:
-                    at = iso(c[key])
-                except (AttributeError, ValueError):
-                    raise Malformed(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
-                if at <= since:
-                    continue
-                if _author(c, "user") != login:
-                    dropped += 1
-                    continue
-                kept.append((at, {"at": c[key], "body": c.get("body", ""), "kind": path.rsplit("/", 1)[1]}))
-    json.dump({"kept": [c for _, c in sorted(kept, key=lambda k: k[0])], "dropped": dropped}, out)
+    user = [(n.at, {"at": n.raw, "source": "linear", "kind": "comment", "author": n.email, "body": n.body})
+            for n in notes if who(n) in humans and n.at > since]
+    others = []
+    for at, e in _pr_entries(ok, run, pr, since) if pr else []:
+        (user if e["author"] == login else others).append((at, e))
+    oldest_first = lambda rows: [e for _, e in sorted(rows, key=lambda r: r[0])]
+    json.dump({"since": since.isoformat(), "user": oldest_first(user), "others": oldest_first(others)}, out)
     out.write("\n")
     return 0
 
-def _command(a, issue, repos, gql, run, out, err):
+def _command(a, issue, repos, humans, markers, gql, run, out, err):
     try:
         ok = resolve(issue, gql, run, repos=repos)
     except Exception as e:
@@ -314,28 +357,30 @@ def _command(a, issue, repos, gql, run, out, err):
     if isinstance(ok, Invalid):
         err.write(f"eng.py: Invalid: {ok.reason}\n")
         return 2
-    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, a.since)
+    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, gql, humans, markers)
 
-def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG):
+def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, root=ROOT):
     import argparse
     ap = argparse.ArgumentParser(prog="eng.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
-    sub.add_parser("comments").add_argument("--since", required=True, type=iso)
+    sub.add_parser("comments")
     a = ap.parse_args(argv)
     issue = env.get("AGENT_PM_ISSUE", "")
     if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", issue):
         err.write("eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
         return 2
     try:
-        repos = load_config(config)["project_repos"]
+        cfg = load_config(config)
+        markers = {r.account.lower() for r in registry(root)[0].values() if "engineering" in r.tasks} if a.cmd == "comments" else set()
     except SystemExit as e:
         err.write(f"eng.py: {e.code}\n")
         return 2
+    humans = {e.lower() for e in cfg.get("human_members") or []}
     if gql is None:
         from pipeline import linear_gql as gql
     try:
-        return _command(a, issue, repos, gql, run, out, err)
+        return _command(a, issue, cfg["project_repos"], humans, markers, gql, run, out, err)
     except Malformed as e:
         err.write(f"eng.py: malformed gh output: {e}\n")
         return 2
