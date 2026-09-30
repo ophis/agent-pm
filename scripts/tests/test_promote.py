@@ -16,15 +16,11 @@ NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
           "Handoff": IDS_BY_KEY["handoff"], "Done": IDS_BY_KEY["done"]}
 PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd", "Engineering": "p-eng"}
+ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
 HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
-CONFIG = HEADER + """human_members = ["me@x.com"]
-[projects.p-dr]
-next = "p-pd"
-[projects.p-pd]
-prefix = "PRD"
-"""
+CONFIG = HEADER + 'human_members = ["me@x.com"]\n[roles.researcher]\nnext = "pm"\n'
 
 
 def ago(minutes):
@@ -36,10 +32,11 @@ class FakeLinear:
         self.issues, self.children, self.mutations, self.fail = {}, {}, [], set()
         self.state_ids = None
 
-    def add(self, ident, project="Deep Research", state="Handoff", **kw):
+    def add(self, ident, project="Deep Research", state="Handoff", role="researcher", **kw):
         self.issues[ident] = dict(id=ident, identifier=ident, url=f"https://l/{ident}", title=f"Title {ident}",
-                                  priority=2, createdAt=ago(10000), project={"id": PROJECTS[project], "name": project},
-                                  state=state, history=[], comments=[], relations=[], inverse=[], attachments=[])
+                                  priority=2, createdAt=ago(10000), state=state, history=[], comments=[], relations=[],
+                                  inverse=[], attachments=[], assignee=role and {"id": f"u-{role}"},
+                                  project=project and {"id": PROJECTS[project], "name": project})
         self.issues[ident].update(kw)
         return self.issues[ident]
 
@@ -52,11 +49,15 @@ class FakeLinear:
 
     def __call__(self, query, **v):
         if query == pipeline.Q_TEAM:
-            return {"teams": {"nodes": [team_node(self.state_ids, [(i, n) for n, i in PROJECTS.items()])]}}
+            return {"teams": {"nodes": [team_node(self.state_ids)]}}
+        if query == pipeline.Q_USER:
+            users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
+            return {"users": {"nodes": [{"id": users[v["e"].lower()]}] if v["e"].lower() in users else []}}
         if query == promote.Q_HANDOFF:
             self.handoff_vars = v
-            return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]})
-                                         for i in self.issues.values() if i["state"] == "Handoff"]}}
+            return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]}) for i in self.issues.values()
+                                         if i["state"] == "Handoff" and i["project"] and i["assignee"]
+                                         and i["assignee"]["id"] in v["a"]]}}
         if query == promote.Q_DETAIL:
             if v["i"] in self.fail:
                 raise SystemExit("linear api error: boom")
@@ -137,9 +138,9 @@ class TestPromote(Base):
         src = self.ready(attachments=[{"title": "Report", "url": "https://gh/r.md"}])
         self.assertEqual(self.run_main(), 0)
         (child,) = self.fake.children.values()
-        self.assertEqual(child["id"], promote.child_id("DR-1", "p-pd", ago(30)))
-        self.assertEqual((child["projectId"], child["stateId"], child["priority"], child["teamId"]),
-                         ("p-pd", STATES["Todo"], 2, TEAM))
+        self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(30)))
+        self.assertEqual((child["projectId"], child["assigneeId"], child["stateId"], child["priority"], child["teamId"]),
+                         ("p-dr", "u-pm", STATES["Todo"], 2, TEAM))
         self.assertEqual(child["title"], "PRD: Title DR-1")
         self.assertEqual(child["description"], "Handoff from DR-1: https://l/DR-1\n\n## Source\n- Report: https://gh/r.md"
                                                f"\n\n## Instructions\nMe, {ago(45)}:\nbuild X"
@@ -182,7 +183,7 @@ class TestPromote(Base):
     def test_handoff_query_by_id(self):
         self.ready()
         self.run_main()
-        self.assertEqual(self.fake.handoff_vars, {"t": TEAM, "s": IDS_BY_KEY["handoff"]})
+        self.assertEqual(self.fake.handoff_vars, {"t": TEAM, "s": IDS_BY_KEY["handoff"], "a": mock.ANY})
         self.assertIn("state: { id: { eq: $s } }", promote.Q_HANDOFF)
         self.assertIn("team: { id: { eq: $t } }", promote.Q_HANDOFF)
 
@@ -270,11 +271,12 @@ class TestPromote(Base):
 
     def test_bounce_subscribes_humans(self):
         self.config = self.write_config(CONFIG.replace('["me@x.com"]', '["me@x.com", "b@x.com"]'))
-        src = self.fake.add("DR-1", assignee="u-agent")
+        src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 60, "In Review")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
-        self.assertEqual((src["state"], src["assignee"], src["subscribers"]), ("In Review", "u-agent", ["me@x.com", "b@x.com"]))
+        self.assertEqual((src["state"], src["assignee"], src["subscribers"]),
+                         ("In Review", {"id": "u-researcher"}, ["me@x.com", "b@x.com"]))
         self.assertEqual([q for q, _ in self.fake.mutations],
                          [promote.M_SUBSCRIBE, promote.M_SUBSCRIBE, promote.M_STATE, promote.M_COMMENT])
 
@@ -282,7 +284,7 @@ class TestPromote(Base):
         src = self.ready()
         self.run_main()
         self.assertEqual(src["state"], "Done")
-        self.assertNotIn("assignee", src)
+        self.assertEqual(src["assignee"], {"id": "u-researcher"})
         self.assertNotIn("subscribers", src)
 
     def test_cutoff_skips_promote_bounce(self):
@@ -297,14 +299,14 @@ class TestPromote(Base):
         (child,) = self.fake.children.values()
         self.assertIn("old", child["description"])
         self.assertIn("new", child["description"])
-        self.assertEqual(child["id"], promote.child_id("DR-1", "p-pd", ago(100)))
+        self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(100)))
         self.assertEqual(src["state"], "Done")
 
 
 class TestIdempotency(Base):
     def test_existing_child_without_relation(self):
         src = self.ready()
-        cid = promote.child_id("DR-1", "p-pd", ago(30))
+        cid = promote.child_id("DR-1", "pm", ago(30))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         self.run_main()
         self.assertEqual(len(self.fake.children), 1)
@@ -314,7 +316,7 @@ class TestIdempotency(Base):
 
     def test_existing_child_with_relation(self):
         src = self.ready()
-        cid = promote.child_id("DR-1", "p-pd", ago(30))
+        cid = promote.child_id("DR-1", "pm", ago(30))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         src["inverse"].append(cid)
         self.run_main()
@@ -342,7 +344,7 @@ class TestIdempotency(Base):
         self.fake.moved("DR-1", 200, "In Review")
         self.fake.said("DR-1", 190)
         self.fake.moved("DR-1", 90, "Handoff", frm=STATES["In Review"])
-        cid = promote.child_id("DR-1", "p-pd", ago(90))
+        cid = promote.child_id("DR-1", "pm", ago(90))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}  # created before the failure
         self.fake.moved("DR-1", 60, "In Review", frm=STATES["Handoff"])  # failure bounce
         self.fake.moved("DR-1", 10, "Handoff", frm=STATES["In Review"])
@@ -362,10 +364,10 @@ class TestIdempotency(Base):
         self.assertEqual(len(self.fake.children), 2)
 
     def test_child_id(self):
-        a = promote.child_id("DR-1", "p-pd", "2026-09-27T10:00:00.000Z")
-        self.assertEqual(a, promote.child_id("DR-1", "p-pd", "2026-09-27T10:00:00.000Z"))
-        self.assertNotEqual(a, promote.child_id("DR-1", "p-pd", "2026-09-27T10:00:01.000Z"))
-        self.assertNotEqual(a, promote.child_id("DR-1", "p-eng", "2026-09-27T10:00:00.000Z"))
+        a = promote.child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z")
+        self.assertEqual(a, promote.child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z"))
+        self.assertNotEqual(a, promote.child_id("DR-1", "pm", "2026-09-27T10:00:01.000Z"))
+        self.assertNotEqual(a, promote.child_id("DR-1", "engineer", "2026-09-27T10:00:00.000Z"))
         self.assertEqual(a[14], "4")  # UUID v4 format
 
 
@@ -387,55 +389,82 @@ class TestChildTitle(unittest.TestCase):
 
 
 class TestScopeAndConfig(Base):
-    def test_project_without_next_untouched(self):
-        src = self.ready(project="Product Design")
+    def test_role_without_next_untouched(self):
+        src = self.ready(role="pm")
         self.run_main()
         self.assertEqual(self.fake.mutations, [])
         self.assertEqual(src["state"], "Handoff")
 
     def test_config_only_extension(self):
-        self.config = self.write_config(CONFIG + 'next = "p-eng"\n[projects.p-eng]\nprefix = "ENG"\n')
-        self.ready(project="Product Design")
+        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\n')
+        self.ready(role="pm", title="PRD: Title DR-1")
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertEqual((child["projectId"], child["title"]), ("p-eng", "ENG: Title DR-1"))
+        self.assertEqual((child["projectId"], child["assigneeId"], child["title"]), ("p-dr", "u-engineer", "ENG: Title DR-1"))
 
     def test_instructions_optional(self):
-        self.config = self.write_config(CONFIG + 'next = "p-eng"\nrequire_instructions = false\n'
-                                        '[projects.p-eng]\nprefix = "TDD"\n')
-        src = self.fake.add("PD-1", project="Product Design")
+        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\nrequire_instructions = false\n')
+        src = self.fake.add("PD-1", project="Product Design", role="pm")
         self.fake.moved("PD-1", 60, "In Review")
         self.fake.moved("PD-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertEqual((child["projectId"], child["title"]), ("p-eng", "TDD: Title PD-1"))
+        self.assertEqual((child["projectId"], child["title"]), ("p-pd", "ENG: Title PD-1"))
         self.assertNotIn("## Instructions", child["description"])
         self.assertEqual(src["state"], "Done")
 
     def test_optional_instructions_still_copied(self):
-        self.config = self.write_config(CONFIG + 'next = "p-eng"\nrequire_instructions = false\n'
-                                        '[projects.p-eng]\nprefix = "TDD"\n')
-        self.ready("PD-1", project="Product Design")
+        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\nrequire_instructions = false\n')
+        self.ready("PD-1", project="Product Design", role="pm")
         self.run_main()
         (child,) = self.fake.children.values()
         self.assertIn("## Instructions\nMe, ", child["description"])
 
-    def test_renamed_projects_still_match(self):
-        src = self.ready()
-        src["project"]["name"] = "Research (renamed)"
+    def test_next_without_prefix_exits(self):
+        self.config = self.write_config(CONFIG + '[roles.engineer]\nnext = "researcher"\n')
+        self.ready()
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main()
+        self.assertIn("whose default task 'deep-research' has no prefix", str(cm.exception.code))
+        self.assertEqual(self.fake.mutations, [])
+
+    def test_next_undefined_role_exits(self):
+        self.config = self.write_config(CONFIG.replace('next = "pm"', 'next = "ghost"'))
+        self.ready()
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main()
+        self.assertIn("names undefined role 'ghost'", str(cm.exception.code))
+        self.assertEqual(self.fake.mutations, [])
+
+    def test_child_in_same_project_assigned_to_next_role(self):
+        src = self.ready(project="Product Design", title="Title DR-1")
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertEqual(child["projectId"], "p-pd")
+        self.assertEqual((child["projectId"], child["assigneeId"], child["title"], child["stateId"]),
+                         ("p-pd", "u-pm", "PRD: Title DR-1", STATES["Todo"]))
+        self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(30)))
+        self.assertEqual(src["state"], "Done")
+        self.assertFalse(any("assigneeId" in repr(v) for q, v in self.fake.mutations if q != promote.M_CREATE))
 
-    def test_next_without_prefix_exits(self):
-        self.config = self.write_config(CONFIG.replace('prefix = "PRD"\n', ""))
-        with self.assertRaises(SystemExit):
-            self.run_main()
+    def test_handoff_scans_role_accounts_in_projects(self):
+        self.ready("DR-1", role=None)
+        self.ready("DR-2", role="someone")
+        self.ready("DR-3", project=None)
+        self.run_main()
+        self.assertEqual(self.fake.mutations, [])
+        self.assertEqual(sorted(self.fake.handoff_vars["a"]), sorted(f"u-{r}" for r in ROLE))
+        self.assertIn("project: { null: false }", promote.Q_HANDOFF)
+        self.assertIn("assignee: { id: { in: $a } }", promote.Q_HANDOFF)
 
-    def test_next_without_projects_entry_exits(self):
-        self.config = self.write_config(CONFIG.replace('next = "p-pd"', 'next = "p-nowhere"'))
-        with self.assertRaises(SystemExit):
-            self.run_main()
+    def test_engineer_handoff_left_alone(self):
+        src = self.ready(role="engineer")
+        self.run_main()
+        self.assertEqual((self.fake.mutations, src["state"]), ([], "Handoff"))
+
+    def test_dry_run_names_role_and_project(self):
+        self.ready()
+        self.run_main("--dry-run")
+        self.assertIn("promote DR-1 -> new pm issue in Deep Research", self.out)
 
     def test_empty_run_logs_a_line(self):
         self.run_main()
@@ -445,11 +474,11 @@ class TestScopeAndConfig(Base):
         self.assertEqual(self.run_main("--nope"), 2)
 
     def test_source_prefix_stripped(self):
-        self.config = self.write_config(CONFIG + 'next = "p-eng"\n[projects.p-eng]\nprefix = "TDD"\n')
-        self.ready("PD-1", project="Product Design", title="PRD: Session Registry")
+        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\n')
+        self.ready("PD-1", project="Product Design", role="pm", title="PRD: Session Registry")
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertEqual(child["title"], "TDD: Session Registry")
+        self.assertEqual(child["title"], "ENG: Session Registry")
 
 
 class TestFailures(Base):
@@ -496,7 +525,7 @@ class TestFailures(Base):
         self.fake.moved("DR-1", 200, "In Review")
         self.fake.said("DR-1", 190)
         self.fake.moved("DR-1", 90, "Handoff", frm=STATES["In Review"])
-        cid = promote.child_id("DR-1", "p-pd", ago(90))
+        cid = promote.child_id("DR-1", "pm", ago(90))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         orig = self.fake.__call__
 
@@ -563,7 +592,7 @@ class TestDryRun(Base):
         self.fake.moved("DR-2", 30, "Handoff", frm=STATES["In Review"])
         self.run_main("--dry-run")
         self.assertEqual(self.fake.mutations, [])
-        self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
+        self.assertIn("dry-run: promote DR-1 -> new pm issue in Deep Research", self.out)
         self.assertIn("dry-run: handoff-bounce DR-2", self.out)
 
 
@@ -575,7 +604,7 @@ class TestPruneHook(Base):
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)
-        self.assertEqual(team, pipeline.Team(TEAM, "Team", {i: n for n, i in PROJECTS.items()}, dict(IDS_BY_KEY)))
+        self.assertEqual(team, pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY)))
 
     def test_prune_real_run(self):
         self.run_main()
@@ -587,7 +616,7 @@ class TestPruneHook(Base):
             rc = self.run_main("--dry-run", pruner=None)
         self.assertEqual(rc, 0)
         self.assertIn("prune-error", self.out)
-        self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
+        self.assertIn("dry-run: promote DR-1 -> new pm issue in Deep Research", self.out)
 
     def test_prune_failure_does_not_break_promote(self):
         class Boom:
@@ -601,7 +630,7 @@ class TestPruneHook(Base):
         rc = self.run_main("--dry-run", pruner=Boom)
         self.assertEqual(rc, 0)
         self.assertIn("prune-error", self.out)
-        self.assertIn("dry-run: promote DR-1 -> new Product Design issue", self.out)
+        self.assertIn("dry-run: promote DR-1 -> new pm issue in Deep Research", self.out)
 
 
 if __name__ == "__main__":
