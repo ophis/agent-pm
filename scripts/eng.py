@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Engineering runs: resolve an issue's target repo, and a CLI for the stage (spec docs/specs/2026-09-27-task-38-…-design.md)."""
+"""Engineering runs: resolve an issue's target repo, and a CLI for the stage."""
 import json, os, re, subprocess, sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, NAME, OWNER, PATH, ROOT, load_config, parse_time, registry, repo_slug, run_dir  # noqa: E402
+from pipeline import CONFIG, NAME, OWNER, PATH, load_config, parse_time, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description project { id } } }"
-Q_COMMENTS = ("query($i: String!, $c: String) { issue(id: $i) { createdAt comments(first: 250, after: $c) "
-              "{ nodes { body createdAt user { email } } pageInfo { hasNextPage endCursor } } } }")
+Q_COMMENTS = "query($i: String!) { issue(id: $i) { createdAt comments(first: 250) { nodes { body createdAt user { email } } } } }"
 MAPPED = "project mapping "
 BUILD_STARTED = re.compile(r"Build started\b")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
@@ -18,7 +16,7 @@ SHORT, LONG = 60, 600
 
 @dataclass(frozen=True)
 class Ok:
-    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False
+    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False; branch_exists: str | None = None
 
 @dataclass(frozen=True)
 class Invalid:
@@ -29,10 +27,7 @@ class Transient:
     reason: str
 
 class TransientError(Exception):
-    """A gh/git call of a CLI command failed: exit 3."""
-
-class Malformed(Exception):
-    """gh printed something other than the expected JSON: exit 2."""
+    """A gh/git/Linear call of a CLI command failed or returned something unusable."""
 
 def sh_run(argv, timeout):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env={**os.environ, "PATH": PATH})
@@ -68,11 +63,6 @@ def parse_repo(description):
 
 NO_LINE = parse_repo("")
 
-def _project_id(issue):
-    project = issue.get("project")
-    pid = project.get("id") if isinstance(project, dict) else None
-    return pid if isinstance(pid, str) else None
-
 def norm_url(url):
     m = re.fullmatch(r"(?:https://|ssh://git@|git@)github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url.strip(), re.I)
     return f"github.com/{m.group(1)}/{m.group(2)}".lower() if m else None
@@ -82,49 +72,32 @@ def slug(title):
     s = "-".join(re.findall(r"[a-z0-9]+", t))[:40].rstrip("-")
     return s or "build"
 
-def _call(run, argv, timeout=SHORT):
-    try:
-        return run(argv, timeout), None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-        return None, Transient(f"{argv[0]} {argv[1]}: {type(e).__name__}")
-
 def _stderr(res):
     return (res.stderr or "").strip()[:200]
 
 def _repo_info(owner, name, run):
     """(push permission, default branch) from `gh api repos/…`, or an Invalid/Transient."""
-    res, err = _call(run, ["gh", "api", f"repos/{owner}/{name}"])
-    if err:
-        return err
+    res = run(["gh", "api", f"repos/{owner}/{name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
             return Invalid(f"{owner}/{name}: not found or no access (HTTP {code.group(1)})")
         return Transient(f"gh api repos/{owner}/{name}: {_stderr(res)}")
-    try:
-        data = json.loads(res.stdout)
-    except ValueError:
-        data = None
-    perms = (data.get("permissions") or {}) if isinstance(data, dict) else None
-    if not isinstance(perms, dict):
-        return Transient(f"gh api repos/{owner}/{name}: malformed JSON")
-    return perms.get("push") is True, data.get("default_branch")
+    data = json.loads(res.stdout)
+    return data["permissions"]["push"] is True, data["default_branch"]
 
 def _existing_branches(ident, clone, run):
-    """Names of the <ident>-* branches, local else on origin, or a Transient."""
-    res, err = _call(run, ["git", "-C", clone, "branch", "--list", f"{ident}-*", "--format=%(refname:short)"])
-    if err:
-        return err
+    """(names of the <ident>-* branches, "local" / "remote" / None where they were found), local else on origin, or a Transient."""
+    res = run(["git", "-C", clone, "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
     if res.returncode != 0:
         return Transient(f"git branch --list: {_stderr(res)}")
     if local := res.stdout.split():
-        return local
-    res, err = _call(run, ["git", "-C", clone, "ls-remote", "--heads", "origin", f"{ident}-*"])
-    if err:
-        return err
+        return local, "local"
+    res = run(["git", "-C", clone, "ls-remote", "--heads", "origin", f"{ident}-*"], SHORT)
     if res.returncode != 0:
         return Transient(f"git ls-remote: {_stderr(res)}")
-    return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
+    remote = [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
+    return remote, "remote" if remote else None
 
 def in_playground(clone, playground=PLAYGROUND):
     """True if clone is a real (non-symlink) entry directly in playground, where the repo step keeps clones."""
@@ -139,8 +112,11 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(f"{issue_id}: issue not found")
     if issue.get("identifier") != issue_id:
         return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+    base = run_dir(issue_id)
+    if not os.path.realpath(os.path.join(base, "worktrees")).startswith(os.path.realpath(base) + os.sep):
+        return Invalid(f"{os.path.join(base, 'worktrees')} resolves outside {base}")
     repo = parse_repo(issue.get("description"))
-    pid = _project_id(issue)
+    pid = (issue.get("project") or {}).get("id")
     mapped = repo == NO_LINE and pid in (repos or {})
     tag = MAPPED if mapped else ""
     if mapped:
@@ -163,42 +139,30 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(f"{clone} is a symlink or outside {playground}")
     want = f"github.com/{owner}/{name}".lower()
     if os.path.exists(clone):
-        res, err = _call(run, ["git", "-C", clone, "rev-parse", "--is-inside-work-tree"])
-        if err:
-            return err
-        if res.returncode != 0 or res.stdout.strip() != "true":
-            return Invalid(f"{clone} exists but is not a git repo")
         for extra in ([], ["--push"]):
-            res, err = _call(run, ["git", "-C", clone, "remote", "get-url", *extra, "origin"])
-            if err:
-                return err
+            res = run(["git", "-C", clone, "remote", "get-url", *extra, "origin"], SHORT)
             if res.returncode != 0 or norm_url(res.stdout) != want:
                 return Invalid(f"{clone} is not a clone of {owner}/{name} (origin {'push ' if extra else ''}URL differs)")
     else:
-        res, err = _call(run, ["gh", "repo", "clone", f"{owner}/{name}", clone], LONG)
-        if err:
-            return err
+        res = run(["gh", "repo", "clone", f"{owner}/{name}", clone], LONG)
         if res.returncode != 0:
             return Transient(f"gh repo clone {owner}/{name}: {_stderr(res)}")
-    names = _existing_branches(issue_id, clone, run)
-    if isinstance(names, Transient):
-        return names
+    found = _existing_branches(issue_id, clone, run)
+    if isinstance(found, Transient):
+        return found
+    names, where = found
     if len(names) > 1:
         return Invalid(f"several {issue_id}-* branches: {', '.join(names)[:200]}")
     if names and not re.fullmatch(rf"{re.escape(issue_id)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {issue_id}-<lowercase slug>")
     branch = names[0] if names else f"{issue_id}-{slug(issue['title'])}"
     return Ok(issue_id, issue["title"], owner, name, clone, default, branch,
-              os.path.join(run_dir(issue_id), "worktrees", branch), mapped=mapped)
+              os.path.join(base, "worktrees", branch), mapped=mapped, branch_exists=where)
 
 def pr_title(ok):
     """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""
     t = f"{ok.issue}: " + re.sub(r"^[A-Z][A-Z0-9]*: ", "", ok.title, count=1)
     return " ".join(re.sub(r"[^\w .,:()/-]", " ", t).split())
-
-def iso(s):
-    t = parse_time(s)
-    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 def _out(run, argv):
     res = run(argv, SHORT)
@@ -210,11 +174,11 @@ def _json(run, argv):
     try:
         return json.loads(_out(run, argv))
     except ValueError as e:
-        raise Malformed(f"{' '.join(argv)[:150]}: {e}") from None
+        raise TransientError(f"{' '.join(argv)[:150]}: {e}") from None
 
 def _rows(data, what):
     if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
-        raise Malformed(f"{what}: not a JSON list of objects")
+        raise TransientError(f"{what}: not a JSON list of objects")
     return data
 
 def _author(row, key):
@@ -225,7 +189,7 @@ def _login(run):
     data = _json(run, ["gh", "api", "user"])
     login = data.get("login") if isinstance(data, dict) else None
     if not isinstance(login, str) or not login:
-        raise Malformed("gh api user: no login")
+        raise TransientError("gh api user: no login")
     return login
 
 def _pr(ok, run, login):
@@ -236,10 +200,10 @@ def _pr(ok, run, login):
     if not mine:
         return None
     if not isinstance(mine[0].get("number"), int):
-        raise Malformed("gh pr list: a PR without a number")
+        raise TransientError("gh pr list: a PR without a number")
     return {k: mine[0].get(k) for k in ("number", "url", "state")}
 
-def _plan_docs(worktree):
+def _plan_docs(worktree, branch):
     found = []
     for base, dirs, files in os.walk(worktree):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".claude")]
@@ -248,30 +212,18 @@ def _plan_docs(worktree):
                 p = os.path.join(base, f)
                 try:
                     with open(p, errors="replace") as fh:
-                        m = re.search(r"RESUME: phase=(S\d)", fh.read())
+                        m = re.search(r"RESUME: phase=(S\d)([^\n]*)", fh.read())
                 except OSError:
                     continue
-                if m:
+                if m and f"branch={branch}" in m.group(2).split():
                     found.append({"path": p, "phase": m.group(1)})
     return sorted(found, key=lambda d: d["path"])
 
-def _branch_exists(ok, run):
-    local = run(["git", "-C", ok.clone, "show-ref", "--verify", "--quiet", f"refs/heads/{ok.branch}"], SHORT)
-    if local.returncode == 0:
-        return "local"
-    if local.returncode != 1:
-        raise TransientError(f"git show-ref: {_stderr(local)}")
-    return "remote" if _out(run, ["git", "-C", ok.clone, "ls-remote", "--heads", "origin", ok.branch]).strip() else None
-
-def worktrees_dir_ok(issue):
-    base = run_dir(issue)
-    return os.path.realpath(os.path.join(base, "worktrees")).startswith(os.path.realpath(base) + os.sep)
-
 def cmd_status(ok, run, out):
     json.dump({"repo": f"{ok.owner}/{ok.name}", "clone": ok.clone, "default": ok.default, "branch": ok.branch,
-               "worktree": ok.worktree, "branch_exists": _branch_exists(ok, run), "worktree_exists": os.path.isdir(ok.worktree),
-               "pr": _pr(ok, run, _login(run)), "pr_title": pr_title(ok), "worktrees_dir_ok": worktrees_dir_ok(ok.issue),
-               "plan_docs": _plan_docs(ok.worktree) if os.path.isdir(ok.worktree) else []}, out)
+               "worktree": ok.worktree, "branch_exists": ok.branch_exists, "worktree_exists": os.path.isdir(ok.worktree),
+               "pr": _pr(ok, run, _login(run)), "pr_title": pr_title(ok),
+               "plan_docs": _plan_docs(ok.worktree, ok.branch) if os.path.isdir(ok.worktree) else []}, out)
     out.write("\n")
     return 0
 
@@ -279,33 +231,14 @@ def _pages(run, path):
     """Every row of a paginated list endpoint; `--slurp` wraps the pages in one array."""
     pages = _json(run, ["gh", "api", "--paginate", "--slurp", path])
     if not isinstance(pages, list) or not all(isinstance(p, list) for p in pages):
-        raise Malformed(f"{path}: not a JSON array of pages")
+        raise TransientError(f"{path}: not a JSON array of pages")
     return _rows([r for p in pages for r in p], path)
 
-@dataclass(frozen=True)
-class Note:
-    at: datetime; raw: str; email: str | None; body: str
-
-def _note(n):
-    email = None if n["user"] is None else n["user"]["email"]
-    if not isinstance(n["body"], str) or not isinstance(email, (str, type(None))):
-        raise TypeError("comment body or author email is not a string")
-    return Note(iso(n["createdAt"]), n["createdAt"], email, n["body"])
-
 def _linear(gql, issue):
-    """(the issue's createdAt, every comment as a Note); a failure or a missing field is Transient."""
+    """(the issue's createdAt, [(instant, comment)]) of its first 250 comments; a failure or a missing field is Transient."""
     try:
-        notes, cursor, seen = [], None, set()
-        while True:
-            page = gql(Q_COMMENTS, i=issue, c=cursor)["issue"]
-            conn = page["comments"]
-            notes += [_note(n) for n in conn["nodes"]]
-            if not conn["pageInfo"]["hasNextPage"]:
-                return iso(page["createdAt"]), notes
-            cursor = conn["pageInfo"]["endCursor"]
-            if not cursor or cursor in seen:
-                raise ValueError(f"page cursor {cursor!r}")
-            seen.add(cursor)
+        page = gql(Q_COMMENTS, i=issue)["issue"]
+        return parse_time(page["createdAt"]), [(parse_time(n["createdAt"]), n) for n in page["comments"]["nodes"]]
     except (SystemExit, Exception) as e:
         raise TransientError(f"Linear: {e!r}") from None
 
@@ -318,9 +251,9 @@ def _pr_entries(ok, run, pr, since):
             if c.get(key) is None:
                 continue
             try:
-                at = iso(c[key])
+                at = parse_time(c[key])
             except (AttributeError, ValueError):
-                raise Malformed(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
+                raise TransientError(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
             if at > since:
                 e = {"at": c[key], "source": "pr", "kind": kind, "author": _author(c, "user"), "body": c.get("body") or ""}
                 if kind == "review":
@@ -330,15 +263,16 @@ def _pr_entries(ok, run, pr, since):
                 found.append((at, e))
     return found
 
-def cmd_comments(ok, run, out, gql, humans, markers):
-    """The comments after the latest `Build started` by a marker account (else the issue's creation), the user's apart from the others'."""
+def cmd_comments(ok, run, out, gql, humans):
+    """The comments after the latest non-human `Build started` (else the issue's creation), the user's apart from the others'."""
     created, notes = _linear(gql, ok.issue)
-    who = lambda n: (n.email or "").lower()
-    since = max((n.at for n in notes if who(n) in markers and BUILD_STARTED.match(n.body.strip())), default=created)
+    email = lambda n: (n["user"] or {}).get("email")
+    who = lambda n: (email(n) or "").lower()
+    since = max((at for at, n in notes if who(n) not in humans and BUILD_STARTED.match(n["body"].strip())), default=created)
     login = _login(run)
     pr = _pr(ok, run, login)
-    user = [(n.at, {"at": n.raw, "source": "linear", "kind": "comment", "author": n.email, "body": n.body})
-            for n in notes if who(n) in humans and n.at > since]
+    user = [(at, {"at": n["createdAt"], "source": "linear", "kind": "comment", "author": email(n), "body": n["body"]})
+            for at, n in notes if who(n) in humans and at > since]
     others = []
     for at, e in _pr_entries(ok, run, pr, since) if pr else []:
         (user if e["author"] == login else others).append((at, e))
@@ -347,19 +281,16 @@ def cmd_comments(ok, run, out, gql, humans, markers):
     out.write("\n")
     return 0
 
-def _command(a, issue, repos, humans, markers, gql, run, out, err):
+def _command(a, issue, repos, humans, gql, run, out):
     try:
         ok = resolve(issue, gql, run, repos=repos)
     except Exception as e:
         raise TransientError(f"resolve: {e!r}") from None
-    if isinstance(ok, Transient):
+    if isinstance(ok, (Invalid, Transient)):
         raise TransientError(ok.reason)
-    if isinstance(ok, Invalid):
-        err.write(f"eng.py: Invalid: {ok.reason}\n")
-        return 2
-    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, gql, humans, markers)
+    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, gql, humans)
 
-def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, root=ROOT):
+def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG):
     import argparse
     ap = argparse.ArgumentParser(prog="eng.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -369,24 +300,20 @@ def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.std
     issue = env.get("AGENT_PM_ISSUE", "")
     if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", issue):
         err.write("eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
-        return 2
+        return 1
     try:
         cfg = load_config(config)
-        markers = {r.account.lower() for r in registry(root)[0].values() if "engineering" in r.tasks} if a.cmd == "comments" else set()
     except SystemExit as e:
         err.write(f"eng.py: {e.code}\n")
-        return 2
+        return 1
     humans = {e.lower() for e in cfg.get("human_members") or []}
     if gql is None:
         from pipeline import linear_gql as gql
     try:
-        return _command(a, issue, cfg["project_repos"], humans, markers, gql, run, out, err)
-    except Malformed as e:
-        err.write(f"eng.py: malformed gh output: {e}\n")
-        return 2
+        return _command(a, issue, cfg["project_repos"], humans, gql, run, out)
     except (TransientError, subprocess.TimeoutExpired, OSError) as e:
-        err.write(f"eng.py: transient: {e}\n")
-        return 3
+        err.write(f"eng.py: {e}\n")
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
