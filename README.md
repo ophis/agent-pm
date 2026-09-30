@@ -2,11 +2,36 @@
 
 Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
 
-| Role | Agent produces | Published to |
+## Roles
+
+A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to `private_docs` in Chinese, ask the user when an issue is too vague.
+
+| Role | Default task | Does | Next |
+|---|---|---|---|
+| researcher | `deep-research` | Answers the issue's questions with a verified report: every finding with its confidence and sources, claims you list as known re-checked, gaps listed | pm |
+| pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions | engineer |
+| engineer | `engineering` | Builds a PRD into a pull request on the target repo, following that repo's conventions; never merges, force-pushes or touches the default branch | — |
+
+## Tasks
+
+A task is the steps a run follows for one issue (`tasks/<task>.md`), including how to resume after an interruption.
+
+- **`deep-research`:** runs the built-in `/deep-research` Workflow once over all the issue's questions, writes the report from `templates/research-report.md` to `private_docs/Research/`, attaches its link and moves the issue to In Review.
+- **`product-design`:** reads the brief and source reports; researches and grills itself with a subagent when needed; writes the PRD from `templates/prd.md` to `private_docs/Product Design/`, has a fresh subagent review it and fixes what holds up; publishes it, retitles the issue `PRD: <product name>`, and asks you to approve it with a Handoff, naming the project's mapped repo if there is one.
+- **`engineering`:** runs `autopilot:build` on the PRD in a worktree on an `<ID>-<slug>` branch of the target repo, pushes the branch, posts the build's spec and plan on the issue, opens the PR and links it. A failed build still pushes the branch and reports what failed.
+
+## Harness
+
+The Python scripts in `scripts/` that turn the board into runs. launchd runs the router and promote; they act in Linear as the harness account `frank.agent.w@gmail.com`, each run as its role's account.
+
+| Script | Runs | Does |
 |---|---|---|
-| researcher | A verified research report | `private_docs/Research/` |
-| pm | A PRD | `private_docs/Product Design/` |
-| engineer | A pull request that builds the PRD | The target repo |
+| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
+| `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. |
+| `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
+| `prune.py` | End of each promote tick | Deletes the worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work. |
+| `eng.py` | Launcher and engineer runs | Resolves an Engineering issue's target repo and branch; its `status` and `comments` commands feed the engineer run. |
+| `pipeline.py` | Shared | Linear API client, and loading and validating the config. |
 
 ## Using the board
 
@@ -17,11 +42,6 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 - **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's `private_docs` worktree) are deleted 24 hours later, along with any unpushed work.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
-
-## Schedule
-
-- **Router:** every 30 minutes, all day. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
-- **Promote:** every 5 minutes. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
 
