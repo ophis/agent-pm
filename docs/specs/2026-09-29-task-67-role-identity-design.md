@@ -58,7 +58,7 @@ Validation (a violation stops router and launcher with a `SystemExit` naming the
 In `launch.main`, for both `new` and `resume`, after the transcript check and before the repo step:
 
 1. `keychain(job.key)` — default `has_key(service)`: `subprocess.run(["security", "find-generic-password", "-s", service], stdout=DEVNULL, stderr=DEVNULL).returncode == 0` (no `-w`, output discarded; the key is never read). `main` takes it as an injectable `keychain=` parameter like `sh=`.
-2. Missing → `fail(plog, issue, "config-error", f"Keychain item {job.key} for role key not found", 2)`: one line in the project log and stderr, no tmux session, exit 2 — the existing config-error path.
+2. Missing → `fail(plog, issue, "config-error", f"no Keychain item for role key {job.key}", 2)`: one line in the project log and stderr, no tmux session, exit 2 — the existing config-error path.
 3. Present → the tmux script exports `LINEAR_KEYCHAIN_SERVICE=<job.key>` alongside `PATH` and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (inside the `bash -c` command, as those are, so a running tmux server's environment does not override it).
 
 The prompt text is unchanged.
