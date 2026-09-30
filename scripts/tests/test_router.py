@@ -2,6 +2,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
+from board_ids import HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 import router  # noqa: E402
 
@@ -24,6 +25,7 @@ DR, PD = "Deep Research", "Product Design"
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
 CONFIG = HEADER + '[roles.researcher]\nnext = "pm"\n[roles.pm]\nnext = "engineer"\n[roles.engineer]\n'
+RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { name parent { id } } } } }"
 
 
 def ago(**kw):
@@ -45,11 +47,16 @@ class FakeLinear:
         self.missing = set()
         self.todo_error = False
         self.unreadable = set()
+        self.group = {"isGroup": True}   # the task_label_group's issueLabel node; None = not found
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
         if query == pipeline.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
+        if query == pipeline.Q_TASK_GROUP:
+            if self.group is None:
+                raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
+            return {"issueLabel": self.group}
         if "users(filter" in query:
             users = {"me@x.com": USER, "b@x.com": "user-b", **{a.lower(): f"u-{r}" for r, a in ROLE.items()}}
             return {"users": {"nodes": [{"id": u} for e, u in users.items() if v["e"].lower() == e and e not in self.missing]}}
@@ -75,7 +82,7 @@ class FakeLinear:
                 return {"issues": {"nodes": [{"assignee": i["assignee"]}] if i else []}}
             if self.todo_error and "inverseRelations" in query:
                 raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
-            drop = {"state"} if "inverseRelations" in query else {"state", "inverseRelations"}
+            drop = {"state", "labels"} if "inverseRelations" in query else {"state", "labels", "inverseRelations"}
             return {"issues": {"nodes": [{k: x for k, x in i.items() if k not in drop} for i in self.issues.values()
                                          if f["team"]["id"]["eq"] == TEAM and f["project"] == {"null": False} and i["project"]
                                          and i["assignee"] and i["assignee"]["id"] in f["assignee"]["id"]["in"]
@@ -84,8 +91,9 @@ class FakeLinear:
             if v["i"] in self.unreadable:
                 raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
             return {"issue": {"inverseRelations": self.issues[v["i"]]["inverseRelations"]}}
-        if "state { id }" in query:
-            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
+        if query == RECHECK:
+            i = self.issues[v["i"]]
+            return {"issue": {"state": {"id": STATES[i["state"]]}, "labels": {"nodes": i["labels"]}}}
         raise AssertionError(query)
 
     def reads(self, state="Todo"):
@@ -96,17 +104,22 @@ def ops(fake):
     return [re.search(r"\{ (\w+)\(", q).group(1) for q, _ in fake.mutations]
 
 
-def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR, inverse=()):
+def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR, inverse=(), labels=()):
     # id == identifier so mutations and history can be keyed by either
     return {"id": ident, "identifier": ident, "url": f"https://linear.app/x/{ident}", "state": state,
             "project": project and {"id": IDS[project], "name": project},
             "assignee": who(role), "priority": priority, "createdAt": created, "updatedAt": updated or ago(minutes=5),
-            "inverseRelations": {"nodes": list(inverse)}}
+            "inverseRelations": {"nodes": list(inverse)}, "labels": list(labels)}
 
 
 def blocker(ident, state="started", kind="blocks"):
     """An inverse relation node: ident (None = unreadable) relates to the issue by kind; state is ident's state type."""
     return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
+
+
+def label(name, group=TASK_GROUP):
+    """A labels node of the re-check: name in the label group (None = not in a group)."""
+    return {"name": name, "parent": group and {"id": group}}
 
 
 class Base(unittest.TestCase):
@@ -120,6 +133,7 @@ class Base(unittest.TestCase):
         self.hist = {}
         self.names = {}
         self.config = self.write_config(CONFIG)
+        self.root = pipeline.ROOT
 
     def sid(self, name):
         """A UUID for a short session name (transcript() accepts UUIDs only); outputs map it back to the name."""
@@ -172,13 +186,31 @@ class Base(unittest.TestCase):
             f.write("\n".join(self.lines) + "\n")
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            rc = router.main(list(argv) + [self.log], gql=fake, now=NOW, tdir=self.tdir, config=self.config)
+            rc = router.main(list(argv) + [self.log], gql=fake, now=NOW, tdir=self.tdir, config=self.config, root=self.root)
         self.err = self.unmap(err.getvalue())
         return rc, self.unmap(out.getvalue().strip())
 
     def said(self):
         """The logged messages, without timestamps."""
         return [line.split(" ", 2)[2] for line in self.err.splitlines()]
+
+    def tick(self, fake, *argv, hour=2, shell=None):
+        self.sh = shell or FakeShell()
+        with open(self.log, "w") as f:
+            f.write("\n".join(self.lines) + ("\n" if self.lines else ""))
+        err = io.StringIO()
+        with redirect_stderr(err), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
+            rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
+                             sh=self.sh, hour=hour, root=self.root)
+            self.path = os.environ["PATH"]
+        self.err = self.unmap(err.getvalue())
+        with open(self.log) as f:
+            self.state = self.unmap(f.read())
+        return rc
+
+    def launched(self):
+        (launch,) = self.sh.launches()
+        return launch[launch.index("--issue") + 1]
 
 
 class ParseAndLiveness(Base):
@@ -756,7 +788,7 @@ class Blockers(Base):
                                blocker("TASK-7"), blocker("TASK-8", "completed"), blocker("TASK-9", "unstarted")]),
                            issue("TASK-2", "Todo", "researcher", priority=2), issue("TASK-3", "Todo", "researcher", priority=3)])
         self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-2 https://linear.app/x/TASK-2 Deep Research")
-        self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7, TASK-9", "pick: TASK-2 (2 in queue)"])
+        self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7, TASK-9", "pick: TASK-2 (2 in queue)", "claim: TASK-2 task=deep-research"])
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
 
     def test_done_blockers(self):
@@ -782,7 +814,7 @@ class Blockers(Base):
                                  inverse=[blocker("TASK-5", kind="related"), blocker("TASK-6", kind="duplicate")]),
                            issue("TASK-2", "Todo", "researcher", priority=1, inverse=[blocker("TASK-1", "unstarted")])])
         self.assertEqual(self.run_main(fake, "--claim")[1].split()[0], "TASK-1")
-        self.assertEqual(self.said(), ["blocked: TASK-2 by TASK-1", "pick: TASK-1 (1 in queue)"])
+        self.assertEqual(self.said(), ["blocked: TASK-2 by TASK-1", "pick: TASK-1 (1 in queue)", "claim: TASK-1 task=deep-research"])
         self.assertFalse(any(re.search(r"\brelations\b", q) for q, _ in fake.queries))
 
     def test_null_blocker_unreadable(self):
@@ -798,7 +830,8 @@ class Blockers(Base):
         self.assertEqual(self.run_main(fake, "--claim"), (0, "TASK-3 https://linear.app/x/TASK-3 Deep Research"))
         said = self.said()
         self.assertRegex(said[0], r"^todo: blocker query failed, reading blockers per issue: linear api error: ")
-        self.assertEqual(said[1:], ["blocked: TASK-1 by (unreadable)", "blocked: TASK-2 by TASK-7", "pick: TASK-3 (1 in queue)"])
+        self.assertEqual(said[1:], ["blocked: TASK-1 by (unreadable)", "blocked: TASK-2 by TASK-7", "pick: TASK-3 (1 in queue)",
+                                    "claim: TASK-3 task=deep-research"])
         todo = fake.reads()
         self.assertEqual(["inverseRelations" in q for q in todo], [True, False])
         self.assertEqual([v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q], ["TASK-1", "TASK-2", "TASK-3"])
@@ -856,24 +889,6 @@ class FakeShell:
 
 
 class Tick(Base):
-    def tick(self, fake, *argv, hour=2, shell=None):
-        self.sh = shell or FakeShell()
-        with open(self.log, "w") as f:
-            f.write("\n".join(self.lines) + ("\n" if self.lines else ""))
-        err = io.StringIO()
-        with redirect_stderr(err), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
-            rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
-                             sh=self.sh, hour=hour)
-            self.path = os.environ["PATH"]
-        self.err = self.unmap(err.getvalue())
-        with open(self.log) as f:
-            self.state = self.unmap(f.read())
-        return rc
-
-    def launched(self):
-        (launch,) = self.sh.launches()
-        return launch[launch.index("--issue") + 1]
-
     def test_outside_hours(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.assertEqual(self.tick(fake, hour=12), 0)
@@ -902,8 +917,9 @@ class Tick(Base):
         sid = launch[launch.index("--sid") + 1]
         self.assertEqual(launch[0], sys.executable)
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", IDS[DR],
-                                      "--assignee", ROLE["researcher"], "--sid", sid, "--mode", "new"])
-        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}\n$")
+                                      "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
+        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}"
+                                     r" task=deep-research\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
     def test_lock_per_role_exact_match(self):
@@ -1143,6 +1159,146 @@ class Tick(Base):
         err = io.StringIO()
         with redirect_stderr(err):
             self.assertEqual(router.main(["--issue", "TASK-1"], gql=None), 2)
+
+
+class TaskLabels(Base):
+    """A copy of the repo's roles/ and tasks/ where researcher also runs light-research and orphan is no role's task."""
+    def setUp(self):
+        super().setUp()
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        self.root = os.path.join(self.tmp.name, "root")
+        for d in ("roles", "tasks"):
+            shutil.copytree(os.path.join(pipeline.ROOT, d), os.path.join(self.root, d))
+        for t in ("light-research", "orphan"):
+            for ext, text in ((".md", "x\n"), (".toml", 'model = "sonnet"\neffort = "low"\n')):
+                with open(os.path.join(self.root, "tasks", t + ext), "w") as f:
+                    f.write(text)
+        path = os.path.join(self.root, "roles", "researcher.toml")
+        with open(path) as f:
+            text = f.read()
+        with open(path, "w") as f:
+            f.write(text.replace('tasks = ["deep-research"]', 'tasks = ["deep-research", "light-research"]'))
+
+    def test_task_for(self):
+        other = [label("Urgent", None), label("Light Research", "00000000-0000-4000-8000-000000000003")]
+        role_tasks = ["deep-research", "light-research"]
+        all_tasks = ["deep-research", "engineering", "light-research", "orphan", "product-design"]
+        fix = "Fix the label or the assignee, then move the issue back to Todo."
+        cases = (([], ("deep-research", None)),
+                 (other, ("deep-research", None)),
+                 ([label("Light Research")], ("light-research", None)),
+                 ([label("light-research")], ("light-research", None)),
+                 (other + [label("LightResearch")], ("light-research", None)),
+                 ([label("Deep Research")], ("deep-research", None)),
+                 ([label("Quick Look")], (None, 'Task label "Quick Look" matches no task in tasks/. Fix the label, then move the issue back to Todo.')),
+                 ([label("Orphan")], (None, f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}')),
+                 ([label("Engineering")], (None, f'Task label "Engineering" is not one of researcher\'s tasks (deep-research, light-research). {fix}')),
+                 ([label("Light Research"), other[0], label("Deep Research")],
+                  (None, "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo.")))
+        for labels, want in cases:
+            self.assertEqual(router.task_for(labels, TASK_GROUP, "researcher", role_tasks, all_tasks), want, labels)
+
+    def test_fr6_fr8_label_picks_the_task(self):
+        for labels, task in (([], "deep-research"), ([label("Light Research"), label("Urgent", None)], "light-research")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=labels)])
+            self.tick(fake)
+            (launch,) = self.sh.launches()
+            sid = launch[launch.index("--sid") + 1]
+            self.assertEqual(launch[launch.index("--sid"):], ["--sid", sid, "--task", task, "--mode", "new"], task)
+            self.assertRegex(self.state, rf"^\S+ \S+ start TASK-1 session={sid} transcript=\S+ task={task}\n$", task)
+            self.assertIn(f"claim: TASK-1 task={task}", self.said(), task)
+            self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress", task)
+
+    def test_fr7_invalid_label_goes_to_review(self):
+        fix = "then move the issue back to Todo."
+        cases = ((["Light Research", "Deep Research"], f"Several task labels (Light Research, Deep Research); keep one, {fix}"),
+                 (["Quick Look"], f'Task label "Quick Look" matches no task in tasks/. Fix the label, {fix}'),
+                 (["Orphan"], f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
+                              f"Fix the label or the assignee, {fix}"))
+        for names, comment in cases:
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label(n) for n in names]),
+                               issue("TASK-2", "Todo", "researcher", priority=2)])
+            self.tick(fake)
+            t = fake.issues["TASK-1"]
+            self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
+                             ("In Review", who("researcher"), [comment], ["me@x.com"]), names)
+            self.assertEqual([(op, v["i"]) for op, (_, v) in zip(ops(fake), fake.mutations)],
+                             [("issueSubscribe", "TASK-1"), ("commentCreate", "TASK-1"), ("issueUpdate", "TASK-1"),
+                              ("issueUpdate", "TASK-2")], names)
+            self.assertEqual(fake.mutations[2][1]["u"], {"stateId": STATES["In Review"]}, names)
+            self.assertIn("claim: TASK-1 bad task label; In Review", self.said(), names)
+            self.assertEqual(self.launched(), "TASK-2", names)
+            self.assertEqual([line.split()[2:4] for line in self.state.splitlines()], [["start", "TASK-2"]], names)
+            self.assertTrue(self.state.endswith(" task=deep-research\n"), names)
+
+    def test_fr4_label_read_from_recheck(self):
+        class Relabel(FakeLinear):
+            def __call__(self, query, **v):
+                out = super().__call__(query, **v)
+                if "issues(filter" in query:
+                    self.issues["TASK-1"]["labels"] = [label("Light Research")]
+                return out
+
+        fake = Relabel([issue("TASK-1", "Todo", "researcher")])
+        self.tick(fake)
+        self.assertIn("claim: TASK-1 task=light-research", self.said())
+        self.assertEqual(self.sh.launches()[0][-4:], ["--task", "light-research", "--mode", "new"])
+        self.assertNotIn("labels", fake.reads()[0])
+
+    def test_fr8_dry_run_resolves_nothing(self):
+        for argv in (("--claim", "--dry-run"), ("--pick", "--dry-run")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan")])])
+            self.assertEqual(self.run_main(fake, *argv), (0, ""), argv)
+            self.assertEqual(self.said(), ["pick: TASK-1 (1 in queue)"], argv)
+            self.assertEqual(([q for q, _ in fake.queries if q == RECHECK], fake.mutations), ([], []), argv)
+
+    def test_nfr1_claim_reads_one_query_per_issue(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Light Research")])])
+        self.tick(fake)
+        self.assertEqual([(q, v) for q, v in fake.queries if "issue(id:" in q], [(RECHECK, {"i": "TASK-1"})])
+        todo = [q for q, _ in fake.queries].index(fake.reads()[0])
+        self.assertEqual([q for q, _ in fake.queries[todo + 1:]], [RECHECK, fake.mutations[0][0]])
+
+    def test_fr12a_manual_claim_takes_default_task_only(self):
+        for argv, out in ((("--pick",), "TASK-3 https://linear.app/x/TASK-3"),
+                          (("--pick", "--role", "researcher"), "TASK-3 https://linear.app/x/TASK-3"),
+                          (("--claim",), "TASK-3 https://linear.app/x/TASK-3 Deep Research")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research")]),
+                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan")]),
+                               issue("TASK-3", "Todo", "researcher", priority=3, labels=[label("deep-research")])])
+            self.assertEqual(self.run_main(fake, *argv), (0, out), argv)
+            self.assertEqual([fake.issues[i]["state"] for i in ("TASK-1", "TASK-2", "TASK-3")], ["Todo", "In Review", "In Progress"], argv)
+            self.assertNotIn("TASK-1", [v["i"] for _, v in fake.mutations], argv)
+            said = self.said()
+            self.assertIn("claim: TASK-1 task=light-research is not researcher's default; skipping", said, argv)
+            self.assertIn("claim: TASK-2 bad task label; In Review", said, argv)
+            self.assertIn("claim: TASK-3 task=deep-research", said, argv)
+
+    def test_fr1_board_stops_on_bad_task_group(self):
+        for group, msg in ((None, f"not found in Linear: linear api error: [{{'message': 'Entity not found'}}]"),
+                           ({"isGroup": False}, "is not a label group")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+            fake.group = group
+            with self.assertRaises(SystemExit) as cm:
+                self.run_main(fake, "--claim")
+            self.assertEqual(cm.exception.code, f"pipeline.toml: task_label_group {TASK_GROUP} {msg}")
+            self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []))
+
+    def test_fr1_one_group_query_per_board(self):
+        for argv in (("--claim",), ("--plan",), ("--pick",), ()):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+            if argv:
+                self.run_main(fake, *argv)
+            else:
+                self.tick(fake)
+            self.assertEqual([v for q, v in fake.queries if q == pipeline.Q_TASK_GROUP], [{"i": TASK_GROUP}], argv)
+
+    def test_resume_passes_the_default_task(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research")])], self.hist)
+        self.resumable("TASK-1", "a", 60)
+        self.tick(fake)
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[-6:], ["--task", "deep-research", "--mode", "resume", "--k", "1"])
 
 
 if __name__ == "__main__":
