@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES, TEAM, team_node  # noqa: E402
+from board_ids import DOCS_CLONE, HEADER, STATES, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 
 BASE = HEADER + """[roles.researcher]
@@ -67,6 +67,108 @@ class Config(unittest.TestCase):
                     self.load(text)
                 self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
                 self.assertIn(fragment, str(cm.exception.code))
+
+
+DOCS = {"repo": "acme/notes", "clone": DOCS_CLONE, "branch": "trunk"}
+
+
+def with_docs(value):
+    """BASE with its docs line replaced: a dict becomes an inline table, anything else a bare value, None drops the key."""
+    if isinstance(value, dict):
+        value = "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in value.items()) + " }"
+    head = BASE[:BASE.index("docs = ")]
+    return head + ("" if value is None else f"docs = {value}\n") + BASE[BASE.index("[roles"):]
+
+
+class Docs(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+
+    def load(self, text):
+        path = os.path.join(self.dir, "pipeline.toml")
+        with open(path, "w") as f:
+            f.write(text)
+        return pipeline.load_config(path)
+
+    def rejects(self, fragment, text):
+        with self.assertRaises(SystemExit) as cm:
+            self.load(text)
+        msg = str(cm.exception.code)
+        self.assertTrue(msg.startswith("pipeline.toml: "), msg)
+        self.assertIn(fragment, msg)
+
+    def test_accepted(self):
+        self.assertEqual(self.load(BASE)["docs"], DOCS)
+
+    def test_clone_normalized(self):
+        cases = {"~/docs-x": os.path.expanduser("~/docs-x"), "/nonexistent/a/../notes/": "/nonexistent/notes"}
+        for clone, want in cases.items():
+            with self.subTest(clone):
+                self.assertEqual(self.load(with_docs({**DOCS, "clone": clone}))["docs"]["clone"], want)
+
+    def test_table_form_accepted(self):
+        body = BASE[BASE.index("[roles"):]
+        text = HEADER[:HEADER.index("docs = ")] + body + '[docs]\nrepo = "acme/notes"\nclone = "/nonexistent/x"\nbranch = "trunk"\n'
+        self.assertEqual(self.load(text)["docs"]["clone"], "/nonexistent/x")
+
+    def test_table_missing_or_not_a_table(self):
+        for label, value in (("missing", None), ("string", '"x"'), ("list", "[1]")):
+            with self.subTest(label):
+                self.rejects("[docs] is missing: repo, clone, branch", with_docs(value))
+
+    def test_missing_keys(self):
+        for key in DOCS:
+            with self.subTest(key):
+                self.rejects(f"[docs] is missing: {key}", with_docs({k: v for k, v in DOCS.items() if k != key}))
+        self.rejects("[docs] is missing: clone, branch", with_docs({"repo": "acme/notes"}))
+
+    def test_unknown_keys(self):
+        self.rejects("[docs] has unknown keys: folder", with_docs({**DOCS, "folder": "x"}))
+        self.rejects("[docs] has unknown keys: a, b", with_docs({**DOCS, "b": "x", "a": "x"}))
+
+    def test_bad_repo(self):
+        for repo in ("acme", "https://github.com/acme/notes", "acme/", "acme/..", "", 5, ["acme/notes"]):
+            with self.subTest(repo=repo):
+                self.rejects("docs.repo", with_docs({**DOCS, "repo": repo}))
+
+    def test_bad_clone(self):
+        cases = ["notes", "", "~someone-nobody/x", 5, ["/nonexistent/x"], "/nonexistent/a\nb", "/nonexistent/a\tb", "/nonexistent/a\x7fb",
+                 "/nonexistent/a*", "/nonexistent/a?", "/nonexistent/[a]", "/nonexistent/a,b", "/nonexistent/(a)", "/nonexistent/{a}"]
+        for clone in cases:
+            with self.subTest(clone=clone):
+                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
+
+    def test_clone_overlapping_root(self):
+        for label, clone in (("root", pipeline.ROOT), ("under root", os.path.join(pipeline.ROOT, "docs")),
+                             ("ancestor of root", os.path.dirname(pipeline.ROOT)), ("filesystem root", "/")):
+            with self.subTest(label):
+                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
+
+    def test_clone_symlink_into_root_rejected(self):
+        link = os.path.join(self.dir, "link")
+        os.symlink(pipeline.ROOT, link)
+        self.rejects("docs.clone", with_docs({**DOCS, "clone": link}))
+
+    def test_clone_overlapping_protected(self):
+        home = os.path.join(self.dir, "home")
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            for d in (".claude", ".claude/x", "Library/LaunchAgents", "Library/LaunchAgents/x", "Library", ""):
+                with self.subTest(d or "home"):
+                    self.rejects("docs.clone", with_docs({**DOCS, "clone": os.path.join(home, d).rstrip("/")}))
+            self.assertEqual(self.load(with_docs({**DOCS, "clone": "~/notes"}))["docs"]["clone"], os.path.join(home, "notes"))
+
+    def test_bad_branch(self):
+        for branch in ("", 5, ["trunk"], "-x", "a..b", "a b", "a\nb", "a*", "a:b"):
+            with self.subTest(branch=branch):
+                self.rejects("docs.branch", with_docs({**DOCS, "branch": branch}))
+
+    def test_ref(self):
+        for ref in ("main", "trunk", "feature/a-b_c.d", "TASK-99-build"):
+            self.assertTrue(pipeline.REF.fullmatch(ref), ref)
+        for ref in ("", "-x", "a..b", "a b", "a\nb"):
+            self.assertFalse(pipeline.REF.fullmatch(ref), repr(ref))
 
 
 ROLES = HEADER + '[roles.researcher]\nnext = "engineer"\n'
@@ -176,6 +278,10 @@ class Runnable(unittest.TestCase):
 
     def test_states_is_a_top_key(self):
         self.assertEqual(list(self.load()["states"]), list(pipeline.STATES))
+        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
+
+    def test_docs_is_a_top_key(self):
+        self.assertEqual(self.load()["docs"], DOCS)
         self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
 
     def test_load_config_ignores_role_checks(self):
@@ -371,6 +477,10 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(cfg["harness_key"], "linear-api-key")
         tasks = pipeline.registry()[1]
         self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
+
+    def test_real_docs(self):
+        self.assertEqual(pipeline.load_config()["docs"], {
+            "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
 
     def test_real_config_ids(self):
         cfg = pipeline.load_config()

@@ -77,6 +77,7 @@ def run_dir(issue):
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
 NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
+REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 
 
 def repo_slug(value):
@@ -132,16 +133,19 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "roles", "project_repos"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "docs", "roles", "project_repos"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
+DOCS_KEYS = ("repo", "clone", "branch")
 PIPELINE_ROLE_KEYS = {"next", "require_instructions"}
 ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
 TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REPO = "{repo}"
+# A clone with one of these would break the launcher's Edit(//<clone>/**) deny rule or the prompt's Docs: line.
+CLONE_BAD_RE = re.compile(r"[\x00-\x1f\x7f*?\[\](){},]")
 # Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
 PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
 
@@ -163,6 +167,28 @@ def _check_ids(cfg):
     for k in STATES:
         if not _uuid(states[k]):
             raise SystemExit(f"pipeline.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
+
+
+def _check_docs(cfg):
+    docs = cfg.get("docs")
+    if not isinstance(docs, dict):
+        docs = {}
+    if missing := [k for k in DOCS_KEYS if k not in docs]:
+        raise SystemExit(f"pipeline.toml: [docs] is missing: {', '.join(missing)}")
+    if extra := sorted(set(docs) - set(DOCS_KEYS)):
+        raise SystemExit(f"pipeline.toml: [docs] has unknown keys: {', '.join(extra)}")
+    if not repo_slug(docs["repo"]):
+        raise SystemExit(f"pipeline.toml: docs.repo must be <owner>/<name>: {docs['repo']!r}")
+    clone = docs["clone"]
+    path = os.path.expanduser(clone) if isinstance(clone, str) else ""
+    if (not os.path.isabs(path) or CLONE_BAD_RE.search(path)
+            or any(overlaps(path, b) for b in [ROOT] + [os.path.expanduser(p) for p in PROTECTED])):
+        raise SystemExit(f"pipeline.toml: docs.clone must be an absolute path (~ allowed) outside the repo root and "
+                         f"{', '.join(PROTECTED)}, without control characters or any of *?[](){{}},: {clone!r}")
+    branch = docs["branch"]
+    if not isinstance(branch, str) or not REF.fullmatch(branch):
+        raise SystemExit(f"pipeline.toml: docs.branch must be a git ref name: {branch!r}")
+    docs["clone"] = os.path.normpath(path)
 
 
 @dataclass(frozen=True)
@@ -193,6 +219,7 @@ def load_config(path=CONFIG):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     _check_ids(cfg)
+    _check_docs(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
         raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
