@@ -19,11 +19,12 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3` because macOS
 ## Architecture
 
 - `scripts/router.py` (hourly 01:00–06:00): tmux lock (session `agent-pm`) → Recover (resume or requeue dead In Progress runs) → usage gate → resume or claim → `launch.py`.
-- `scripts/launch.py` starts `claude -p` in tmux with cwd `work/<ID>/`. It checks the role's Keychain item (`security find-generic-password -s <key>`, no `-w`; missing → `config-error`, exit 2) and exports `LINEAR_KEYCHAIN_SERVICE=<key>`, so the run acts as the role's Linear account; it never reads a key. The prompt passes `roles/principles.md`, the charter and the task by absolute path, plus a tail line of ids (`Reviewer:`, `Humans:`, `Project:`, `Team:`, `States:`) and, for `repo_from_issue` tasks, `Repo check:` from `eng.resolve`.
+- `scripts/launch.py` starts `claude -p` in tmux with cwd `work/<ID>/`. It checks the role's Keychain item (`security find-generic-password -s <key>`, no `-w`; missing → `config-error`, exit 2) and exports `LINEAR_KEYCHAIN_SERVICE=<key>`, so the run acts as the role's Linear account; it never reads a key. The prompt passes `roles/principles.md`, the charter and the task by absolute path, plus a tail line of ids (`Humans:`, `Project:`, `Team:`, `States:`) and, for `repo_from_issue` tasks, `Repo check:` from `eng.resolve`.
 - `scripts/eng.py`: the Engineering repo step (parse the issue's `Repo:` line, clone into `~/playground/<name>`, pick the `<ID>-<slug>` branch) and a `status`/`comments` CLI the Engineering run calls.
 - `scripts/promote.py` (every 15 min, no LLM): Handoff issues → a new issue in the `next` project; the child id is a hash of source, target and handoff time, which makes reruns idempotent. Each tick ends with `prune.py` (force-deletes worktrees of issues finished ≥ 24 h ago).
 - `scripts/pipeline.py`: shared Linear GraphQL client (the harness account's key, from the Keychain service `harness_key` in `pipeline.toml`), config loading and validation (`load_config`, `registry`, `runnable`).
 - Identity: router, promote and prune act as the harness account `frank.agent.w@gmail.com`; each run as its role's `account` (`roles/<role>.toml`). Only Keychain service names travel in env vars, argv, logs and prompts, never keys.
+- Every move to In Review, by a run (`roles/principles.md`) or the harness (router's attempt cap, promote's bounce), also subscribes each `human_members` email (`issueSubscribe`) and keeps the assignee.
 - State between ticks is only `logs/runs.log` (start/resume/end lines) plus Linear issue history. Resume finds a session at `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans resumable sessions.
 
 ## Roles, tasks, rules

@@ -53,8 +53,6 @@ class FakeLinear:
     def __call__(self, query, **v):
         if query == pipeline.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids, [(i, n) for n, i in PROJECTS.items()])]}}
-        if "users(filter" in query:
-            return {"users": {"nodes": [{"id": "u-human"}] if v["e"] == HUMAN["email"] else []}}
         if query == promote.Q_HANDOFF:
             self.handoff_vars = v
             return {"issues": {"nodes": [dict(i, attachments={"nodes": i["attachments"]})
@@ -84,10 +82,11 @@ class FakeLinear:
         if query == promote.M_COMMENT:
             self.issues[v["i"]].setdefault("posted", []).append(v["b"])
             return {"commentCreate": {"success": True}}
-        if query in (promote.M_STATE, promote.M_REVIEW):
+        if query == promote.M_SUBSCRIBE:
+            self.issues[v["i"]].setdefault("subscribers", []).append(v["e"])
+            return {"issueSubscribe": {"success": True}}
+        if query == promote.M_STATE:
             self.issues[v["i"]]["state"] = next(n for n, i in STATES.items() if i == v["s"])
-            if "a" in v:
-                self.issues[v["i"]]["assignee"] = v["a"]
             return {"issueUpdate": {"success": True}}
         raise AssertionError(query)
 
@@ -269,18 +268,22 @@ class TestPromote(Base):
         self.assertEqual(src["posted"], [promote.NO_INSTRUCTIONS])
         self.assertIn("handoff-bounce DR-1 no instructions", self.out)
 
-    def test_bounce_assigns_reviewer(self):
-        src = self.fake.add("DR-1")
+    def test_bounce_subscribes_humans(self):
+        self.config = self.write_config(CONFIG.replace('["me@x.com"]', '["me@x.com", "b@x.com"]'))
+        src = self.fake.add("DR-1", assignee="u-agent")
         self.fake.moved("DR-1", 60, "In Review")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
-        self.assertEqual((src["state"], src["assignee"]), ("In Review", "u-human"))
+        self.assertEqual((src["state"], src["assignee"], src["subscribers"]), ("In Review", "u-agent", ["me@x.com", "b@x.com"]))
+        self.assertEqual([q for q, _ in self.fake.mutations],
+                         [promote.M_SUBSCRIBE, promote.M_SUBSCRIBE, promote.M_STATE, promote.M_COMMENT])
 
     def test_promotion_leaves_assignee(self):
         src = self.ready()
         self.run_main()
         self.assertEqual(src["state"], "Done")
         self.assertNotIn("assignee", src)
+        self.assertNotIn("subscribers", src)
 
     def test_cutoff_skips_promote_bounce(self):
         src = self.fake.add("DR-1")
@@ -468,6 +471,7 @@ class TestFailures(Base):
         self.run_main()
         self.assertEqual(src["state"], "In Review")
         self.assertTrue(src["posted"][0].startswith("Handoff failed: linear api error: create failed"))
+        self.assertEqual(src["subscribers"], ["me@x.com"])
 
     def test_failing_under_grace_waits(self):
         src = self.ready()  # handed off 30 min ago
@@ -529,12 +533,27 @@ class TestPartialFailures(Base):
         orig = self.fake.__call__
 
         def move_fails(query, **v):
-            if query in (promote.M_STATE, promote.M_REVIEW):
+            if query == promote.M_STATE:
                 raise SystemExit("linear api error: move failed")
             return orig(query, **v)
         self.fake = move_fails
         self.run_main()
         self.assertNotIn("posted", src)
+
+    def test_failed_subscribe_stays_in_handoff(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])  # no instructions, under GRACE
+        orig = self.fake.__call__
+
+        def subscribe_fails(query, **v):
+            if query == promote.M_SUBSCRIBE:
+                raise SystemExit("linear api error: user not found")
+            return orig(query, **v)
+        self.fake = subscribe_fails
+        self.run_main()
+        self.assertEqual(src["state"], "Handoff")
+        self.assertNotIn("posted", src)
+        self.assertIn("handoff-error DR-1", self.out)
 
 
 class TestDryRun(Base):

@@ -140,7 +140,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         return fail(plog, a.issue, "config-error", f"no Keychain item for role key {job.key}", 2)
     humans = cfg.get("human_members") or []
     states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
-    tail = (f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
+    tail = (f" Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
             f" Team: {cfg['team']}. States: {states}.")
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):

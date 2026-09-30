@@ -164,9 +164,8 @@ class Board:
         self.me = gql("query { viewer { id } }")["viewer"]["id"]
         t = team(gql, cfg)
         self.states = t.states
-        ids = humans(gql, cfg)
-        self.reviewer = next(iter(ids), None)
-        self.humans = set(ids)
+        self.humans = set(humans(gql, cfg))
+        self.emails = cfg.get("human_members") or []
         if not self.projects:
             raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
         missing = [p for p in self.projects if p not in t.projects]
@@ -206,8 +205,10 @@ class Board:
     def comment_and_move(self, issue, body, state, **extra):
         if self.dry:
             return
-        if state == "in_review" and self.reviewer:
-            extra.setdefault("assigneeId", self.reviewer)
+        if state == "in_review":
+            for email in self.emails:
+                self.gql("mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }",
+                         i=issue["id"], e=email)
         self.gql("mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
                  i=issue["id"], b=body)
         self.gql("mutation($i: String!, $u: IssueUpdateInput!) { issueUpdate(id: $i, input: $u) { success } }",

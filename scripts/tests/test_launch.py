@@ -193,7 +193,7 @@ class Launch(unittest.TestCase):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
-                            "The runner has already claimed it. Reviewer: me@x.com. Humans: me@x.com. Project: p-dr." + IDS,
+                            "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + IDS,
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -218,15 +218,15 @@ class Launch(unittest.TestCase):
     def test_deny(self):
         self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
 
-    def test_reviewer_none(self):
+    def test_humans_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Reviewer: none. Humans: none. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + IDS))
 
     def test_humans_lists_every_member(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Reviewer: me@x.com. Humans: me@x.com, b@x.com. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + IDS))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -236,7 +236,7 @@ class Launch(unittest.TestCase):
         charter = os.path.join(self.root, "roles/researcher.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
                                   f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
-                                  " Reviewer: me@x.com. Humans: me@x.com. Project: p-dr." + IDS)
+                                  " Humans: me@x.com. Project: p-dr." + IDS)
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
         self.calls = []
@@ -276,7 +276,7 @@ class Launch(unittest.TestCase):
         argv = self.claude()
         wt = self.ok().worktree
         self.assertTrue(argv[2].endswith(
-            " Reviewer: me@x.com. Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
@@ -363,7 +363,7 @@ class Launch(unittest.TestCase):
         self.run_launch(*self.args())
         argv = self.claude()
         self.assertIn(f"The runner has already claimed it. Your role memory: {mem}; your role charter says how to use it."
-                      " Reviewer: me@x.com.", argv[2])
+                      " Humans: me@x.com.", argv[2])
         self.assertEqual([argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"][-1], mem)
         self.assertFalse(any(mem in r for r in self.after(argv, "--disallowedTools")))
 
@@ -493,7 +493,7 @@ class RealConfig(unittest.TestCase):
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
             " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-            f" Reviewer: {humans[0]}. Humans: {', '.join(humans)}. Project: {project}." + real + tail,
+            f" Humans: {', '.join(humans)}. Project: {project}." + real + tail,
             "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -527,7 +527,7 @@ class RealConfig(unittest.TestCase):
     def test_real_config_resume_prompt(self):
         argv, _ = self.launch(self.DR, mode="resume")
         root = pipeline.ROOT
-        self.assertEqual(argv[2].split(" Reviewer:")[0],
+        self.assertEqual(argv[2].split(" Humans:")[0],
                          f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {root}/roles/principles.md,"
                          f" your role charter {root}/roles/researcher.md and the task {root}/tasks/deep-research.md first"
                          " (they may have changed since this session started) and follow the task's resume rule.")
