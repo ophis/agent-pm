@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, reviewer, runnable, stage_order, team, transcript)
+from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, humans, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, runnable, stage_order, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -164,7 +164,9 @@ class Board:
         self.me = gql("query { viewer { id } }")["viewer"]["id"]
         t = team(gql, cfg)
         self.states = t.states
-        self.reviewer = reviewer(gql, cfg)
+        ids = humans(gql, cfg)
+        self.reviewer = next(iter(ids), None)
+        self.humans = set(ids)
         if not self.projects:
             raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
         missing = [p for p in self.projects if p not in t.projects]
@@ -180,13 +182,13 @@ class Board:
         return -self.stage.get(issue["project"]["id"], 0)
 
     def last_move(self, issue, state, by_user=False):
-        """Latest time the issue was moved to state (by_user: by someone other than the agent)."""
+        """Latest time the issue was moved to state (by_user: by a `human_members` user)."""
         if issue["id"] not in self.hist:
             # orderBy createdAt returns newest first, so the latest moves are on this page.
             self.hist[issue["id"]] = self.gql("""query($i: String!) { issue(id: $i) { history(first: 250, orderBy: createdAt) {
                     nodes { createdAt actorId toStateId } } } }""", i=issue["id"])["issue"]["history"]["nodes"]
         times = [parse_time(n["createdAt"]) for n in self.hist[issue["id"]] if n["toStateId"] == self.states[state]
-                 and (not by_user or (n["actorId"] and n["actorId"] != self.me))]
+                 and (not by_user or n["actorId"] in self.humans)]
         return max(times, default=None)
 
     def attempts(self, issue):

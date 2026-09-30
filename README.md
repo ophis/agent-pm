@@ -16,7 +16,7 @@ Runs Claude agents unattended from a Linear board. Each project on the board is 
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
 - **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
 
-An issue still unfinished after 4 attempts goes to In Review; moving it back to Todo resets the count.
+An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 
 ## Schedule
 
@@ -25,10 +25,10 @@ An issue still unfinished after 4 attempts goes to In Review; moving it back to 
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`.
 
 ```bash
-security add-generic-password -a frank.agent.w -s linear-api-key -w   # Linear API key of the agent account
+security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
 mkdir -p logs                                                         # launchd can't start a job without it
 for job in router promote; do
   cp scripts/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
@@ -37,6 +37,17 @@ done
 ```
 
 To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+
+### Role accounts
+
+Each role in `roles/*.toml` acts in Linear as its own `account`, with its API key in the Keychain under `key`:
+
+1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
+2. Open the invite in a private window and choose **Continue with email**; Continue with Google signs in as the harness account.
+3. Signed in as the role account, create a personal API key in its account settings.
+4. `security add-generic-password -s <key> -a <account> -w` and paste the key at the prompt.
+
+The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in its project log.
 
 ## Operating
 
@@ -60,9 +71,9 @@ Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-p
 
 ## Configuration
 
-- `pipeline.toml`: the Linear team, workflow states and projects, all by id; each project's `next` stage and its `role` + `task`.
-- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings.
-- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs).
+- `pipeline.toml`: the Linear team, workflow states and projects, all by id; each project's `next` stage and its `role` + `task`; `harness_key`, the Keychain service of the harness account's key.
+- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only`, `memory`.
+- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, optional title `prefix`).
 - `templates/`: the report and PRD skeletons.
 
 ## Development

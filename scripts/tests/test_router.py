@@ -31,7 +31,7 @@ task = "deep-research"
 [projects.p-pd]
 prefix = "PRD"
 """
-PD_RUNNABLE = 'role = "researcher"\ntask = "product-design"\n'
+PD_RUNNABLE = 'role = "pm"\ntask = "product-design"\n'
 
 
 def ago(**kw):
@@ -421,6 +421,7 @@ class Plan(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"][-1], router.CAP_COMMENT)
 
     def reset_fixture(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         self.moved("TASK-1", 700)
         self.add("start", "TASK-1", "old", 699)
         for m in (650, 600, 550):
@@ -477,6 +478,7 @@ class Plan(Base):
         self.assertIn("nobody@x.com", str(e.exception))
 
     def capped(self, hist):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3))], {"TASK-1": hist})
         for i, sid in enumerate("abcd"):
             self.add("start", "TASK-1", sid, 400 - i * 50)
@@ -488,8 +490,9 @@ class Plan(Base):
         self.assertEqual(out, "resume TASK-1 d 1 https://linear.app/x/TASK-1 Deep Research")
         self.assertEqual(fake.mutations, [])
 
-    def test_attempt_cap_not_reset_by_agent_or_other_moves(self):
+    def test_attempt_cap_reset_only_by_human_members(self):
         fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": ME, "toStateId": STATES["Todo"]},
+                                 {"createdAt": ago(minutes=375), "actorId": "role-account", "toStateId": STATES["Todo"]},
                                  {"createdAt": ago(minutes=370), "actorId": USER, "toStateId": STATES["In Progress"]},
                                  {"createdAt": ago(minutes=360), "actorId": None, "toStateId": STATES["Todo"]}])
         self.assertEqual(out, "")
@@ -576,6 +579,7 @@ class Claim(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
 
     def test_capped_todo_reset_by_user(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         hist = {"TASK-1": [{"createdAt": ago(minutes=200), "actorId": USER, "toStateId": STATES["Todo"]}]}
         fake = FakeLinear([issue("TASK-1", "Todo")], hist)
         for sid in "abcd":

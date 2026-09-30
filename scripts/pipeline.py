@@ -1,6 +1,7 @@
 """Shared by router.py, launch.py and promote.py: Linear access, paths and pipeline.toml.
 Imports none of them. Needs Python 3.11+ (tomllib).
 """
+import functools
 import json
 import os
 import re
@@ -23,8 +24,14 @@ SESSION = "agent-pm"
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
 
+@functools.cache
+def harness_service():
+    """Keychain service of the harness account's Linear key: pipeline.toml's harness_key."""
+    return load_config()["harness_key"]
+
+
 def linear_gql(query, **variables):
-    key = subprocess.run(["security", "find-generic-password", "-a", "frank.agent.w", "-s", "linear-api-key", "-w"],
+    key = subprocess.run(["security", "find-generic-password", "-s", harness_service(), "-w"],
                          capture_output=True, text=True, check=True).stdout.strip()
     req = urllib.request.Request("https://api.linear.app/graphql",
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
@@ -113,13 +120,13 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "projects"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "projects"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
 PROJECT_KEYS = {"next", "prefix", "require_instructions", "role", "task"}
-ROLE_KEYS = {"read_only", "memory"}
-TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools"}
+ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
+TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REPO = "{repo}"
@@ -147,14 +154,25 @@ def _check_ids(cfg):
 
 
 @dataclass(frozen=True)
+class Role:
+    """roles/<role>.toml, validated; key is a Keychain service name, never the secret."""
+    read_only: tuple
+    memory: str | None
+    tasks: tuple
+    account: str
+    key: str
+
+
+@dataclass(frozen=True)
 class Run:
-    """A runnable project's task and role, resolved from roles/ and tasks/; every path is absolute."""
+    """A runnable project's task and role, resolved from roles/ and tasks/; every path is absolute. key is the role's Keychain service name."""
     task_name: str
     task: dict
     charter: str
     instructions: str
     memory: str | None
     read_only: tuple
+    key: str
 
 
 def load_config(path=CONFIG):
@@ -162,6 +180,9 @@ def load_config(path=CONFIG):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     _check_ids(cfg)
+    hk = cfg.get("harness_key")
+    if not isinstance(hk, str) or not hk:
+        raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
     projects = cfg.setdefault("projects", {})
     for name, p in projects.items():
         nxt = p.get("next")
@@ -213,7 +234,7 @@ def _pairs(root, kind):
 
 
 def _role(name, r, root):
-    """(read_only, memory) of roles/<name>.toml, normalized; a broken file stops the caller."""
+    """Role of roles/<name>.toml, normalized; a broken file stops the caller."""
     where = f"roles/{name}.toml"
     if extra := sorted(set(r) - ROLE_KEYS):
         raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
@@ -226,15 +247,21 @@ def _role(name, r, root):
             raise SystemExit(f"{where}: read_only entries are absolute paths or {REPO}: {entry!r}")
         read_only.append(entry if entry == REPO else os.path.normpath(path))
     memory = r.get("memory")
-    if memory is None:
-        return tuple(read_only), None
-    memory = os.path.normpath(os.path.expanduser(memory))
-    if not os.path.isabs(memory) or not os.path.isdir(memory):
-        raise SystemExit(f"{where}: memory must be an existing absolute directory: {r['memory']!r}")
-    near = [root] + [p for p in read_only if p != REPO] + [os.path.expanduser(p) for p in PROTECTED]
-    if any(overlaps(memory, b) for b in near):
-        raise SystemExit(f"{where}: memory must not overlap the repo root, a read_only path or {', '.join(PROTECTED)}: {r['memory']!r}")
-    return tuple(read_only), memory
+    if memory is not None:
+        memory = os.path.normpath(os.path.expanduser(memory))
+        if not os.path.isabs(memory) or not os.path.isdir(memory):
+            raise SystemExit(f"{where}: memory must be an existing absolute directory: {r['memory']!r}")
+        near = [root] + [p for p in read_only if p != REPO] + [os.path.expanduser(p) for p in PROTECTED]
+        if any(overlaps(memory, b) for b in near):
+            raise SystemExit(f"{where}: memory must not overlap the repo root, a read_only path or {', '.join(PROTECTED)}: {r['memory']!r}")
+    tasks, account, key = r.get("tasks"), r.get("account"), r.get("key")
+    if not isinstance(tasks, list) or not tasks or not all(isinstance(t, str) and t for t in tasks):
+        raise SystemExit(f"{where}: tasks must be a non-empty list of task names: {tasks!r}")
+    if not isinstance(account, str) or not account:
+        raise SystemExit(f"{where}: account must be the role's Linear email: {account!r}")
+    if not isinstance(key, str) or not key:
+        raise SystemExit(f"{where}: key must be a Keychain service name: {key!r}")
+    return Role(tuple(read_only), memory, tuple(tasks), account, key)
 
 
 def _task(name, t):
@@ -247,11 +274,18 @@ def _task(name, t):
 
 
 def registry(root=ROOT):
-    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: (read_only, memory)}, {name: task table}."""
+    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: Role}, {name: task table}."""
     roles = {name: _role(name, r, root) for name, r in _pairs(root, "roles").items()}
     tasks = _pairs(root, "tasks")
     for name, t in tasks.items():
         _task(name, t)
+    owner = {}
+    for name, r in roles.items():
+        if unknown := [t for t in r.tasks if t not in tasks]:
+            raise SystemExit(f"roles/{name}.toml: tasks {', '.join(unknown)} have no tasks/<task>.md + .toml pair")
+        if r.key in owner:
+            raise SystemExit(f"roles/{name}.toml: key {r.key!r} is also roles/{owner[r.key]}.toml's")
+        owner[r.key] = name
     return roles, tasks
 
 
@@ -260,6 +294,9 @@ def runnable(cfg, root=ROOT):
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
     roles, tasks = registry(root)
+    for name, r in roles.items():
+        if r.key == cfg["harness_key"]:
+            raise SystemExit(f"roles/{name}.toml: key {r.key!r} is pipeline.toml's harness_key")
     out = {}
     for name, p in cfg["projects"].items():
         if extra := sorted(set(p) - PROJECT_KEYS):
@@ -273,23 +310,36 @@ def runnable(cfg, root=ROOT):
             raise SystemExit(f"pipeline.toml: {name!r} role {role!r} has no roles/<role>.md + .toml pair")
         if task not in tasks:
             raise SystemExit(f"pipeline.toml: {name!r} task {task!r} has no tasks/<task>.md + .toml pair")
-        read_only, memory = roles[role]
+        r = roles[role]
         t = tasks[task]
-        if REPO in read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
+        if REPO in r.read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
             raise SystemExit(f"pipeline.toml: {name!r}: role {role!r} has read_only {REPO}, so task {task!r} needs repo_from_issue and no allowed_tools")
-        out[name] = Run(task, t, os.path.join(root, "roles", f"{role}.md"), os.path.join(root, "tasks", f"{task}.md"), memory, read_only)
+        out[name] = Run(task, t, os.path.join(root, "roles", f"{role}.md"), os.path.join(root, "tasks", f"{task}.md"),
+                        r.memory, r.read_only, r.key)
     return out
+
+
+Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }"
+
+
+def user_id(gql, email):
+    """Linear user id of an email (case-insensitive), or None."""
+    nodes = gql(Q_USER, e=email)["users"]["nodes"]
+    return nodes[0]["id"] if nodes else None
+
+
+def humans(gql, cfg):
+    """Linear user ids of the `human_members` emails, in order; one not found in Linear stops the caller."""
+    emails = cfg.get("human_members") or []
+    ids = [user_id(gql, e) for e in emails]
+    if missing := [e for e, i in zip(emails, ids) if not i]:
+        raise SystemExit(f"pipeline.toml: human_members not found in Linear: {', '.join(missing)}")
+    return ids
 
 
 def reviewer(gql, cfg):
     """Linear user id of the first `human_members` email, who is assigned issues that need human review; None if unset."""
-    emails = cfg.get("human_members") or []
-    if not emails:
-        return None
-    nodes = gql("query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }", e=emails[0])["users"]["nodes"]
-    if not nodes:
-        raise SystemExit(f"pipeline.toml: human_members {emails[0]!r} not found in Linear")
-    return nodes[0]["id"]
+    return next(iter(humans(gql, cfg)), None)
 
 
 @dataclass(frozen=True)

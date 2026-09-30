@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,9 +27,11 @@ prefix = "ENG"
 role = "engineer"
 task = "engineering"
 """
+RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
+ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
-    "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": "",
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n',
+    "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
     "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
     "tasks/engineering.md": "",
@@ -67,6 +70,7 @@ class Launch(unittest.TestCase):
         self.runs = os.path.join(self.tmp, "logs", "runs.log")
         self.logs = os.path.join(self.tmp, "logs")
         self.calls = []
+        self.checked, self.missing = [], set()
         self.gql, self.run = object(), object()
 
     def write(self, rel, text):
@@ -80,12 +84,13 @@ class Launch(unittest.TestCase):
         with open(self.config, "w") as f:
             f.write(text)
 
-    def run_launch(self, *argv):
+    def run_launch(self, *argv, keychain=None):
         err = io.StringIO()
         with redirect_stderr(err), mock.patch.dict(os.environ):
             rc = launch.main(list(argv), sh=lambda cmd, **kw: self.calls.append(cmd), config=self.config,
                              runs=self.runs, logs=self.logs, gql=self.gql, run=self.run, projects=self.projects,
-                             root=self.root)
+                             root=self.root,
+                             keychain=keychain or (lambda s: self.checked.append(s) or s not in self.missing))
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc
@@ -118,6 +123,56 @@ class Launch(unittest.TestCase):
         path = pipeline.transcript("TASK-1", SID, self.projects)
         os.makedirs(os.path.dirname(path))
         open(path, "w").close()
+
+    def test_session_gets_role_key_service(self):
+        self.assertEqual(self.run_launch(*self.args()), 0)
+        self.assertEqual(self.checked, ["k-researcher"])
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
+
+    def test_missing_role_key_is_config_error(self):
+        self.missing = {"k-researcher"}
+        self.make_transcript()
+        for mode in ("new", "resume"):
+            with self.subTest(mode):
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(mode)), 2)
+                self.assertEqual(self.calls, [])
+                self.assertRegex(self.plog().splitlines()[-1],
+                                 r"^\S+ \S+ config-error TASK-1: no Keychain item for role key k-researcher$")
+                self.assertIn("config-error TASK-1", self.err)
+
+    def test_has_key_never_reads_the_secret(self):
+        calls = []
+        def run(cmd, **kw):
+            calls.append((cmd, kw))
+            return SimpleNamespace(returncode=44)
+        with mock.patch.object(launch.subprocess, "run", run):
+            self.assertFalse(launch.has_key("k-x"))
+        self.assertEqual(calls, [(["security", "find-generic-password", "-s", "k-x"],
+                                  {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL})])
+
+    def test_no_key_in_command_env_or_log(self):
+        secret, security = "lin_api_SENTINEL", []
+        def run(cmd, **kw):
+            if cmd[0] != "security":
+                raise AssertionError(cmd)
+            security.append(cmd)
+            return SimpleNamespace(returncode=0, stdout=secret if "-w" in cmd else "", stderr="")
+        for project, key in (("p-dr", "k-researcher"), ("p-eng", "k-engineer")):
+            with self.subTest(project):
+                self.calls = []
+                with mock.patch.object(launch.subprocess, "run", run), \
+                        mock.patch.object(eng, "resolve", return_value=eng.Invalid("x")):
+                    self.assertEqual(self.run_launch(*self.args(project=project), keychain=launch.has_key), 0)
+                (cmd,) = self.calls
+                self.assertFalse([part for part in cmd if secret in part])
+                self.assertIn(f"LINEAR_KEYCHAIN_SERVICE={key}", self.exports())
+                self.assertNotIn("LINEAR_API_KEY", cmd[9])
+        self.assertEqual(sorted(c[-1] for c in security), ["k-engineer", "k-researcher"])
+        self.assertFalse([c for c in security if "-w" in c])
+        for f in os.listdir(os.path.join(self.logs, "projects")):
+            with open(os.path.join(self.logs, "projects", f)) as fh:
+                self.assertNotIn(secret, fh.read())
 
     def test_tmux_session_cwd_and_bash(self):
         self.assertEqual(self.run_launch(*self.args()), 0)
@@ -300,7 +355,7 @@ class Launch(unittest.TestCase):
     def with_memory(self):
         mem = os.path.join(self.tmp, "mem")
         os.makedirs(mem)
-        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_ID)
         return mem
 
     def test_memory_prompt_and_dir(self):
@@ -319,7 +374,7 @@ class Launch(unittest.TestCase):
         self.assertIn(f"follow the task's resume rule. Your role memory: {mem}; your role charter says how to use it.", self.claude()[2])
 
     def repo_config(self):
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n')
+        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
 
     def test_repo_read_only_ok(self):
         self.repo_config()
@@ -343,7 +398,7 @@ class Launch(unittest.TestCase):
 
     def eng_memory(self, mem):
         os.makedirs(mem, exist_ok=True)
-        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n')
+        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n' + ENGINEER_ID)
 
     def ok_at(self, clone):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
@@ -390,7 +445,7 @@ class Launch(unittest.TestCase):
     def test_memory_check_skipped_without_repo_step(self):
         mem = os.path.join(self.work, "TASK-1", "worktrees", "mem")
         os.makedirs(mem)
-        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_ID)
         self.assertEqual(self.run_launch(*self.args()), 0)
         self.assertEqual(len(self.calls), 1)
 
@@ -422,7 +477,8 @@ class RealConfig(unittest.TestCase):
         with redirect_stderr(io.StringIO()), mock.patch.dict(os.environ), \
                 mock.patch.object(eng, "resolve", return_value=repo):
             rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
-                             logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects)
+                             logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects,
+                             keychain=lambda s: True)
         self.assertEqual(rc, 0)
         (cmd,) = self.calls
         toks = shlex.split(cmd[9])
@@ -448,11 +504,13 @@ class RealConfig(unittest.TestCase):
         argv, script = self.launch(self.DR)
         self.assertEqual(argv, self.expected(self.DR, "researcher", "deep-research", "xhigh"))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "deep-research.log"), script)
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-researcher", script.split(";")[0])
 
     def test_product_design(self):
         argv, script = self.launch(self.PD)
         self.assertEqual(argv, self.expected(self.PD, "pm", "product-design", "high"))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "product-design.log"), script)
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-pm", script.split(";")[0])
 
     def test_engineering(self):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
@@ -463,6 +521,7 @@ class RealConfig(unittest.TestCase):
             tail=" Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
                  f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-engineer", script.split(";")[0])
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "engineering.log"), script)
 
     def test_real_config_resume_prompt(self):

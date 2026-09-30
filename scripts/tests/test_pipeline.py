@@ -1,8 +1,10 @@
 import dataclasses
+import io
 import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,6 +46,15 @@ class Config(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.load(BASE.replace('prefix = "TDD"\n', ""))
 
+    def test_harness_key_required(self):
+        for text in (BASE.replace('harness_key = "linear-api-key"\n', ""),
+                     BASE.replace('harness_key = "linear-api-key"', "harness_key = 1")):
+            with self.subTest(text[:80]):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(text)
+                self.assertIn("pipeline.toml: harness_key", str(cm.exception.code))
+        self.assertEqual(self.load(BASE)["harness_key"], "linear-api-key")
+
     def test_ids_required(self):
         states = "states = { " + ", ".join(f'{k} = "{v}"' for k, v in STATES.items()) + " }\n"
         body = BASE[BASE.index("[projects"):]
@@ -74,10 +85,12 @@ task = "engineering"
 [projects.idle]
 prefix = "I"
 """
+RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
+ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 FILES = {
     "roles/principles.md": "",
-    "roles/researcher.md": "", "roles/researcher.toml": "",
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n',
+    "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
     "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
     "tasks/engineering.md": "", "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nrepo_from_issue = true\n',
@@ -126,7 +139,8 @@ class Runnable(unittest.TestCase):
         self.assertEqual(sorted(runs), ["dr", "eng"])
         dr, eng = runs["dr"], runs["eng"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only"])
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key"])
+        self.assertEqual((dr.key, eng.key), ("k-researcher", "k-engineer"))
         self.assertEqual((dr.task_name, dr.task["effort"], dr.memory, dr.read_only), ("deep-research", "xhigh", None, ()))
         self.assertEqual(dr.charter, os.path.join(self.root, "roles", "researcher.md"))
         self.assertEqual(dr.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
@@ -134,7 +148,7 @@ class Runnable(unittest.TestCase):
         self.assertTrue(eng.task["repo_from_issue"])
 
     def test_read_only_normalized(self):
-        self.write("roles/engineer.toml", 'read_only = ["~/playground/private_docs/"]\n')
+        self.write("roles/engineer.toml", 'read_only = ["~/playground/private_docs/"]\n' + ENGINEER_ID)
         self.assertEqual(self.runs()["eng"].read_only, (os.path.expanduser("~/playground/private_docs"),))
 
     def test_old_tables_rejected(self):
@@ -208,27 +222,60 @@ class Runnable(unittest.TestCase):
         self.rejects("model", prefix="tasks/deep-research.toml")
 
     def test_unknown_keys(self):
-        self.write("roles/engineer.toml", 'readonly = ["~/playground/private_docs"]\n')
+        self.write("roles/engineer.toml", 'readonly = ["~/playground/private_docs"]\n' + ENGINEER_ID)
         self.rejects("readonly", prefix="roles/engineer.toml")
         self.write("roles/engineer.toml", FILES["roles/engineer.toml"])
         self.write("tasks/engineering.toml", ENGINEERING + 'instructions = "x"\n')
         self.rejects("instructions", prefix="tasks/engineering.toml")
 
+    def test_role_identity_rejected(self):
+        ro = 'read_only = ["~/playground/private_docs"]\n'
+        cases = {
+            "tasks": ro + 'account = "e@x.com"\nkey = "k-engineer"\n',
+            "tasks ": ro + 'tasks = []\naccount = "e@x.com"\nkey = "k-engineer"\n',
+            "tasks  ": ro + 'tasks = "engineering"\naccount = "e@x.com"\nkey = "k-engineer"\n',
+            "account": ro + 'tasks = ["engineering"]\nkey = "k-engineer"\n',
+            "account ": ro + 'tasks = ["engineering"]\naccount = ""\nkey = "k-engineer"\n',
+            "key": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\n',
+            "key ": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = ""\n',
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.write("roles/engineer.toml", text)
+                self.rejects(label.strip(), prefix="roles/engineer.toml")
+
+    def test_role_unknown_task(self):
+        self.write("roles/engineer.toml", ENGINEER_ID.replace('["engineering"]', '["engineering", "nope"]'))
+        self.rejects("nope", prefix="roles/engineer.toml")
+
+    def test_role_key_shared(self):
+        self.write("roles/engineer.toml", ENGINEER_ID.replace("k-engineer", "k-researcher"))
+        self.rejects("k-researcher", prefix="roles/researcher.toml")
+
+    def test_role_key_is_harness_key(self):
+        self.write("roles/engineer.toml", ENGINEER_ID.replace("k-engineer", "linear-api-key"))
+        self.rejects("harness_key", prefix="roles/engineer.toml")
+
+    def test_unused_role_validated(self):
+        self.write("roles/pm.md", "")
+        self.write("roles/pm.toml", 'tasks = ["deep-research"]\naccount = "p@x.com"\n')
+        self.rejects("key", prefix="roles/pm.toml")
+
     def test_read_only_paths(self):
         for bad in ('["playground/private_docs"]', '["~/playground/../private_docs"]', '["{repo}/x"]', '"/"'):
             with self.subTest(bad):
-                self.write("roles/engineer.toml", f"read_only = {bad}\n")
+                self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
                 self.rejects("read_only", prefix="roles/engineer.toml")
 
     def test_repo_read_only(self):
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n')
+        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
         self.assertEqual(self.runs()["eng"].read_only, ("{repo}",))
         self.rejects("{repo}", text=PROJECTS.replace('role = "researcher"', 'role = "engineer"'))
         self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
         self.rejects("{repo}")
 
     def memory(self, path, read_only="~/playground/private_docs"):
-        self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n')
+        self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
     def test_memory_ok(self):
         mem = os.path.join(self.outside, "engineer")
@@ -294,6 +341,14 @@ class RealConfig(unittest.TestCase):
             "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
         })
         self.assertNotIn("allowed_tools", runs["ddbff8bf-b633-4b8c-9272-d1d5ee923747"].task)
+        self.assertEqual({k: r.key for k, r in runs.items()}, {
+            "03495382-48f7-4280-a11c-4375df80a561": "linear-api-key-researcher",
+            "ba0738ba-ade7-4525-8d79-1b9944334e74": "linear-api-key-pm",
+            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": "linear-api-key-engineer",
+        })
+        self.assertEqual(pipeline.load_config()["harness_key"], "linear-api-key")
+        tasks = pipeline.registry()[1]
+        self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
 
     def test_real_config_ids(self):
         cfg = pipeline.load_config()
@@ -410,6 +465,27 @@ class AllowedTools(unittest.TestCase):
     def test_rejects_without_repo_from_issue(self):
         with self.assertRaises(SystemExit):
             self.check(["Bash(git status)"], repo_from_issue=False)
+
+
+class LinearGql(unittest.TestCase):
+    def test_harness_key_by_service_only(self):
+        calls = []
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return SimpleNamespace(stdout="secret\n")
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(b'{"data": {"viewer": {"id": "v"}}}')
+        with mock.patch.object(pipeline, "harness_service", return_value="svc-h"), \
+                mock.patch.object(pipeline.subprocess, "run", run), \
+                mock.patch.object(pipeline.urllib.request, "urlopen", return_value=resp) as urlopen:
+            self.assertEqual(pipeline.linear_gql("query { viewer { id } }"), {"viewer": {"id": "v"}})
+        self.assertEqual(calls, [["security", "find-generic-password", "-s", "svc-h", "-w"]])
+        self.assertEqual(urlopen.call_args[0][0].get_header("Authorization"), "secret")
+
+    def test_harness_service_reads_pipeline_toml(self):
+        pipeline.harness_service.cache_clear()
+        self.addCleanup(pipeline.harness_service.cache_clear)
+        self.assertEqual(pipeline.harness_service(), "linear-api-key")
 
 
 if __name__ == "__main__":
