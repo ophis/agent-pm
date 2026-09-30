@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Promote issues in Handoff to the next role (docs/specs/2026-09-27-promote-design.md).
+"""Promote issues in Handoff to the next role.
 
 For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in pipeline.toml has a next:
 create that role's issue in the same project, assigned to its account, in Todo with the source links and the
