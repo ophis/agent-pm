@@ -1180,7 +1180,7 @@ class Tick(Base):
 
 
 class TaskLabels(Base):
-    """A copy of the repo's roles/ and tasks/ where researcher also runs light-research and orphan is no role's task."""
+    """A copy of the repo's roles/ and tasks/ (which ship light-research) plus orphan, no role's task; deliberately depends on the shipped researcher config."""
     ORPHAN = ('Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
               "Fix the label or the assignee, then move the issue back to Todo.")
 
@@ -1190,15 +1190,9 @@ class TaskLabels(Base):
         self.root = os.path.join(self.tmp.name, "root")
         for d in ("roles", "tasks"):
             shutil.copytree(os.path.join(pipeline.ROOT, d), os.path.join(self.root, d))
-        for t in ("light-research", "orphan"):
-            for ext, text in ((".md", "x\n"), (".toml", 'model = "sonnet"\neffort = "low"\n')):
-                with open(os.path.join(self.root, "tasks", t + ext), "w") as f:
-                    f.write(text)
-        path = os.path.join(self.root, "roles", "researcher.toml")
-        with open(path) as f:
-            text = f.read()
-        with open(path, "w") as f:
-            f.write(text.replace('tasks = ["deep-research"]', 'tasks = ["deep-research", "light-research"]'))
+        for ext, text in ((".md", "x\n"), (".toml", 'model = "sonnet"\neffort = "low"\n')):
+            with open(os.path.join(self.root, "tasks", "orphan" + ext), "w") as f:
+                f.write(text)
 
     def test_task_for(self):
         other = [label("Urgent", None), label("Light Research", "00000000-0000-4000-8000-000000000003")]

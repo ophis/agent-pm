@@ -12,7 +12,7 @@ agent-pm/
 │   ├── principles.md      # rules for every role and task
 │   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks
 ├── tasks/
-│   └── <task>.md + .toml  # deep-research, product-design, engineering: steps; model, effort, dirs
+│   └── <task>.md + .toml  # deep-research, light-research, product-design, engineering: steps; model, effort, dirs
 ├── templates/             # research-report.md, prd.md
 ├── scripts/
 │   ├── router.py          # picks and starts the next run
@@ -31,9 +31,9 @@ agent-pm/
 
 A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the task its `Tasks` label names (see Task labels), else the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to the docs repo (`[docs]`) in Chinese, ask the user when an issue is too vague.
 
-| Role | Default task | Does | Next |
+| Role | Tasks (first is default) | Does | Next |
 |---|---|---|---|
-| researcher | `deep-research` | Answers the issue's questions with a verified report: every finding with its confidence and sources, claims you list as known re-checked, gaps listed | pm |
+| researcher | `deep-research`, `light-research` | Answers the issue's questions with a report: every finding with its confidence and sources, claims you list as known re-checked, gaps listed | pm |
 | pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions | engineer |
 | engineer | `engineering` | Builds a PRD into a pull request on the target repo, following that repo's conventions; never merges, force-pushes or touches the default branch | — |
 
@@ -42,6 +42,7 @@ A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, stan
 A task is the steps a run follows for one issue (`tasks/<task>.md`), including how to resume after an interruption.
 
 - **`deep-research`:** runs the built-in `/deep-research` Workflow once over all the issue's questions, writes the report from `templates/research-report.md` to `Research/` in the docs repo, attaches its link and moves the issue to In Review.
+- **`light-research`:** for issues labeled `Light Research`. Sends 3–6 angles, one web-research agent each, in one round, each checking its own sources, with no separate verification. Publishes a shorter report marked 轻量调研 like `deep-research`, aiming at 10 minutes or less. To upgrade, remove the label, comment the claims to verify and move the issue back to Todo: the next run is `deep-research`, which rewrites the same report.
 - **`product-design`:** reads the brief and source reports; researches and grills itself with a subagent when needed; writes the PRD from `templates/prd.md` to `Product Design/` in the docs repo, has a fresh subagent review it and fixes what holds up; publishes it, retitles the issue `PRD: <product name>`, and asks you to approve it with a Handoff, naming the project's mapped repo if there is one.
 - **`engineering`:** runs `autopilot:build` on the PRD in a worktree on an `<ID>-<slug>` branch of the target repo, pushes the branch, posts the build's spec and plan on the issue, opens the PR and links it. A failed build still pushes the branch and reports what failed.
 

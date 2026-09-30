@@ -1,0 +1,3 @@
+model = "opus"
+effort = "high"
+add_dirs = ["{docs_clone}"]
