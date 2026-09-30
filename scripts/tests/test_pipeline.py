@@ -1,8 +1,10 @@
 import dataclasses
+import io
 import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -481,6 +483,27 @@ class AllowedTools(unittest.TestCase):
     def test_rejects_without_repo_from_issue(self):
         with self.assertRaises(SystemExit):
             self.check(["Bash(git status)"], repo_from_issue=False)
+
+
+class LinearGql(unittest.TestCase):
+    def test_harness_key_by_service_only(self):
+        calls = []
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return SimpleNamespace(stdout="secret\n")
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(b'{"data": {"viewer": {"id": "v"}}}')
+        with mock.patch.object(pipeline, "harness_service", return_value="svc-h"), \
+                mock.patch.object(pipeline.subprocess, "run", run), \
+                mock.patch.object(pipeline.urllib.request, "urlopen", return_value=resp) as urlopen:
+            self.assertEqual(pipeline.linear_gql("query { viewer { id } }"), {"viewer": {"id": "v"}})
+        self.assertEqual(calls, [["security", "find-generic-password", "-s", "svc-h", "-w"]])
+        self.assertEqual(urlopen.call_args[0][0].get_header("Authorization"), "secret")
+
+    def test_harness_service_reads_pipeline_toml(self):
+        pipeline.harness_service.cache_clear()
+        self.addCleanup(pipeline.harness_service.cache_clear)
+        self.assertEqual(pipeline.harness_service(), "linear-api-key")
 
 
 if __name__ == "__main__":

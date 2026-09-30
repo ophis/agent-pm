@@ -1,6 +1,7 @@
 """Shared by router.py, launch.py and promote.py: Linear access, paths and pipeline.toml.
 Imports none of them. Needs Python 3.11+ (tomllib).
 """
+import functools
 import json
 import os
 import re
@@ -23,8 +24,14 @@ SESSION = "agent-pm"
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
 
+@functools.cache
+def harness_service():
+    """Keychain service of the harness account's Linear key: pipeline.toml's harness_key."""
+    return load_config()["harness_key"]
+
+
 def linear_gql(query, **variables):
-    key = subprocess.run(["security", "find-generic-password", "-a", "frank.agent.w", "-s", "linear-api-key", "-w"],
+    key = subprocess.run(["security", "find-generic-password", "-s", harness_service(), "-w"],
                          capture_output=True, text=True, check=True).stdout.strip()
     req = urllib.request.Request("https://api.linear.app/graphql",
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
