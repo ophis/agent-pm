@@ -13,7 +13,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 - **New work:** create an issue in the product's project, assigned to the role account that should do it, in Todo; an issue not assigned to a role account (unassigned, or to a person) is never picked. Researcher and pm issues take the brief from the description; a direct engineer issue needs a `Repo: <owner>/<name>` line in its description unless its project has a `[project_repos]` entry.
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>` unless the project has a `[project_repos]` entry; a `Repo:` line always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
-- **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
+- **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
 - **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
