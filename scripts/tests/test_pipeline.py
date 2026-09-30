@@ -271,6 +271,18 @@ class Runnable(unittest.TestCase):
         self.write("tasks/engineering.toml", ENGINEERING.replace('prefix = "ENG"\n', ""))
         self.rejects("pipeline.toml: next of 'researcher' is role 'engineer', whose default task 'engineering' has no prefix")
 
+    def test_hands_off_to_repo(self):
+        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + 'prefix = "DR"\n')
+        cases = [
+            (ROLES, "researcher", True),  # next's default task has repo_from_issue
+            (ROLES + "[roles.engineer]\n", "engineer", False),  # no next
+            (ROLES, "engineer", False),  # no [roles.engineer] entry
+            (HEADER + '[roles.engineer]\nnext = "researcher"\n', "engineer", False),  # next's task lacks repo_from_issue
+        ]
+        for text, role, want in cases:
+            with self.subTest(text=text, role=role):
+                self.assertIs(pipeline.hands_off_to_repo(self.load(text), self.runs(text), role), want)
+
     def test_roles_table_needs_a_role_pair(self):
         self.rejects("pipeline.toml: [roles.ghost] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.ghost]\n")
         self.rejects("pipeline.toml: [roles.principles] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.principles]\n")

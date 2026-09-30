@@ -28,6 +28,7 @@ REGISTRY = {
     "tasks/engineering.md": "",
     "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["{docs_clone}"]\nrepo_from_issue = true\n',
 }
+MAPPED = "11111111-1111-1111-1111-111111111111"
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
 DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
@@ -364,9 +365,44 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.run_launch(*self.args(assignee="R@X.com")), 0)
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
 
-    def test_project_only_fills_the_prompt(self):
+    def test_project_fills_the_prompt_tail(self):
         self.assertEqual(self.run_launch(*self.args(project="p-anything")), 0)
-        self.assertIn(" Project: p-anything.", self.claude()[2])
+        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com. Project: p-anything." + self.ids))
+
+    def hand_off(self, roles='[roles.researcher]\nnext = "engineer"\n', engineering=REGISTRY["tasks/engineering.toml"]):
+        """Project MAPPED maps to ophis/demo; the engineering task needs a prefix to be a next."""
+        self.write("tasks/engineering.toml", engineering + 'prefix = "ENG"\n')
+        self.write_config(CONFIG + roles + f'[project_repos]\n"{MAPPED}" = "ophis/demo"\n')
+
+    def test_project_repo_follows_project_in_prompt(self):
+        self.hand_off()
+        for project, repo in ((MAPPED, "ophis/demo"), ("p-other", "none")):
+            with self.subTest(project=project):
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(project=project)), 0)
+                self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {project}. Project repo: {repo}." + self.ids))
+
+    def test_project_repo_on_resume(self):
+        self.hand_off()
+        self.make_transcript()
+        self.assertEqual(self.run_launch(*self.args("resume", project=MAPPED)), 0)
+        self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {MAPPED}. Project repo: ophis/demo." + self.ids))
+
+    def test_no_project_repo_without_repo_hand_off(self):
+        cases = {"no roles entry": dict(roles=""), "no next": dict(roles="[roles.researcher]\n"),
+                 "next task without repo_from_issue": dict(engineering=REGISTRY["tasks/engineering.toml"].replace("repo_from_issue = true\n", ""))}
+        for name, kw in cases.items():
+            with self.subTest(name):
+                self.hand_off(**kw)
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
+                self.assertTrue(self.claude()[2].endswith(f" Project: {MAPPED}." + self.ids))
+
+    def test_engineer_run_has_no_project_repo(self):
+        self.hand_off()
+        with mock.patch.object(eng, "resolve", return_value=self.ok()):
+            self.assertEqual(self.run_launch(*self.args("new", "e@x.com", MAPPED)), 0)
+        self.assertIn(f" Project: {MAPPED}." + self.ids + " Repo check: OK ", self.claude()[2])
 
     def test_script_logs_output_and_end_lines(self):
         self.run_launch(*self.args())
@@ -517,8 +553,8 @@ class RealConfig(unittest.TestCase):
         self.calls = []
         self.humans = pipeline.load_config()["human_members"]
 
-    def launch(self, role, mode="new", repo=None):
-        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", self.PROJECT,
+    def launch(self, role, mode="new", repo=None, project=PROJECT):
+        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project,
                 "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode]
         if mode == "resume":
             argv += ["--k", "2"]
@@ -536,7 +572,7 @@ class RealConfig(unittest.TestCase):
         i = toks.index("claude")
         return toks[i:toks.index("<", i)], cmd[9]
 
-    def expected(self, role, task, effort, extra_deny=(), tail=""):
+    def expected(self, role, task, effort, extra_deny=(), tail="", project=PROJECT, project_repo=""):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         humans, cfg = self.humans, pipeline.load_config()
         real = (f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
@@ -545,7 +581,7 @@ class RealConfig(unittest.TestCase):
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
             " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-            f" Humans: {', '.join(humans)}. Project: {self.PROJECT}." + real + tail,
+            f" Humans: {', '.join(humans)}. Project: {project}.{project_repo}" + real + tail,
             "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -560,9 +596,14 @@ class RealConfig(unittest.TestCase):
 
     def test_product_design(self):
         argv, script = self.launch("pm")
-        self.assertEqual(argv, self.expected("pm", "product-design", "high"))
+        self.assertEqual(argv, self.expected("pm", "product-design", "high", project_repo=" Project repo: none."))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "product-design.log"), script)
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-pm", script.split(";")[0])
+
+    def test_product_design_in_a_mapped_project(self):
+        project, repo = next(iter(pipeline.load_config()["project_repos"].items()))
+        argv, _ = self.launch("pm", project=project)
+        self.assertEqual(argv, self.expected("pm", "product-design", "high", project=project, project_repo=f" Project repo: {repo}."))
 
     def test_engineering(self):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")

@@ -47,9 +47,10 @@ def parse_repo(description):
     for line in (description or "").splitlines():
         if line.rstrip("\r") == "## Comments":
             break
-        m = re.match(r"^\s*repo:\s*(.+?)\s*$", line.rstrip("\r"), re.I)
+        # Markdown a pasted line may carry: a list or quote marker, `code`, **bold**.
+        m = re.match(r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I)
         if m:
-            one = _one(m.group(1))
+            one = _one(m.group(1).strip("`*").strip())
             if not one:
                 return Invalid(f"unreadable Repo line: {m.group(1)[:80]!r}")
             found.append(one)

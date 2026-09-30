@@ -62,7 +62,9 @@ class ParseRepo(unittest.TestCase):
         for line in ("Repo: ophis/agent-pm", "repo: https://github.com/ophis/agent-pm",
                      "REPO: https://github.com/ophis/agent-pm.git/", "Repo: git@github.com:ophis/agent-pm.git",
                      "repo: [https://github.com/ophis/agent-pm](<https://github.com/ophis/agent-pm>)",
-                     "Repo: [agent-pm](https://github.com/ophis/agent-pm)", "  repo:   ophis/agent-pm  "):
+                     "Repo: [agent-pm](https://github.com/ophis/agent-pm)", "  repo:   ophis/agent-pm  ",
+                     "`Repo: ophis/agent-pm`", "* Repo: ophis/agent-pm", "- Repo: ophis/agent-pm", "> Repo: ophis/agent-pm",
+                     "**Repo:** ophis/agent-pm", "**Repo: ophis/agent-pm**", "Repo: `ophis/agent-pm`"):
             self.assertEqual(eng.parse_repo(f"x\n{line}\ny"), ("ophis", "agent-pm"), line)
 
     def test_crlf(self):
