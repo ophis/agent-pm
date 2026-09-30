@@ -14,6 +14,7 @@ RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktr
 - S4: plan written (4 tasks: config, resolve+CLI, launcher, docs).
 - S5: tasks 1-4 done via subagent-driven-development, each task review Approved (b63097a, 0ecffd7, 88b5594, 7c3be8a); deferred minors: loop-only-last-call assertions in test_eng, eng.main catches only SystemExit from load_config, engineering.md step 2 parenthetical wording.
 - S6: unittest 302 OK, no warnings; read-only live check with the real pipeline.toml: Agent PM + no Repo: line -> Ok ophis/agent-pm mapped=True; unmapped / no project -> today's Invalid; Repo: line wins (mapped=False); gh access to ophis/claude-autopilot OK (push, main); 404 mapping -> `project mapping ophis/…: not found or no access (HTTP 404)`.
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[test,code-quality] (performance: one config load per CLI call, marginal; architecture: structure reviewed at S3 and follows spec) transport=Workflow
 
 ## Implementation plan
 
