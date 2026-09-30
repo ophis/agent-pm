@@ -10,9 +10,10 @@ Requirement: Linear TASK-88 (its description is the PRD; copy at `work/TASK-88/p
 ## Observable changes (all others are forbidden)
 
 - `status`: `worktrees_dir_ok` is gone; `plan_docs` is filtered by branch. Every other `status` and `comments` field keeps its name and meaning.
-- Every CLI failure writes one line `eng.py: <reason>` to stderr, nothing to stdout, and exits 1 (today 2 or 3, with `Invalid:` / `transient:` / `malformed gh output:` prefixes). Argparse's own usage errors are untouched.
+- Every handled CLI failure (the ones `main` catches today, plus `Invalid`) writes one line `eng.py: <reason>` to stderr, nothing to stdout, and exits 1 (today 2 or 3, with `Invalid:` / `transient:` / `malformed gh output:` prefixes). An unexpected exception still exits 1 (traceback). Argparse's own usage errors are untouched.
 - `comments.since` = the latest `Build started` comment whose author's email (case-insensitive) is not in `human_members`; a comment without a user counts as non-human. Else the issue's `createdAt`. The body rule (`BUILD_STARTED.match(body.strip())`) is unchanged.
 - `resolve` returns `Invalid` when `work/<ID>/worktrees` resolves outside `work/<ID>/`. It no longer turns exceptions raised by `run`, or unexpected `gh api repos/…` JSON, into `Transient`; they propagate to its two callers, which already convert any exception (`launch.py:100-103`, `eng.py:352-354`).
+- Accepted limits (PRD 2, 4): comments past the first 250 are not read; a comment without a user can be a `Build started` marker.
 - `Ok` gains `branch_exists` (`"local"` / `"remote"` / `None`), a last field defaulting to `None` so existing positional constructions stay valid.
 
 ## Design
@@ -42,7 +43,7 @@ Walk, skipped dirs, `.md` filter, unreadable-file skip and path sort stay. Per f
 | 7 | Delete `_project_id`; `pid = (issue.get("project") or {}).get("id")`. |
 | 8 | `_repo_info`: `json.loads` then index `data["permissions"]["push"] is True` and `data["default_branch"]` directly. The `is True` test and the default-branch checks (`:159-160`) stay. |
 | 9 | Delete `iso`; call `parse_time` (both APIs return `Z` times). Drop unused imports. |
-| 10 | Delete `worktrees_dir_ok` and its `status` field. `resolve` checks `realpath(run_dir(ID)/worktrees)` is under `realpath(run_dir(ID))` right after the issue-identifier check, before any `gh`/`git` call, returning `Invalid("<run_dir>/worktrees resolves outside <run_dir>")`. |
+| 10 | Delete `worktrees_dir_ok` and its `status` field. `resolve` keeps `worktrees_dir_ok`'s test (`realpath(run_dir(ID)/worktrees)` starts with `realpath(run_dir(ID)) + os.sep`) right after the issue-identifier check, before any `gh`/`git` call, returning `Invalid("<run_dir>/worktrees resolves outside <run_dir>")`. |
 
 ### E. Kept (PRD "保留"; do not touch)
 
