@@ -22,8 +22,11 @@ class FakeRun:
                 return res
         raise AssertionError(f"unexpected {argv}")
 
-def gql_for(description, title="ENG: Session Registry", ident="TASK-26"):
-    return lambda q, **v: {"issue": {"identifier": ident, "title": title, "description": description}}
+PROJ = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
+NO_LINE = eng.Invalid("no Repo: line in the description or its ## Instructions")
+
+def gql_for(description, title="ENG: Session Registry", ident="TASK-26", project=None):
+    return lambda q, **v: {"issue": {"identifier": ident, "title": title, "description": description, "project": project}}
 
 def pr_row(number, login="ophis", fork=False):
     return {"number": number, "url": f"u{number}", "state": "OPEN", "isCrossRepository": fork, "author": {"login": login}}
@@ -101,9 +104,13 @@ class Resolve(unittest.TestCase):
             (("git", "-C", self.clone, "ls-remote", "--heads", "origin"), t["remote"]),
         ]
 
-    def resolve(self, desc="Repo: ophis/agent-pm", gql=None, **over):
+    def resolve(self, desc="Repo: ophis/agent-pm", gql=None, repos=None, project=None, **over):
         self.run_ = FakeRun(self.table(**over))
-        return eng.resolve("TASK-26", gql or gql_for(desc), self.run_, playground=self.pg)
+        extra = {} if repos is None else {"repos": repos}
+        return eng.resolve("TASK-26", gql or gql_for(desc, project=project), self.run_, playground=self.pg, **extra)
+
+    def mapped(self, desc="no repo here", **over):
+        return self.resolve(desc, repos={PROJ: "ophis/agent-pm"}, project={"id": PROJ}, **over)
 
     def test_ok_existing_clone(self):
         os.makedirs(self.clone)
@@ -187,6 +194,82 @@ class Resolve(unittest.TestCase):
     def test_invalid_repo_line(self):
         self.assertIsInstance(self.resolve(desc="no repo here"), eng.Invalid)
 
+    def test_mapped_project_without_repo_line(self):
+        os.makedirs(self.clone)
+        asked = []
+        def gql(q, **v):
+            asked.append(q)
+            return gql_for("no repo here", project={"id": PROJ})(q, **v)
+        r = self.resolve(gql=gql, repos={PROJ: "ophis/agent-pm"})
+        self.assertEqual(r, eng.Ok("TASK-26", "ENG: Session Registry", "ophis", "agent-pm", self.clone, "main",
+                                   "TASK-26-session-registry",
+                                   os.path.join(self.work, "TASK-26", "worktrees", "TASK-26-session-registry"), mapped=True))
+        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), 60), self.run_.calls)
+        self.assertIn("project { id }", asked[0])
+
+    def test_repo_line_wins_over_mapping(self):
+        os.makedirs(self.clone)
+        r = self.resolve(repos={PROJ: "ophis/other"}, project={"id": PROJ})
+        self.assertEqual((r.owner, r.name, r.mapped), ("ophis", "agent-pm", False))
+        self.assertNotIn(("gh", "api", "repos/ophis/other"), [c[0] for c in self.run_.calls])
+
+    def test_bad_repo_line_is_not_replaced_by_mapping(self):
+        self.assertEqual(self.mapped("Repo: nope"), eng.Invalid("unreadable Repo line: 'nope'"))
+        self.assertEqual(self.mapped("Repo: ophis/a\nRepo: ophis/b"), eng.Invalid("several different Repo: values"))
+        self.assertEqual(self.run_.calls, [])
+
+    def test_no_mapping_for_the_project_keeps_todays_invalid(self):
+        for project in ({"id": "other"}, None, "not-an-object", {"id": ["x"]}, {"id": None}, {}, {"id": 7}):
+            with self.subTest(project=project):
+                self.assertEqual(self.resolve(desc="no repo here", repos={PROJ: "ophis/agent-pm"}, project=project), NO_LINE)
+        self.assertEqual(self.resolve(desc="no repo here", project={"id": PROJ}), NO_LINE)
+        self.assertEqual(self.run_.calls, [])
+
+    def test_mapped_failures_carry_the_mapping_prefix(self):
+        os.makedirs(self.clone)
+        r = self.mapped
+        want = "ophis/agent-pm: not found or no access (HTTP %s)"
+        self.assertEqual(r(api=ok(code=1, stderr="gh: Not Found (HTTP 404)")), eng.Invalid(eng.MAPPED + want % 404))
+        self.assertEqual(r(api=ok(code=1, stderr="gh: Forbidden (HTTP 403)")), eng.Invalid(eng.MAPPED + want % 403))
+        self.assertEqual(r(api=ok('{"default_branch": "main", "permissions": {"push": false}}')),
+                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: no push permission"))
+        self.assertEqual(r(api=ok('{"default_branch": "-x", "permissions": {"push": true}}')),
+                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: unsafe default branch name"))
+        self.assertTrue(eng.MAPPED.startswith("project mapping") and eng.MAPPED.endswith(" "))
+
+    def test_same_failures_from_a_repo_line_have_no_prefix(self):
+        os.makedirs(self.clone)
+        repos, project = {PROJ: "ophis/agent-pm"}, {"id": PROJ}
+        for over, reason in (({"api": ok(code=1, stderr="gh: Not Found (HTTP 404)")}, "ophis/agent-pm: not found or no access (HTTP 404)"),
+                             ({"api": ok(code=1, stderr="gh: Forbidden (HTTP 403)")}, "ophis/agent-pm: not found or no access (HTTP 403)"),
+                             ({"api": ok('{"default_branch": "main", "permissions": {"push": false}}')}, "ophis/agent-pm: no push permission"),
+                             ({"api": ok('{"default_branch": "-x", "permissions": {"push": true}}')}, "ophis/agent-pm: unsafe default branch name")):
+            with self.subTest(reason=reason):
+                self.assertEqual(self.resolve(repos=repos, project=project, **over), eng.Invalid(reason))
+
+    def test_mapped_other_failures_keep_todays_reason(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.mapped(fetch_url=ok("git@github.com:other/agent-pm.git\n")),
+                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"))
+        self.assertEqual(self.mapped(wt=ok(code=128, stderr="not a git repository")),
+                         eng.Invalid(f"{self.clone} exists but is not a git repo"))
+        self.assertEqual(self.mapped(branches=ok("TASK-26-a\nTASK-26-b\n")), eng.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
+        self.assertIsInstance(self.mapped(api=ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")), eng.Transient)
+
+    def test_mapped_clone_outside_playground_keeps_todays_reason(self):
+        other = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
+        os.symlink(other, self.clone)
+        self.assertEqual(self.mapped(), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
+
+    def test_mapping_value_that_is_not_a_repo(self):
+        for value in ("https://github.com/ophis/agent-pm", "ophis", "", "ophis/..", 42, None):
+            with self.subTest(value=value):
+                r = self.resolve(desc="no repo here", repos={PROJ: value}, project={"id": PROJ})
+                self.assertIsInstance(r, eng.Invalid)
+                self.assertTrue(r.reason.startswith(eng.MAPPED), r.reason)
+        self.assertEqual(self.run_.calls, [])
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -209,17 +292,47 @@ class Cli(unittest.TestCase):
                 ((*api, "repos/ophis/agent-pm/pulls/7/reviews"), t["reviews"]),
                 ((*api, "repos/ophis/agent-pm/pulls/7/comments"), t["review_comments"])]
 
-    def cli(self, *argv, env=None, resolved=None, resolve_error=None, **over):
+    def cli(self, *argv, env=None, resolved=None, resolve_error=None, config=None, **over):
         self.run_ = FakeRun(self.table(**over))
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(eng, "resolve", return_value=resolved or self.ok, side_effect=resolve_error):
+        extra = {} if config is None else {"config": config}
+        with mock.patch.object(eng, "resolve", return_value=resolved or self.ok, side_effect=resolve_error) as resolve:
             rc = eng.main(list(argv), env={"AGENT_PM_ISSUE": "TASK-26"} if env is None else env,
-                          gql=lambda *a, **k: None, run=self.run_, out=out, err=err)
-        self.out, self.err = out.getvalue(), err.getvalue()
+                          gql=lambda *a, **k: None, run=self.run_, out=out, err=err, **extra)
+        self.out, self.err, self.resolve = out.getvalue(), err.getvalue(), resolve
         return rc
+
+    def config_file(self, tail):
+        uid = "00000000-0000-4000-8000-000000000000"
+        text = f'team = "{uid}"\nharness_key = "k"\n[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
+        path = os.path.join(self.root, "pipeline.toml")
+        with open(path, "w") as f:
+            f.write(text)
+        return path
 
     def test_requires_issue_env(self):
         self.assertEqual(self.cli("status", env={}), 2)
+        self.assertIn("AGENT_PM_ISSUE", self.err)
+
+    def test_passes_the_configured_mapping_to_resolve(self):
+        path = self.config_file(f'[project_repos]\n"{PROJ}" = "ophis/agent-pm"\n')
+        self.assertEqual(self.cli("status", config=path), 0)
+        self.assertEqual(self.resolve.call_args.kwargs["repos"], {PROJ: "ophis/agent-pm"})
+        self.assertEqual(self.cli("status", config=self.config_file("")), 0)
+        self.assertEqual(self.resolve.call_args.kwargs["repos"], {})
+
+    def test_default_config_is_the_real_one(self):
+        self.assertEqual(self.cli("status"), 0)
+        self.assertEqual(self.resolve.call_args.kwargs["repos"], pipeline.load_config()["project_repos"])
+
+    def test_broken_config_refused(self):
+        self.assertEqual(self.cli("status", config=self.config_file(f'[project_repos]\n"{PROJ}" = "ophis"\n')), 2)
+        self.assertTrue(self.err.startswith(f"eng.py: pipeline.toml: project_repos.{PROJ} "), self.err)
+        self.assertEqual(self.out, "")
+        self.resolve.assert_not_called()
+
+    def test_config_loaded_after_the_issue_check(self):
+        self.assertEqual(self.cli("status", env={}, config=os.path.join(self.root, "missing.toml")), 2)
         self.assertIn("AGENT_PM_ISSUE", self.err)
 
     def test_refuses_when_not_ok(self):

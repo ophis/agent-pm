@@ -5,18 +5,17 @@ from dataclasses import dataclass
 from datetime import timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import PATH, parse_time, run_dir  # noqa: E402
+from pipeline import CONFIG, NAME, OWNER, PATH, load_config, parse_time, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
-Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description } }"
-OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
-NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
+Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description project { id } } }"
+MAPPED = "project mapping "
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 SHORT, LONG = 60, 600
 
 @dataclass(frozen=True)
 class Ok:
-    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str
+    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False
 
 @dataclass(frozen=True)
 class Invalid:
@@ -40,12 +39,11 @@ def _one(value):
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    for pat in (rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?", rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?",
-                rf"({OWNER})/({NAME})"):
+    for pat in (rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?", rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?"):
         m = re.fullmatch(pat, v)
         if m and m.group(2) not in (".", ".."):
             return m.group(1), m.group(2)
-    return None
+    return repo_slug(v)
 
 def parse_repo(description):
     found = []
@@ -64,6 +62,13 @@ def parse_repo(description):
     if len(distinct) > 1:
         return Invalid("several different Repo: values")
     return found[0]
+
+NO_LINE = parse_repo("")
+
+def _project_id(issue):
+    project = issue.get("project")
+    pid = project.get("id") if isinstance(project, dict) else None
+    return pid if isinstance(pid, str) else None
 
 def norm_url(url):
     m = re.fullmatch(r"(?:https://|ssh://git@|git@)github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url.strip(), re.I)
@@ -122,7 +127,7 @@ def in_playground(clone, playground=PLAYGROUND):
     """True if clone is a real (non-symlink) entry directly in playground, where the repo step keeps clones."""
     return not os.path.islink(clone) and os.path.dirname(os.path.realpath(clone)) == os.path.realpath(playground)
 
-def resolve(issue_id, gql, run, playground=PLAYGROUND):
+def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
     try:
         issue = gql(Q_ISSUE, i=issue_id)["issue"]
     except (SystemExit, Exception) as e:
@@ -132,17 +137,24 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND):
     if issue.get("identifier") != issue_id:
         return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
     repo = parse_repo(issue.get("description"))
+    pid = _project_id(issue)
+    mapped = repo == NO_LINE and pid in (repos or {})
+    tag = MAPPED if mapped else ""
+    if mapped:
+        repo = repo_slug(repos[pid]) or Invalid(f"{MAPPED}{str(repos[pid])[:80]!r}: not <owner>/<name>")
     if isinstance(repo, Invalid):
         return repo
     owner, name = repo
     info = _repo_info(owner, name, run)
-    if isinstance(info, (Invalid, Transient)):
+    if isinstance(info, Invalid):
+        return Invalid(tag + info.reason)
+    if isinstance(info, Transient):
         return info
     push, default = info
     if not push:
-        return Invalid(f"{owner}/{name}: no push permission")
+        return Invalid(f"{tag}{owner}/{name}: no push permission")
     if not isinstance(default, str) or not REF.fullmatch(default):
-        return Invalid(f"{owner}/{name}: unsafe default branch name")
+        return Invalid(f"{tag}{owner}/{name}: unsafe default branch name")
     clone = os.path.join(playground, name)
     if not in_playground(clone, playground):
         return Invalid(f"{clone} is a symlink or outside {playground}")
@@ -174,7 +186,7 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {issue_id}-<lowercase slug>")
     branch = names[0] if names else f"{issue_id}-{slug(issue['title'])}"
     return Ok(issue_id, issue["title"], owner, name, clone, default, branch,
-              os.path.join(run_dir(issue_id), "worktrees", branch))
+              os.path.join(run_dir(issue_id), "worktrees", branch), mapped=mapped)
 
 def pr_title(ok):
     """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""
@@ -292,9 +304,9 @@ def cmd_comments(ok, run, out, since):
     out.write("\n")
     return 0
 
-def _command(a, issue, gql, run, out, err):
+def _command(a, issue, repos, gql, run, out, err):
     try:
-        ok = resolve(issue, gql, run)
+        ok = resolve(issue, gql, run, repos=repos)
     except Exception as e:
         raise TransientError(f"resolve: {e!r}") from None
     if isinstance(ok, Transient):
@@ -304,7 +316,7 @@ def _command(a, issue, gql, run, out, err):
         return 2
     return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, a.since)
 
-def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr):
+def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG):
     import argparse
     ap = argparse.ArgumentParser(prog="eng.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -315,10 +327,15 @@ def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.std
     if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", issue):
         err.write("eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
         return 2
+    try:
+        repos = load_config(config)["project_repos"]
+    except SystemExit as e:
+        err.write(f"eng.py: {e.code}\n")
+        return 2
     if gql is None:
         from pipeline import linear_gql as gql
     try:
-        return _command(a, issue, gql, run, out, err)
+        return _command(a, issue, repos, gql, run, out, err)
     except Malformed as e:
         err.write(f"eng.py: malformed gh output: {e}\n")
         return 2

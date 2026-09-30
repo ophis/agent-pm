@@ -1,5 +1,6 @@
 import dataclasses
 import io
+import json
 import os
 import sys
 import tempfile
@@ -364,6 +365,72 @@ class RealConfig(unittest.TestCase):
         cfg = pipeline.load_config()
         self.assertEqual(list(cfg["states"]), list(pipeline.STATES))
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
+
+
+P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51ab71fb8"
+
+
+class ProjectRepos(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+
+    def load(self, text):
+        path = os.path.join(self.dir, "pipeline.toml")
+        with open(path, "w") as f:
+            f.write(text)
+        return pipeline.load_config(path)
+
+    def test_absent_is_empty(self):
+        self.assertEqual(self.load(BASE)["project_repos"], {})
+
+    def test_two_projects_one_repo(self):
+        cfg = self.load(BASE + f'[project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n')
+        self.assertEqual(cfg["project_repos"], {P1: "ophis/x", P2: "ophis/x"})
+
+    def test_bad_entry_rejected(self):
+        cases = [("not-a-uuid", "ophis/x"), (P1.upper(), "ophis/x"), (P1, "https://github.com/ophis/x"),
+                 (P1, "ophis/."), (P1, "ophis/.."), (P1, ""), (P1, 42), (P1, "ophis")]
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(BASE + f'[project_repos]\n"{key}" = {json.dumps(value)}\n')
+                msg = str(cm.exception.code)
+                self.assertTrue(msg.startswith(f"pipeline.toml: project_repos.{key} "), msg)
+                self.assertIn(repr(value), msg)
+
+    def test_not_a_table_rejected(self):
+        body = BASE[BASE.index("[roles"):]
+        with self.assertRaises(SystemExit) as cm:
+            self.load(HEADER + 'project_repos = "x"\n' + body)
+        self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: project_repos"), cm.exception.code)
+
+    def test_runnable_accepts(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for rel, text in FILES.items():
+            path = os.path.join(tmp.name, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+        os.makedirs(os.path.join(tmp.name, "templates"))
+        cfg = self.load(ROLES + f'[project_repos]\n"{P1}" = "ophis/x"\n')
+        self.assertEqual(sorted(pipeline.runnable(cfg, root=tmp.name)), ["engineer", "researcher"])
+
+    def test_real_config(self):
+        self.assertEqual(pipeline.load_config()["project_repos"],
+                         {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
+
+
+class RepoSlug(unittest.TestCase):
+    def test_slug(self):
+        cases = {"ophis/agent-pm": ("ophis", "agent-pm"), "ophis/.github": ("ophis", ".github"),
+                 "-a/b": None, "a/-b": None, "a/..": None, "a/.": None, "a b/c": None, "ophis": None,
+                 "https://github.com/ophis/x": None, "": None, None: None, 42: None}
+        for value, want in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(pipeline.repo_slug(value), want)
 
 
 class TeamCheck(unittest.TestCase):

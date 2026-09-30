@@ -5,20 +5,20 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 ## Board
 
 - Issues assigned to your role account, in any project; the principles file named in the prompt holds the rules every role and task shares.
-- Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line) → Done (user only). Canceled only as in step 2.
+- Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line or project mapping) → Done (user only). Canceled only as in step 2.
 
 ## Inputs
 
-- The cwd is this run's directory `work/<ID>/` in the agent-pm root; `work/<ID>/…` below is a path in it, passed as an absolute path. The prompt's `Repo check: OK` line gives `<owner>/<name>`, `<clone>`, `<default>` (the default branch), `<branch>` and `<worktree>` (`work/<ID>/worktrees/<branch>`).
+- The cwd is this run's directory `work/<ID>/` in the agent-pm root; `work/<ID>/…` below is a path in it, passed as an absolute path. The prompt's `Repo check: OK` line gives `<owner>/<name>` (may be followed by `(from project mapping)`), `<clone>`, `<default>` (the default branch), `<branch>` and `<worktree>` (`work/<ID>/worktrees/<branch>`).
 - `<eng> status` and `<eng> comments --since <ISO>` print JSON, where `<eng>` is exactly the prompt's `eng.py:` command (`python3 <ROOT>/scripts/eng.py`; the launcher sets `AGENT_PM_ISSUE`). `status`: `repo`, `clone`, `default`, `branch`, `worktree`, `pr_title`, `worktrees_dir_ok`, `branch_exists` (`local`/`remote`/null), `worktree_exists`, `pr` (number, url, state of the branch's non-fork PR by the user's `gh` login, or null), `plan_docs` (path, phase). `comments`: the PR comments and reviews after `<ISO>` written by the user's `gh` login (`kept`); others are dropped and counted. Exit 2 = refused or malformed `gh` output (reason on stderr), 3 = transient.
-- A Handoff-created issue (principles) comes from the PRD issue: `## Source` holds the PRD link and `## Instructions` the `Repo:` line and which phase to build.
+- A Handoff-created issue (principles) comes from the PRD issue: `## Source` holds the PRD link and `## Instructions` the `Repo:` line (optional in a mapped project) and which phase to build.
 
 ## Steps
 
 1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. The user's comments outrank `## Instructions` and the PRD.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs (the cwd, `<clone>`, `<worktree>`, `~/playground/private_docs`). On `Repo check failed: <reason>`, bounce and stop:
-   - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review; on this issue comment the same and move it to Canceled.
-   - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.
+   - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment (reason starting `project mapping `: after fixing the project's `[project_repos]` entry in `pipeline.toml`, or with a `Repo:` comment), move it to In Review; on this issue comment the same and move it to Canceled.
+   - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description (reason starting `project mapping `: the project's `[project_repos]` entry in `pipeline.toml`, or add a `Repo:` line) and then move the issue back to Todo; move the issue to In Review.
 3. **Status.** `<eng> status`; if it shows a PR, also `<eng> comments --since <the issue's creation time>` (its `kept` comments count as the user's).
 4. **Which build.** From `plan_docs` (autopilot's plan doc and its `RESUME: phase=` line) and the comments:
    - A plan doc in the worktree with phase before S9 → continue that build (`autopilot:build` resumes from its plan doc), with the user's comments as requirements: update the spec and plan where they differ, then continue.

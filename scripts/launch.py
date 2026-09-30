@@ -95,10 +95,10 @@ def fail(plog, issue, kind, reason, rc):
     return rc
 
 
-def repo_step(a, task, gql, run):
+def repo_step(a, task, gql, run, repos):
     """(prompt tail, extra env, allowed rules, repo result) for a repo_from_issue task, or a Transient."""
     try:
-        r = eng.resolve(a.issue, gql, run)
+        r = eng.resolve(a.issue, gql, run, repos=repos)
     except Exception as e:  # a resolve bug must not crash the launcher: Transient lets Recover retry the issue
         return eng.Transient(f"resolve: {type(e).__name__}: {e}")
     if isinstance(r, eng.Invalid) and a.mode == "resume":
@@ -108,7 +108,8 @@ def repo_step(a, task, gql, run):
     cli = f" eng.py: python3 {shlex.quote(os.path.join(ROOT, 'scripts', 'eng.py'))}."
     if isinstance(r, eng.Invalid):
         return f" Repo check failed: {r.reason}.{cli}", {}, [], r
-    tail = (f" Repo check: OK {r.owner}/{r.name}, clone {r.clone}, default branch {r.default}, branch {r.branch}, "
+    src = " (from project mapping)" if r.mapped else ""
+    tail = (f" Repo check: OK {r.owner}/{r.name}{src}, clone {r.clone}, default branch {r.default}, branch {r.branch}, "
             f"worktree {r.worktree}.{cli}")
     values = {k: getattr(r, k) for k in PLACEHOLDERS}
     return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
@@ -147,7 +148,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
             f" Team: {cfg['team']}. States: {states}.")
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
-        step = repo_step(a, job.task, gql or linear_gql, run)
+        step = repo_step(a, job.task, gql or linear_gql, run, cfg["project_repos"])
         if isinstance(step, eng.Transient):
             return fail(plog, a.issue, "transient", step.reason, 3)
         extra, env, allowed, repo = step
