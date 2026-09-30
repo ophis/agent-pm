@@ -1,36 +1,29 @@
 #!/usr/bin/env python3
 """Research runs: a read-only, detached worktree of the issue's target repo."""
-import json, os, re, sys
+import json, os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eng import LONG, PLAYGROUND, Q_ISSUE, Invalid, Transient, _stderr, locate, run_subdir, sh_run, target  # noqa: E402
-from pipeline import CONFIG, load_config  # noqa: E402
+from eng import LONG, PLAYGROUND, Invalid, Transient, _stderr, locate, read_issue, run_subdir, sh_run, target  # noqa: E402
+from pipeline import CONFIG, load_config, run_dir  # noqa: E402
 
 SHA = re.compile(r"[0-9a-f]{40}")
 
-def _commit(wt, src, clone):
-    """The detached HEAD of clone's worktree at wt, read from files only, or Invalid."""
-    if os.path.islink(wt) or not os.path.isdir(wt) or os.path.realpath(wt) != os.path.join(os.path.realpath(src), os.path.basename(wt)):
-        return Invalid(f"{wt} is not a real directory inside {src}")
+def _worktree(wt, clone):
+    """(HEAD text, gitdir) of clone's worktree at wt, read from files only, or Invalid."""
+    if os.path.islink(wt) or not os.path.isdir(wt):
+        return Invalid(f"{wt} is not a real directory")
     try:
-        found, _, head = locate(wt)
+        found, _, head, gitdir = locate(wt)
     except ValueError as e:
         return Invalid(f"{wt}: {e}")
     if os.path.realpath(found) != os.path.realpath(clone):
         return Invalid(f"{wt} is a worktree of {found}, not of {clone}")
-    if not SHA.fullmatch(head):
-        return Invalid(f"{wt}: HEAD is not a detached commit")
-    return head
+    return head, gitdir
 
 def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
-    try:
-        issue = gql(Q_ISSUE, i=issue_id)["issue"]
-    except (SystemExit, Exception) as e:
-        return Transient(f"Linear: {e}")
-    if issue is None:
-        return Invalid(f"{issue_id}: issue not found")
-    if issue.get("identifier") != issue_id:
-        return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+    issue = read_issue(issue_id, gql)
+    if isinstance(issue, (Invalid, Transient)):
+        return issue
     t = target(issue, run, playground, repos, push=False)
     if isinstance(t, (Invalid, Transient)):
         return t
@@ -38,18 +31,31 @@ def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
     if isinstance(src, Invalid):
         return src
     wt = os.path.join(src, t.name)
-    reused = os.path.lexists(wt)
-    if not reused:
-        for what, argv in (("git fetch", ["git", "-C", t.clone, "fetch", "origin"]),
-                           ("git worktree add", ["git", "-c", "core.symlinks=false", "-C", t.clone, "worktree", "add", "--detach", wt, f"origin/{t.default}"])):
-            res = run(argv, LONG)
-            if res.returncode != 0:
-                return Transient(f"{what}: {_stderr(res)}")
-    commit = _commit(wt, src, t.clone)
-    if isinstance(commit, Invalid):
-        return commit
+    real = os.path.realpath(wt)
+    if real != os.path.join(os.path.realpath(run_dir(issue_id)), "src", t.name):
+        return Invalid(f"{wt} resolves to {real}")
+    found = _worktree(wt, t.clone) if os.path.lexists(wt) else None
+    if isinstance(found, Invalid):
+        return found
+    steps = []
+    # git keeps a new worktree's gitdir locked until `worktree add` completes.
+    if found and os.path.lexists(os.path.join(found[1], "locked")):
+        steps.append(("git worktree remove", ["git", "-C", t.clone, "worktree", "remove", "--force", "--force", "--", wt]))
+    if not found or steps:
+        steps += [("git fetch", ["git", "-C", t.clone, "fetch", "origin"]),
+                  ("git worktree add", ["git", "-c", "core.symlinks=false", "-C", t.clone, "worktree", "add", "--detach", wt, f"origin/{t.default}"])]
+    for what, argv in steps:
+        res = run(argv, LONG)
+        if res.returncode != 0:
+            return Transient(f"{what}: {_stderr(res)}")
+    if steps:
+        found = _worktree(wt, t.clone)
+        if isinstance(found, Invalid):
+            return found
+    if not SHA.fullmatch(found[0]):
+        return Invalid(f"{wt}: HEAD is not a detached commit")
     return {"repo": f"{t.owner}/{t.name}", "mapped": t.mapped, "clone": t.clone, "default": t.default,
-            "worktree": wt, "commit": commit, "reused": reused}
+            "worktree": wt, "commit": found[0], "reused": not steps}
 
 def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, playground=PLAYGROUND):
     import argparse
@@ -70,7 +76,7 @@ def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.std
         from pipeline import linear_gql as gql
     try:
         r = prepare(issue, gql, run, cfg["project_repos"], playground)
-    except Exception as e:
+    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError) as e:
         err.write(f"research.py: prepare: {e!r}\n")
         return 1
     if isinstance(r, (Invalid, Transient)):

@@ -373,6 +373,7 @@ class Locate(unittest.TestCase):
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.root]))
         self.clone = os.path.join(self.root, "clone")
+        self.gitdir = os.path.join(self.clone, ".git", "worktrees", "wt")
 
     def put(self, path, text):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -387,15 +388,15 @@ class Locate(unittest.TestCase):
         return path
 
     def test_detached(self):
-        self.assertEqual(eng.locate(self.wt(self.SHA + "\n")), (self.clone, None, self.SHA))
+        self.assertEqual(eng.locate(self.wt(self.SHA + "\n")), (self.clone, None, self.SHA, self.gitdir))
 
     def test_branch(self):
-        self.assertEqual(eng.locate(self.wt("ref: refs/heads/TASK-1-x\n")), (self.clone, "TASK-1-x", "ref: refs/heads/TASK-1-x"))
+        self.assertEqual(eng.locate(self.wt("ref: refs/heads/TASK-1-x\n")), (self.clone, "TASK-1-x", "ref: refs/heads/TASK-1-x", self.gitdir))
 
     def test_relative_gitdir(self):
         path = self.wt(self.SHA + "\n")
         self.put(os.path.join(path, ".git"), "gitdir: ../clone/.git/worktrees/wt\n")
-        self.assertEqual(eng.locate(path), (self.clone, None, self.SHA))
+        self.assertEqual(eng.locate(path), (self.clone, None, self.SHA, self.gitdir))
 
     def test_refusals(self):
         self.put(os.path.join(self.root, "dir", ".git", "x"), "")
@@ -419,7 +420,7 @@ class Locate(unittest.TestCase):
     def test_a_missing_head_is_empty_and_detached(self):
         path = self.wt("")
         os.remove(os.path.join(self.clone, ".git", "worktrees", "wt", "HEAD"))
-        self.assertEqual(eng.locate(path), (self.clone, None, ""))
+        self.assertEqual(eng.locate(path), (self.clone, None, "", self.gitdir))
 
 class Cli(unittest.TestCase):
     def setUp(self):

@@ -39,6 +39,8 @@ class Prepare(unittest.TestCase):
         self.get_push_url = ("git", "-C", self.clone, "remote", "get-url", "--push", "origin")
         self.fetch = ("git", "-C", self.clone, "fetch", "origin")
         self.add = ("git", "-c", "core.symlinks=false", "-C", self.clone, "worktree", "add", "--detach", self.wt, "origin/main")
+        self.remove = ("git", "-C", self.clone, "worktree", "remove", "--force", "--force", "--", self.wt)
+        self.gitdir = os.path.join(self.clone, ".git", "worktrees", "agent-pm")
 
     def worktree(self, path, head=SHA, clone=None):
         """What `git worktree add` leaves: path/.git and its gitdir's HEAD."""
@@ -50,13 +52,18 @@ class Prepare(unittest.TestCase):
         self.worktree(argv[-2])
         return ok()
 
+    def removed(self, argv):
+        shutil.rmtree(argv[-1])
+        shutil.rmtree(self.gitdir)
+        return ok()
+
     def table(self, **over):
         t = {"api": ok('{"default_branch": "main", "permissions": {"push": false}}'), "clone": ok(),
              "fetch_url": ok("git@github.com:ophis/agent-pm.git\n"), "push_url": ok("git@github.com:ophis/agent-pm.git\n"),
-             "fetch": ok(), "add": self.added}
+             "fetch": ok(), "add": self.added, "remove": self.removed}
         t.update(over)
         return [(self.api, t["api"]), (("gh", "repo", "clone"), t["clone"]), (self.get_push_url, t["push_url"]),
-                (self.get_url, t["fetch_url"]), (self.fetch, t["fetch"]), (self.add, t["add"])]
+                (self.get_url, t["fetch_url"]), (self.fetch, t["fetch"]), (self.add, t["add"]), (self.remove, t["remove"])]
 
     def prepare(self, desc="Repo: ophis/agent-pm", repos=None, project=None, **over):
         self.run_ = FakeRun(self.table(**over))
@@ -80,6 +87,7 @@ class Prepare(unittest.TestCase):
                 "commit": SHA, "reused": False, **over}
 
     def assert_untouched(self):
+        self.assertNotIn(self.remove, self.argvs())
         self.assertNotIn(self.fetch, self.argvs())
         self.assertNotIn(self.add, self.argvs())
 
@@ -126,6 +134,45 @@ class Prepare(unittest.TestCase):
         self.assertEqual(self.prepare(), self.expected(commit=OTHER, reused=True))
         self.assertEqual(self.argvs(), [self.api, self.get_url, self.get_push_url])
 
+    def test_an_interrupted_add_is_removed_then_added_again(self):
+        os.makedirs(self.clone)
+        for name, head in (("locked with a HEAD", OTHER), ("locked before HEAD", None)):
+            with self.subTest(name):
+                shutil.rmtree(self.base, ignore_errors=True)
+                self.worktree(self.wt, head=OTHER)
+                put(os.path.join(self.wt, "partial"), "")
+                put(os.path.join(self.gitdir, "locked"), "initializing\n")
+                if head is None:
+                    os.remove(os.path.join(self.gitdir, "HEAD"))
+                self.assertEqual(self.prepare(), self.expected())
+                self.assertEqual(self.argvs(), [self.api, self.get_url, self.get_push_url, self.remove, self.fetch, self.add])
+                self.assertEqual(self.run_.calls[3], (self.remove, eng.LONG))
+                self.assertFalse(os.path.exists(os.path.join(self.wt, "partial")))
+
+    def test_a_failed_remove_exits_1(self):
+        os.makedirs(self.clone)
+        self.worktree(self.wt)
+        put(os.path.join(self.gitdir, "locked"), "initializing\n")
+        self.assertEqual(self.cli(remove=ok(code=1, stderr="fatal: busy")), 1)
+        self.assertEqual((self.out, self.err), ("", "research.py: git worktree remove: fatal: busy\n"))
+        self.assertEqual(self.argvs()[-1], self.remove)
+        self.assertNotIn(self.fetch, self.argvs())
+
+    def test_src_symlinked_inside_the_run_dir_exits_2(self):
+        os.makedirs(self.clone)
+        real = os.path.join(self.base, "worktrees")
+        for name, existing in (("reuse", True), ("new", False)):
+            with self.subTest(name):
+                shutil.rmtree(self.base, ignore_errors=True)
+                os.makedirs(real)
+                os.symlink(real, self.src)
+                if existing:
+                    self.worktree(os.path.join(real, "agent-pm"))
+                self.assertEqual(self.cli(), 2)
+                self.assertRegex(self.err, rf"\Aresearch\.py: {re.escape(self.wt)}\b[^\n]*\n\Z")
+                self.assert_untouched()
+                self.assertEqual(os.listdir(real), ["agent-pm"] if existing else [])
+
     def test_reuse_refusals_exit_2(self):
         os.makedirs(self.clone)
         def linked_worktree():
@@ -143,6 +190,8 @@ class Prepare(unittest.TestCase):
         cases = {"symlink to a worktree in src": linked_worktree, "symlink out of src": linked_outside,
                  "dangling symlink": lambda: (os.makedirs(self.src), os.symlink(os.path.join(self.root, "nowhere"), self.wt)),
                  "another clone's worktree": lambda: self.worktree(self.wt, clone=os.path.join(self.pg, "other")),
+                 "another clone's locked worktree": lambda: (self.worktree(self.wt, clone=os.path.join(self.pg, "other")),
+                                                            put(os.path.join(self.pg, "other", ".git", "worktrees", "agent-pm", "locked"), "")),
                  "no .git": lambda: os.makedirs(self.wt), ".git directory": lambda: os.makedirs(os.path.join(self.wt, ".git")),
                  "a file": lambda: put(self.wt, SHA), "branch HEAD": lambda: self.worktree(self.wt, head="ref: refs/heads/main"),
                  "missing HEAD": no_head, "short HEAD": lambda: self.worktree(self.wt, head=SHA[:12]),
@@ -201,27 +250,38 @@ class Prepare(unittest.TestCase):
     def test_transient_or_git_failure_exits_1(self):
         def linear_down(q, **v):
             raise SystemExit("linear api error: boom")
+        timeout = subprocess.TimeoutExpired("git", 600)
         cases = [({"gql": linear_down}, "Linear: linear api error: boom"),
-                 ({"api": ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")}, None),
-                 ({"api": ok("not json")}, None),
-                 ({"fetch": ok(code=1, stderr="fatal: unable to access")}, None),
-                 ({"fetch": subprocess.TimeoutExpired("git", 600)}, None),
-                 ({"add": ok(code=128, stderr="fatal: invalid reference: origin/main")}, None),
-                 ({"add": subprocess.TimeoutExpired("git", 600)}, None)]
+                 ({"api": ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")}, "gh api repos/ophis/agent-pm: gh: Bad Gateway (HTTP 502)"),
+                 ({"api": ok("not json")}, "prepare: JSONDecodeError('Expecting value: line 1 column 1 (char 0)')"),
+                 ({"api": ok('{"message": "Bad credentials"}')}, "prepare: KeyError('permissions')"),
+                 ({"api": ok("[]")}, "prepare: TypeError('list indices must be integers or slices, not str')"),
+                 ({"fetch": ok(code=1, stderr="fatal: unable to access")}, "git fetch: fatal: unable to access"),
+                 ({"fetch": timeout}, f"prepare: {timeout!r}"),
+                 ({"add": ok(code=128, stderr="fatal: invalid reference: origin/main")}, "git worktree add: fatal: invalid reference: origin/main"),
+                 ({"add": timeout}, f"prepare: {timeout!r}"),
+                 ({"fetch": FileNotFoundError(2, "No such file or directory", "git")},
+                  "prepare: FileNotFoundError(2, 'No such file or directory')")]
         os.makedirs(self.clone)
         for kwargs, reason in cases:
-            with self.subTest(kwargs):
+            with self.subTest(reason):
                 shutil.rmtree(self.base, ignore_errors=True)
                 self.assertEqual(self.cli(**kwargs), 1)
-                self.assertEqual(self.out, "")
-                self.assertRegex(self.err, r"\Aresearch\.py: [^\n]+\n\Z")
-                if reason:
-                    self.assertEqual(self.err, f"research.py: {reason}\n")
+                self.assertEqual((self.out, self.err), ("", f"research.py: {reason}\n"))
         self.assertEqual(self.cli(fetch=ok(code=1, stderr="network")), 1)
         self.assertNotIn(self.add, self.argvs())
         shutil.rmtree(self.clone)
         self.assertEqual(self.cli(clone=ok(code=1, stderr="network")), 1)
+        self.assertEqual(self.err, "research.py: gh repo clone ophis/agent-pm: network\n")
         self.assert_untouched()
+
+    def test_an_unexpected_command_is_not_an_exit_code(self):
+        os.makedirs(self.clone)
+        config = os.path.join(self.root, "pipeline.toml")
+        put(config, HEADER)
+        with self.assertRaisesRegex(AssertionError, "unexpected"):
+            research.main(["prepare"], env={"AGENT_PM_ISSUE": "TASK-26"}, gql=te.gql_for("Repo: ophis/agent-pm"), run=FakeRun([]),
+                          out=io.StringIO(), err=io.StringIO(), config=config, playground=self.pg)
 
     def test_bad_or_missing_issue_env_exits_1(self):
         def no_linear(q, **v):
@@ -252,6 +312,9 @@ class Prepare(unittest.TestCase):
         self.assertIn(("gh", "repo", "clone", "ophis/agent-pm", self.clone), seen)
         self.assertEqual(seen.count(self.add), 2)
         self.assertFalse([a for a in seen if a != self.add and any(self.src in str(x) for x in a)])
+        put(os.path.join(self.gitdir, "locked"), "initializing\n")
+        self.prepare()
+        self.assertEqual(self.argvs(), [self.api, self.get_url, self.get_push_url, self.remove, self.fetch, self.add])
 
 if __name__ == "__main__":
     unittest.main()

@@ -151,7 +151,8 @@ def target(issue, run, playground=PLAYGROUND, repos=None, push=True):
             return Transient(f"gh repo clone {owner}/{name}: {_stderr(res)}")
     return Target(owner, name, clone, default, mapped)
 
-def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
+def read_issue(issue_id, gql):
+    """The issue's Q_ISSUE fields; Invalid if missing or another issue, Transient if Linear fails."""
     try:
         issue = gql(Q_ISSUE, i=issue_id)["issue"]
     except (SystemExit, Exception) as e:
@@ -160,6 +161,12 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(f"{issue_id}: issue not found")
     if issue.get("identifier") != issue_id:
         return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+    return issue
+
+def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
+    issue = read_issue(issue_id, gql)
+    if isinstance(issue, (Invalid, Transient)):
+        return issue
     worktrees = run_subdir(issue_id, "worktrees")
     if isinstance(worktrees, Invalid):
         return worktrees
@@ -189,7 +196,7 @@ def _read(path):
     return ""
 
 def locate(path):
-    """(clone, local branch or None if detached, HEAD text) of the worktree at path, read from files only; ValueError if it is not a linked worktree."""
+    """(clone, local branch or None if detached, HEAD text, gitdir) of the worktree at path, read from files only; ValueError if it is not a linked worktree."""
     text = _read(os.path.join(path, ".git"))
     if not text.startswith("gitdir: "):
         raise ValueError("clone unknown: .git is not a gitdir file")
@@ -201,7 +208,7 @@ def locate(path):
     branch = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else None
     if branch is not None and not REF.fullmatch(branch):
         raise ValueError("unsafe branch name")
-    return os.path.dirname(os.path.dirname(parent)), branch, head
+    return os.path.dirname(os.path.dirname(parent)), branch, head, gitdir
 
 def pr_title(ok):
     """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""

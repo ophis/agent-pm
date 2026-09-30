@@ -94,7 +94,7 @@ class Pruner:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
                 raise Skip(f"not a real directory inside {ident}/{folder}/, refusing to touch")
             try:
-                clone, branch, _ = locate(path)
+                clone, branch, _, _ = locate(path)
             except ValueError as e:
                 raise Skip(e) from None
             if self.dry:
