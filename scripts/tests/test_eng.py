@@ -318,7 +318,7 @@ class Cli(unittest.TestCase):
     def config_file(self, tail, head=""):
         uid = "00000000-0000-4000-8000-000000000000"
         docs = f'docs = {{ repo = "acme/notes", clone = "{DOCS_CLONE}", branch = "trunk" }}\n'
-        text = f'team = "{uid}"\nharness_key = "k"\n{docs}{head}[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
+        text = f'team = "{uid}"\nharness_key = "k"\ntask_label_group = "{uid}"\n{docs}{head}[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
         path = os.path.join(self.root, "pipeline.toml")
         with open(path, "w") as f:
             f.write(text)

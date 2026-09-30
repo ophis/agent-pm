@@ -6,9 +6,9 @@
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is busy.
---pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given); print "<ID> <url>" (manual use).
+--pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given; only issues whose task is their role's default); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
---claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
+--claim [RUNS_LOG]  Pick + Claim (only issues whose task is their role's default): print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
 --prune RUNS_LOG    Drop runs.log lines older than 7 days.
 Needs Python 3.11+.
@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, role_for, role_ids, runnable, session, stage_order, team, transcript)
+from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log, norm,  # noqa: E402
+                      parse_time, registry, role_for, role_ids, runnable, session, stage_order, task_group, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -38,12 +38,13 @@ USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROL
          " | --gate resume|new | --prune RUNS_LOG")
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)")
+LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
+Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { name parent { id } } } } }"
 
 
 def local_time(s):
@@ -51,7 +52,8 @@ def local_time(s):
 
 
 def parse_log(path):
-    """(time, kind, issue, sid) of every start/resume line, in file order. runs.log timestamps are local time."""
+    """(time, kind, issue, sid, task) of every start/resume line, in file order; task is None without a trailing task= field.
+    runs.log timestamps are local time."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -61,7 +63,7 @@ def parse_log(path):
     for line in lines:
         m = LINE.match(line)
         if m:
-            entries.append((local_time(m[1]), m[2], m[3], m[4]))
+            entries.append((local_time(m[1]), m[2], m[3], m[4], m[5]))
     return entries
 
 
@@ -94,6 +96,10 @@ def prune(path, now):
 
 def latest_sid(entries, issue):
     return next((e[3] for e in reversed(entries) if e[2] == issue), None)
+
+
+def logged_task(entries, sid):
+    return next((e[4] for e in reversed(entries) if e[3] == sid and e[4]), None)
 
 
 def sid_times(entries, sid):
@@ -156,6 +162,24 @@ def blockers(issue):
             if not n.get("issue") or n["issue"]["state"]["type"] not in DONE]
 
 
+def task_for(labels, group, role, role_tasks, all_tasks):
+    """(task, None) from the issue's labels in the task label group (none -> role's default), or (None, comment) for an invalid one.
+    The task is a name from all_tasks; only the comment carries label text."""
+    names = [n["name"] for n in labels if n["parent"] and n["parent"]["id"] == group]
+    if not names:
+        return role_tasks[0], None
+    if len(names) > 1:
+        return None, f"Several task labels ({', '.join(names)}); keep one, then move the issue back to Todo."
+    label = names[0]
+    task = next((t for t in all_tasks if norm(t) == norm(label)), None)
+    if task is None:
+        return None, f'Task label "{label}" matches no task in tasks/. Fix the label, then move the issue back to Todo.'
+    if task not in role_tasks:
+        return None, (f'Task label "{label}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
+                      "Fix the label or the assignee, then move the issue back to Todo.")
+    return task, None
+
+
 def gate(kind, lines):
     """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
     info = None
@@ -179,21 +203,23 @@ def gate(kind, lines):
 
 
 class Board:
-    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None):
+    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None, root=ROOT):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist, self.ready, self.blocked = {}, None, {}
-        runs = runnable(cfg)
+        self.runs = runnable(cfg, root)
         if only is not None:
             if not only:
                 raise SystemExit("Board: only is empty")
-            if unknown := [r for r in only if r not in runs]:
+            if unknown := [r for r in only if r not in self.runs]:
                 raise SystemExit(f"no role {unknown[0]!r} in roles/")
         self.stage = stage_order(cfg)
+        self.group, self.all_tasks = cfg["task_label_group"], list(registry(root, cfg["docs"]["clone"])[1])
         t = team(gql, cfg)
+        task_group(gql, cfg)
         self.team, self.states = t.id, t.states
         self.humans = set(humans(gql, cfg))
         self.emails = cfg.get("human_members") or []
-        self.roles = role_ids(gql, {r: run for r, run in runs.items() if only is None or r in only})
+        self.roles = role_ids(gql, {r: run for r, run in self.runs.items() if only is None or r in only})
 
     def issues(self, state, fields=""):
         flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
@@ -225,8 +251,11 @@ class Board:
         self.todo()
         return ident in self.blocked
 
+    def role(self, issue):
+        return self.roles[issue["assignee"]["id"]]
+
     def later(self, issue):
-        return -self.stage.get(self.roles[issue["assignee"]["id"]], 0)
+        return -self.stage.get(self.role(issue), 0)
 
     def last_move(self, issue, state, by_user=False):
         """Latest time the issue was moved to state (by_user: by a `human_members` user)."""
@@ -263,7 +292,7 @@ class Board:
                  i=issue["id"], u={"stateId": self.states[state]})
 
     def recover(self):
-        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k) or None."""
+        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k, task) or None."""
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress")]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
@@ -277,7 +306,15 @@ class Board:
                 log(f"recover: {ident} reached {CAP} attempts; In Review")
                 self.comment_and_move(issue, CAP_COMMENT, "in_review")
             elif sid and has_transcript(self.tdir, ident, sid):
-                cand = cand or (issue, sid, resume_count(self.entries, sid) + 1)
+                role = self.role(issue)
+                run = self.runs[role]
+                task = logged_task(self.entries, sid) or run.task_name
+                if task not in run.tasks:
+                    log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
+                    self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
+                                                 f'({", ".join(run.tasks)}); needs a look.', "in_review")
+                else:
+                    cand = cand or (issue, sid, resume_count(self.entries, sid) + 1, task)
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
@@ -288,12 +325,12 @@ class Board:
         return cand
 
     def next_run(self):
-        """("resume", issue, sid, k), ("new",) or None, after Recover."""
+        """("resume", issue, sid, k, task), ("new",) or None, after Recover."""
         cand = self.recover()
         if cand:
-            issue, sid, k = cand
+            issue, sid, k, task = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return ("resume", issue, sid, k)
+            return ("resume", issue, sid, k, task)
         todo = self.todo()
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
@@ -304,12 +341,12 @@ class Board:
     def plan(self):
         run = self.next_run()
         if run and run[0] == "resume":
-            _, issue, sid, k = run
+            _, issue, sid, k, _ = run
             return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
         return run and "new"
 
-    def take(self, only=None):
-        """The claimed Todo issue, or None."""
+    def take(self, only=None, default_only=False):
+        """(claimed Todo issue, its task), or None; default_only leaves an issue whose task is not its role's default in Todo."""
         # Pick: highest priority first, then later role, then oldest.
         queue = sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
@@ -323,18 +360,33 @@ class Board:
             if self.dry:
                 return None
             # Claim: re-check right before claiming so a concurrent change isn't overwritten.
-            current = self.gql("query($i: String!) { issue(id: $i) { state { id } } }", i=issue["id"])["issue"]["state"]["id"]
-            if current != self.states["todo"]:
-                log(f"claim: {issue['identifier']} is no longer Todo; skipping")
+            current = self.gql(Q_RECHECK, i=issue["id"])["issue"]
+            ident = issue["identifier"]
+            if current["state"]["id"] != self.states["todo"]:
+                log(f"claim: {ident} is no longer Todo; skipping")
                 return None
+            role = self.role(issue)
+            role_tasks = list(self.runs[role].tasks)
+            task, comment = task_for(current["labels"]["nodes"], self.group, role, role_tasks, self.all_tasks)
+            if comment:
+                log(f"claim: {ident} bad task label; In Review")
+                self.comment_and_move(issue, comment, "in_review")
+                continue
+            if default_only and task != role_tasks[0]:
+                log(f"claim: {ident} task={task} is not {role}'s default; skipping")
+                continue
+            log(f"claim: {ident} task={task}")
             self.gql("mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }",
                      i=issue["id"], s=self.states["in_progress"])
-            return issue
-        log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
+            return issue, task
+        if queue:
+            log("pick: nothing claimable")
+        else:
+            log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
         return None
 
-    def claim(self, only=None):
-        issue = self.take(only)
+    def claim(self, only=None, default_only=False):
+        issue, _ = self.take(only, default_only) or (None, None)
         return issue and f"{issue['identifier']} {issue['url']} {issue['project']['name']}"
 
 
@@ -344,14 +396,14 @@ def append(path, line):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
 
 
-def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
+def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     """One launchd tick. Returns the exit code."""
     dry, issue_id = opts["dry"], opts["issue"]
     if not opts["now"] and not 1 <= hour <= 6:
         log("skip: outside hours")
         if not dry:
             return 0
-    roles = runnable(cfg)
+    roles = runnable(cfg, root)
     busy = busy_roles(roles, sh)
     if len(busy) == len(roles):
         log(f"skip: all roles busy ({', '.join(busy)})")
@@ -369,7 +421,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         except Exception as e:
             log(f"skip: prune failed: {e}")
     # Recover sees only idle roles' issues, so it never touches an issue whose session is running.
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy])
+    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy], root=root)
     run = board.next_run()
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
         if board.is_blocked(issue_id):
@@ -392,26 +444,27 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
     if kind == "resume":
-        _, issue, sid, k = run
-        append(runs, f"resume {issue['identifier']} session={sid} n={k}")
+        _, issue, sid, k, task = run
+        append(runs, f"resume {issue['identifier']} session={sid} n={k} task={task}")
         mode = ["--mode", "resume", "--k", str(k)]
     else:
-        issue = board.take(issue_id)
-        if not issue:
+        taken = board.take(issue_id)
+        if not taken:
             log("skip: nothing claimed")
             return 0
+        issue, task = taken
         sid = str(uuid.uuid4())
-        append(runs, f"start {issue['identifier']} session={sid} transcript={transcript(issue['identifier'], sid, tdir)}")
+        append(runs, f"start {issue['identifier']} session={sid} transcript={transcript(issue['identifier'], sid, tdir)} task={task}")
         mode = ["--mode", "new"]
     ident, project = issue["identifier"], issue["project"]
     rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"],
-             "--assignee", issue["assignee"]["email"], "--sid", sid] + mode).returncode
+             "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task] + mode).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
 
 
 def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
-         sh=subprocess.run, hour=None):
+         sh=subprocess.run, hour=None, root=ROOT):
     args = [a for a in argv if a != "--dry-run"]
     dry = len(args) < len(argv)
     now = now or datetime.now(timezone.utc)
@@ -425,7 +478,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
             print(USAGE, file=sys.stderr)
             return 2
         os.environ["PATH"] = PATH
-        return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour)
+        return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour, root)
     if args[0] == "--pick":
         rest, only = args[1:], None
         if rest[:1] == ["--role"] and len(rest) >= 2:
@@ -433,9 +486,9 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
         if len(rest) > 1 or any(a.startswith("-") for a in rest):
             print(USAGE, file=sys.stderr)
             return 2
-        board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg(), only=only)
+        board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg(), only=only, root=root)
         board.recover()
-        out = board.claim()
+        out = board.claim(default_only=True)
         if out:
             print(" ".join(out.split()[:2]))
         return 0
@@ -453,8 +506,8 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
     if mode == "--prune":
         prune(rest[0], now)
         return 0
-    board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg())
-    out = board.plan() if mode == "--plan" else board.claim()
+    board = Board(gql, parse_log(rest[0] if rest else runs), tdir, now, dry, cfg(), root=root)
+    out = board.plan() if mode == "--plan" else board.claim(default_only=True)
     if out:
         print(out)
     return 0

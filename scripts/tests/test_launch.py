@@ -20,6 +20,8 @@ import pipeline  # noqa: E402
 CONFIG = HEADER + 'human_members = ["me@x.com"]\n'
 RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
 ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
+RESEARCHER_TWO = 'tasks = ["deep-research", "quick-scan"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
+ENGINEER_TWO = 'read_only = ["{docs_clone}"]\ntasks = ["engineering", "review", "triage"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
     "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
     "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["{docs_clone}"]\n' + ENGINEER_ID,
@@ -91,9 +93,11 @@ class Launch(unittest.TestCase):
         self.err = err.getvalue()
         return rc
 
-    def args(self, mode="new", assignee="r@x.com", project="p-dr"):
+    def args(self, mode="new", assignee="r@x.com", project="p-dr", task=None):
+        if task is None:
+            task = "engineering" if assignee.lower() == "e@x.com" else "deep-research"
         base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project, "--assignee", assignee,
-                "--sid", SID, "--mode", mode]
+                "--sid", SID, "--mode", mode, "--task", task]
         return base + (["--k", "2"] if mode == "resume" else [])
 
     def claude(self):
@@ -404,6 +408,86 @@ class Launch(unittest.TestCase):
             self.assertEqual(self.run_launch(*self.args("new", "e@x.com", MAPPED)), 0)
         self.assertIn(f" Project: {MAPPED}." + self.ids + " Repo check: OK ", self.claude()[2])
 
+    def two_tasks(self):
+        self.write("roles/researcher.toml", RESEARCHER_TWO)
+        self.write("tasks/quick-scan.md", "")
+        self.write("tasks/quick-scan.toml", f'model = "sonnet"\neffort = "low"\nadd_dirs = ["{self.tmp}/extra"]\n')
+
+    def engineer_tasks(self, review_tools=False):
+        self.write("roles/engineer.toml", ENGINEER_TWO)
+        self.write("tasks/review.md", "")
+        tools = f'allowed_tools = ["Bash(git -C {{worktree}} status {{branch}})"]\n' if review_tools else ""
+        self.write("tasks/review.toml", 'model = "sonnet"\neffort = "medium"\nadd_dirs = ["{docs_clone}"]\nrepo_from_issue = true\n' + tools)
+        self.write("tasks/triage.md", "")
+        self.write("tasks/triage.toml", 'model = "haiku"\neffort = "low"\n')
+
+    def test_task_selects_file_model_effort_add_dirs_and_log(self):
+        self.two_tasks()
+        self.assertEqual(self.run_launch(*self.args(task="quick-scan")), 0)
+        argv = self.claude()
+        self.assertIn(f"and the task {os.path.join(self.root, 'tasks/quick-scan.md')} to handle TASK-1", argv[2])
+        self.assertNotIn("deep-research", argv[2])
+        self.assertEqual((self.after(argv, "--model"), self.after(argv, "--effort")), (["sonnet"], ["low"]))
+        dirs = [argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"]
+        self.assertEqual(dirs[3:], [os.path.join(self.tmp, "extra")])
+        script = self.calls[0][9]
+        self.assertIn(os.path.join(self.logs, "projects", "quick-scan.log"), script)
+        self.assertNotIn("deep-research.log", script)
+
+    def test_task_keeps_the_roles_charter_session_key_memory_and_project_repo(self):
+        self.hand_off()
+        mem = os.path.join(self.tmp, "mem")
+        os.makedirs(mem)
+        self.two_tasks()
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_TWO)
+        self.assertEqual(self.run_launch(*self.args(project=MAPPED, task="quick-scan")), 0)
+        argv = self.claude()
+        self.assertIn(f"your role charter {os.path.join(self.root, 'roles/researcher.md')} and the task", argv[2])
+        self.assertIn(f"Your role memory: {mem};", argv[2])
+        self.assertIn(f" Project: {MAPPED}. Project repo: ophis/demo.", argv[2])
+        self.assertEqual(self.checked, ["k-researcher"])
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
+        self.assertEqual(self.calls[0][2:5], ["-d", "-s", "agent-pm-researcher"])
+
+    def test_task_decides_the_repo_step_and_allowed_tools(self):
+        self.engineer_tasks(review_tools=True)
+        wt = self.ok().worktree
+        with mock.patch.object(eng, "resolve", return_value=self.ok()) as resolve:
+            self.assertEqual(self.run_launch(*self.args(assignee="e@x.com", task="review")), 0)
+        resolve.assert_called_once()
+        self.assertIn(" AGENT_PM_ISSUE=TASK-1", self.exports())
+        self.assertEqual(self.after(self.claude(), "--allowedTools"), [f"Bash(git -C {wt} status TASK-1-demo)"])
+        self.assertIn("Repo check: OK", self.claude()[2])
+        self.calls = []
+        with mock.patch.object(eng, "resolve") as resolve:
+            self.assertEqual(self.run_launch(*self.args(assignee="e@x.com", task="triage")), 0)
+        resolve.assert_not_called()
+        self.assertNotIn("AGENT_PM_ISSUE", self.exports())
+        self.assertNotIn("--allowedTools", self.claude())
+        self.assertNotIn("Repo check", self.claude()[2])
+        self.assertIn(os.path.join(self.logs, "projects", "triage.log"), self.calls[0][9])
+
+    def test_task_not_the_roles_is_config_error_in_the_default_tasks_log(self):
+        self.two_tasks()
+        for bad in ("engineering", "../x", "nope", ""):
+            for mode in ("new", "resume"):
+                with self.subTest(task=bad, mode=mode):
+                    self.calls, self.checked = [], []
+                    self.assertEqual(self.run_launch(*self.args(mode, task=bad)), 2)
+                    line = f"config-error TASK-1: task {bad!r} is not one of researcher's tasks (deep-research, quick-scan)"
+                    self.assertRegex(self.plog().splitlines()[-1], rf"^\S+ \S+ {re.escape(line)}$")
+                    self.assertIn(line, self.err)
+                    self.assertEqual((self.calls, self.checked), ([], []))
+        self.assertEqual(os.listdir(os.path.join(self.logs, "projects")), ["deep-research.log"])
+
+    def test_task_is_required(self):
+        argv = self.args()
+        i = argv.index("--task")
+        del argv[i:i + 2]
+        with self.assertRaises(SystemExit) as e:
+            self.run_launch(*argv)
+        self.assertEqual((e.exception.code, self.calls), (2, []))
+
     def test_script_logs_output_and_end_lines(self):
         self.run_launch(*self.args())
         script = self.calls[0][9]
@@ -555,7 +639,8 @@ class RealConfig(unittest.TestCase):
 
     def launch(self, role, mode="new", repo=None, project=PROJECT):
         argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project,
-                "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode]
+                "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode,
+                "--task", pipeline.registry()[0][role].tasks[0]]
         if mode == "resume":
             argv += ["--k", "2"]
             path = pipeline.transcript("TASK-1", SID, self.projects)

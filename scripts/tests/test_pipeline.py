@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import DOCS_CLONE, HEADER, STATES, TEAM, team_node  # noqa: E402
+from board_ids import DOCS_CLONE, HEADER, STATES, TASK_GROUP, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 
 BASE = HEADER + """[roles.researcher]
@@ -77,6 +77,20 @@ class Config(ConfigFile, unittest.TestCase):
                     self.load(text)
                 self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
                 self.assertIn(fragment, str(cm.exception.code))
+
+    def test_task_label_group_required(self):
+        line = f'task_label_group = "{TASK_GROUP}"\n'
+        cases = {None: BASE.replace(line, ""), "'not-a-uuid'": BASE.replace(TASK_GROUP, "not-a-uuid"),
+                 "'ABCDEF00-0000-4000-8000-000000000002'": BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"),
+                 "5": BASE.replace(f'"{TASK_GROUP}"', "5")}
+        for value, text in cases.items():
+            with self.subTest(value):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(text)
+                self.assertEqual(str(cm.exception.code),
+                                 f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {value}")
+        self.assertEqual(self.load(BASE)["task_label_group"], TASK_GROUP)
+        self.assertIn("task_label_group", pipeline.TOP_KEYS)
 
 
 DOCS = {"repo": "acme/notes", "clone": DOCS_CLONE, "branch": "trunk"}
@@ -243,7 +257,7 @@ class Runnable(unittest.TestCase):
         self.assertEqual(sorted(runs), ["engineer", "researcher"])
         r, e = runs["researcher"], runs["engineer"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account"])
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks"])
         self.assertEqual((r.key, e.key), ("k-researcher", "k-engineer"))
         self.assertEqual((r.account, e.account), ("r@x.com", "e@x.com"))
         self.assertEqual((r.task_name, e.task_name), ("deep-research", "engineering"))
@@ -254,6 +268,41 @@ class Runnable(unittest.TestCase):
         self.assertEqual(e.read_only, (DOCS_CLONE,))
         self.assertEqual(r.task["add_dirs"], [DOCS_CLONE])
         self.assertTrue(e.task["repo_from_issue"])
+
+    def two_tasks(self, task=None, read_only='["{docs_clone}"]'):
+        """engineer runs engineering, then light-research (task: its toml, default repo_from_issue)."""
+        self.write("roles/engineer.toml", f"read_only = {read_only}\n" + ENGINEER_ID.replace('["engineering"]', '["engineering", "light-research"]'))
+        self.write("tasks/light-research.md", "")
+        self.write("tasks/light-research.toml", task or 'model = "sonnet"\neffort = "low"\nrepo_from_issue = true\nprefix = "LR"\n')
+
+    def test_run_tasks_in_role_order(self):
+        self.two_tasks()
+        runs = self.runs()
+        e, r = runs["engineer"], runs["researcher"]
+        self.assertEqual(list(e.tasks), ["engineering", "light-research"])
+        self.assertEqual(e.tasks["engineering"], e.task)
+        self.assertEqual(e.tasks["light-research"], {"model": "sonnet", "effort": "low", "repo_from_issue": True, "prefix": "LR"})
+        self.assertEqual(e.task_name, "engineering")
+        self.assertEqual(r.tasks, {"deep-research": r.task})
+        self.write("roles/engineer.toml", self.read_role("engineer").replace('"engineering", "light-research"', '"light-research", "engineering"'))
+        e = self.runs()["engineer"]
+        self.assertEqual((list(e.tasks), e.task_name), (["light-research", "engineering"], "light-research"))
+
+    def test_with_task(self):
+        self.two_tasks()
+        e = self.runs()["engineer"]
+        light = e.with_task("light-research")
+        self.assertEqual((light.task_name, light.task["model"], light.instructions),
+                         ("light-research", "sonnet", os.path.join(self.root, "tasks", "light-research.md")))
+        self.assertEqual(light.task, e.tasks["light-research"])
+        for field in ("charter", "memory", "read_only", "key", "account", "tasks"):
+            self.assertEqual(getattr(light, field), getattr(e, field), field)
+        self.assertEqual(e.with_task("engineering"), e)
+        self.assertEqual(e.task_name, "engineering")
+        for bad in ("deep-research", "../x", "", "Light-Research", "nope"):
+            with self.subTest(bad):
+                with self.assertRaises(KeyError):
+                    e.with_task(bad)
 
     def test_read_only_normalized(self):
         self.write("roles/engineer.toml", 'read_only = ["~/playground/private_docs/"]\n' + ENGINEER_ID)
@@ -483,6 +532,37 @@ class Runnable(unittest.TestCase):
         self.write("roles/researcher.toml", 'read_only = ["{repo}"]\n' + RESEARCHER_ID)
         self.rejects("read_only {repo} needs default task 'deep-research' with repo_from_issue and no allowed_tools", prefix="roles/researcher.toml")
 
+    def test_repo_read_only_checks_every_task(self):
+        self.two_tasks(read_only='["{repo}"]')
+        self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
+        bad = {"no repo_from_issue": 'model = "sonnet"\neffort = "low"\n',
+               "allowed_tools": 'model = "sonnet"\neffort = "low"\nrepo_from_issue = true\nallowed_tools = []\n'}
+        for label, task in bad.items():
+            with self.subTest(label):
+                self.write("tasks/light-research.toml", task)
+                self.rejects("read_only {repo} needs task 'light-research' with repo_from_issue and no allowed_tools",
+                             prefix="roles/engineer.toml")
+        self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
+        self.rejects("read_only {repo} needs default task 'engineering' with repo_from_issue and no allowed_tools",
+                     prefix="roles/engineer.toml")
+        self.write("tasks/engineering.toml", ENGINEERING)
+        self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
+        self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
+
+    def test_task_names_matching_ignoring_case_hyphens_spaces_rejected(self):
+        for name in ("light-research", "lightresearch"):
+            self.write(f"tasks/{name}.md", "")
+            self.write(f"tasks/{name}.toml", 'model = "opus"\neffort = "high"\n')
+        with self.assertRaises(SystemExit) as cm:
+            self.runs()
+        self.assertEqual(str(cm.exception.code),
+                         "tasks/light-research and tasks/lightresearch: task names match ignoring case, hyphens and spaces")
+        self.remove("tasks/light-research.md")
+        self.remove("tasks/light-research.toml")
+        self.write("tasks/deep-research-2.md", "")
+        self.write("tasks/deep-research-2.toml", 'model = "opus"\neffort = "high"\n')
+        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
+
     def memory(self, path, read_only="~/playground/private_docs"):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
@@ -627,6 +707,16 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
                          {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
 
 
+class Norm(unittest.TestCase):
+    def test_norm(self):
+        cases = {"Light Research": "lightresearch", "light-research": "lightresearch", "LightResearch": "lightresearch",
+                 "deep-research": "deepresearch", " Deep - Research ": "deepresearch", "light_research": "light_research",
+                 "x1-2": "x12", "": "", "-": "", "Ünï-cöde": "ünïcöde"}
+        for name, want in cases.items():
+            with self.subTest(name):
+                self.assertEqual(pipeline.norm(name), want)
+
+
 class RepoSlug(unittest.TestCase):
     def test_slug(self):
         cases = {"ophis/agent-pm": ("ophis", "agent-pm"), "ophis/.github": ("ophis", ".github"),
@@ -670,6 +760,44 @@ class TeamCheck(unittest.TestCase):
             pipeline.team(self.gql([team_node(other)]), self.cfg())
         self.assertEqual(str(cm.exception.code), "pipeline.toml: [states] not workflow states of team 'Team': "
                          f"handoff {STATES['handoff']}, done {STATES['done']}")
+
+
+class TaskGroupCheck(unittest.TestCase):
+    def cfg(self):
+        return {"task_label_group": TASK_GROUP}
+
+    def gql(self, node=None, error=None):
+        calls = []
+
+        def gql(query, **v):
+            calls.append((query, v))
+            if error:
+                raise SystemExit(error)
+            return {"issueLabel": node}
+        gql.calls = calls
+        return gql
+
+    def test_group_ok(self):
+        gql = self.gql({"isGroup": True})
+        self.assertIsNone(pipeline.task_group(gql, self.cfg()))
+        (query, v), = gql.calls
+        self.assertEqual((query, v), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP}))
+        self.assertIn("issueLabel(id: $i) { isGroup }", query)
+
+    def test_not_found(self):
+        gql = self.gql(error="linear api error: [{'message': 'Entity not found: IssueLabel'}]")
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.task_group(gql, self.cfg())
+        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
+                         "linear api error: [{'message': 'Entity not found: IssueLabel'}]")
+        self.assertEqual(len(gql.calls), 1)
+
+    def test_not_a_group(self):
+        gql = self.gql({"isGroup": False})
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.task_group(gql, self.cfg())
+        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
+        self.assertEqual(len(gql.calls), 1)
 
 
 class Paths(unittest.TestCase):

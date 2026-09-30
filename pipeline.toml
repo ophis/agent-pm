@@ -1,6 +1,7 @@
 team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents; Linear ids, since names change with a rename
 human_members = ["ophis.w@outlook.com"]   # the human users; subscribed to every issue moved to In Review
 harness_key = "linear-api-key"   # Keychain service of the harness account's Linear API key (router, promote, prune)
+task_label_group = "66f375be-02ef-44d2-84cc-d11a280dc3ea"   # Linear id of the `Tasks` label group whose labels pick an issue's task
 
 # The team's workflow states the code uses, by Linear state id.
 [states]
@@ -18,7 +19,7 @@ clone = "~/playground/private_docs"  # local clone; ~ allowed
 branch = "main"
 
 # Each role's place in the pipeline, keyed by role name (roles/<role>.md + roles/<role>.toml);
-# an issue assigned to the role's account runs the role's default task.
+# an issue assigned to the role's account runs the role's default task unless its Task label picks another of the role's tasks.
 [roles.researcher]
 next = "pm"                        # promote hands the role's Handoff issues to this role
 
