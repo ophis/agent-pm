@@ -1,6 +1,6 @@
 # TASK-69: In Review subscribes the humans — plan
 
-RESUME: phase=S5 worktree=/Users/francis/playground/agent-pm/work/TASK-69/worktrees/TASK-69-in-review-subscribes-the-humans-instead branch=TASK-69-in-review-subscribes-the-humans-instead base_ref=909c4d368340a06a43184710c43bc80f8d484672 review_round=0 spec_file=docs/specs/2026-09-30-task-69-subscribe-on-review-design.md
+RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-69/worktrees/TASK-69-in-review-subscribes-the-humans-instead branch=TASK-69-in-review-subscribes-the-humans-instead base_ref=909c4d368340a06a43184710c43bc80f8d484672 review_round=0 spec_file=docs/specs/2026-09-30-task-69-subscribe-on-review-design.md
 
 ## Implementation plan
 
@@ -245,3 +245,5 @@ delete `self.reviewer = reviewer(gql, cfg)`; `move`:
 - S3 panel: core=[architecture,spec-fitness] +optional=[] transport=Workflow (security dropped: no auth/key/IO surface change)
 - S3 r0: architecture=PASS spec-fitness=PASS -> converged; non-blockers applied: grep widened to scripts/, router comment non-idempotence noted
 - decision(session subscribe failure): principles says comment and move anyway - mirrors the old unknown-email clause; the harness instead stays unmoved and retries next tick; dissent: none
+- S5: tasks 1-4 done, per-task reviews clean (50fdb22, a3d36d4, e32bd32, f710549); deferred minors: promote has no empty-human_members test; bounce test's assignee assert is vacuous; launch endswith tests don't guard Reviewer: removal; CLAUDE.md bullet omits run-vs-harness subscribe-failure difference
+- S6: `python3 -m unittest discover -s scripts/tests` -> 268 OK; reviewer/assigneeId grep -> only claim, Recover, their fake, test_pipeline's roles/Reviewer.*
