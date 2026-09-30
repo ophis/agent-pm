@@ -28,7 +28,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3` because macOS
 
 ## Roles, tasks, rules
 
-- A runnable project has `role` + `task` in `pipeline.toml`; the task must be in the role's `tasks`; each is an `.md` + `.toml` pair. Allowed keys are the `*_KEYS` sets in `pipeline.py`; an unpaired file or unknown key stops router and launcher.
+- A runnable project has `role` + `task` in `pipeline.toml`; each is an `.md` + `.toml` pair. Allowed keys are the `*_KEYS` sets in `pipeline.py`; an unpaired file or unknown key stops router and launcher.
 - Where a rule goes: holds for every role → `roles/principles.md`; every task of one role → the charter `roles/<role>.md`; a document format → `templates/`; this task only (claiming, failure, hand-off, resume) → `tasks/<task>.md`. One rule, one place. Precedence: principles > charter > task.
 - Every task file defines a resume rule; a resumed session re-reads all three files.
 

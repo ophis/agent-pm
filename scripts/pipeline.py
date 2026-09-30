@@ -129,8 +129,6 @@ ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
 TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-# A Keychain service name; it reaches `security` argv and the tmux command line.
-KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 REPO = "{repo}"
 # Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
 PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
@@ -175,7 +173,6 @@ class Run:
     memory: str | None
     read_only: tuple
     key: str
-    account: str
 
 
 def load_config(path=CONFIG):
@@ -184,7 +181,7 @@ def load_config(path=CONFIG):
         cfg = tomllib.load(f)
     _check_ids(cfg)
     hk = cfg.get("harness_key")
-    if not isinstance(hk, str) or not KEY_RE.fullmatch(hk):
+    if not isinstance(hk, str) or not hk:
         raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
     projects = cfg.setdefault("projects", {})
     for name, p in projects.items():
@@ -262,7 +259,7 @@ def _role(name, r, root):
         raise SystemExit(f"{where}: tasks must be a non-empty list of task names: {tasks!r}")
     if not isinstance(account, str) or not account:
         raise SystemExit(f"{where}: account must be the role's Linear email: {account!r}")
-    if not isinstance(key, str) or not KEY_RE.fullmatch(key):
+    if not isinstance(key, str) or not key:
         raise SystemExit(f"{where}: key must be a Keychain service name: {key!r}")
     return Role(tuple(read_only), memory, tuple(tasks), account, key)
 
@@ -273,8 +270,6 @@ def _task(name, t):
         raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
     if missing := [k for k in ("model", "effort") if not t.get(k)]:
         raise SystemExit(f"{where} has no {', '.join(missing)}")
-    if "prefix" in t and (not isinstance(t["prefix"], str) or not t["prefix"]):
-        raise SystemExit(f"{where}: prefix must be a non-empty string")
     check_allowed_tools(where, t)
 
 
@@ -299,12 +294,9 @@ def runnable(cfg, root=ROOT):
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
     roles, tasks = registry(root)
-    humans = {e.lower() for e in cfg.get("human_members") or []}
     for name, r in roles.items():
         if r.key == cfg["harness_key"]:
             raise SystemExit(f"roles/{name}.toml: key {r.key!r} is pipeline.toml's harness_key")
-        if r.account.lower() in humans:
-            raise SystemExit(f"roles/{name}.toml: account {r.account!r} is in pipeline.toml's human_members")
     out = {}
     for name, p in cfg["projects"].items():
         if extra := sorted(set(p) - PROJECT_KEYS):
@@ -319,13 +311,11 @@ def runnable(cfg, root=ROOT):
         if task not in tasks:
             raise SystemExit(f"pipeline.toml: {name!r} task {task!r} has no tasks/<task>.md + .toml pair")
         r = roles[role]
-        if task not in r.tasks:
-            raise SystemExit(f"pipeline.toml: {name!r} task {task!r} is not in roles/{role}.toml tasks")
         t = tasks[task]
         if REPO in r.read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
             raise SystemExit(f"pipeline.toml: {name!r}: role {role!r} has read_only {REPO}, so task {task!r} needs repo_from_issue and no allowed_tools")
         out[name] = Run(task, t, os.path.join(root, "roles", f"{role}.md"), os.path.join(root, "tasks", f"{task}.md"),
-                        r.memory, r.read_only, r.key, r.account)
+                        r.memory, r.read_only, r.key)
     return out
 
 
@@ -338,15 +328,18 @@ def user_id(gql, email):
     return nodes[0]["id"] if nodes else None
 
 
+def humans(gql, cfg):
+    """Linear user ids of the `human_members` emails, in order; one not found in Linear stops the caller."""
+    emails = cfg.get("human_members") or []
+    ids = [user_id(gql, e) for e in emails]
+    if missing := [e for e, i in zip(emails, ids) if not i]:
+        raise SystemExit(f"pipeline.toml: human_members not found in Linear: {', '.join(missing)}")
+    return ids
+
+
 def reviewer(gql, cfg):
     """Linear user id of the first `human_members` email, who is assigned issues that need human review; None if unset."""
-    emails = cfg.get("human_members") or []
-    if not emails:
-        return None
-    uid = user_id(gql, emails[0])
-    if not uid:
-        raise SystemExit(f"pipeline.toml: human_members {emails[0]!r} not found in Linear")
-    return uid
+    return next(iter(humans(gql, cfg)), None)
 
 
 @dataclass(frozen=True)

@@ -48,7 +48,6 @@ class Config(unittest.TestCase):
 
     def test_harness_key_required(self):
         for text in (BASE.replace('harness_key = "linear-api-key"\n', ""),
-                     BASE.replace('harness_key = "linear-api-key"', 'harness_key = "-a"'),
                      BASE.replace('harness_key = "linear-api-key"', "harness_key = 1")):
             with self.subTest(text[:80]):
                 with self.assertRaises(SystemExit) as cm:
@@ -140,8 +139,8 @@ class Runnable(unittest.TestCase):
         self.assertEqual(sorted(runs), ["dr", "eng"])
         dr, eng = runs["dr"], runs["eng"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account"])
-        self.assertEqual((dr.key, dr.account, eng.key, eng.account), ("k-researcher", "r@x.com", "k-engineer", "e@x.com"))
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key"])
+        self.assertEqual((dr.key, eng.key), ("k-researcher", "k-engineer"))
         self.assertEqual((dr.task_name, dr.task["effort"], dr.memory, dr.read_only), ("deep-research", "xhigh", None, ()))
         self.assertEqual(dr.charter, os.path.join(self.root, "roles", "researcher.md"))
         self.assertEqual(dr.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
@@ -238,8 +237,7 @@ class Runnable(unittest.TestCase):
             "account": ro + 'tasks = ["engineering"]\nkey = "k-engineer"\n',
             "account ": ro + 'tasks = ["engineering"]\naccount = ""\nkey = "k-engineer"\n',
             "key": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\n',
-            "key ": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "-w"\n',
-            "key  ": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "a b"\n',
+            "key ": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = ""\n',
         }
         for label, text in cases.items():
             with self.subTest(label):
@@ -258,25 +256,10 @@ class Runnable(unittest.TestCase):
         self.write("roles/engineer.toml", ENGINEER_ID.replace("k-engineer", "linear-api-key"))
         self.rejects("harness_key", prefix="roles/engineer.toml")
 
-    def test_role_account_is_human(self):
-        self.rejects("human_members", prefix="roles/researcher.toml", text='human_members = ["R@X.com"]\n' + PROJECTS)
-
-    def test_project_task_outside_role_tasks(self):
-        self.write("roles/researcher.toml", RESEARCHER_ID.replace('["deep-research"]', '["engineering"]'))
-        self.rejects("deep-research")
-
     def test_unused_role_validated(self):
         self.write("roles/pm.md", "")
         self.write("roles/pm.toml", 'tasks = ["deep-research"]\naccount = "p@x.com"\n')
         self.rejects("key", prefix="roles/pm.toml")
-
-    def test_task_prefix(self):
-        self.write("tasks/engineering.toml", ENGINEERING + 'prefix = "ENG"\n')
-        self.assertEqual(self.runs()["eng"].task["prefix"], "ENG")
-        for bad in ('""', "1"):
-            with self.subTest(bad):
-                self.write("tasks/engineering.toml", ENGINEERING + f"prefix = {bad}\n")
-                self.rejects("prefix", prefix="tasks/engineering.toml")
 
     def test_read_only_paths(self):
         for bad in ('["playground/private_docs"]', '["~/playground/../private_docs"]', '["{repo}/x"]', '"/"'):
@@ -287,7 +270,6 @@ class Runnable(unittest.TestCase):
     def test_repo_read_only(self):
         self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
         self.assertEqual(self.runs()["eng"].read_only, ("{repo}",))
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID.replace('["engineering"]', '["engineering", "deep-research"]'))
         self.rejects("{repo}", text=PROJECTS.replace('role = "researcher"', 'role = "engineer"'))
         self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
         self.rejects("{repo}")
@@ -359,10 +341,10 @@ class RealConfig(unittest.TestCase):
             "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
         })
         self.assertNotIn("allowed_tools", runs["ddbff8bf-b633-4b8c-9272-d1d5ee923747"].task)
-        self.assertEqual({k: (r.key, r.account) for k, r in runs.items()}, {
-            "03495382-48f7-4280-a11c-4375df80a561": ("linear-api-key-researcher", "frank.agent.w+researcher@gmail.com"),
-            "ba0738ba-ade7-4525-8d79-1b9944334e74": ("linear-api-key-pm", "frank.agent.w+pm@gmail.com"),
-            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("linear-api-key-engineer", "frank.agent.w+engineer@gmail.com"),
+        self.assertEqual({k: r.key for k, r in runs.items()}, {
+            "03495382-48f7-4280-a11c-4375df80a561": "linear-api-key-researcher",
+            "ba0738ba-ade7-4525-8d79-1b9944334e74": "linear-api-key-pm",
+            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": "linear-api-key-engineer",
         })
         self.assertEqual(pipeline.load_config()["harness_key"], "linear-api-key")
         tasks = pipeline.registry()[1]

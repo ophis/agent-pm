@@ -16,7 +16,7 @@ Runs Claude agents unattended from a Linear board. Each project on the board is 
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
 - **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
 
-An issue still unfinished after 4 attempts goes to In Review; moving it back to Todo resets the count.
+An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 
 ## Schedule
 

@@ -32,7 +32,6 @@ task = "deep-research"
 prefix = "PRD"
 """
 PD_RUNNABLE = 'role = "pm"\ntask = "product-design"\n'
-ROLE_IDS = {r.account: f"role:{n}" for n, r in pipeline.registry()[0].items()}
 
 
 def ago(**kw):
@@ -46,7 +45,6 @@ class FakeLinear:
         self.mutations = []
         self.queries = []
         self.state_ids = None
-        self.unknown = set()
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
@@ -55,7 +53,7 @@ class FakeLinear:
         if query == pipeline.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids, [(IDS[p], p) for p in PROJECTS])]}}
         if "users(filter" in query:
-            return {"users": {"nodes": [{"id": uid}] if (uid := {"me@x.com": USER, **ROLE_IDS}.get(v["e"])) and v["e"] not in self.unknown else []}}
+            return {"users": {"nodes": [{"id": USER}] if v["e"] == "me@x.com" else []}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if "mutation" in query:
@@ -423,6 +421,7 @@ class Plan(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"][-1], router.CAP_COMMENT)
 
     def reset_fixture(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         self.moved("TASK-1", 700)
         self.add("start", "TASK-1", "old", 699)
         for m in (650, 600, 550):
@@ -479,6 +478,7 @@ class Plan(Base):
         self.assertIn("nobody@x.com", str(e.exception))
 
     def capped(self, hist):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=3))], {"TASK-1": hist})
         for i, sid in enumerate("abcd"):
             self.add("start", "TASK-1", sid, 400 - i * 50)
@@ -490,33 +490,13 @@ class Plan(Base):
         self.assertEqual(out, "resume TASK-1 d 1 https://linear.app/x/TASK-1 Deep Research")
         self.assertEqual(fake.mutations, [])
 
-    def test_attempt_cap_not_reset_by_agent_or_other_moves(self):
+    def test_attempt_cap_reset_only_by_human_members(self):
         fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": ME, "toStateId": STATES["Todo"]},
+                                 {"createdAt": ago(minutes=375), "actorId": "role-account", "toStateId": STATES["Todo"]},
                                  {"createdAt": ago(minutes=370), "actorId": USER, "toStateId": STATES["In Progress"]},
                                  {"createdAt": ago(minutes=360), "actorId": None, "toStateId": STATES["Todo"]}])
         self.assertEqual(out, "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-
-    def test_attempt_cap_not_reset_by_role_account(self):
-        pm = ROLE_IDS["frank.agent.w+pm@gmail.com"]  # not the runnable project's role
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": pm, "toStateId": STATES["Todo"]}])
-        self.assertEqual(out, "")
-        self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-
-    def test_attempt_cap_reset_by_other_member(self):
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": "member", "toStateId": STATES["Todo"]}])
-        self.assertEqual(out, "resume TASK-1 d 1 https://linear.app/x/TASK-1 Deep Research")
-
-    def test_unknown_role_account_fails_loud(self):
-        fake = FakeLinear([])
-        fake.unknown = {"frank.agent.w+engineer@gmail.com"}
-        with self.assertRaises(SystemExit) as e:
-            self.run_main(fake, "--plan")
-        self.assertIn("role accounts not found in Linear: frank.agent.w+engineer@gmail.com", str(e.exception))
-
-    def test_agents_cover_every_role_under_project_filter(self):
-        board = router.Board(FakeLinear([]), [], self.tdir, NOW, True, pipeline.load_config(self.config), only="p-dr")
-        self.assertEqual(board.agents, {ME, *ROLE_IDS.values()})
 
     def test_one_history_fetch_per_issue(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", ME)])
@@ -599,6 +579,7 @@ class Claim(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
 
     def test_capped_todo_reset_by_user(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         hist = {"TASK-1": [{"createdAt": ago(minutes=200), "actorId": USER, "toStateId": STATES["Todo"]}]}
         fake = FakeLinear([issue("TASK-1", "Todo")], hist)
         for sid in "abcd":
