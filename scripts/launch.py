@@ -4,9 +4,9 @@
 launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --mode new|resume [--k K]
 The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs the role's
 default task. PROJECT_ID only fills the prompt's Project:. Every run works in work/<ID>/. Exits 2 for an assignee that
-is not a role account or a config error (a role memory overlapping the issue's repo, or a role key missing from the
-Keychain; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the Engineering repo step
-failed transiently). Needs Python 3.11+.
+is not a role account or a config error (a role memory overlapping the issue's repo, a role key missing from the
+Keychain, or the docs clone not a directory; logged), 3 when the run cannot start yet (transient: no transcript to
+resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -116,7 +116,7 @@ def repo_step(a, task, gql, run, repos):
 
 
 def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
-         keychain=has_key):
+         keychain=has_key, docs_ok=os.path.isdir):
     ap = argparse.ArgumentParser(prog="launch.py")
     for f in ("--issue", "--url", "--project", "--assignee", "--sid"):
         ap.add_argument(f, required=True)
@@ -142,10 +142,14 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
             return fail(plog, a.issue, "transient", f"no transcript to resume at {path}", 3)
     if not keychain(job.key):
         return fail(plog, a.issue, "config-error", f"no Keychain item for role key {job.key}", 2)
+    docs = cfg["docs"]
+    if not docs_ok(docs["clone"]):
+        return fail(plog, a.issue, "config-error", f"docs clone {docs['clone']} is not a directory", 2)
     humans = cfg.get("human_members") or []
     states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
     tail = (f" Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
-            f" Team: {cfg['team']}. States: {states}.")
+            f" Team: {cfg['team']}. States: {states}."
+            f" Docs: {docs['repo']}, clone {docs['clone']}, branch {docs['branch']}.")
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run, cfg["project_repos"])

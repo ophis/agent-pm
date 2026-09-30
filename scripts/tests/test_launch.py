@@ -30,6 +30,7 @@ REGISTRY = {
 }
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
+DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
 PRIVATE = os.path.expanduser("~/playground/private_docs")
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
 IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
@@ -57,6 +58,9 @@ class Launch(unittest.TestCase):
         self.root = os.path.join(self.tmp, "registry")
         for rel, text in REGISTRY.items():
             self.write(rel, text)
+        self.clone = os.path.join(self.tmp, "notes")
+        os.makedirs(self.clone)
+        self.ids = IDS + DOCS.format(repo="acme/notes", clone=self.clone, branch="trunk")
         self.write_config(CONFIG)
         self.runs = os.path.join(self.tmp, "logs", "runs.log")
         self.logs = os.path.join(self.tmp, "logs")
@@ -73,7 +77,7 @@ class Launch(unittest.TestCase):
     def write_config(self, text):
         self.config = os.path.join(self.tmp, "pipeline.toml")
         with open(self.config, "w") as f:
-            f.write(text)
+            f.write(text.replace(DOCS_CLONE, self.clone))
 
     def run_launch(self, *argv, keychain=None):
         err = io.StringIO()
@@ -133,6 +137,32 @@ class Launch(unittest.TestCase):
                                  r"^\S+ \S+ config-error TASK-1: no Keychain item for role key k-researcher$")
                 self.assertIn("config-error TASK-1", self.err)
 
+    def test_missing_docs_clone_is_config_error(self):
+        os.rmdir(self.clone)
+        self.make_transcript()
+        for mode in ("new", "resume"):
+            with self.subTest(mode):
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(mode)), 2)
+                self.assertEqual(self.calls, [])
+                self.assertRegex(self.plog().splitlines()[-1],
+                                 rf"^\S+ \S+ config-error TASK-1: docs clone {re.escape(self.clone)} is not a directory$")
+                self.assertIn("config-error TASK-1: docs clone", self.err)
+
+    def test_missing_docs_clone_before_repo_step(self):
+        os.rmdir(self.clone)
+        with mock.patch.object(eng, "resolve") as resolve:
+            self.assertEqual(self.run_launch(*self.args(assignee="e@x.com")), 2)
+        resolve.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_missing_role_key_reported_before_docs_clone(self):
+        os.rmdir(self.clone)
+        self.missing = {"k-researcher"}
+        self.assertEqual(self.run_launch(*self.args()), 2)
+        self.assertIn("no Keychain item for role key k-researcher", self.plog())
+        self.assertNotIn("docs clone", self.plog())
+
     def test_has_key_never_reads_the_secret(self):
         calls = []
         def run(cmd, **kw):
@@ -191,10 +221,10 @@ class Launch(unittest.TestCase):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
-                            "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + IDS,
+                            "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + self.ids,
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", DOCS_CLONE,
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", self.clone,
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
@@ -211,7 +241,7 @@ class Launch(unittest.TestCase):
             self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
-            self.assertEqual(f"Edit({slashes(DOCS_CLONE)}/**)" in rules, assignee == "e@x.com")
+            self.assertEqual(f"Edit({slashes(self.clone)}/**)" in rules, assignee == "e@x.com")
 
     def test_deny(self):
         self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
@@ -219,12 +249,12 @@ class Launch(unittest.TestCase):
     def test_humans_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + self.ids))
 
     def test_humans_lists_every_member(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + self.ids))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -234,12 +264,12 @@ class Launch(unittest.TestCase):
         charter = os.path.join(self.root, "roles/researcher.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
                                   f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
-                                  " Humans: me@x.com. Project: p-dr." + IDS)
+                                  " Humans: me@x.com. Project: p-dr." + self.ids)
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
         self.calls = []
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(IDS))
+        self.assertTrue(self.claude()[2].endswith(self.ids))
 
     def test_resume_without_transcript(self):
         legacy = os.path.join(self.projects, pipeline.escape(self.work), f"{SID}.jsonl")
@@ -274,18 +304,18 @@ class Launch(unittest.TestCase):
         argv = self.claude()
         wt = self.ok().worktree
         self.assertTrue(argv[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
-        self.assertIn(f"Edit({slashes(DOCS_CLONE)}/**)", rules)
+        self.assertIn(f"Edit({slashes(self.clone)}/**)", rules)
 
     def test_engineering_ok_from_project_mapping(self):
         mapped = dataclasses.replace(self.ok(), mapped=True)
         self.assertEqual(self.launch_eng(mapped), 0)
         wt = mapped.worktree
         self.assertTrue(self.claude()[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
+            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
             f" default branch main, branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
 
     def test_engineering_passes_project_repos_to_resolve(self):
@@ -304,7 +334,7 @@ class Launch(unittest.TestCase):
 
     def test_engineering_invalid_starts_run_to_bounce(self):
         self.assertEqual(self.launch_eng(eng.Invalid("no Repo: line")), 0)
-        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{IDS} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
+        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{self.ids} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("AGENT_PM_ISSUE", self.exports())
 
     def test_engineering_resolve_error_is_transient(self):
@@ -403,7 +433,7 @@ class Launch(unittest.TestCase):
         rules = self.after(self.claude(), "--disallowedTools")
         rd = os.path.join(self.work, "TASK-1")
         self.assertEqual(rules[-2:], [f"Edit({slashes(self.ok().clone)}/**)", f"Edit({slashes(rd)}/worktrees/**)"])
-        self.assertNotIn(f"Edit({slashes(DOCS_CLONE)}/**)", rules)
+        self.assertNotIn(f"Edit({slashes(self.clone)}/**)", rules)
 
     def test_repo_read_only_invalid(self):
         self.repo_config()
@@ -499,7 +529,7 @@ class RealConfig(unittest.TestCase):
                 mock.patch.object(eng, "resolve", return_value=repo):
             rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
                              logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects,
-                             keychain=lambda s: True)
+                             keychain=lambda s: True, docs_ok=lambda p: True)
         self.assertEqual(rc, 0)
         (cmd,) = self.calls
         toks = shlex.split(cmd[9])
@@ -509,7 +539,8 @@ class RealConfig(unittest.TestCase):
     def expected(self, role, task, effort, extra_deny=(), tail=""):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         humans, cfg = self.humans, pipeline.load_config()
-        real = f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
+        real = (f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
+                + DOCS.format(**cfg["docs"]))
         return [
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
