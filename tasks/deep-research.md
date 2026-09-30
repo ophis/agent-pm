@@ -15,7 +15,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the docs
 4. **Claim.** If `router.py --pick` or the runner already claimed it, only comment that research started. Otherwise re-read the status right before claiming: not Todo anymore → another session has it; stop. Else set In Progress and comment that research started.
 5. **Research.** Combine all subquestions, shared context, and any "already known" claims from the description and the user's comments into one self-contained brief; where they conflict, the user's comments override the description (ignore the agent's own comments); phrase existing claims as claims to verify and prioritize the questions most important to the deliverable. Then, by type:
    - **Web.** Call the built-in `/deep-research` Workflow exactly once for the whole issue in this invocation, with the brief as its `args` string, and write or run no other workflow. Do not launch separate runs for individual parts or additional runs to fill coverage gaps. The workflow verifies only its top-ranked claims, so the rest stay unverified.
-   - **Local or mixed.** Prepare (charter), then research with Ultra Code: write and run your own workflows (Workflow tool) and decide their orchestration; a mixed issue's web part runs inside them too. Never call `/deep-research`. A workflow agent that reads the worktree gets the charter's read-only restriction in its prompt; a web agent's prompt allows web search and web fetch only, and its queries carry no private details from the issue.
+   - **Local or mixed.** Prepare (charter), then research with Ultra Code: write and run your own workflows (Workflow tool) and decide their orchestration; a mixed issue's web part runs inside them too. Never call `/deep-research`. Workflow agent prompts and results follow the charter's Agents and Untrusted rules.
 6. **Failed or partial run.** Do not automatically retry or launch a replacement research run in this invocation. If the run produces usable findings, including supported refutations, publish the report. If it fails and yields no usable findings, comment the failure, move the issue back to Todo, and stop.
 7. **Report.** In the run's docs worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed.
 8. **Hand off.** Comment a 3–5 line summary naming the type (charter) plus the GitHub link, set In Review, and reply to the user with the link.
@@ -24,7 +24,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the docs
 
 A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first; it overrides any earlier resume rule in your context. It is the one exception to steps 5–6. Finish the interrupted research by reusing everything the run already produced and running only what is missing, by the issue's type. Never move the issue to Todo.
 
-**Web.** Never call the Workflow again (except rule 3a) and never use `resumeFromRunId` (it replays only the unchanged prefix of agent calls, so deep-research re-runs almost everything).
+**Web.** Never call the Workflow again (except rule 3a), write or run no other workflow, and never use `resumeFromRunId` (it replays only the unchanged prefix of agent calls, so deep-research re-runs almost everything).
 
 Where the run's work is: this session's latest Workflow result for the issue prints `Run ID: wf_…` and `Script file: <session folder>/workflows/scripts/…`. In that session folder:
 - `workflows/<runId>.json`: one long line, read only with `jq`. `status`, and `result` with `summary`, `findings` (empty when synthesis failed), `confirmed`, `refuted`, `unverified` (claim, erroredVotes, validVotes, source) and `sources`.
@@ -48,6 +48,6 @@ Check in order:
 
 1. No Workflow call yet in this session → continue from step 5.
 2. Prepare again (charter).
-3. Use each completed workflow's result as is (its `workflows/<runId>.json` `status` is `completed`; paths as in the web branch). Continue each interrupted one with a Workflow call: its `Script file:` as `scriptPath`, the same `args`, and its Run ID as `resumeFromRunId`.
+3. Use each completed workflow's result as is (its `workflows/<runId>.json` `status` is `completed`; paths as in the web branch). Finish every other workflow: one that started (interrupted or failed) with a Workflow call with its `Script file:` as `scriptPath`, the same `args`, and its Run ID as `resumeFromRunId`; one planned but never started, by running it.
 
 **Then, both types:** steps 7–8, doing only what is missing: report committed and pushed (principles), link on the issue, hand-off comment, In Review. Never repeat the "research started" comment. If nothing usable exists even after the re-runs, publish no report: comment what failed and set In Review.
