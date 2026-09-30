@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Launcher: starts one claude run for an issue the router already claimed (or resumes it), per pipeline.toml.
 
-launch.py --issue ID --url URL --project PROJECT_ID --sid SID --mode new|resume [--k K]
-Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project or a config error (a role memory
-overlapping the issue's repo, or a role key missing from the Keychain; logged), 3 when the run cannot start yet
-(transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
+launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --mode new|resume [--k K]
+The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs the role's
+default task. PROJECT_ID only fills the prompt's Project:. Every run works in work/<ID>/. Exits 2 for an assignee that
+is not a role account or a config error (a role memory overlapping the issue's repo, or a role key missing from the
+Keychain; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the Engineering repo step
+failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -94,7 +96,7 @@ def fail(plog, issue, kind, reason, rc):
 
 
 def repo_step(a, task, gql, run):
-    """(prompt tail, extra env, allowed rules, repo result) for a repo_from_issue project, or a Transient."""
+    """(prompt tail, extra env, allowed rules, repo result) for a repo_from_issue task, or a Transient."""
     try:
         r = eng.resolve(a.issue, gql, run)
     except Exception as e:  # a resolve bug must not crash the launcher: Transient lets Recover retry the issue
@@ -115,7 +117,7 @@ def repo_step(a, task, gql, run):
 def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
          keychain=has_key):
     ap = argparse.ArgumentParser(prog="launch.py")
-    for f in ("--issue", "--url", "--project", "--sid"):
+    for f in ("--issue", "--url", "--project", "--assignee", "--sid"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
     ap.add_argument("--k", default="1")
@@ -127,10 +129,11 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     os.environ["PATH"] = PATH
     cfg = load_config(config) if config else load_config()
     jobs = runnable(cfg, root)
-    if a.project not in jobs:
-        print(f"launch.py: {a.project!r} is not a runnable project in pipeline.toml", file=sys.stderr)
+    role = next((r for r, j in jobs.items() if j.account.lower() == a.assignee.lower()), None)
+    if role is None:
+        print(f"launch.py: {a.assignee!r} is not a role account", file=sys.stderr)
         return 2
-    job = jobs[a.project]
+    job = jobs[role]
     plog = project_log(job.task_name, logs) if logs else project_log(job.task_name)
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)

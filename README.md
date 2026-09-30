@@ -1,18 +1,18 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each project on the board is a pipeline stage; the agent works one issue at a time overnight and hands its output back to you for review.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue at a time overnight and hands its output back to you for review.
 
-| Stage | Agent produces | Published to |
+| Role | Agent produces | Published to |
 |---|---|---|
-| 1-Research | A verified research report | `private_docs/Research/` |
-| 2-Product Design | A PRD | `private_docs/Product Design/` |
-| 3-Engineering | A pull request that builds the PRD | The target repo |
+| researcher | A verified research report | `private_docs/Research/` |
+| pm | A PRD | `private_docs/Product Design/` |
+| engineer | A pull request that builds the PRD | The target repo |
 
 ## Using the board
 
-- **New work:** create an issue in Todo in a stage's project. Research and Product Design take the brief from the description; a direct Engineering issue needs a `Repo: <owner>/<name>` line in its description.
+- **New work:** create an issue in the product's project, assigned to the role account that should do it, in Todo; an issue not assigned to a role account (unassigned, or to a person) is never picked. Researcher and pm issues take the brief from the description; a direct engineer issue needs a `Repo: <owner>/<name>` line in its description.
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
-- **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>`. After 10 minutes (an undo window), promote creates the next stage's issue and marks this one Done.
+- **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>`. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
 - **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
 
@@ -20,7 +20,7 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ## Schedule
 
-- **Router:** hourly 01:00–06:00. Resumes an interrupted run or claims the top Todo issue (priority, then later stage, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Router:** hourly 01:00–06:00. Resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
 - **Promote:** at :05, :20, :35 and :50. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
@@ -47,7 +47,7 @@ Each role in `roles/*.toml` acts in Linear as its own `account`, with its API ke
 3. Signed in as the role account, create a personal API key in its account settings.
 4. `security add-generic-password -s <key> -a <account> -w` and paste the key at the prompt.
 
-The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in its project log.
+The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in `logs/projects/<task>.log`.
 
 ## Operating
 
@@ -55,6 +55,7 @@ The launcher never reads the key: it checks the item exists and sets `LINEAR_KEY
 python3 scripts/router.py --now --dry-run           # what the next tick would do; changes nothing
 python3 scripts/router.py --now                     # run a tick now, outside the schedule
 python3 scripts/router.py --now --issue TASK-12     # start a specific Todo issue
+python3 scripts/router.py --pick --role researcher  # recover, then claim the role's top Todo issue
 python3 scripts/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux attach -t agent-pm                             # watch the live run
 cd work/TASK-12 && claude --resume <session-id>     # open a run's session (id from logs/runs.log)
@@ -71,10 +72,21 @@ Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-p
 
 ## Configuration
 
-- `pipeline.toml`: the Linear team, workflow states and projects, all by id; each project's `next` stage and its `role` + `task`; `harness_key`, the Keychain service of the harness account's key.
+- `pipeline.toml`: the Linear team and workflow states, both by id; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`.
 - `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only`, `memory`.
-- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, optional title `prefix`).
+- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, title `prefix`, required on the default task of any role that is some role's `next`).
 - `templates/`: the report and PRD skeletons.
+
+## Cutover (TASK-62 PR-C)
+
+Moving a running pipeline from stage projects to assignees:
+
+1. Merge the PR without deploying.
+2. Create a Linear project per product.
+3. Stop the pipeline: no `agent-pm` tmux session, every `start` in `logs/runs.log` has an `end`, and don't run the router by hand.
+4. Reassign every open issue (Todo, In Progress, In Review, Handoff) by its stage project: 1-Research → researcher, 2-Product Design → pm, 3-Engineering → engineer. An issue not assigned to a role account (unassigned, or to a person) is never picked, recovered or handed off.
+5. `git pull --ff-only` in `~/playground/agent-pm`.
+6. `python3 scripts/router.py --now --dry-run` logs a `plan:` line counting the role accounts' Todo issues (`plan: new (N in queue)`); after the next promote tick, `logs/promote.log` has no error.
 
 ## Development
 

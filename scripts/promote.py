@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Promote issues in Handoff to the next stage (docs/specs/2026-09-27-promote-design.md).
+"""Promote issues in Handoff to the next role (docs/specs/2026-09-27-promote-design.md).
 
-For each issue in Handoff whose project has a `next` in pipeline.toml: create the next stage's issue
-in Todo with the source links and the human instructions, relate it, and move the source to Done.
+For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in pipeline.toml has a next:
+create that role's issue in the same project, assigned to its account, in Todo with the source links and the
+human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
@@ -18,14 +19,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, linear_gql, load_config, parse_time, team  # noqa: E402
+from pipeline import CONFIG, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
 
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 
-Q_HANDOFF = """query($t: ID, $s: ID) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } } }, first: 100) {
-  nodes { id identifier url title priority createdAt project { id name } attachments { nodes { title url } } } } }"""
+Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
+  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
+  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
 Q_DETAIL = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250) { nodes { createdAt fromStateId toStateId } }
   comments(first: 250) { nodes { body createdAt user { email name } } }
@@ -39,8 +41,8 @@ M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { sta
 M_SUBSCRIBE = "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
 
 
-def child_id(source_id, project_id, handoff_at):
-    key = f"{source_id}/{project_id}/{handoff_at}".encode()
+def child_id(source_id, target, handoff_at):
+    key = f"{source_id}/{target}/{handoff_at}".encode()
     return str(uuid.UUID(bytes=hashlib.sha256(key).digest()[:16], version=4))
 
 
@@ -66,11 +68,11 @@ class Promoter:
     def __init__(self, gql, cfg, now, dry, wait=True):
         self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
         self.team = team(gql, cfg)
-        self.states, self.projects = self.team.states, self.team.projects
+        self.states = self.team.states
         self.humans = {e.lower() for e in cfg.get("human_members") or []}
-        missing = [p["next"] for p in cfg.get("projects", {}).values() if p.get("next") and p["next"] not in self.projects]
-        if missing:
-            raise SystemExit(f"not found in Linear: {', '.join(missing)}")
+        self.runs = runnable(cfg)
+        self.roles = role_ids(gql, self.runs)
+        self.ids = {r: i for i, r in self.roles.items()}
 
     def say(self, msg):
         self.said = True
@@ -78,25 +80,26 @@ class Promoter:
 
     def run(self):
         self.said = False
-        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"])["issues"]["nodes"]
+        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))["issues"]["nodes"]
         work = []
         for src in issues:
-            nxt = self.cfg.get("projects", {}).get((src["project"] or {}).get("id"), {}).get("next")
+            role = self.roles[src["assignee"]["id"]]
+            nxt = self.cfg["roles"].get(role, {}).get("next")
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
                     if detail["state"]["id"] != self.states["handoff"]:  # the Handoff list can lag behind a just-made move
                         continue
-                    work.append((self.moves(src, detail), src, detail, nxt))
+                    work.append((self.moves(src, detail), src, detail, role, nxt))
                 except (Exception, SystemExit) as e:
                     self.say(f"handoff-error {src['identifier']}: {e}")
-        for (cutoff, first, latest), src, detail, nxt in sorted(work, key=lambda w: w[0][2]):
+        for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
             if self.wait and self.now - parse_time(latest) < MATURE:
                 self.say(f"handoff-wait {src['identifier']} (in Handoff under {MATURE.seconds // 60} min)")
                 continue
             found = [None]
             try:
-                self.promote(src, detail, nxt, cutoff, first, found)
+                self.promote(src, detail, role, nxt, cutoff, first, found)
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
                 self.say(f"handoff-error {src['identifier']}: {e}")
                 if self.now - parse_time(latest) > GRACE:
@@ -120,10 +123,9 @@ class Promoter:
                        and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
                       key=lambda c: parse_time(c["createdAt"]))
 
-    def promote(self, src, detail, nxt, cutoff, first, found):
+    def promote(self, src, detail, role, nxt, cutoff, first, found):
         comments = self.instructions(detail, cutoff)
-        src_cfg = self.cfg["projects"][src["project"]["id"]]
-        required = src_cfg.get("require_instructions", True)
+        required = self.cfg["roles"].get(role, {}).get("require_instructions", True)
         if not comments and required:
             self.comment_and_move(src, NO_INSTRUCTIONS, "in_review")
             self.say(f"handoff-bounce {src['identifier']} no instructions")
@@ -133,13 +135,13 @@ class Promoter:
         if existing:
             child = found[0] = existing[0]
         elif self.dry:
-            self.say(f"promote {src['identifier']} -> new {self.projects[nxt]} issue")
+            self.say(f"promote {src['identifier']} -> new {nxt} issue in {src['project']['name']}")
             return
         else:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
-                "id": cid, "teamId": self.team.id, "projectId": nxt, "stateId": self.states["todo"],
-                "priority": src["priority"],
-                "title": child_title(self.cfg["projects"][nxt]["prefix"], src_cfg.get("prefix"), src["title"]),
+                "id": cid, "teamId": self.team.id, "projectId": src["project"]["id"], "assigneeId": self.ids[nxt],
+                "stateId": self.states["todo"], "priority": src["priority"],
+                "title": child_title(self.runs[nxt].task["prefix"], self.runs[role].task.get("prefix"), src["title"]),
                 "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}

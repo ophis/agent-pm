@@ -140,7 +140,7 @@ class PruneTest(unittest.TestCase):
     def test_given_team_skips_team_query(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        given = pipeline.Team(TEAM, "Team", {}, dict(IDS_BY_KEY))
+        given = pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY))
         self.assertEqual(self.prune(gql, team=given)[0], 0)
         self.assertNotIn(pipeline.Q_TEAM, gql.calls)
         self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))

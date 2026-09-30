@@ -120,11 +120,11 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "projects"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "roles"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
-PROJECT_KEYS = {"next", "prefix", "require_instructions", "role", "task"}
+PIPELINE_ROLE_KEYS = {"next", "require_instructions"}
 ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
 TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
@@ -165,7 +165,7 @@ class Role:
 
 @dataclass(frozen=True)
 class Run:
-    """A runnable project's task and role, resolved from roles/ and tasks/; every path is absolute. key is the role's Keychain service name."""
+    """A role's default task, resolved from roles/ and tasks/; every path is absolute. key is the role's Keychain service name, account its Linear email."""
     task_name: str
     task: dict
     charter: str
@@ -173,27 +173,25 @@ class Run:
     memory: str | None
     read_only: tuple
     key: str
+    account: str
 
 
 def load_config(path=CONFIG):
-    """Checks every consumer needs; runnable-project checks are in runnable()."""
+    """Checks every consumer needs; the role checks are in runnable(), which every consumer calls."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
         raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
-    projects = cfg.setdefault("projects", {})
-    for name, p in projects.items():
-        nxt = p.get("next")
-        if nxt and "prefix" not in projects.get(nxt, {}):
-            raise SystemExit(f"pipeline.toml: next of {name!r} must name a [projects] entry with a prefix")
-        seen = {name}
+    roles = cfg.setdefault("roles", {})
+    for name in roles:
+        nxt, seen = roles[name].get("next"), {name}
         while nxt:
             if nxt in seen:
                 raise SystemExit(f"pipeline.toml: the next chain from {name!r} has a cycle")
             seen.add(nxt)
-            nxt = projects.get(nxt, {}).get("next")
+            nxt = roles.get(nxt, {}).get("next")
     return cfg
 
 
@@ -290,32 +288,34 @@ def registry(root=ROOT):
 
 
 def runnable(cfg, root=ROOT):
-    """{project id: Run} of projects with role + task; a broken pipeline.toml, role or task stops the caller (fail loud)."""
+    """{role: Run} of every role, running its default task; a broken pipeline.toml, role or task stops the caller (fail loud)."""
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
     roles, tasks = registry(root)
     for name, r in roles.items():
         if r.key == cfg["harness_key"]:
             raise SystemExit(f"roles/{name}.toml: key {r.key!r} is pipeline.toml's harness_key")
-    out = {}
-    for name, p in cfg["projects"].items():
-        if extra := sorted(set(p) - PROJECT_KEYS):
-            raise SystemExit(f"pipeline.toml: {name!r} has unknown keys: {', '.join(extra)}; {SETTINGS}")
-        if "role" not in p and "task" not in p:
+    for name, p in cfg["roles"].items():
+        if name not in roles:
+            raise SystemExit(f"pipeline.toml: [roles.{name}] has no roles/<role>.md + .toml pair")
+        if extra := sorted(set(p) - PIPELINE_ROLE_KEYS):
+            raise SystemExit(f"pipeline.toml: [roles.{name}] has unknown keys: {', '.join(extra)}; {SETTINGS}")
+        nxt = p.get("next")
+        if not nxt:
             continue
-        if "role" not in p or "task" not in p:
-            raise SystemExit(f"pipeline.toml: {name!r} needs both role and task")
-        role, task = p["role"], p["task"]
-        if role not in roles:
-            raise SystemExit(f"pipeline.toml: {name!r} role {role!r} has no roles/<role>.md + .toml pair")
-        if task not in tasks:
-            raise SystemExit(f"pipeline.toml: {name!r} task {task!r} has no tasks/<task>.md + .toml pair")
-        r = roles[role]
+        if nxt not in roles:
+            raise SystemExit(f"pipeline.toml: next of {name!r} names undefined role {nxt!r}")
+        nxt_task = roles[nxt].tasks[0]
+        if not tasks[nxt_task].get("prefix"):
+            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {nxt_task!r} has no prefix")
+    out = {}
+    for name, r in roles.items():
+        task = r.tasks[0]
         t = tasks[task]
         if REPO in r.read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
-            raise SystemExit(f"pipeline.toml: {name!r}: role {role!r} has read_only {REPO}, so task {task!r} needs repo_from_issue and no allowed_tools")
-        out[name] = Run(task, t, os.path.join(root, "roles", f"{role}.md"), os.path.join(root, "tasks", f"{task}.md"),
-                        r.memory, r.read_only, r.key)
+            raise SystemExit(f"roles/{name}.toml: read_only {REPO} needs default task {task!r} with repo_from_issue and no allowed_tools")
+        out[name] = Run(task, t, os.path.join(root, "roles", f"{name}.md"), os.path.join(root, "tasks", f"{task}.md"),
+                        r.memory, r.read_only, r.key, r.account)
     return out
 
 
@@ -337,17 +337,27 @@ def humans(gql, cfg):
     return ids
 
 
+def role_ids(gql, runs):
+    """{Linear user id: role} of the runs' accounts; an account not found in Linear stops the caller."""
+    out = {}
+    for name, run in runs.items():
+        uid = user_id(gql, run.account)
+        if not uid:
+            raise SystemExit(f"roles/{name}.toml: account {run.account!r} not found in Linear")
+        out[uid] = name
+    return out
+
+
 @dataclass(frozen=True)
 class Team:
-    """The pipeline.toml team as checked by team(): {project id: name}, {logical state: state id}."""
+    """The pipeline.toml team as checked by team(): {logical state: state id}."""
     id: str
     name: str
-    projects: dict
     states: dict
 
 
 Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
-  states(first: 100) { nodes { id } } projects(first: 50) { nodes { id name } } } } }"""
+  states(first: 100) { nodes { id } } } } }"""
 
 
 def team(gql, cfg):
@@ -359,19 +369,19 @@ def team(gql, cfg):
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg['states'][k]}" for k in STATES if cfg["states"][k] not in ids]:
         raise SystemExit(f"pipeline.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}")
-    return Team(t["id"], t["name"], {p["id"]: p["name"] for p in t["projects"]["nodes"]}, {k: cfg["states"][k] for k in STATES})
+    return Team(t["id"], t["name"], {k: cfg["states"][k] for k in STATES})
 
 
 def stage_order(cfg):
-    """{name: position in its next chain}; projects outside a chain are 0."""
-    projects = cfg["projects"]
-    targets = {p["next"] for p in projects.values() if p.get("next")}
-    order = {name: 0 for name in projects}
-    for start in projects:
+    """{role: position in its next chain}; roles outside a chain are 0."""
+    roles = cfg["roles"]
+    targets = {p["next"] for p in roles.values() if p.get("next")}
+    order = {name: 0 for name in roles}
+    for start in roles:
         if start in targets:
             continue
         name, i = start, 0
         while name:
             order[name] = i
-            name, i = projects.get(name, {}).get("next"), i + 1
+            name, i = roles.get(name, {}).get("next"), i + 1
     return order
