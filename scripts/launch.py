@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Launcher: starts one claude run for an issue the router already claimed (or resumes it), per pipeline.toml.
 
-launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --mode new|resume [--k K]
-The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs the role's
-default task. PROJECT_ID fills the prompt's Project: and, for a role whose next role's default task has repo_from_issue,
-Project repo:. Every run works in work/<ID>/. Exits 2 for an assignee that is not a role account or a config error (a
-role memory overlapping the issue's repo, a role key missing from the Keychain, or the docs clone not a directory;
-logged), 3 when the run cannot start yet (transient: no transcript to resume, or the Engineering repo step failed
-transiently). Needs Python 3.11+.
+launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
+The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs TASK, one of
+the role's tasks (the router resolves it). PROJECT_ID fills the prompt's Project: and, for a role whose next role's
+default task has repo_from_issue, Project repo:. Every run works in work/<ID>/. Exits 2 for an assignee that is not a
+role account or a config error (TASK not one of the role's tasks, a role memory overlapping the issue's repo, a role key
+missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot start yet (transient: no
+transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -19,7 +19,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, linear_gql,  # noqa: E402
+from pipeline import (LOGS, PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, linear_gql,  # noqa: E402
                       hands_off_to_repo, load_config, overlaps, project_log, role_for, run_dir, runnable, session, transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
@@ -116,10 +116,10 @@ def repo_step(a, task, gql, run, repos):
     return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
 
 
-def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
+def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
          keychain=has_key, docs_ok=os.path.isdir):
     ap = argparse.ArgumentParser(prog="launch.py")
-    for f in ("--issue", "--url", "--project", "--assignee", "--sid"):
+    for f in ("--issue", "--url", "--project", "--assignee", "--sid", "--task"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
     ap.add_argument("--k", default="1")
@@ -136,7 +136,12 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         print(f"launch.py: {a.assignee!r} is not a role account", file=sys.stderr)
         return 2
     job = jobs[role]
-    plog = project_log(job.task_name, logs) if logs else project_log(job.task_name)
+    try:
+        job = job.with_task(a.task)
+    except KeyError:
+        return fail(project_log(job.task_name, logs), a.issue, "config-error",
+                    f"task {a.task!r} is not one of {role}'s tasks ({', '.join(job.tasks)})", 2)
+    plog = project_log(job.task_name, logs)
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
