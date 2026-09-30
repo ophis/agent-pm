@@ -282,7 +282,9 @@ class PruneTest(unittest.TestCase):
         write(config, tp.CONFIG)
 
         def gql(query, **v):
+            self.user_queries += query == pipeline.Q_USER
             return (prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else linear)(query, **v)
+        self.user_queries = 0
         out = io.StringIO()
         with redirect_stdout(out):
             code = promote.main([], gql=gql, now=NOW, config=config,
@@ -293,6 +295,13 @@ class PruneTest(unittest.TestCase):
         wt = self.mkw("TASK-49", "TASK-49-x")
         self.assertEqual(self.tick(gql_for({"TASK-49": ("Done", [(30, "Done")])}))[:2], (0, "Done"))
         self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
+
+    def test_promote_tick_archives_with_its_roles(self):
+        gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
+        code, _, out = self.tick(gql)
+        self.assertEqual((code, gql.archived), (0, ["id-TASK-1"]))
+        self.assertIn("prune-archived TASK-1", out)
+        self.assertEqual(self.user_queries, len(tp.ROLE))
 
     def test_prune_failure_leaves_handoff_alone(self):
         self.mkw("TASK-49", "TASK-49-x")
