@@ -337,11 +337,6 @@ def humans(gql, cfg):
     return ids
 
 
-def reviewer(gql, cfg):
-    """Linear user id of the first `human_members` email, who is assigned issues that need human review; None if unset."""
-    return next(iter(humans(gql, cfg)), None)
-
-
 @dataclass(frozen=True)
 class Team:
     """The pipeline.toml team as checked by team(): {project id: name}, {logical state: state id}."""
