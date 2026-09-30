@@ -19,7 +19,7 @@ clone = "~/playground/private_docs"  # local clone; ~ allowed
 branch = "main"
 
 # Each role's place in the pipeline, keyed by role name (roles/<role>.md + roles/<role>.toml);
-# an issue assigned to the role's account runs the role's default task.
+# an issue assigned to the role's account runs the role's default task unless its Task label picks another of the role's tasks.
 [roles.researcher]
 next = "pm"                        # promote hands the role's Handoff issues to this role
 

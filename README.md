@@ -79,7 +79,7 @@ To add a task to a role: create `tasks/<task>.md` and `.toml`, add it to `roles/
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. Create the `Task` label group in Linear and set `task_label_group` in `pipeline.toml` to its id; the committed value is a placeholder, and the router stops until it is a real label group.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. Create the `Task` label group in Linear and set `task_label_group` in `pipeline.toml` to its id (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the committed value is a placeholder, and the router stops until it is a real label group.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
