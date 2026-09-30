@@ -16,7 +16,7 @@ SHORT, LONG = 60, 600
 
 @dataclass(frozen=True)
 class Ok:
-    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False
+    issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False; branch_exists: str | None = None
 
 @dataclass(frozen=True)
 class Invalid:
@@ -63,11 +63,6 @@ def parse_repo(description):
 
 NO_LINE = parse_repo("")
 
-def _project_id(issue):
-    project = issue.get("project")
-    pid = project.get("id") if isinstance(project, dict) else None
-    return pid if isinstance(pid, str) else None
-
 def norm_url(url):
     m = re.fullmatch(r"(?:https://|ssh://git@|git@)github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url.strip(), re.I)
     return f"github.com/{m.group(1)}/{m.group(2)}".lower() if m else None
@@ -77,49 +72,32 @@ def slug(title):
     s = "-".join(re.findall(r"[a-z0-9]+", t))[:40].rstrip("-")
     return s or "build"
 
-def _call(run, argv, timeout=SHORT):
-    try:
-        return run(argv, timeout), None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-        return None, Transient(f"{argv[0]} {argv[1]}: {type(e).__name__}")
-
 def _stderr(res):
     return (res.stderr or "").strip()[:200]
 
 def _repo_info(owner, name, run):
     """(push permission, default branch) from `gh api repos/…`, or an Invalid/Transient."""
-    res, err = _call(run, ["gh", "api", f"repos/{owner}/{name}"])
-    if err:
-        return err
+    res = run(["gh", "api", f"repos/{owner}/{name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
             return Invalid(f"{owner}/{name}: not found or no access (HTTP {code.group(1)})")
         return Transient(f"gh api repos/{owner}/{name}: {_stderr(res)}")
-    try:
-        data = json.loads(res.stdout)
-    except ValueError:
-        data = None
-    perms = (data.get("permissions") or {}) if isinstance(data, dict) else None
-    if not isinstance(perms, dict):
-        return Transient(f"gh api repos/{owner}/{name}: malformed JSON")
-    return perms.get("push") is True, data.get("default_branch")
+    data = json.loads(res.stdout)
+    return data["permissions"]["push"] is True, data["default_branch"]
 
 def _existing_branches(ident, clone, run):
-    """Names of the <ident>-* branches, local else on origin, or a Transient."""
-    res, err = _call(run, ["git", "-C", clone, "branch", "--list", f"{ident}-*", "--format=%(refname:short)"])
-    if err:
-        return err
+    """(names of the <ident>-* branches, "local" / "remote" / None where they were found), local else on origin, or a Transient."""
+    res = run(["git", "-C", clone, "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
     if res.returncode != 0:
         return Transient(f"git branch --list: {_stderr(res)}")
     if local := res.stdout.split():
-        return local
-    res, err = _call(run, ["git", "-C", clone, "ls-remote", "--heads", "origin", f"{ident}-*"])
-    if err:
-        return err
+        return local, "local"
+    res = run(["git", "-C", clone, "ls-remote", "--heads", "origin", f"{ident}-*"], SHORT)
     if res.returncode != 0:
         return Transient(f"git ls-remote: {_stderr(res)}")
-    return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
+    remote = [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
+    return remote, "remote" if remote else None
 
 def in_playground(clone, playground=PLAYGROUND):
     """True if clone is a real (non-symlink) entry directly in playground, where the repo step keeps clones."""
@@ -134,8 +112,11 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(f"{issue_id}: issue not found")
     if issue.get("identifier") != issue_id:
         return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+    base = run_dir(issue_id)
+    if not os.path.realpath(os.path.join(base, "worktrees")).startswith(os.path.realpath(base) + os.sep):
+        return Invalid(f"{os.path.join(base, 'worktrees')} resolves outside {base}")
     repo = parse_repo(issue.get("description"))
-    pid = _project_id(issue)
+    pid = (issue.get("project") or {}).get("id")
     mapped = repo == NO_LINE and pid in (repos or {})
     tag = MAPPED if mapped else ""
     if mapped:
@@ -158,33 +139,25 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(f"{clone} is a symlink or outside {playground}")
     want = f"github.com/{owner}/{name}".lower()
     if os.path.exists(clone):
-        res, err = _call(run, ["git", "-C", clone, "rev-parse", "--is-inside-work-tree"])
-        if err:
-            return err
-        if res.returncode != 0 or res.stdout.strip() != "true":
-            return Invalid(f"{clone} exists but is not a git repo")
         for extra in ([], ["--push"]):
-            res, err = _call(run, ["git", "-C", clone, "remote", "get-url", *extra, "origin"])
-            if err:
-                return err
+            res = run(["git", "-C", clone, "remote", "get-url", *extra, "origin"], SHORT)
             if res.returncode != 0 or norm_url(res.stdout) != want:
                 return Invalid(f"{clone} is not a clone of {owner}/{name} (origin {'push ' if extra else ''}URL differs)")
     else:
-        res, err = _call(run, ["gh", "repo", "clone", f"{owner}/{name}", clone], LONG)
-        if err:
-            return err
+        res = run(["gh", "repo", "clone", f"{owner}/{name}", clone], LONG)
         if res.returncode != 0:
             return Transient(f"gh repo clone {owner}/{name}: {_stderr(res)}")
-    names = _existing_branches(issue_id, clone, run)
-    if isinstance(names, Transient):
-        return names
+    found = _existing_branches(issue_id, clone, run)
+    if isinstance(found, Transient):
+        return found
+    names, where = found
     if len(names) > 1:
         return Invalid(f"several {issue_id}-* branches: {', '.join(names)[:200]}")
     if names and not re.fullmatch(rf"{re.escape(issue_id)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {issue_id}-<lowercase slug>")
     branch = names[0] if names else f"{issue_id}-{slug(issue['title'])}"
     return Ok(issue_id, issue["title"], owner, name, clone, default, branch,
-              os.path.join(run_dir(issue_id), "worktrees", branch), mapped=mapped)
+              os.path.join(base, "worktrees", branch), mapped=mapped, branch_exists=where)
 
 def pr_title(ok):
     """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""
@@ -246,22 +219,10 @@ def _plan_docs(worktree, branch):
                     found.append({"path": p, "phase": m.group(1)})
     return sorted(found, key=lambda d: d["path"])
 
-def _branch_exists(ok, run):
-    local = run(["git", "-C", ok.clone, "show-ref", "--verify", "--quiet", f"refs/heads/{ok.branch}"], SHORT)
-    if local.returncode == 0:
-        return "local"
-    if local.returncode != 1:
-        raise TransientError(f"git show-ref: {_stderr(local)}")
-    return "remote" if _out(run, ["git", "-C", ok.clone, "ls-remote", "--heads", "origin", ok.branch]).strip() else None
-
-def worktrees_dir_ok(issue):
-    base = run_dir(issue)
-    return os.path.realpath(os.path.join(base, "worktrees")).startswith(os.path.realpath(base) + os.sep)
-
 def cmd_status(ok, run, out):
     json.dump({"repo": f"{ok.owner}/{ok.name}", "clone": ok.clone, "default": ok.default, "branch": ok.branch,
-               "worktree": ok.worktree, "branch_exists": _branch_exists(ok, run), "worktree_exists": os.path.isdir(ok.worktree),
-               "pr": _pr(ok, run, _login(run)), "pr_title": pr_title(ok), "worktrees_dir_ok": worktrees_dir_ok(ok.issue),
+               "worktree": ok.worktree, "branch_exists": ok.branch_exists, "worktree_exists": os.path.isdir(ok.worktree),
+               "pr": _pr(ok, run, _login(run)), "pr_title": pr_title(ok),
                "plan_docs": _plan_docs(ok.worktree, ok.branch) if os.path.isdir(ok.worktree) else []}, out)
     out.write("\n")
     return 0

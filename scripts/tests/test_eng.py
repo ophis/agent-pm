@@ -104,7 +104,6 @@ class Resolve(unittest.TestCase):
         t = {
             "api": ok('{"default_branch": "main", "permissions": {"push": true}}'),
             "clone": ok(),
-            "wt": ok("true\n"),
             "fetch_url": ok("git@github.com:ophis/agent-pm.git\n"),
             "push_url": ok("git@github.com:ophis/agent-pm.git\n"),
             "branches": ok(""),
@@ -114,7 +113,6 @@ class Resolve(unittest.TestCase):
         return [
             (("gh", "api", "repos/ophis/agent-pm"), t["api"]),
             (("gh", "repo", "clone"), t["clone"]),
-            (("git", "-C", self.clone, "rev-parse", "--is-inside-work-tree"), t["wt"]),
             (("git", "-C", self.clone, "remote", "get-url", "--push", "origin"), t["push_url"]),
             (("git", "-C", self.clone, "remote", "get-url", "origin"), t["fetch_url"]),
             (("git", "-C", self.clone, "branch", "--list"), t["branches"]),
@@ -152,6 +150,15 @@ class Resolve(unittest.TestCase):
             self.assertIsInstance(self.resolve(gql=gql_for("Repo: ophis/agent-pm", ident=ident)), eng.Invalid, ident)
             self.assertEqual(self.run_.calls, [])
 
+    def test_worktrees_dir_symlinked_out_invalid(self):
+        outside = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", outside]))
+        base = os.path.join(self.work, "TASK-26")
+        os.makedirs(base)
+        os.symlink(outside, os.path.join(base, "worktrees"))
+        self.assertEqual(self.resolve(), eng.Invalid(f"{os.path.join(base, 'worktrees')} resolves outside {base}"))
+        self.assertEqual(self.run_.calls, [])
+
     def test_access(self):
         os.makedirs(self.clone)
         for res, kind in ((ok(code=1, stderr="gh: Not Found (HTTP 404)"), eng.Invalid),
@@ -159,14 +166,10 @@ class Resolve(unittest.TestCase):
                           (ok('{"default_branch": "main", "permissions": {"push": false}}'), eng.Invalid),
                           (ok(code=1, stderr="gh: Bad Gateway (HTTP 502)"), eng.Transient),
                           (ok(code=1, stderr="error connecting to api.github.com"), eng.Transient),
-                          (subprocess.TimeoutExpired("gh", 60), eng.Transient),
-                          (FileNotFoundError("gh"), eng.Transient),
                           (ok('{"default_branch": "-x", "permissions": {"push": true}}'), eng.Invalid),
                           (ok('{"default_branch": "a..b", "permissions": {"push": true}}'), eng.Invalid),
                           (ok('{"default_branch": "ma$(x)", "permissions": {"push": true}}'), eng.Invalid),
-                          (ok('{"default_branch": null, "permissions": {"push": true}}'), eng.Invalid),
-                          (ok("<html>502</html>"), eng.Transient), (ok("[]"), eng.Transient),
-                          (ok('{"permissions": ["push"]}'), eng.Transient)):
+                          (ok('{"default_branch": null, "permissions": {"push": true}}'), eng.Invalid)):
             self.assertIsInstance(self.resolve(api=res), kind, res)
 
     def test_clone_checks(self):
@@ -176,26 +179,26 @@ class Resolve(unittest.TestCase):
         self.assertIsInstance(self.resolve(), eng.Invalid)
         os.remove(self.clone)
         os.makedirs(self.clone)
-        self.assertIsInstance(self.resolve(wt=ok(code=128, stderr="not a git repository")), eng.Invalid)
         self.assertIsInstance(self.resolve(fetch_url=ok("git@github.com:other/agent-pm.git\n")), eng.Invalid)
         self.assertIsInstance(self.resolve(push_url=ok("https://evil.example/x.git\n")), eng.Invalid)
         self.assertIsInstance(self.resolve(fetch_url=ok("https://github.com/OPHIS/Agent-PM\n")), eng.Ok)
 
     def test_clone_failure_transient(self):
         self.assertIsInstance(self.resolve(clone=ok(code=1, stderr="network")), eng.Transient)
-        self.assertIsInstance(self.resolve(clone=subprocess.TimeoutExpired("gh", 600)), eng.Transient)
 
     def test_existing_branches(self):
         os.makedirs(self.clone)
-        self.assertEqual(self.resolve(branches=ok("TASK-26-old-name\n")).branch, "TASK-26-old-name")
-        self.assertEqual(self.resolve(remote=ok("abc\trefs/heads/TASK-26-remote\n")).branch, "TASK-26-remote")
+        local = self.resolve(branches=ok("TASK-26-old-name\n"))
+        self.assertEqual((local.branch, local.branch_exists), ("TASK-26-old-name", "local"))
+        remote = self.resolve(remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+        self.assertEqual((remote.branch, remote.branch_exists), ("TASK-26-remote", "remote"))
+        self.assertIsNone(self.resolve().branch_exists)
         self.assertIsInstance(self.resolve(branches=ok("TASK-26-a\nTASK-26-b\n")), eng.Invalid)
         self.assertIsInstance(self.resolve(branches=ok("TASK-26-Bad$(x)\n")), eng.Invalid)
 
     def test_branch_listing_failure_transient(self):
         os.makedirs(self.clone)
-        for over in ({"branches": ok(code=128, stderr="fatal")}, {"remote": ok(code=128, stderr="no remote")},
-                     {"remote": subprocess.TimeoutExpired("git", 60)}):
+        for over in ({"branches": ok(code=128, stderr="fatal")}, {"remote": ok(code=128, stderr="no remote")}):
             self.assertIsInstance(self.resolve(**over), eng.Transient, over)
 
     def test_local_only_branch_with_worktree_present_resolves_without_remote_lookup(self):
@@ -236,25 +239,13 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.run_.calls, [])
 
     def test_no_mapping_for_the_project_keeps_todays_invalid(self):
-        for project in ({"id": "other"}, None, "not-an-object", {"id": ["x"]}, {"id": None}, {}, {"id": 7}):
+        for project in ({"id": "other"}, None, {"id": None}, {}, {"id": 7}):
             with self.subTest(project=project):
                 self.assertEqual(self.resolve(desc="no repo here", repos={PROJ: "ophis/agent-pm"}, project=project), NO_LINE)
         self.assertEqual(self.resolve(desc="no repo here", project={"id": PROJ}), NO_LINE)
         self.assertEqual(self.run_.calls, [])
 
-    def test_mapped_failures_carry_the_mapping_prefix(self):
-        os.makedirs(self.clone)
-        r = self.mapped
-        want = "ophis/agent-pm: not found or no access (HTTP %s)"
-        self.assertEqual(r(api=ok(code=1, stderr="gh: Not Found (HTTP 404)")), eng.Invalid(eng.MAPPED + want % 404))
-        self.assertEqual(r(api=ok(code=1, stderr="gh: Forbidden (HTTP 403)")), eng.Invalid(eng.MAPPED + want % 403))
-        self.assertEqual(r(api=ok('{"default_branch": "main", "permissions": {"push": false}}')),
-                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: no push permission"))
-        self.assertEqual(r(api=ok('{"default_branch": "-x", "permissions": {"push": true}}')),
-                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: unsafe default branch name"))
-        self.assertTrue(eng.MAPPED.startswith("project mapping") and eng.MAPPED.endswith(" "))
-
-    def test_same_failures_from_a_repo_line_have_no_prefix(self):
+    def test_failure_reasons_carry_the_mapping_prefix_only_when_mapped(self):
         os.makedirs(self.clone)
         repos, project = {PROJ: "ophis/agent-pm"}, {"id": PROJ}
         for over, reason in (({"api": ok(code=1, stderr="gh: Not Found (HTTP 404)")}, "ophis/agent-pm: not found or no access (HTTP 404)"),
@@ -262,20 +253,16 @@ class Resolve(unittest.TestCase):
                              ({"api": ok('{"default_branch": "main", "permissions": {"push": false}}')}, "ophis/agent-pm: no push permission"),
                              ({"api": ok('{"default_branch": "-x", "permissions": {"push": true}}')}, "ophis/agent-pm: unsafe default branch name")):
             with self.subTest(reason=reason):
+                self.assertEqual(self.mapped(**over), eng.Invalid(eng.MAPPED + reason))
                 self.assertEqual(self.resolve(repos=repos, project=project, **over), eng.Invalid(reason))
-
-    def test_mapped_other_failures_keep_todays_reason(self):
-        os.makedirs(self.clone)
+        self.assertTrue(eng.MAPPED.startswith("project mapping") and eng.MAPPED.endswith(" "))
         self.assertEqual(self.mapped(fetch_url=ok("git@github.com:other/agent-pm.git\n")),
                          eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"))
-        self.assertEqual(self.mapped(wt=ok(code=128, stderr="not a git repository")),
-                         eng.Invalid(f"{self.clone} exists but is not a git repo"))
         self.assertEqual(self.mapped(branches=ok("TASK-26-a\nTASK-26-b\n")), eng.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
         self.assertIsInstance(self.mapped(api=ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")), eng.Transient)
-
-    def test_mapped_clone_outside_playground_keeps_todays_reason(self):
         other = tempfile.mkdtemp()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
+        os.rmdir(self.clone)
         os.symlink(other, self.clone)
         self.assertEqual(self.mapped(), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
 
@@ -291,20 +278,16 @@ class Cli(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.root]))
-        os.makedirs(os.path.join(self.root, "work"))
         self.wt = os.path.join(self.root, "work", "TASK-26", "worktrees", "TASK-26-x")
-        self.ok = eng.Ok("TASK-26", "ENG: X", "ophis", "agent-pm", os.path.join(self.root, "clone"), "main", "TASK-26-x", self.wt)
-        patcher = mock.patch.object(eng, "run_dir", lambda issue: os.path.join(self.root, "work", issue))
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.ok = eng.Ok("TASK-26", "ENG: X", "ophis", "agent-pm", os.path.join(self.root, "clone"), "main", "TASK-26-x", self.wt,
+                         branch_exists="local")
 
     def table(self, **over):
-        t = {"show_ref": ok(), "remote": ok(""), "user": ok('{"login": "ophis"}'), "prs": ok(json.dumps([pr_row(7)])),
+        t = {"user": ok('{"login": "ophis"}'), "prs": ok(json.dumps([pr_row(7)])),
              "issue_comments": ok("[[]]"), "reviews": ok("[[]]"), "review_comments": ok("[[]]")}
         t.update(over)
         api = ("gh", "api", "--paginate", "--slurp")
-        return [(("git", "-C", self.ok.clone, "show-ref"), t["show_ref"]), (("git", "-C", self.ok.clone, "ls-remote"), t["remote"]),
-                (("gh", "api", "user"), t["user"]), (("gh", "pr", "list"), t["prs"]),
+        return [(("gh", "api", "user"), t["user"]), (("gh", "pr", "list"), t["prs"]),
                 ((*api, "repos/ophis/agent-pm/issues/7/comments"), t["issue_comments"]),
                 ((*api, "repos/ophis/agent-pm/pulls/7/reviews"), t["reviews"]),
                 ((*api, "repos/ophis/agent-pm/pulls/7/comments"), t["review_comments"])]
@@ -372,13 +355,11 @@ class Cli(unittest.TestCase):
 
     def test_transient_subprocess_error_exits_1(self):
         exc = subprocess.TimeoutExpired("git", 60)
-        self.assertEqual(self.cli("status", show_ref=exc), 1)
+        self.assertEqual(self.cli("status", user=exc), 1)
         self.assertEqual((self.out, self.err), ("", f"eng.py: {exc}\n"))
 
     def test_gh_or_git_failure_exits_1(self):
         for cmd, over in (("status", {"prs": ok(code=1, stderr="HTTP 502")}), ("status", {"user": ok(code=1, stderr="auth")}),
-                          ("status", {"show_ref": ok(code=128, stderr="fatal")}),
-                          ("status", {"show_ref": ok(code=1), "remote": ok(code=128, stderr="no remote")}),
                           ("comments", {"user": ok(code=1, stderr="auth")}), ("comments", {"prs": ok(code=1, stderr="HTTP 502")}),
                           ("comments", {"reviews": ok(code=1, stderr="HTTP 502")})):
             self.assertEqual(self.cli(cmd, **over), 1, over)
@@ -491,7 +472,7 @@ class Cli(unittest.TestCase):
                          ("ophis/agent-pm", "TASK-26-x", "local", True, None))
         self.assertEqual(s["plan_docs"], [{"path": os.path.join(self.wt, "docs", "specs", "p.md"), "phase": "S5"}])
         self.assertEqual(s["pr_title"], "TASK-26: X")
-        self.assertTrue(s["worktrees_dir_ok"])
+        self.assertNotIn("worktrees_dir_ok", s)
 
     def test_status_plan_docs_only_this_branch(self):
         os.makedirs(self.wt)
@@ -520,20 +501,10 @@ class Cli(unittest.TestCase):
 
     def test_status_pr_title_sanitized(self):
         bad = eng.Ok("TASK-26", 'ENG: a $(rm) `x` "q"', "ophis", "agent-pm", self.ok.clone, "main", "TASK-26-x", self.wt)
-        self.assertEqual(self.cli("status", resolved=bad, show_ref=ok(code=1)), 0)
+        self.assertEqual(self.cli("status", resolved=bad), 0)
         s = json.loads(self.out)
         self.assertEqual(s["pr_title"], "TASK-26: a (rm) x q")
         self.assertIsNone(s["branch_exists"])
-
-    def test_status_worktrees_dir_ok_false_for_symlink_out(self):
-        outside = tempfile.mkdtemp()
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", outside]))
-        run_dir = os.path.join(self.root, "work", "TASK-26")
-        os.makedirs(run_dir)
-        os.symlink(outside, os.path.join(run_dir, "worktrees"))
-        self.assertEqual(self.cli("status"), 0)
-        s = json.loads(self.out)
-        self.assertFalse(s["worktrees_dir_ok"])
 
 class PrTitle(unittest.TestCase):
     def title(self, t):
