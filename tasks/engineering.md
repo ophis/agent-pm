@@ -33,14 +33,14 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
    - "put the spec and plan doc where the target repo keeps design docs (e.g. an existing `docs/specs/`), else in `docs/.autopilot/` at the repo root; commit them on the branch unless git ignores them, never with `git add -f`";
    - "skip S8: keep the commits"; "after each implementation task and each review round run exactly `git -C <worktree> push -u origin <branch>`".
 7. **PR** (build converged):
+   - Post this round's spec, then its plan doc (the plan doc this build created or continued; the spec is its `spec_file=`), one comment each with the `linear` skill, the body passed as a variable, never through `eng.py`: first line ``**Spec** `<file name>` `` or ``**Plan** `<file name>` `` (basename), a blank line, `---`, a blank line, then the file's full text from disk, unchanged. Every round posts new comments; never edit earlier ones. Linear rejecting one → step 8.
    - `git -C <worktree> push -u origin <branch>`.
-   - Comment `Build docs:` with the GitHub links of the build's spec and plan doc on the branch (`https://github.com/<owner>/<name>/blob/<branch>/<path>`, paths from `<eng> status`; the spec is the plan doc's `spec_file=`).
-   - Write `work/<ID>/pr.md`: what changed, PRD and spec links, how to verify, residual non-blocking items.
+   - Write `work/<ID>/pr.md`: what changed, PRD and issue links, how to verify, residual non-blocking items.
    - If `<eng> status` shows no PR, `gh pr create --repo <owner>/<name> --head <branch> --base <default> --title '<pr_title>' --body-file work/<ID>/pr.md`, else `gh pr edit <number> --repo <owner>/<name> --body-file work/<ID>/pr.md`.
    - Attach the PR URL to the issue; subscribe the humans (principles); comment `Build ready:` + 3–5 lines incl. how to verify.
    - The GitHub integration moves the issue to In Review when the PR opens, so do not move it: read its state and move it to In Review only if it is not there (e.g. the PR already existed, or the integration lagged).
    - Fallbacks: push denied → comment `Build failed:` "push not permitted" and move to In Review; PR creation denied → attach `https://github.com/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `Build ready:` that the user must open the PR.
-8. **Failure** (build stopped or capped, or an action it needs was denied by the permission classifier): push the branch (`git -C <worktree> push -u origin <branch>`); comment `Build docs:` with the spec and plan links as in step 7 (whatever exists); comment `Build failed:` with the failing tests, open blockers or denied action, and the branch URL (`https://github.com/<owner>/<name>/tree/<branch>`); move to In Review.
+8. **Failure** (build stopped or capped, an action it needs was denied by the permission classifier, or Linear rejected a Spec/Plan comment): push the branch (`git -C <worktree> push -u origin <branch>`); post the spec and plan doc that exist (possibly neither; every existing one, even if step 7 posted it) as in step 7, a rejected one not stopping this step; comment `Build failed:` with the failing tests, open blockers, denied action or rejected Spec/Plan comment, and the branch URL (`https://github.com/<owner>/<name>/tree/<branch>`); move to In Review.
 
 ## Resume rule
 
