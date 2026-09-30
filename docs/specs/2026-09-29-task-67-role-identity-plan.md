@@ -1,6 +1,6 @@
 # TASK-67: role identity — plan
 
-RESUME: phase=S3 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
+RESUME: phase=S4 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
 
 ## Implementation plan
 
@@ -12,3 +12,5 @@ RESUME: phase=S3 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktr
 - decision(attempt cap): role accounts join the agent set in Router's by_user check (G5) over leaving it to PR-C's FR-11 - a role session's own move to Todo would otherwise reset the cap forever, breaking "runs as before"; dissent: none
 - decision(project task in role tasks): runnable() rejects a project task outside its role's tasks - gives `tasks` its meaning while dispatch is by project; dissent: none
 - decision(harness key source): linear_gql reads harness_key from pipeline.toml per call over threading cfg through every caller - no caller signature changes; dissent: none
+- S3 panel: core=[architecture,spec-fitness] +optional=[security] transport=Workflow
+- S3 r0: architecture=PASS spec-fitness=PASS security=PASS -> converged; folded non-blockers: harness_service cached, harness_key/account checks in runnable, agents from all roles via user_id eqIgnoreCase, KEY_RE, account not in human_members, residual-risk note

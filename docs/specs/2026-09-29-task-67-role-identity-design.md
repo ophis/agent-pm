@@ -38,11 +38,11 @@ key = "linear-api-key-researcher"                 # Keychain service holding tha
 
 Validation (a violation stops router and launcher with a `SystemExit` naming the file):
 
-- per role (`_role`): `tasks` is a non-empty list of strings; `account` and `key` are non-empty strings;
-- across the registry (`registry(root, harness_key)`): every `tasks` entry names a `tasks/<task>.md` + `.toml` pair; no two roles share a `key`; no role's `key` equals `harness_key`;
-- per runnable project (`runnable`): the project's `task` is in its role's `tasks` (the role's `tasks` are what it can run).
+- per role (`_role`): `tasks` is a non-empty list of strings; `account` is a non-empty string; `key` matches `KEY_RE` = `[A-Za-z0-9][A-Za-z0-9._-]*` (it reaches `security` argv and the tmux command line);
+- across the registry (`registry(root)`, every role whether or not a project uses it): every `tasks` entry names a `tasks/<task>.md` + `.toml` pair; no two roles share a `key`;
+- against `pipeline.toml` (`runnable(cfg, root)`): no role's `key` equals `harness_key`; no role's `account` is in `human_members` (case-insensitive; promote and the rules treat those users' comments as the user's); each runnable project's `task` is in its role's `tasks` (the role's `tasks` are what it can run).
 
-`registry` returns roles as a frozen `Role(read_only, memory, tasks, account, key)` dataclass instead of the `(read_only, memory)` tuple. `runnable(cfg, root)` passes `cfg["harness_key"]` to `registry`. `Run` gains `key` and `account` (its role's).
+`registry` returns roles as a frozen `Role(read_only, memory, tasks, account, key)` dataclass instead of the `(read_only, memory)` tuple; its docstring says `key` is a Keychain service name, never the secret. `Run` gains `key` and `account` (its role's).
 
 ## G2 — `tasks/<task>.toml`
 
@@ -50,8 +50,8 @@ Validation (a violation stops router and launcher with a `SystemExit` naming the
 
 ## G3 — harness key
 
-- `pipeline.toml`: top-level `harness_key = "linear-api-key"` (Keychain service of the harness account's key). `TOP_KEYS` gains it; `load_config` requires a non-empty string.
-- `pipeline.linear_gql` reads the service from `pipeline.toml` (`load_config()["harness_key"]`) on each call and runs `security find-generic-password -s <harness_key> -w` — no `-a`. Callers (router, promote, prune, launch's repo step, eng.py) are unchanged.
+- `pipeline.toml`: top-level `harness_key = "linear-api-key"` (Keychain service of the harness account's key). `TOP_KEYS` gains it; `load_config` requires it to match `KEY_RE`.
+- `pipeline.linear_gql` gets the service from `harness_service()`: `load_config()["harness_key"]` of the default `pipeline.toml`, cached per process (a broken `pipeline.toml` stops the caller, as `load_config` does elsewhere). It runs `security find-generic-password -s <harness_key> -w` — no `-a`, so exactly one Keychain item may use that service (README says so). Callers (router, promote, prune, launch's repo step, eng.py) are unchanged.
 
 ## G4 — launcher
 
@@ -67,7 +67,7 @@ The prompt text is unchanged.
 
 `Board.last_move(..., by_user=True)` treats a move as the user's when its actor is neither the harness (`viewer`) nor a role account. Before PR-A every agent move was the harness's; now a role session's moves (e.g. deep-research step 6 moving a failed run back to Todo) are made by its role account and would otherwise reset the cap forever.
 
-- `Board.__init__` collects the accounts of the runnable projects' roles and resolves them in one query: `users(filter: { email: { in: [...] } }) { nodes { id email } }`. `self.agents = {viewer id} ∪ those ids`.
+- `Board.__init__` takes the `account` of every role in the registry (not only the `--project`-filtered ones) and resolves each with `user_id(gql, email)`: the `users(filter: { email: { eqIgnoreCase: $e } })` lookup factored out of `reviewer()`, which now uses it too. `self.agents = {viewer id} ∪ those ids`.
 - An account not found in Linear stops the router: `SystemExit("role accounts not found in Linear: <emails>")` (as `reviewer()` does for `human_members`).
 - `by_user` becomes `n["actorId"] and n["actorId"] not in self.agents`. Claiming and Recover still use the harness `viewer` id.
 
@@ -81,7 +81,7 @@ The prompt text is unchanged.
 
 `README.md`:
 
-- Setup: the harness key stored under service `harness_key` (`linear-api-key`).
+- Setup: the harness key stored under service `harness_key` (`linear-api-key`), the only Keychain item with that service.
 - New "Role accounts" steps, per role in `roles/*.toml`: invite its `account` (a Gmail plus-alias of the harness account) in Linear → Settings → Members; accept in a private window with **Continue with email** (not Google, which signs in as the harness account); generate a personal API key in that account's settings; `security add-generic-password -s <key> -a <account> -w`. A missing item stops that role's runs (`config-error` in its project log).
 - Configuration: the new role, task and `pipeline.toml` keys.
 
@@ -91,9 +91,11 @@ The prompt text is unchanged.
 
 Keys exist only in the `linear` skill's and harness processes' memory. The launcher's only Keychain call has no `-w`; the session gets a service name.
 
+Residual risk (accepted in the PRD, isolation is TASK-63): every process runs as one macOS user, so a session can read any Keychain item (e.g. set another `LINEAR_KEYCHAIN_SERVICE`, or run `eng.py`, which uses the harness key). Role attribution is not an authorization boundary.
+
 Tests (`scripts/tests`, no network, Keychain or Claude; every `security` call faked):
 
-- `test_pipeline`: each G1 rejection (empty/non-list `tasks`, unknown task, missing `account`, missing `key`, `key` == `harness_key`, shared `key`, project task outside its role's `tasks`); `Role`/`Run` carry `tasks`, `account`, `key`; `prefix` accepted, empty or non-string rejected; `harness_key` required; `linear_gql` calls `security find-generic-password -s <harness_key> -w` with no `-a` (faked `subprocess.run` and `urlopen`, temp `pipeline.toml`).
+- `test_pipeline`: each G1 rejection (empty/non-list `tasks`, unknown task, missing `account`, missing or malformed `key`, `key` == `harness_key`, shared `key`, `account` in `human_members`, project task outside its role's `tasks`); `Role`/`Run` carry `tasks`, `account`, `key`; `prefix` accepted, empty or non-string rejected; `harness_key` required and matching `KEY_RE`; `linear_gql` calls `security find-generic-password -s <harness_key> -w` with no `-a` (faked `subprocess.run` and `urlopen`, temp `pipeline.toml`).
 - `test_launch`: `LINEAR_KEYCHAIN_SERVICE=<key>` is exported; the existence check is `security find-generic-password -s <key>` with no `-w`; a missing item gives exit 2, a `config-error` project-log line and no tmux call, for `new` and `resume`; with `subprocess.run` faked to return a sentinel secret for any `-w` call, the sentinel appears nowhere in the tmux argv, the exported environment or the project log, and no `-w` call is made.
-- `test_router`: a Todo move by a role account does not reset the cap; one by another member still does; an unknown role account stops the router.
+- `test_router`: a Todo move by a role account (of any role, also under `--project`) does not reset the cap; one by another member still does; an unknown role account stops the router.
 - Existing fixtures gain the new required keys (`harness_key` in `board_ids.HEADER`; `tasks`, `account`, `key` in role fixtures).
