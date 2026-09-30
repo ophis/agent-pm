@@ -21,7 +21,8 @@ next = "engineer"
 """
 
 
-class Config(unittest.TestCase):
+class ConfigFile:
+    """setUp, load and rejects for TestCases that write a pipeline.toml into self.dir."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -33,6 +34,15 @@ class Config(unittest.TestCase):
             f.write(text)
         return pipeline.load_config(path)
 
+    def rejects(self, fragment, text):
+        with self.assertRaises(SystemExit) as cm:
+            self.load(text)
+        msg = str(cm.exception.code)
+        self.assertTrue(msg.startswith("pipeline.toml: "), msg)
+        self.assertIn(fragment, msg)
+
+
+class Config(ConfigFile, unittest.TestCase):
     def test_stage_order(self):
         self.assertEqual(pipeline.stage_order(self.load(BASE)),
                          {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
@@ -80,25 +90,7 @@ def with_docs(value):
     return head + ("" if value is None else f"docs = {value}\n") + BASE[BASE.index("[roles"):]
 
 
-class Docs(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-
-    def load(self, text):
-        path = os.path.join(self.dir, "pipeline.toml")
-        with open(path, "w") as f:
-            f.write(text)
-        return pipeline.load_config(path)
-
-    def rejects(self, fragment, text):
-        with self.assertRaises(SystemExit) as cm:
-            self.load(text)
-        msg = str(cm.exception.code)
-        self.assertTrue(msg.startswith("pipeline.toml: "), msg)
-        self.assertIn(fragment, msg)
-
+class Docs(ConfigFile, unittest.TestCase):
     def test_accepted(self):
         self.assertEqual(self.load(BASE)["docs"], DOCS)
 
@@ -150,6 +142,16 @@ class Docs(unittest.TestCase):
         link = os.path.join(self.dir, "link")
         os.symlink(pipeline.ROOT, link)
         self.rejects("docs.clone", with_docs({**DOCS, "clone": link}))
+
+    def test_clone_checked_as_stored(self):
+        root = os.path.join(self.dir, "parent", "root")
+        deep = os.path.join(self.dir, "elsewhere", "deep")
+        os.makedirs(root)
+        os.makedirs(deep)
+        os.symlink(deep, os.path.join(self.dir, "parent", "link"))
+        clone = os.path.join(self.dir, "parent", "link", "..", "root", "sub")
+        with mock.patch.object(pipeline, "ROOT", root):
+            self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
 
     def test_clone_overlapping_protected(self):
         home = os.path.join(self.dir, "home")
@@ -491,18 +493,7 @@ class RealConfig(unittest.TestCase):
 P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51ab71fb8"
 
 
-class ProjectRepos(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-
-    def load(self, text):
-        path = os.path.join(self.dir, "pipeline.toml")
-        with open(path, "w") as f:
-            f.write(text)
-        return pipeline.load_config(path)
-
+class ProjectRepos(ConfigFile, unittest.TestCase):
     def test_absent_is_empty(self):
         self.assertEqual(self.load(BASE)["project_repos"], {})
 

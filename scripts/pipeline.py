@@ -180,7 +180,7 @@ def _check_docs(cfg):
     if not repo_slug(docs["repo"]):
         raise SystemExit(f"pipeline.toml: docs.repo must be <owner>/<name>: {docs['repo']!r}")
     clone = docs["clone"]
-    path = os.path.expanduser(clone) if isinstance(clone, str) else ""
+    path = os.path.normpath(os.path.expanduser(clone)) if isinstance(clone, str) else ""
     if (not os.path.isabs(path) or CLONE_BAD_RE.search(path)
             or any(overlaps(path, b) for b in [ROOT] + [os.path.expanduser(p) for p in PROTECTED])):
         raise SystemExit(f"pipeline.toml: docs.clone must be an absolute path (~ allowed) outside the repo root and "
@@ -188,7 +188,7 @@ def _check_docs(cfg):
     branch = docs["branch"]
     if not isinstance(branch, str) or not REF.fullmatch(branch):
         raise SystemExit(f"pipeline.toml: docs.branch must be a git ref name: {branch!r}")
-    docs["clone"] = os.path.normpath(path)
+    docs["clone"] = path
 
 
 @dataclass(frozen=True)
