@@ -2,15 +2,13 @@
 """Engineering runs: resolve an issue's target repo, and a CLI for the stage (spec docs/specs/2026-09-27-task-38-…-design.md)."""
 import json, os, re, subprocess, sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, NAME, OWNER, PATH, ROOT, load_config, parse_time, registry, repo_slug, run_dir  # noqa: E402
+from pipeline import CONFIG, NAME, OWNER, PATH, load_config, parse_time, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description project { id } } }"
-Q_COMMENTS = ("query($i: String!, $c: String) { issue(id: $i) { createdAt comments(first: 250, after: $c) "
-              "{ nodes { body createdAt user { email } } pageInfo { hasNextPage endCursor } } } }")
+Q_COMMENTS = "query($i: String!) { issue(id: $i) { createdAt comments(first: 250) { nodes { body createdAt user { email } } } } }"
 MAPPED = "project mapping "
 BUILD_STARTED = re.compile(r"Build started\b")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
@@ -29,10 +27,7 @@ class Transient:
     reason: str
 
 class TransientError(Exception):
-    """A gh/git call of a CLI command failed: exit 3."""
-
-class Malformed(Exception):
-    """gh printed something other than the expected JSON: exit 2."""
+    """A gh/git/Linear call of a CLI command failed or returned something unusable."""
 
 def sh_run(argv, timeout):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env={**os.environ, "PATH": PATH})
@@ -196,10 +191,6 @@ def pr_title(ok):
     t = f"{ok.issue}: " + re.sub(r"^[A-Z][A-Z0-9]*: ", "", ok.title, count=1)
     return " ".join(re.sub(r"[^\w .,:()/-]", " ", t).split())
 
-def iso(s):
-    t = parse_time(s)
-    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
-
 def _out(run, argv):
     res = run(argv, SHORT)
     if res.returncode != 0:
@@ -210,11 +201,11 @@ def _json(run, argv):
     try:
         return json.loads(_out(run, argv))
     except ValueError as e:
-        raise Malformed(f"{' '.join(argv)[:150]}: {e}") from None
+        raise TransientError(f"{' '.join(argv)[:150]}: {e}") from None
 
 def _rows(data, what):
     if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
-        raise Malformed(f"{what}: not a JSON list of objects")
+        raise TransientError(f"{what}: not a JSON list of objects")
     return data
 
 def _author(row, key):
@@ -225,7 +216,7 @@ def _login(run):
     data = _json(run, ["gh", "api", "user"])
     login = data.get("login") if isinstance(data, dict) else None
     if not isinstance(login, str) or not login:
-        raise Malformed("gh api user: no login")
+        raise TransientError("gh api user: no login")
     return login
 
 def _pr(ok, run, login):
@@ -236,7 +227,7 @@ def _pr(ok, run, login):
     if not mine:
         return None
     if not isinstance(mine[0].get("number"), int):
-        raise Malformed("gh pr list: a PR without a number")
+        raise TransientError("gh pr list: a PR without a number")
     return {k: mine[0].get(k) for k in ("number", "url", "state")}
 
 def _plan_docs(worktree, branch):
@@ -279,33 +270,14 @@ def _pages(run, path):
     """Every row of a paginated list endpoint; `--slurp` wraps the pages in one array."""
     pages = _json(run, ["gh", "api", "--paginate", "--slurp", path])
     if not isinstance(pages, list) or not all(isinstance(p, list) for p in pages):
-        raise Malformed(f"{path}: not a JSON array of pages")
+        raise TransientError(f"{path}: not a JSON array of pages")
     return _rows([r for p in pages for r in p], path)
 
-@dataclass(frozen=True)
-class Note:
-    at: datetime; raw: str; email: str | None; body: str
-
-def _note(n):
-    email = None if n["user"] is None else n["user"]["email"]
-    if not isinstance(n["body"], str) or not isinstance(email, (str, type(None))):
-        raise TypeError("comment body or author email is not a string")
-    return Note(iso(n["createdAt"]), n["createdAt"], email, n["body"])
-
 def _linear(gql, issue):
-    """(the issue's createdAt, every comment as a Note); a failure or a missing field is Transient."""
+    """(the issue's createdAt, [(instant, comment)]) of its first 250 comments; a failure or a missing field is Transient."""
     try:
-        notes, cursor, seen = [], None, set()
-        while True:
-            page = gql(Q_COMMENTS, i=issue, c=cursor)["issue"]
-            conn = page["comments"]
-            notes += [_note(n) for n in conn["nodes"]]
-            if not conn["pageInfo"]["hasNextPage"]:
-                return iso(page["createdAt"]), notes
-            cursor = conn["pageInfo"]["endCursor"]
-            if not cursor or cursor in seen:
-                raise ValueError(f"page cursor {cursor!r}")
-            seen.add(cursor)
+        page = gql(Q_COMMENTS, i=issue)["issue"]
+        return parse_time(page["createdAt"]), [(parse_time(n["createdAt"]), n) for n in page["comments"]["nodes"]]
     except (SystemExit, Exception) as e:
         raise TransientError(f"Linear: {e!r}") from None
 
@@ -318,9 +290,9 @@ def _pr_entries(ok, run, pr, since):
             if c.get(key) is None:
                 continue
             try:
-                at = iso(c[key])
+                at = parse_time(c[key])
             except (AttributeError, ValueError):
-                raise Malformed(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
+                raise TransientError(f"{path}: bad {key} {str(c[key])[:40]!r}") from None
             if at > since:
                 e = {"at": c[key], "source": "pr", "kind": kind, "author": _author(c, "user"), "body": c.get("body") or ""}
                 if kind == "review":
@@ -330,15 +302,16 @@ def _pr_entries(ok, run, pr, since):
                 found.append((at, e))
     return found
 
-def cmd_comments(ok, run, out, gql, humans, markers):
-    """The comments after the latest `Build started` by a marker account (else the issue's creation), the user's apart from the others'."""
+def cmd_comments(ok, run, out, gql, humans):
+    """The comments after the latest non-human `Build started` (else the issue's creation), the user's apart from the others'."""
     created, notes = _linear(gql, ok.issue)
-    who = lambda n: (n.email or "").lower()
-    since = max((n.at for n in notes if who(n) in markers and BUILD_STARTED.match(n.body.strip())), default=created)
+    email = lambda n: (n["user"] or {}).get("email")
+    who = lambda n: (email(n) or "").lower()
+    since = max((at for at, n in notes if who(n) not in humans and BUILD_STARTED.match(n["body"].strip())), default=created)
     login = _login(run)
     pr = _pr(ok, run, login)
-    user = [(n.at, {"at": n.raw, "source": "linear", "kind": "comment", "author": n.email, "body": n.body})
-            for n in notes if who(n) in humans and n.at > since]
+    user = [(at, {"at": n["createdAt"], "source": "linear", "kind": "comment", "author": email(n), "body": n["body"]})
+            for at, n in notes if who(n) in humans and at > since]
     others = []
     for at, e in _pr_entries(ok, run, pr, since) if pr else []:
         (user if e["author"] == login else others).append((at, e))
@@ -347,19 +320,16 @@ def cmd_comments(ok, run, out, gql, humans, markers):
     out.write("\n")
     return 0
 
-def _command(a, issue, repos, humans, markers, gql, run, out, err):
+def _command(a, issue, repos, humans, gql, run, out):
     try:
         ok = resolve(issue, gql, run, repos=repos)
     except Exception as e:
         raise TransientError(f"resolve: {e!r}") from None
-    if isinstance(ok, Transient):
+    if isinstance(ok, (Invalid, Transient)):
         raise TransientError(ok.reason)
-    if isinstance(ok, Invalid):
-        err.write(f"eng.py: Invalid: {ok.reason}\n")
-        return 2
-    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, gql, humans, markers)
+    return cmd_status(ok, run, out) if a.cmd == "status" else cmd_comments(ok, run, out, gql, humans)
 
-def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, root=ROOT):
+def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG):
     import argparse
     ap = argparse.ArgumentParser(prog="eng.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -369,24 +339,20 @@ def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.std
     issue = env.get("AGENT_PM_ISSUE", "")
     if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", issue):
         err.write("eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
-        return 2
+        return 1
     try:
         cfg = load_config(config)
-        markers = {r.account.lower() for r in registry(root)[0].values() if "engineering" in r.tasks} if a.cmd == "comments" else set()
     except SystemExit as e:
         err.write(f"eng.py: {e.code}\n")
-        return 2
+        return 1
     humans = {e.lower() for e in cfg.get("human_members") or []}
     if gql is None:
         from pipeline import linear_gql as gql
     try:
-        return _command(a, issue, cfg["project_repos"], humans, markers, gql, run, out, err)
-    except Malformed as e:
-        err.write(f"eng.py: malformed gh output: {e}\n")
-        return 2
+        return _command(a, issue, cfg["project_repos"], humans, gql, run, out)
     except (TransientError, subprocess.TimeoutExpired, OSError) as e:
-        err.write(f"eng.py: transient: {e}\n")
-        return 3
+        err.write(f"eng.py: {e}\n")
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

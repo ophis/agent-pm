@@ -1,5 +1,4 @@
 import dataclasses, io, json, os, sys, subprocess, tempfile, unittest
-from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +30,7 @@ def gql_for(description, title="ENG: Session Registry", ident="TASK-26", project
 def pr_row(number, login="ophis", fork=False):
     return {"number": number, "url": f"u{number}", "state": "OPEN", "isCrossRepository": fork, "author": {"login": login}}
 
-ENGINEER, PM, HUMAN = "frank.agent.w+engineer@gmail.com", "frank.agent.w+pm@gmail.com", "Frank@Example.com"
+ENGINEER, HUMAN = "frank.agent.w+engineer@gmail.com", "Frank@Example.com"
 CREATED = "2026-09-01T00:00:00Z"
 
 def lin(at, email, body):
@@ -46,16 +45,8 @@ def gh_pages(*rows):
 def bodies(entries):
     return [e["body"] for e in entries]
 
-def linear_for(pages, created=CREATED):
-    """Fake Linear: `pages` are the comment lists of successive pages; the `c` cursor is the next page's index."""
-    def gql(q, **v):
-        gql.calls.append((q, v))
-        i = int(v.get("c") or 0)
-        more = i + 1 < len(pages)
-        return {"issue": {"createdAt": created, "comments": {"nodes": pages[i],
-                "pageInfo": {"hasNextPage": more, "endCursor": str(i + 1) if more else None}}}}
-    gql.calls = []
-    return gql
+def linear_for(nodes, created=CREATED):
+    return lambda q, **v: {"issue": {"createdAt": created, "comments": {"nodes": nodes}}}
 
 class Placeholders(unittest.TestCase):
     def test_placeholders_are_ok_fields(self):
@@ -318,21 +309,20 @@ class Cli(unittest.TestCase):
                 ((*api, "repos/ophis/agent-pm/pulls/7/reviews"), t["reviews"]),
                 ((*api, "repos/ophis/agent-pm/pulls/7/comments"), t["review_comments"])]
 
-    def cli(self, *argv, env=None, resolved=None, resolve_error=None, config=None, root=None, gql=None, **over):
+    def cli(self, *argv, env=None, resolved=None, resolve_error=None, config=None, gql=None, **over):
         self.run_ = FakeRun(self.table(**over))
         out, err = io.StringIO(), io.StringIO()
-        extra = {**({} if config is None else {"config": config}), **({} if root is None else {"root": root})}
+        extra = {} if config is None else {"config": config}
         with mock.patch.object(eng, "resolve", return_value=resolved or self.ok, side_effect=resolve_error) as resolve:
             rc = eng.main(list(argv), env={"AGENT_PM_ISSUE": "TASK-26"} if env is None else env,
-                          gql=gql or linear_for([[]]), run=self.run_, out=out, err=err, **extra)
+                          gql=gql or linear_for([]), run=self.run_, out=out, err=err, **extra)
         self.out, self.err, self.resolve = out.getvalue(), err.getvalue(), resolve
         return rc
 
-    def comments(self, *pages, created=CREATED, **over):
-        """Runs `comments` against fake Linear pages and the humans [HUMAN]; returns the parsed output."""
-        self.gql = linear_for(list(pages) or [[]], created)
+    def comments(self, nodes=(), created=CREATED, **over):
+        """Runs `comments` against fake Linear comments and the humans [HUMAN]; returns the parsed output."""
         config = self.config_file("", head=f'human_members = ["{HUMAN}"]\n')
-        self.assertEqual(self.cli("comments", config=config, gql=self.gql, **over), 0, self.err)
+        self.assertEqual(self.cli("comments", config=config, gql=linear_for(list(nodes), created), **over), 0, self.err)
         return json.loads(self.out)
 
     def config_file(self, tail, head=""):
@@ -344,8 +334,8 @@ class Cli(unittest.TestCase):
         return path
 
     def test_requires_issue_env(self):
-        self.assertEqual(self.cli("status", env={}), 2)
-        self.assertIn("AGENT_PM_ISSUE", self.err)
+        self.assertEqual(self.cli("status", env={}), 1)
+        self.assertEqual(self.err, "eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
 
     def test_passes_the_configured_mapping_to_resolve(self):
         path = self.config_file(f'[project_repos]\n"{PROJ}" = "ophis/agent-pm"\n')
@@ -359,72 +349,62 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.resolve.call_args.kwargs["repos"], pipeline.load_config()["project_repos"])
 
     def test_broken_config_refused(self):
-        self.assertEqual(self.cli("status", config=self.config_file(f'[project_repos]\n"{PROJ}" = "ophis"\n')), 2)
+        self.assertEqual(self.cli("status", config=self.config_file(f'[project_repos]\n"{PROJ}" = "ophis"\n')), 1)
         self.assertTrue(self.err.startswith(f"eng.py: pipeline.toml: project_repos.{PROJ} "), self.err)
         self.assertEqual(self.out, "")
         self.resolve.assert_not_called()
 
     def test_config_loaded_after_the_issue_check(self):
-        self.assertEqual(self.cli("status", env={}, config=os.path.join(self.root, "missing.toml")), 2)
+        self.assertEqual(self.cli("status", env={}, config=os.path.join(self.root, "missing.toml")), 1)
         self.assertIn("AGENT_PM_ISSUE", self.err)
 
     def test_refuses_when_not_ok(self):
-        self.assertEqual(self.cli("status", resolved=eng.Invalid("no Repo")), 2)
-        self.assertIn("no Repo", self.err)
+        self.assertEqual(self.cli("status", resolved=eng.Invalid("no Repo")), 1)
+        self.assertEqual((self.out, self.err), ("", "eng.py: no Repo\n"))
 
-    def test_resolve_transient_or_error_exits_3(self):
-        self.assertEqual(self.cli("status", resolved=eng.Transient("gh api: TimeoutExpired")), 3)
-        self.assertEqual(self.err, "eng.py: transient: gh api: TimeoutExpired\n")
-        self.assertEqual(self.cli("comments", resolve_error=subprocess.TimeoutExpired("git", 60)), 3)
-        self.assertTrue(self.err.startswith("eng.py: transient:"))
-        self.assertEqual(self.cli("status", resolve_error=KeyError("title")), 3)
-        self.assertEqual(self.err, "eng.py: transient: resolve: KeyError('title')\n")
+    def test_resolve_transient_or_error_exits_1(self):
+        self.assertEqual(self.cli("status", resolved=eng.Transient("gh api: TimeoutExpired")), 1)
+        self.assertEqual(self.err, "eng.py: gh api: TimeoutExpired\n")
+        self.assertEqual(self.cli("comments", resolve_error=subprocess.TimeoutExpired("git", 60)), 1)
+        self.assertTrue(self.err.startswith("eng.py: resolve: TimeoutExpired("), self.err)
+        self.assertEqual(self.cli("status", resolve_error=KeyError("title")), 1)
+        self.assertEqual(self.err, "eng.py: resolve: KeyError('title')\n")
 
-    def test_setup_push_pr_commands_removed(self):
-        for cmd in ("setup", "push", "pr"):
-            with self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
-                eng.main([cmd], env={"AGENT_PM_ISSUE": "TASK-26"}, gql=lambda *a, **k: None,
-                          run=FakeRun([]), out=io.StringIO(), err=io.StringIO())
-            self.assertEqual(cm.exception.code, 2)
+    def test_transient_subprocess_error_exits_1(self):
+        exc = subprocess.TimeoutExpired("git", 60)
+        self.assertEqual(self.cli("status", show_ref=exc), 1)
+        self.assertEqual((self.out, self.err), ("", f"eng.py: {exc}\n"))
 
-    def test_since_refused(self):
-        for argv in (("comments", "--since", "2026-09-28T00:00:00Z"), ("comments", "--since", "yesterday")):
-            with self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
-                self.cli(*argv)
-            self.assertEqual(cm.exception.code, 2)
-
-    def test_transient_subprocess_error_exits_3(self):
-        self.assertEqual(self.cli("status", show_ref=subprocess.TimeoutExpired("git", 60)), 3)
-        self.assertIn("transient", self.err)
-
-    def test_gh_or_git_failure_exits_3(self):
+    def test_gh_or_git_failure_exits_1(self):
         for cmd, over in (("status", {"prs": ok(code=1, stderr="HTTP 502")}), ("status", {"user": ok(code=1, stderr="auth")}),
                           ("status", {"show_ref": ok(code=128, stderr="fatal")}),
                           ("status", {"show_ref": ok(code=1), "remote": ok(code=128, stderr="no remote")}),
                           ("comments", {"user": ok(code=1, stderr="auth")}), ("comments", {"prs": ok(code=1, stderr="HTTP 502")}),
                           ("comments", {"reviews": ok(code=1, stderr="HTTP 502")})):
-            self.assertEqual(self.cli(cmd, **over), 3, over)
-            self.assertTrue(self.err.startswith("eng.py: transient:"), self.err)
+            self.assertEqual(self.cli(cmd, **over), 1, over)
+            self.assertRegex(self.err, r"eng\.py: (?!transient)[^\n]+\n\Z")
             self.assertEqual(self.out, "")
 
-    def test_malformed_gh_output_exits_2(self):
+    def test_malformed_gh_output(self):
         for cmd, over in (("status", {"prs": ok('{"message": "Bad credentials"}')}), ("status", {"prs": ok("not json")}),
                           ("status", {"prs": ok(json.dumps([{**pr_row(7), "number": "7"}]))}),
                           ("status", {"user": ok("[]")}), ("status", {"user": ok('{"login": ""}')}),
                           ("comments", {"issue_comments": ok('{"message": "x"}')}), ("comments", {"issue_comments": ok('[{"a": 1}]')}),
                           ("comments", {"reviews": ok(json.dumps([[{"user": {"login": "ophis"}, "submitted_at": "later"}]]))})):
-            self.assertEqual(self.cli(cmd, **over), 2, over)
-            self.assertTrue(self.err.startswith("eng.py: malformed gh output:"), self.err)
+            self.assertEqual(self.cli(cmd, **over), 1, over)
+            self.assertRegex(self.err, r"eng\.py: (?!malformed)[^\n]+\n\Z")
+            self.assertEqual(self.out, "")
 
     def test_since_is_the_latest_engineer_build_started(self):
         d = self.comments([lin("2026-09-10T00:00:00Z", ENGINEER, "Build started"), lin("2026-09-12T00:00:00Z", HUMAN.lower(), "old ask"),
                            lin("2026-09-20T12:00:00Z", ENGINEER.upper(), "  Build started\n\nrework"),
-                           lin("2026-09-15T00:00:00Z", ENGINEER, "Build started"), lin("2026-09-21T00:00:00Z", HUMAN.lower(), "new ask")],
+                           lin("2026-09-15T00:00:00Z", ENGINEER, "Build started"), lin("2026-09-21T00:00:00Z", HUMAN.lower(), "new ask"),
+                           lin("2026-09-21T01:00:00Z", HUMAN.lower(), "Build started")],
                           issue_comments=gh_pages(gh_row("ophis", "2026-09-19T00:00:00Z", "old pr"), gh_row("ophis", "2026-09-22T00:00:00Z", "new pr")),
                           reviews=gh_pages(gh_row("rando", "2026-09-19T00:00:00Z", "old review", key="submitted_at", state="COMMENTED"),
                                            gh_row("rando", "2026-09-23T00:00:00Z", "new review", key="submitted_at", state="COMMENTED")))
         self.assertEqual(d["since"], "2026-09-20T12:00:00+00:00")
-        self.assertEqual(bodies(d["user"]), ["new ask", "new pr"])
+        self.assertEqual(bodies(d["user"]), ["new ask", "Build started", "new pr"])
         self.assertEqual(bodies(d["others"]), ["new review"])
 
     def test_no_build_started_since_is_the_issue_creation(self):
@@ -432,16 +412,6 @@ class Cli(unittest.TestCase):
                           issue_comments=gh_pages(gh_row("ophis", "2026-08-31T23:59:59Z", "before"), gh_row("ophis", "2026-09-03T00:00:00Z", "after")))
         self.assertEqual(d["since"], "2026-09-01T00:00:00+00:00")
         self.assertEqual(bodies(d["user"]), ["ask", "after"])
-
-    def test_only_the_engineering_account_moves_the_cutoff(self):
-        d = self.comments([lin("2026-09-05T00:00:00Z", HUMAN.lower(), "Build started"), lin("2026-09-06T00:00:00Z", PM, "Build started"),
-                           lin("2026-09-07T00:00:00Z", None, "Build started"), lin("2026-09-08T00:00:00Z", "bot@linear.app", "Build started"),
-                           lin("2026-09-09T00:00:00Z", ENGINEER, "Build startedX"), lin("2026-09-09T01:00:00Z", ENGINEER, "Not Build started"),
-                           lin("2026-09-09T02:00:00Z", ENGINEER, "build started")])
-        self.assertEqual(d["since"], "2026-09-01T00:00:00+00:00")
-        self.assertEqual(bodies(d["user"]), ["Build started"])
-        self.assertEqual(d["user"][0]["at"], "2026-09-05T00:00:00Z")
-        self.assertEqual(d["others"], [])
 
     def test_entries_at_since_excluded_and_times_compared_as_instants(self):
         d = self.comments([lin("2026-09-20T12:00:00Z", ENGINEER, "Build started"), lin("2026-09-20T12:00:00Z", HUMAN.lower(), "at since")],
@@ -485,14 +455,6 @@ class Cli(unittest.TestCase):
         d = self.comments([lin("2026-09-02T00:00:00Z", HUMAN.upper(), "ask")])
         self.assertEqual(bodies(d["user"]), ["ask"])
 
-    def test_every_linear_page_is_read(self):
-        d = self.comments([lin("2026-09-02T00:00:00Z", HUMAN.lower(), "early ask")], [lin("2026-09-03T00:00:00Z", ENGINEER, "Build started")],
-                          [lin("2026-09-04T00:00:00Z", HUMAN.lower(), "late ask")])
-        self.assertEqual(d["since"], "2026-09-03T00:00:00+00:00")
-        self.assertEqual(bodies(d["user"]), ["late ask"])
-        self.assertEqual([v for _, v in self.gql.calls], [{"i": "TASK-26", "c": None}, {"i": "TASK-26", "c": "1"}, {"i": "TASK-26", "c": "2"}])
-        self.assertIn("first: 250", self.gql.calls[0][0])
-
     def test_every_gh_page_is_read(self):
         page = lambda n: [gh_row("ophis", f"2026-09-0{n}T00:00:00Z", f"p{n}")]
         d = self.comments(issue_comments=ok(json.dumps([page(2), page(3), page(4)])))
@@ -509,42 +471,6 @@ class Cli(unittest.TestCase):
         self.assertEqual(bodies(d["user"]), ["ask"])
         self.assertEqual(d["others"], [])
         self.assertFalse(any("--paginate" in c[0] for c in self.run_.calls))
-
-    def test_linear_failure_exits_3(self):
-        def raises(exc):
-            def gql(q, **v):
-                raise exc
-            return gql
-        def damaged(fix):
-            def gql(q, **v):
-                d = linear_for([[lin("2026-09-02T00:00:00Z", HUMAN, "x")]])(q, **v)
-                fix(d["issue"])
-                return d
-            return gql
-        node = lambda i: i["comments"]["nodes"][0]
-        for name, gql in (("raise", raises(RuntimeError("boom"))), ("api error", raises(SystemExit("linear api error: x"))),
-                          ("no issue", lambda q, **v: {"issue": None}), ("no createdAt", damaged(lambda i: i.pop("createdAt"))),
-                          ("bad createdAt", damaged(lambda i: i.update(createdAt="yesterday"))),
-                          ("no comments", damaged(lambda i: i.pop("comments"))), ("no nodes", damaged(lambda i: i["comments"].pop("nodes"))),
-                          ("no pageInfo", damaged(lambda i: i["comments"].pop("pageInfo"))), ("no body", damaged(lambda i: node(i).pop("body"))),
-                          ("null body", damaged(lambda i: node(i).update(body=None))), ("no user", damaged(lambda i: node(i).pop("user"))),
-                          ("no email", damaged(lambda i: node(i).update(user={}))), ("no node time", damaged(lambda i: node(i).pop("createdAt"))),
-                          ("bad node time", damaged(lambda i: node(i).update(createdAt="soon"))),
-                          ("no endCursor", damaged(lambda i: i["comments"]["pageInfo"].update(hasNextPage=True, endCursor=None))),
-                          ("stuck cursor", damaged(lambda i: i["comments"]["pageInfo"].update(hasNextPage=True, endCursor="same")))):
-            self.assertEqual(self.cli("comments", gql=gql), 3, name)
-            self.assertTrue(self.err.startswith("eng.py: transient: Linear: "), (name, self.err))
-            self.assertEqual(self.out, "")
-
-    def test_broken_registry_exits_2(self):
-        bad = os.path.join(self.root, "bad")
-        os.makedirs(os.path.join(bad, "roles"))
-        os.makedirs(os.path.join(bad, "tasks"))
-        open(os.path.join(bad, "roles", "solo.md"), "w").close()
-        self.assertEqual(self.cli("comments", root=bad), 2)
-        self.assertEqual(self.err, "eng.py: roles/solo.md: has no roles/solo.toml\n")
-        self.assertEqual(self.out, "")
-        self.assertEqual(self.cli("status", root=bad), 0)
 
     def test_pr_ignores_forks_and_other_authors(self):
         prs = [pr_row(9, fork=True), pr_row(8, login="rando"), pr_row(7)]
