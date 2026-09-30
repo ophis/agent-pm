@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works overnight, one issue per role at a time, and hands its output back to you for review.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
 
 | Role | Agent produces | Published to |
 |---|---|---|
@@ -20,8 +20,8 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ## Schedule
 
-- **Router:** hourly 01:00–06:00. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
-- **Promote:** at :05, :20, :35 and :50. Handles Handoff, then prunes finished worktrees.
+- **Router:** hourly, all day. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Promote:** every 5 minutes. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
 
@@ -36,7 +36,7 @@ for job in router promote; do
 done
 ```
 
-To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+To change a schedule, edit the plist in `scripts/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ### Role accounts
 

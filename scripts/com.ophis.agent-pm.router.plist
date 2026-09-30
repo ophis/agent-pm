@@ -10,49 +10,16 @@
 	<array>
 		<string>/opt/homebrew/bin/python3</string>
 		<string>/Users/francis/playground/agent-pm/scripts/router.py</string>
+		<string>--now</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/francis/playground/agent-pm/logs/router.log</string>
 	<key>StandardOutPath</key>
 	<string>/Users/francis/playground/agent-pm/logs/router.log</string>
 	<key>StartCalendarInterval</key>
-	<array>
-		<dict>
-			<key>Hour</key>
-			<integer>1</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>2</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>3</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>4</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>5</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key>
-			<integer>6</integer>
-			<key>Minute</key>
-			<integer>0</integer>
-		</dict>
-	</array>
+	<dict>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
 </dict>
 </plist>
