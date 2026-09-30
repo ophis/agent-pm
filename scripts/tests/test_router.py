@@ -53,13 +53,15 @@ class FakeLinear:
         if query == pipeline.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids, [(IDS[p], p) for p in PROJECTS])]}}
         if "users(filter" in query:
-            return {"users": {"nodes": [{"id": USER}] if v["e"] == "me@x.com" else []}}
+            return {"users": {"nodes": [{"id": u} for e, u in (("me@x.com", USER), ("b@x.com", "user-b")) if v["e"] == e]}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if "mutation" in query:
             self.mutations.append((query, v))
             issue = self.issues[v["i"]]
-            if "commentCreate" in query:
+            if "issueSubscribe" in query:
+                issue.setdefault("subscribers", []).append(v["e"])
+            elif "commentCreate" in query:
                 issue.setdefault("comments", []).append(v["b"])
             else:
                 upd = v.get("u") or {"stateId": v["s"], "assigneeId": v["a"]}
@@ -76,6 +78,10 @@ class FakeLinear:
         if "state { id }" in query:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         raise AssertionError(query)
+
+
+def ops(fake):
+    return [re.search(r"\{ (\w+)\(", q).group(1) for q, _ in fake.mutations]
 
 
 def issue(ident, state, assignee=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR):
@@ -456,22 +462,27 @@ class Plan(Base):
         self.assertEqual(self.run_main(fake, "--plan"), (0, ""))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
+        self.assertNotIn("subscribers", fake.issues["TASK-1"])
 
-    def test_attempt_cap_assigns_reviewer(self):
-        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+    def test_attempt_cap_subscribes_humans(self):
+        self.config = self.write_config('human_members = ["me@x.com", "b@x.com"]\n' + CONFIG)
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(minutes=40))])
         for i, sid in enumerate(["a", "b", "c", "d"]):
             self.add("start", "TASK-1", sid, 400 - i * 50)
         self.run_main(fake, "--plan")
-        self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]), ("In Review", USER))
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["assignee"], t["subscribers"]), ("In Review", ME, ["me@x.com", "b@x.com"]))
+        self.assertEqual(ops(fake), ["issueSubscribe", "issueSubscribe", "commentCreate", "issueUpdate"])
+        self.assertEqual(fake.mutations[-1][1]["u"], {"stateId": STATES["In Review"]})
 
-    def test_interrupted_unassigns_even_with_reviewer(self):
+    def test_interrupted_unassigns_and_subscribes_no_one(self):
         self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         fake = FakeLinear([issue("TASK-1", "In Progress", ME, updated=ago(hours=5))])
         self.run_main(fake, "--plan")
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]), ("Todo", None))
+        self.assertNotIn("subscribers", fake.issues["TASK-1"])
 
-    def test_unknown_reviewer_fails_loud(self):
+    def test_unknown_human_fails_loud(self):
         self.config = self.write_config('human_members = ["nobody@x.com"]\n' + CONFIG)
         with self.assertRaises(SystemExit) as e:
             self.run_main(FakeLinear([]), "--plan")
@@ -571,12 +582,14 @@ class Claim(Base):
         self.assertEqual((fake.issues["TASK-3"]["state"], fake.issues["TASK-3"]["assignee"]), ("In Progress", ME))
 
     def test_capped_todo_goes_to_review(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         fake = FakeLinear([issue("TASK-1", "Todo", priority=1), issue("TASK-2", "Todo", priority=2)])
         for sid in "abcd":
             self.add("start", "TASK-1", sid, 300)
         self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-2 https://linear.app/x/TASK-2 Deep Research")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
+        self.assertEqual((fake.issues["TASK-1"]["assignee"], fake.issues["TASK-1"]["subscribers"]), (None, ["me@x.com"]))
 
     def test_capped_todo_reset_by_user(self):
         self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
