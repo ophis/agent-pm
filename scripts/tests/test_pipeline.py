@@ -11,14 +11,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 
-BASE = HEADER + """[projects."Deep Research"]
-next = "Product Design"
-[projects."Product Design"]
-prefix = "PRD"
-next = "Engineering"
-[projects.Engineering]
-prefix = "TDD"
-[projects.Solo]
+BASE = HEADER + """[roles.researcher]
+next = "pm"
+[roles.pm]
+next = "engineer"
+[roles.engineer]
+[roles.solo]
 """
 
 
@@ -36,15 +34,11 @@ class Config(unittest.TestCase):
 
     def test_stage_order(self):
         self.assertEqual(pipeline.stage_order(self.load(BASE)),
-                         {"Deep Research": 0, "Product Design": 1, "Engineering": 2, "Solo": 0})
+                         {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
 
     def test_cycle_rejected(self):
         with self.assertRaises(SystemExit):
-            self.load(BASE + '[projects.A]\nprefix = "A"\nnext = "B"\n[projects.B]\nprefix = "B"\nnext = "A"\n')
-
-    def test_next_without_prefix_rejected(self):
-        with self.assertRaises(SystemExit):
-            self.load(BASE.replace('prefix = "TDD"\n', ""))
+            self.load(BASE + '[roles.a]\nnext = "b"\n[roles.b]\nnext = "a"\n')
 
     def test_harness_key_required(self):
         for text in (BASE.replace('harness_key = "linear-api-key"\n', ""),
@@ -57,7 +51,7 @@ class Config(unittest.TestCase):
 
     def test_ids_required(self):
         states = "states = { " + ", ".join(f'{k} = "{v}"' for k, v in STATES.items()) + " }\n"
-        body = BASE[BASE.index("[projects"):]
+        body = BASE[BASE.index("[roles"):]
         cases = {
             "team must be a Linear team id (UUID): \"Frank's Agents\"": 'team = "Frank\'s Agents"\n' + states + body,
             "team must be a Linear team id (UUID): None": states + body,
@@ -74,17 +68,7 @@ class Config(unittest.TestCase):
                 self.assertIn(fragment, str(cm.exception.code))
 
 
-PROJECTS = HEADER + """[projects.dr]
-next = "eng"
-role = "researcher"
-task = "deep-research"
-[projects.eng]
-prefix = "ENG"
-role = "engineer"
-task = "engineering"
-[projects.idle]
-prefix = "I"
-"""
+ROLES = HEADER + '[roles.researcher]\nnext = "engineer"\n'
 RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
 ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 FILES = {
@@ -93,7 +77,7 @@ FILES = {
     "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
     "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
-    "tasks/engineering.md": "", "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nrepo_from_issue = true\n',
+    "tasks/engineering.md": "", "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nrepo_from_issue = true\nprefix = "ENG"\n',
 }
 ENGINEERING = FILES["tasks/engineering.toml"]
 
@@ -115,19 +99,23 @@ class Runnable(unittest.TestCase):
         with open(path, "w") as f:
             f.write(text)
 
+    def read_role(self, name):
+        with open(os.path.join(self.root, "roles", f"{name}.toml")) as f:
+            return f.read()
+
     def remove(self, rel):
         os.remove(os.path.join(self.root, rel))
 
-    def load(self, text=PROJECTS):
+    def load(self, text=ROLES):
         path = os.path.join(self.outside, "pipeline.toml")
         with open(path, "w") as f:
             f.write(text)
         return pipeline.load_config(path)
 
-    def runs(self, text=PROJECTS):
+    def runs(self, text=ROLES):
         return pipeline.runnable(self.load(text), root=self.root)
 
-    def rejects(self, fragment, prefix="pipeline.toml", text=PROJECTS):
+    def rejects(self, fragment, prefix="pipeline.toml", text=ROLES):
         with self.assertRaises(SystemExit) as cm:
             self.runs(text)
         msg = str(cm.exception.code)
@@ -136,47 +124,63 @@ class Runnable(unittest.TestCase):
 
     def test_runs(self):
         runs = self.runs()
-        self.assertEqual(sorted(runs), ["dr", "eng"])
-        dr, eng = runs["dr"], runs["eng"]
+        self.assertEqual(sorted(runs), ["engineer", "researcher"])
+        r, e = runs["researcher"], runs["engineer"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key"])
-        self.assertEqual((dr.key, eng.key), ("k-researcher", "k-engineer"))
-        self.assertEqual((dr.task_name, dr.task["effort"], dr.memory, dr.read_only), ("deep-research", "xhigh", None, ()))
-        self.assertEqual(dr.charter, os.path.join(self.root, "roles", "researcher.md"))
-        self.assertEqual(dr.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
-        self.assertEqual(eng.read_only, (os.path.expanduser("~/playground/private_docs"),))
-        self.assertTrue(eng.task["repo_from_issue"])
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account"])
+        self.assertEqual((r.key, e.key), ("k-researcher", "k-engineer"))
+        self.assertEqual((r.account, e.account), ("r@x.com", "e@x.com"))
+        self.assertEqual((r.task_name, e.task_name), ("deep-research", "engineering"))
+        self.assertEqual((r.task["effort"], r.memory, r.read_only), ("xhigh", None, ()))
+        self.assertEqual(r.charter, os.path.join(self.root, "roles", "researcher.md"))
+        self.assertEqual(e.charter, os.path.join(self.root, "roles", "engineer.md"))
+        self.assertEqual(r.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
+        self.assertEqual(e.read_only, (os.path.expanduser("~/playground/private_docs"),))
+        self.assertTrue(e.task["repo_from_issue"])
 
     def test_read_only_normalized(self):
         self.write("roles/engineer.toml", 'read_only = ["~/playground/private_docs/"]\n' + ENGINEER_ID)
-        self.assertEqual(self.runs()["eng"].read_only, (os.path.expanduser("~/playground/private_docs"),))
+        self.assertEqual(self.runs()["engineer"].read_only, (os.path.expanduser("~/playground/private_docs"),))
 
-    def test_old_tables_rejected(self):
-        self.rejects("unknown keys: roles", text=PROJECTS + "[roles.researcher]\n")
-        self.rejects("unknown keys: tasks", text=PROJECTS + '[tasks.x]\nmodel = "opus"\n')
+    def test_projects_table_rejected(self):
+        self.rejects("pipeline.toml has unknown keys: projects", text=ROLES + '[projects.p]\nnext = "q"\n')
+        self.rejects("pipeline.toml has unknown keys: tasks", text=ROLES + '[tasks.x]\nmodel = "opus"\n')
 
-    def test_project_keys_rejected(self):
-        for key, value in (("instructions", '"tasks/x.md"'), ("model", '"opus"'), ("effort", '"high"'), ("add_dirs", "[]"),
-                           ("repo_from_issue", "true"), ("allowed_tools", "[]"), ("prefx", '"I"')):
-            with self.subTest(key):
-                self.rejects(key, text=PROJECTS.replace('prefix = "I"\n', f'prefix = "I"\n{key} = {value}\n'))
+    def test_next_names_undefined_role(self):
+        self.rejects("pipeline.toml: next of 'researcher' names undefined role 'ghost'",
+                     text=ROLES.replace('next = "engineer"', 'next = "ghost"'))
+
+    def test_next_role_default_task_needs_prefix(self):
+        self.write("tasks/engineering.toml", ENGINEERING.replace('prefix = "ENG"\n', ""))
+        self.rejects("pipeline.toml: next of 'researcher' is role 'engineer', whose default task 'engineering' has no prefix")
+
+    def test_roles_table_needs_a_role_pair(self):
+        self.rejects("pipeline.toml: [roles.ghost] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.ghost]\n")
+        self.rejects("pipeline.toml: [roles.principles] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.principles]\n")
+
+    def test_roles_table_unknown_keys(self):
+        self.rejects("pipeline.toml: [roles.researcher] has unknown keys: role, task",
+                     text=ROLES + 'role = "x"\ntask = "y"\n')
 
     def test_states_is_a_top_key(self):
         self.assertEqual(list(self.load()["states"]), list(pipeline.STATES))
-        self.assertEqual(sorted(self.runs()), ["dr", "eng"])
+        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
 
-    def test_load_config_ignores_old_tables(self):
-        cfg = self.load(PROJECTS + '[roles.researcher]\n[projects.old]\ninstructions = "stages/gone.md"\n')
-        self.assertIn("old", cfg["projects"])
+    def test_load_config_ignores_role_checks(self):
+        cfg = self.load(ROLES + '[roles.ghost]\nfoo = "x"\n[projects.old]\n')
+        self.assertIn("ghost", cfg["roles"])
 
-    def test_role_and_task_together(self):
-        self.rejects("both role and task", text=PROJECTS.replace('role = "engineer"\n', ""))
-        self.rejects("both role and task", text=PROJECTS.replace('task = "engineering"\n', ""))
+    def test_default_task_is_first(self):
+        self.write("roles/engineer.toml", self.read_role("engineer").replace('tasks = ["engineering"]', 'tasks = ["engineering", "deep-research"]'))
+        self.assertEqual(self.runs()["engineer"].task_name, "engineering")
 
-    def test_unknown_role_or_task(self):
-        self.rejects("'em'", text=PROJECTS.replace('role = "engineer"', 'role = "em"'))
-        self.rejects("'principles'", text=PROJECTS.replace('role = "engineer"', 'role = "principles"'))
-        self.rejects("'work-breakdown'", text=PROJECTS.replace('task = "engineering"', 'task = "work-breakdown"'))
+    def test_role_ids(self):
+        runs = self.runs()
+        gql = lambda q, **v: {"users": {"nodes": [{"id": "u-" + v["e"]}]}}
+        self.assertEqual(pipeline.role_ids(gql, runs), {"u-e@x.com": "engineer", "u-r@x.com": "researcher"})
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.role_ids(lambda q, **v: {"users": {"nodes": []}}, {"engineer": runs["engineer"]})
+        self.assertEqual(str(cm.exception.code), "roles/engineer.toml: account 'e@x.com' not found in Linear")
 
     def test_orphans(self):
         for rel, other in (("roles/engineer.toml", "roles/engineer.md"), ("roles/engineer.md", "roles/engineer.toml"),
@@ -199,7 +203,7 @@ class Runnable(unittest.TestCase):
         self.write("roles/notes.txt", "x")
         self.write("tasks/.engineering.toml.swp", "x")
         self.write("roles/drafts/x.md", "")
-        self.assertEqual(sorted(self.runs()), ["dr", "eng"])
+        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
 
     def test_bad_names(self):
         self.write("roles/Reviewer.md", "")
@@ -269,10 +273,12 @@ class Runnable(unittest.TestCase):
 
     def test_repo_read_only(self):
         self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
-        self.assertEqual(self.runs()["eng"].read_only, ("{repo}",))
-        self.rejects("{repo}", text=PROJECTS.replace('role = "researcher"', 'role = "engineer"'))
+        self.assertEqual(self.runs()["engineer"].read_only, ("{repo}",))
         self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
-        self.rejects("{repo}")
+        self.rejects("read_only {repo} needs default task 'engineering' with repo_from_issue and no allowed_tools", prefix="roles/engineer.toml")
+        self.write("tasks/engineering.toml", ENGINEERING)
+        self.write("roles/researcher.toml", 'read_only = ["{repo}"]\n' + RESEARCHER_ID)
+        self.rejects("read_only {repo} needs default task 'deep-research' with repo_from_issue and no allowed_tools", prefix="roles/researcher.toml")
 
     def memory(self, path, read_only="~/playground/private_docs"):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
@@ -281,7 +287,7 @@ class Runnable(unittest.TestCase):
         mem = os.path.join(self.outside, "engineer")
         os.makedirs(mem)
         self.memory(mem)
-        self.assertEqual(self.runs()["eng"].memory, mem)
+        self.assertEqual(self.runs()["engineer"].memory, mem)
 
     def test_memory_rejected(self):
         ro = os.path.join(self.outside, "docs")
@@ -314,39 +320,43 @@ class Runnable(unittest.TestCase):
                     self.memory(os.path.join(home, d).rstrip("/"), read_only=ro)
                     self.rejects("memory", prefix="roles/engineer.toml")
             self.memory(os.path.join(home, "notes"), read_only=ro)
-            self.assertEqual(self.runs()["eng"].memory, os.path.join(home, "notes"))
+            self.assertEqual(self.runs()["engineer"].memory, os.path.join(home, "notes"))
 
     def test_allowed_tools_checked_in_task_file(self):
         self.write("tasks/engineering.toml", ENGINEERING + 'allowed_tools = ["Bash(git push origin *)"]\n')
         self.rejects("wildcard", prefix="tasks/engineering.toml")
         rule = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
         self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
-        self.assertEqual(self.runs()["eng"].task["allowed_tools"], [rule])
+        self.assertEqual(self.runs()["engineer"].task["allowed_tools"], [rule])
 
     def test_load_config_does_not_need_files(self):
         self.remove("tasks/engineering.md")
-        self.assertIn("eng", self.load()["projects"])
+        self.assertIn("researcher", self.load()["roles"])
 
 
 class RealConfig(unittest.TestCase):
     def test_three_runs(self):
-        runs = pipeline.runnable(pipeline.load_config())
+        cfg = pipeline.load_config()
+        runs = pipeline.runnable(cfg)
         got = {k: (r.task_name, r.task["model"], r.task["effort"], bool(r.task.get("repo_from_issue")), r.read_only, r.memory,
                    os.path.basename(r.charter))
                for k, r in runs.items()}
         private = os.path.expanduser("~/playground/private_docs")
         self.assertEqual(got, {
-            "03495382-48f7-4280-a11c-4375df80a561": ("deep-research", "opus", "xhigh", False, (), None, "researcher.md"),
-            "ba0738ba-ade7-4525-8d79-1b9944334e74": ("product-design", "opus", "high", False, (), None, "pm.md"),
-            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
+            "researcher": ("deep-research", "opus", "xhigh", False, (), None, "researcher.md"),
+            "pm": ("product-design", "opus", "high", False, (), None, "pm.md"),
+            "engineer": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
         })
-        self.assertNotIn("allowed_tools", runs["ddbff8bf-b633-4b8c-9272-d1d5ee923747"].task)
+        self.assertNotIn("allowed_tools", runs["engineer"].task)
         self.assertEqual({k: r.key for k, r in runs.items()}, {
-            "03495382-48f7-4280-a11c-4375df80a561": "linear-api-key-researcher",
-            "ba0738ba-ade7-4525-8d79-1b9944334e74": "linear-api-key-pm",
-            "ddbff8bf-b633-4b8c-9272-d1d5ee923747": "linear-api-key-engineer",
+            "researcher": "linear-api-key-researcher",
+            "pm": "linear-api-key-pm",
+            "engineer": "linear-api-key-engineer",
         })
-        self.assertEqual(pipeline.load_config()["harness_key"], "linear-api-key")
+        self.assertEqual({k: r.account for k, r in runs.items()}, {k: pipeline.registry()[0][k].account for k in runs})
+        self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
+        self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
+        self.assertEqual(cfg["harness_key"], "linear-api-key")
         tasks = pipeline.registry()[1]
         self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
 
@@ -370,12 +380,13 @@ class TeamCheck(unittest.TestCase):
         return gql
 
     def test_ok(self):
-        gql = self.gql([team_node(projects=[("p1", "One")])])
+        gql = self.gql([team_node()])
         t = pipeline.team(gql, self.cfg())
-        self.assertEqual(t, pipeline.Team(TEAM, "Team", {"p1": "One"}, dict(STATES)))
+        self.assertEqual(t, pipeline.Team(TEAM, "Team", dict(STATES)))
         (query, v), = gql.calls
         self.assertEqual((query, v), (pipeline.Q_TEAM, {"t": TEAM}))
         self.assertIn("teams(filter: { id: { eq: $t } })", query)
+        self.assertNotIn("projects", query)
 
     def test_team_not_found(self):
         with self.assertRaises(SystemExit) as cm:

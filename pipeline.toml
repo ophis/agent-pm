@@ -11,21 +11,13 @@ handoff     = "6d876dc6-7732-4473-a0b2-30041d93d0aa"
 done        = "414a4381-7260-46e7-8057-d8cec9d4b11f"
 canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 
-# Projects are keyed by their Linear project id (a name or URL slug changes with a rename). role + task make one runnable:
-# the pairs roles/<role>.md + roles/<role>.toml and tasks/<task>.md + tasks/<task>.toml.
-[projects."03495382-48f7-4280-a11c-4375df80a561"]  # 1-Research
-next = "ba0738ba-ade7-4525-8d79-1b9944334e74"  # 2-Product Design
-role = "researcher"
-task = "deep-research"
+# Each role's place in the pipeline, keyed by role name (roles/<role>.md + roles/<role>.toml);
+# an issue assigned to the role's account runs the role's default task.
+[roles.researcher]
+next = "pm"                        # promote hands the role's Handoff issues to this role
 
-[projects."ba0738ba-ade7-4525-8d79-1b9944334e74"]  # 2-Product Design
-prefix = "PRD"                            # title prefix for issues created in this project
-next = "ddbff8bf-b633-4b8c-9272-d1d5ee923747"  # 3-Engineering
-require_instructions = false              # a PRD carries enough context; comments are optional
-role = "pm"
-task = "product-design"
+[roles.pm]
+next = "engineer"
+require_instructions = false       # a PRD carries enough context; Handoff comments are optional
 
-[projects."ddbff8bf-b633-4b8c-9272-d1d5ee923747"]  # 3-Engineering
-prefix = "ENG"
-role = "engineer"
-task = "engineering"
+[roles.engineer]                   # no next: the last stage
