@@ -1,6 +1,6 @@
 # TASK-67: role identity — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
 
 ## Implementation plan
 
@@ -429,3 +429,7 @@ The launcher never reads the key: it checks the item exists and sets `LINEAR_KEY
 - S4: plan written, 5 tasks (config, harness key, launcher, router agents, docs); execution=subagent-driven-development
 - S5: 5 tasks done via SDD (65e8cd3 config, 62ea949 harness key, 9a1885d launcher, 26e13ea router agents, d6df89a+f2ec8e9 docs); per-task reviews clean
 - S6: 274 tests OK; Keychain items present (no -w); real runnable() gives each run its role key/account; linear_gql by service -> viewer frank.agent.w@gmail.com; role accounts resolve in Linear; each role service authenticates as its account; promote --dry-run OK
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[test,code-quality] +security(roster, unmatched by selector; keys are the change's core risk) dropped=[architecture (reviewed in S3), performance (marginal)] transport=Workflow
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS test=PASS code-quality=PASS security=PASS -> converged
+- S8: skipped (commits kept, per run instructions)
+- Residual non-blocking: harness_key service must hold exactly one Keychain item (documented, not checked at runtime); has_key lets an OSError from `security` crash instead of config-error; one unresolvable role account stops every router tick (fail loud, intended); two roles may share an `account`; README "tasks (first is the default)" describes behavior used only from PR-C; README harness_key comment and "its project log" wording; CLAUDE.md Identity bullet overlaps the launch.py bullet; Run.account unused outside tests; router reuses the name `missing`; Board parses the registry twice; RESEARCHER_ID/ENGINEER_ID duplicated across test modules; long Run docstring and launch.py tmux line; dense FakeLinear users branch.
