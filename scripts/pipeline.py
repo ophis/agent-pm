@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,6 +53,11 @@ def log(msg):
 
 def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def norm(name):
+    """A task or label name compared ignoring case, hyphens and spaces."""
+    return re.sub(r"[- ]", "", name.lower())
 
 
 def slug(name):
@@ -133,7 +138,7 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "docs", "roles", "project_repos"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "docs", "roles", "project_repos"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -168,6 +173,8 @@ def _check_ids(cfg):
     for k in STATES:
         if not _uuid(states[k]):
             raise SystemExit(f"pipeline.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
+    if not _uuid(cfg.get("task_label_group")):
+        raise SystemExit(f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
 
 
 def _check_docs(cfg):
@@ -204,7 +211,8 @@ class Role:
 
 @dataclass(frozen=True)
 class Run:
-    """A role's default task, resolved from roles/ and tasks/; every path is absolute. key is the role's Keychain service name, account its Linear email."""
+    """A role's task, resolved from roles/ and tasks/; every path is absolute. runnable() gives the default task (the first of tasks), with_task() another.
+    key is the role's Keychain service name, account its Linear email, tasks the role's {name: task table} in its order."""
     task_name: str
     task: dict
     charter: str
@@ -213,6 +221,12 @@ class Run:
     read_only: tuple
     key: str
     account: str
+    tasks: dict
+
+    def with_task(self, name):
+        """This run for task `name` of the same role; KeyError when the role does not have it."""
+        return replace(self, task_name=name, task=self.tasks[name],
+                       instructions=os.path.join(os.path.dirname(self.instructions), f"{name}.md"))
 
 
 def load_config(path=CONFIG):
@@ -339,6 +353,11 @@ def registry(root=ROOT, docs_clone=None):
 
     roles = {name: _role(name, r, root, resolve) for name, r in _pairs(root, "roles").items()}
     tasks = {name: _task(name, t, resolve) for name, t in _pairs(root, "tasks").items()}
+    seen = {}
+    for name in sorted(tasks):
+        if (n := norm(name)) in seen:
+            raise SystemExit(f"tasks/{seen[n]} and tasks/{name}: task names match ignoring case, hyphens and spaces")
+        seen[n] = name
     owner = {}
     for name, r in roles.items():
         if unknown := [t for t in r.tasks if t not in tasks]:
@@ -350,7 +369,7 @@ def registry(root=ROOT, docs_clone=None):
 
 
 def runnable(cfg, root=ROOT):
-    """{role: Run} of every role, running its default task; a broken pipeline.toml, role or task stops the caller (fail loud)."""
+    """{role: Run} of every role, each its default task's (Run.with_task gives another of the role's tasks); a broken pipeline.toml, role or task stops the caller (fail loud)."""
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
     roles, tasks = registry(root, cfg["docs"]["clone"])
@@ -372,12 +391,15 @@ def runnable(cfg, root=ROOT):
             raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {nxt_task!r} has no prefix")
     out = {}
     for name, r in roles.items():
+        role_tasks = {t: tasks[t] for t in r.tasks}
+        if REPO in r.read_only:
+            for i, (t, table) in enumerate(role_tasks.items()):
+                if not table.get("repo_from_issue") or "allowed_tools" in table:
+                    which = f"default task {t!r}" if i == 0 else f"task {t!r}"
+                    raise SystemExit(f"roles/{name}.toml: read_only {REPO} needs {which} with repo_from_issue and no allowed_tools")
         task = r.tasks[0]
-        t = tasks[task]
-        if REPO in r.read_only and (not t.get("repo_from_issue") or "allowed_tools" in t):
-            raise SystemExit(f"roles/{name}.toml: read_only {REPO} needs default task {task!r} with repo_from_issue and no allowed_tools")
-        out[name] = Run(task, t, os.path.join(root, "roles", f"{name}.md"), os.path.join(root, "tasks", f"{task}.md"),
-                        r.memory, r.read_only, r.key, r.account)
+        out[name] = Run(task, tasks[task], os.path.join(root, "roles", f"{name}.md"), os.path.join(root, "tasks", f"{task}.md"),
+                        r.memory, r.read_only, r.key, r.account, role_tasks)
     return out
 
 
@@ -443,6 +465,20 @@ def team(gql, cfg):
     if bad := [f"{k} {cfg['states'][k]}" for k in STATES if cfg["states"][k] not in ids]:
         raise SystemExit(f"pipeline.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}")
     return Team(t["id"], t["name"], {k: cfg["states"][k] for k in STATES})
+
+
+Q_TASK_GROUP = "query($i: String!) { issueLabel(id: $i) { isGroup } }"
+
+
+def task_group(gql, cfg):
+    """Checks pipeline.toml's task_label_group is a Linear label group, in one query; a missing label or a non-group stops the caller."""
+    group = cfg["task_label_group"]
+    try:
+        label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
+    except SystemExit as e:
+        raise SystemExit(f"pipeline.toml: task_label_group {group} not found in Linear: {e.code}") from None
+    if not label["isGroup"]:
+        raise SystemExit(f"pipeline.toml: task_label_group {group} is not a label group")
 
 
 def stage_order(cfg):
