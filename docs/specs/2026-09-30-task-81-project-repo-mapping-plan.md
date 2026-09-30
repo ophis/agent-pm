@@ -1,6 +1,6 @@
 # TASK-81: project → repo mapping — plan
 
-RESUME: phase=S4 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktrees/TASK-81-build branch=TASK-81-build base_ref=0651ba0e2469f8607ff782b9a0001a9c10da8736 review_round=0 spec_file=docs/specs/2026-09-30-task-81-project-repo-mapping-design.md
+RESUME: phase=S5 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktrees/TASK-81-build branch=TASK-81-build base_ref=0651ba0e2469f8607ff782b9a0001a9c10da8736 review_round=0 spec_file=docs/specs/2026-09-30-task-81-project-repo-mapping-design.md
 
 ## Progress
 
