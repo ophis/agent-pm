@@ -2,6 +2,31 @@
 
 Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
 
+## Files
+
+```
+agent-pm/
+├── CLAUDE.md              # architecture notes for Claude working on this repo
+├── pipeline.toml          # Linear team and state ids, humans, role order, project → repo map
+├── roles/
+│   ├── principles.md      # rules for every role and task
+│   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks
+├── tasks/
+│   └── <task>.md + .toml  # deep-research, product-design, engineering: steps; model, effort, dirs
+├── templates/             # research-report.md, prd.md
+├── scripts/
+│   ├── router.py          # picks and starts the next run
+│   ├── launch.py          # starts one claude run
+│   ├── promote.py         # Handoff to the next role
+│   ├── prune.py           # deletes finished issues' worktrees
+│   ├── eng.py             # engineering repo resolution and CLI
+│   ├── pipeline.py        # shared Linear client and config
+│   ├── *.plist            # launchd schedules for router and promote
+│   └── tests/
+├── work/<ID>/             # a run's working dir and worktrees (gitignored)
+└── logs/                  # runner state and run output (gitignored)
+```
+
 ## Roles
 
 A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to `private_docs` in Chinese, ask the user when an issue is too vague.
