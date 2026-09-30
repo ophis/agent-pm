@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, reviewer, runnable, stage_order, team, transcript)
+                      parse_time, registry, reviewer, runnable, stage_order, team, transcript, user_id)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -165,6 +165,10 @@ class Board:
         t = team(gql, cfg)
         self.states = t.states
         self.reviewer = reviewer(gql, cfg)
+        ids = {r.account: user_id(gql, r.account) for r in registry()[0].values()}
+        if missing := sorted(a for a, i in ids.items() if i is None):
+            raise SystemExit(f"role accounts not found in Linear: {', '.join(missing)}")
+        self.agents = {self.me, *ids.values()}
         if not self.projects:
             raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
         missing = [p for p in self.projects if p not in t.projects]
@@ -180,13 +184,13 @@ class Board:
         return -self.stage.get(issue["project"]["id"], 0)
 
     def last_move(self, issue, state, by_user=False):
-        """Latest time the issue was moved to state (by_user: by someone other than the agent)."""
+        """Latest time the issue was moved to state (by_user: by someone other than the harness or a role account)."""
         if issue["id"] not in self.hist:
             # orderBy createdAt returns newest first, so the latest moves are on this page.
             self.hist[issue["id"]] = self.gql("""query($i: String!) { issue(id: $i) { history(first: 250, orderBy: createdAt) {
                     nodes { createdAt actorId toStateId } } } }""", i=issue["id"])["issue"]["history"]["nodes"]
         times = [parse_time(n["createdAt"]) for n in self.hist[issue["id"]] if n["toStateId"] == self.states[state]
-                 and (not by_user or (n["actorId"] and n["actorId"] != self.me))]
+                 and (not by_user or (n["actorId"] and n["actorId"] not in self.agents))]
         return max(times, default=None)
 
     def attempts(self, issue):

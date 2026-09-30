@@ -329,15 +329,24 @@ def runnable(cfg, root=ROOT):
     return out
 
 
+Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }"
+
+
+def user_id(gql, email):
+    """Linear user id of an email (case-insensitive), or None."""
+    nodes = gql(Q_USER, e=email)["users"]["nodes"]
+    return nodes[0]["id"] if nodes else None
+
+
 def reviewer(gql, cfg):
     """Linear user id of the first `human_members` email, who is assigned issues that need human review; None if unset."""
     emails = cfg.get("human_members") or []
     if not emails:
         return None
-    nodes = gql("query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }", e=emails[0])["users"]["nodes"]
-    if not nodes:
+    uid = user_id(gql, emails[0])
+    if not uid:
         raise SystemExit(f"pipeline.toml: human_members {emails[0]!r} not found in Linear")
-    return nodes[0]["id"]
+    return uid
 
 
 @dataclass(frozen=True)
