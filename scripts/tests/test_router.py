@@ -88,6 +88,9 @@ class FakeLinear:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         raise AssertionError(query)
 
+    def reads(self, state="Todo"):
+        return [q for q, v in self.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES[state]}}]
+
 
 def ops(fake):
     return [re.search(r"\{ (\w+)\(", q).group(1) for q, _ in fake.mutations]
@@ -796,7 +799,7 @@ class Blockers(Base):
         said = self.said()
         self.assertRegex(said[0], r"^todo: blocker query failed, reading blockers per issue: linear api error: ")
         self.assertEqual(said[1:], ["blocked: TASK-1 by (unreadable)", "blocked: TASK-2 by TASK-7", "pick: TASK-3 (1 in queue)"])
-        todo = [q for q, v in fake.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES["Todo"]}}]
+        todo = fake.reads()
         self.assertEqual(["inverseRelations" in q for q in todo], [True, False])
         self.assertEqual([v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q], ["TASK-1", "TASK-2", "TASK-3"])
 
@@ -804,8 +807,7 @@ class Blockers(Base):
         for argv in (("--claim",), ("--plan",), ("--pick",)):
             fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher")])
             self.run_main(fake, *argv)
-            reads = {s: [q for q, v in fake.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES[s]}}]
-                     for s in ("Todo", "In Progress")}
+            reads = {s: fake.reads(s) for s in ("Todo", "In Progress")}
             self.assertEqual(len(reads["Todo"]), 1, argv)
             self.assertIn("inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }", reads["Todo"][0], argv)
             self.assertEqual(len(reads["In Progress"]), 0 if argv == ("--claim",) else 1, argv)
@@ -1016,9 +1018,6 @@ class Tick(Base):
         self.assertIn("skip: nothing to do", self.err)
         self.assertFalse(any(c[0] == "claude" for c in self.sh.calls))
 
-    def todo_reads(self, fake):
-        return [q for q, v in fake.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES["Todo"]}}]
-
     def test_all_todo_blocked_skips_probe(self):
         def issues():
             return [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-2", "unstarted")]),
@@ -1030,7 +1029,7 @@ class Tick(Base):
         self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-2", "blocked: TASK-2 by TASK-1", "blocked: TASK-3 by TASK-9",
                                        "plan: nothing to do", "skip: nothing to do"])
         self.assertEqual(([c[0] for c in self.sh.calls].count("claude"), self.sh.launches(), fake.mutations), (0, [], []))
-        self.assertEqual(len(self.todo_reads(fake)), 1)
+        self.assertEqual(len(fake.reads()), 1)
         fake = FakeLinear(issues())
         self.assertEqual(self.tick(fake, "--dry-run"), 0)
         self.assertEqual(self.said()[3:5], ["plan: nothing to do", "plan: nothing"])
@@ -1051,7 +1050,7 @@ class Tick(Base):
                                  else ["blocked: TASK-1 by TASK-7", "plan: new (1 in queue)"], (argv, resume))
                 self.assertEqual(([c[0] for c in self.sh.calls].count("claude"), self.sh.launches(), fake.mutations), (0, [], []), (argv, resume))
                 self.assertEqual(self.state, before, (argv, resume))
-                self.assertEqual(len(self.todo_reads(fake)), 1, (argv, resume))
+                self.assertEqual(len(fake.reads()), 1, (argv, resume))
 
     def test_ready_tick_reads_todo_once(self):
         for argv in ((), ("--now", "--issue", "TASK-2")):
@@ -1059,7 +1058,7 @@ class Tick(Base):
                                issue("TASK-2", "Todo", "researcher", priority=2), issue("TASK-3", "Todo", "pm", priority=3, project=PD)])
             self.assertEqual(self.tick(fake, *argv), 0, argv)
             self.assertEqual(self.launched(), "TASK-2", argv)
-            self.assertEqual(len(self.todo_reads(fake)), 1, argv)
+            self.assertEqual(len(fake.reads()), 1, argv)
             self.assertIn("plan: new (2 in queue)", self.err, argv)
             self.assertEqual(self.said().count("blocked: TASK-1 by TASK-7"), 1, argv)
 
@@ -1068,7 +1067,7 @@ class Tick(Base):
         self.resumable("TASK-1", "a", 60)
         self.tick(fake, "--now", "--issue", "TASK-2")
         self.assertEqual(self.launched(), "TASK-2")
-        self.assertEqual(len(self.todo_reads(fake)), 1)
+        self.assertEqual(len(fake.reads()), 1)
 
     def test_usage_blocked(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
