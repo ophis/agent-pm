@@ -30,11 +30,11 @@ Model: an Engineering issue's target repo is its `Repo:` line if it has one, els
 
 `pipeline.py`:
 
-- `OWNER` and `NAME` (the regexes) move from `eng.py` to `pipeline.py`; `eng.py` imports them. No other rule changes.
+- `OWNER` and `NAME` (the regexes) move from `eng.py` to `pipeline.py`, with `repo_slug(value)` → `(owner, name)` or `None`: the bare `owner/name` rule (fullmatch, name not `.`/`..`). `eng._one` uses it for its bare form; `load_config` and `resolve` use it for mapping values. No rule changes.
 - `TOP_KEYS` gains `project_repos`.
 - `load_config` sets `cfg["project_repos"]` to `{}` when absent and validates:
   - not a table → `SystemExit` `pipeline.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"`;
-  - per entry, the key is a Linear project id (`UUID_RE`, lowercase as Linear returns it) and the value is a string that fullmatches `({OWNER})/({NAME})` with a name other than `.`/`..` — the same rule as a bare `Repo: owner/name` (no URL, no empty value). A bad entry → `SystemExit` starting `pipeline.toml: project_repos.<key> ` and containing the value (`!r`).
+  - per entry, the key is a Linear project id (`UUID_RE`, lowercase as Linear returns it) and the value is a string accepted by `repo_slug` — the same rule as a bare `Repo: owner/name` (no URL, no empty value). A bad entry → `SystemExit` starting `pipeline.toml: project_repos.<key> ` and containing the value (`!r`).
   - Several projects may map to the same repo.
 
 `pipeline.toml` gets, after `[roles.*]`:
@@ -52,7 +52,7 @@ Model: an Engineering issue's target repo is its `Repo:` line if it has one, els
 - `parse_repo` is unchanged. `resolve`:
   - `parse_repo` returns a repo → use it (`mapped=False`), whatever the mapping says.
   - It returns an `Invalid` other than "no Repo: line" (unreadable value, several values) → return it, mapped or not.
-  - It returns "no Repo: line …" and the issue's project id (absent when the issue has no project) is in `repos` → use `repos[id]` split at `/` (`mapped=True`); else return today's `Invalid` unchanged.
+  - It returns "no Repo: line …" and the issue's project id is in `repos` → use `repo_slug(repos[id])` (`mapped=True`; `None` → `Invalid` with the mapping prefix); else return today's `Invalid` unchanged. No project, a `project` that is not an object, or an `id` that is not a string counts as no project.
 - The rest of `resolve` (access, clone, branch) is unchanged for both sources.
 - `eng.main(argv, env, gql, run, out, err, config=CONFIG)` loads `config` after the `AGENT_PM_ISSUE` check and passes `repos=cfg["project_repos"]` to `resolve`.
 
@@ -63,7 +63,7 @@ Model: an Engineering issue's target repo is its `Repo:` line if it has one, els
 
 ## G4 — Mapping failures
 
-With `mapped=True`, these `Invalid` reasons are prefixed with `project mapping `: HTTP 403/404 from `gh api repos/<owner>/<name>`, no push permission, unsafe default branch name. Clone and branch failures (symlink/outside playground, not a git repo, origin URL differs, several/bad `<ID>-*` branches) and every `Transient` keep today's reason. A resumed launch still turns `Invalid` into `Transient` (unchanged).
+With `mapped=True`, these `Invalid` reasons are prefixed with `project mapping ` (one constant in `eng.py`, which the tests use): HTTP 403/404 from `gh api repos/<owner>/<name>`, no push permission, unsafe default branch name. Clone and branch failures (symlink/outside playground, not a git repo, origin URL differs, several/bad `<ID>-*` branches) and every `Transient` keep today's reason. A resumed launch still turns `Invalid` into `Transient` (unchanged).
 
 `tasks/engineering.md` step 2, for a reason starting `project mapping `:
 
@@ -83,7 +83,7 @@ Other reasons keep today's two bullets.
 
 `python3 -m unittest discover -s scripts/tests` (no network, Keychain or Claude). Existing expectations stay, except `test_launch`'s `resolve` call assertion, which gains the `repos` argument. New:
 
-- **pipeline:** absent table → `{}`; the two shipped entries load (the real `pipeline.toml`); two projects → one repo accepted; rejected with a message naming `project_repos.<key>` and the value: non-UUID key, URL value, `owner/.` and `owner/..`, empty string, non-string value, `owner` without name; non-table `project_repos` rejected; `project_repos` is not an unknown key for `runnable`.
+- **pipeline:** absent table → `{}`; the real `pipeline.toml` loads with exactly the two shipped entries (MISC absent); two projects → one repo accepted; rejected with a message naming `project_repos.<key>` and the value: non-UUID key, URL value, `owner/.` and `owner/..`, empty string, non-string value, `owner` without name; non-table `project_repos` rejected; `project_repos` is not an unknown key for `runnable`.
 - **eng.resolve:** mapped project + no `Repo:` line → `Ok` of the mapped repo, `mapped=True`; mapped + different `Repo:` line → the line's repo, `mapped=False`; mapped + unreadable `Repo:` line → `Invalid` (unreadable); unmapped project + no line → today's exact `Invalid`; issue without project (`project: null`) + no line → today's exact `Invalid`; mapped repo HTTP 404/403, no push, unsafe default → reason starts `project mapping ophis/<name>: `; mapped repo with a bad clone → today's reason (no prefix).
 - **eng CLI:** passes the loaded config's mapping to `resolve`; a broken config → exit 2 with the message on stderr.
 - **launch:** a mapped `Ok` → tail `Repo check: OK ophis/demo (from project mapping), clone …`; `repo_step` passes `cfg["project_repos"]` to `resolve`.
