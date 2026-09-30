@@ -6,9 +6,9 @@
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is busy.
---pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given); print "<ID> <url>" (manual use).
+--pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given; only issues whose task is their role's default); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
---claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
+--claim [RUNS_LOG]  Pick + Claim (only issues whose task is their role's default): print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
 --prune RUNS_LOG    Drop runs.log lines older than 7 days.
 Needs Python 3.11+.
