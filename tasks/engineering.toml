@@ -1,4 +1,5 @@
 model = "opus"
 effort = "xhigh"
 add_dirs = ["~/playground/private_docs"]
+prefix = "ENG"
 repo_from_issue = true                    # the launcher resolves and clones the issue's target repo

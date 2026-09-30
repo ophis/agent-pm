@@ -1,5 +1,6 @@
 team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents; Linear ids, since names change with a rename
 human_members = ["ophis.w@outlook.com"]   # the human users; the first is assigned issues that need human review (In Review)
+harness_key = "linear-api-key"   # Keychain service of the harness account's Linear API key (router, promote, prune)
 
 # The team's workflow states the code uses, by Linear state id.
 [states]

@@ -26,9 +26,11 @@ prefix = "ENG"
 role = "engineer"
 task = "engineering"
 """
+RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
+ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
-    "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": "",
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n',
+    "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
     "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
     "tasks/engineering.md": "",
@@ -300,7 +302,7 @@ class Launch(unittest.TestCase):
     def with_memory(self):
         mem = os.path.join(self.tmp, "mem")
         os.makedirs(mem)
-        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_ID)
         return mem
 
     def test_memory_prompt_and_dir(self):
@@ -319,7 +321,7 @@ class Launch(unittest.TestCase):
         self.assertIn(f"follow the task's resume rule. Your role memory: {mem}; your role charter says how to use it.", self.claude()[2])
 
     def repo_config(self):
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n')
+        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
 
     def test_repo_read_only_ok(self):
         self.repo_config()
@@ -343,7 +345,7 @@ class Launch(unittest.TestCase):
 
     def eng_memory(self, mem):
         os.makedirs(mem, exist_ok=True)
-        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n')
+        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n' + ENGINEER_ID)
 
     def ok_at(self, clone):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
@@ -390,7 +392,7 @@ class Launch(unittest.TestCase):
     def test_memory_check_skipped_without_repo_step(self):
         mem = os.path.join(self.work, "TASK-1", "worktrees", "mem")
         os.makedirs(mem)
-        self.write("roles/researcher.toml", f'memory = "{mem}"\n')
+        self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_ID)
         self.assertEqual(self.run_launch(*self.args()), 0)
         self.assertEqual(len(self.calls), 1)
 

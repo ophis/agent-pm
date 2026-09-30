@@ -31,7 +31,7 @@ task = "deep-research"
 [projects.p-pd]
 prefix = "PRD"
 """
-PD_RUNNABLE = 'role = "researcher"\ntask = "product-design"\n'
+PD_RUNNABLE = 'role = "pm"\ntask = "product-design"\n'
 
 
 def ago(**kw):
