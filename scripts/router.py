@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
-docs/specs/2026-09-27-router-launcher-design.md
 
 (no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.

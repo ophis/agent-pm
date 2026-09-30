@@ -94,4 +94,4 @@ Moving a running pipeline from stage projects to assignees:
 python3 -m unittest discover -s scripts/tests   # no network, Keychain or Claude needed
 ```
 
-Design docs are in `docs/specs/`; architecture notes for Claude are in `CLAUDE.md`.
+Architecture notes for Claude are in `CLAUDE.md`.
