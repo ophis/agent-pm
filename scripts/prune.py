@@ -26,7 +26,7 @@ import sys
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eng import LONG, REF, SHORT, TransientError, _stderr, sh_run  # noqa: E402
+from eng import LONG, SHORT, TransientError, _stderr, locate, sh_run  # noqa: E402
 from pipeline import WORK, linear_gql, load_config, parse_time, role_ids, runnable, team as linear_team  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -50,33 +50,6 @@ def finished_at(nodes, finished):
 
 class Skip(Exception):
     """The worktree stays; the message says why."""
-
-
-def _read(path):
-    """A regular file's stripped text, or "" (never blocks on a FIFO)."""
-    try:
-        if os.path.isfile(path):
-            with open(path) as f:
-                return f.read(4096).strip()
-    except (OSError, UnicodeDecodeError):
-        pass
-    return ""
-
-
-def locate(path):
-    """(clone, local branch or None if detached) of the worktree at path, read from files only."""
-    text = _read(os.path.join(path, ".git"))
-    if not text.startswith("gitdir: "):
-        raise Skip("clone unknown: .git is not a gitdir file")
-    gitdir = os.path.realpath(os.path.join(path, text[len("gitdir: "):]))
-    parent = os.path.dirname(gitdir)
-    if os.path.basename(parent) != "worktrees" or os.path.basename(os.path.dirname(parent)) != ".git":
-        raise Skip("clone unknown: gitdir is not <clone>/.git/worktrees/<name>")
-    head = _read(os.path.join(gitdir, "HEAD"))
-    branch = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else None
-    if branch is not None and not REF.fullmatch(branch):
-        raise Skip("unsafe branch name")
-    return os.path.dirname(os.path.dirname(parent)), branch
 
 
 class Pruner:
@@ -115,7 +88,10 @@ class Pruner:
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
                 raise Skip(f"not a real directory inside {ident}/worktrees/, refusing to touch")
-            clone, branch = locate(path)
+            try:
+                clone, branch, _ = locate(path)
+            except ValueError as e:
+                raise Skip(e) from None
             if self.dry:
                 self.say(f"prune-plan {key}: force-delete the worktree" + (f" and local branch {branch}" if branch else ""))
                 return

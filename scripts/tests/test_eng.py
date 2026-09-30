@@ -281,6 +281,146 @@ class Resolve(unittest.TestCase):
                 self.assertTrue(r.reason.startswith(eng.MAPPED), r.reason)
         self.assertEqual(self.run_.calls, [])
 
+    def target(self, desc="Repo: ophis/agent-pm", repos=None, project=None, push=False, **over):
+        self.run_ = FakeRun(self.table(**over))
+        issue = {"description": desc, "project": project}
+        return eng.target(issue, self.run_, playground=self.pg, repos=repos, push=push)
+
+    def test_target_without_push_check_accepts_a_read_only_repo(self):
+        os.makedirs(self.clone)
+        read_only = ok('{"default_branch": "main", "permissions": {"push": false}}')
+        self.assertEqual(self.target(api=read_only), eng.Target("ophis", "agent-pm", self.clone, "main", False))
+        self.assertEqual(self.target(api=read_only, push=True), eng.Invalid("ophis/agent-pm: no push permission"))
+        self.assertEqual(self.target(api=read_only, repos={PROJ: "ophis/agent-pm"}, project={"id": PROJ}, desc="no repo here", push=True),
+                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: no push permission"))
+
+    def test_target_is_not_the_branch_step(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.target(), eng.Target("ophis", "agent-pm", self.clone, "main", False))
+        self.assertFalse(any(c[0][3] in ("branch", "ls-remote") for c in self.run_.calls if c[0][:2] == ("git", "-C")))
+
+    def test_target_keeps_every_other_check_with_push_off(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.target(desc="no repo here"), NO_LINE)
+        self.assertEqual(self.target(desc="Repo: nope"), eng.Invalid("unreadable Repo line: 'nope'"))
+        for res, kind in ((ok(code=1, stderr="gh: Not Found (HTTP 404)"), eng.Invalid),
+                          (ok(code=1, stderr="gh: Forbidden (HTTP 403)"), eng.Invalid),
+                          (ok(code=1, stderr="gh: Bad Gateway (HTTP 502)"), eng.Transient),
+                          (ok('{"default_branch": "-x", "permissions": {"push": false}}'), eng.Invalid),
+                          (ok('{"default_branch": null, "permissions": {"push": false}}'), eng.Invalid)):
+            self.assertIsInstance(self.target(api=res), kind, res)
+        self.assertEqual(self.target(api=ok('{"default_branch": "ma$(x)", "permissions": {"push": false}}')),
+                         eng.Invalid("ophis/agent-pm: unsafe default branch name"))
+        self.assertEqual(self.target(fetch_url=ok("git@github.com:other/agent-pm.git\n")),
+                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"))
+        self.assertEqual(self.target(push_url=ok("https://evil.example/x.git\n")),
+                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin push URL differs)"))
+
+    def test_target_clones_a_missing_clone_and_reports_a_failure(self):
+        self.assertEqual(self.target(), eng.Target("ophis", "agent-pm", self.clone, "main", False))
+        self.assertIn((("gh", "repo", "clone", "ophis/agent-pm", self.clone), 600), self.run_.calls)
+        self.assertIsInstance(self.target(clone=ok(code=1, stderr="network")), eng.Transient)
+
+    def test_target_clone_symlink_invalid(self):
+        other = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
+        os.symlink(other, self.clone)
+        self.assertEqual(self.target(), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
+
+    def test_target_mapping(self):
+        os.makedirs(self.clone)
+        repos, project = {PROJ: "ophis/agent-pm"}, {"id": PROJ}
+        self.assertEqual(self.target("no repo here", repos=repos, project=project),
+                         eng.Target("ophis", "agent-pm", self.clone, "main", True))
+        self.assertEqual(self.target("Repo: ophis/agent-pm", repos={PROJ: "ophis/other"}, project=project),
+                         eng.Target("ophis", "agent-pm", self.clone, "main", False))
+        self.assertEqual(self.target("no repo here", repos=repos, project=project, api=ok(code=1, stderr="gh: Not Found (HTTP 404)")),
+                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: not found or no access (HTTP 404)"))
+        self.assertEqual(self.target("no repo here", repos={PROJ: "nope"}, project=project),
+                         eng.Invalid(f"{eng.MAPPED}'nope': not <owner>/<name>"))
+        self.assertEqual(self.target("no repo here", repos=repos, project={"id": "other"}), NO_LINE)
+
+class RunSubdir(unittest.TestCase):
+    def setUp(self):
+        self.work = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.work]))
+        patcher = mock.patch.object(pipeline, "WORK", self.work)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.base = os.path.join(self.work, "TASK-26")
+
+    def test_path_inside_the_run_dir(self):
+        self.assertEqual(eng.run_subdir("TASK-26", "src"), os.path.join(self.base, "src"))
+        os.makedirs(os.path.join(self.base, "src"))
+        self.assertEqual(eng.run_subdir("TASK-26", "src"), os.path.join(self.base, "src"))
+
+    def test_symlink_out_of_the_run_dir_invalid(self):
+        outside = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", outside]))
+        os.makedirs(self.base)
+        os.symlink(outside, os.path.join(self.base, "src"))
+        self.assertEqual(eng.run_subdir("TASK-26", "src"), eng.Invalid(f"{os.path.join(self.base, 'src')} resolves outside {self.base}"))
+
+    def test_symlink_inside_the_run_dir_is_fine(self):
+        os.makedirs(os.path.join(self.base, "real"))
+        os.symlink(os.path.join(self.base, "real"), os.path.join(self.base, "src"))
+        self.assertEqual(eng.run_subdir("TASK-26", "src"), os.path.join(self.base, "src"))
+
+class Locate(unittest.TestCase):
+    SHA = "0123456789abcdef0123456789abcdef01234567"
+
+    def setUp(self):
+        self.root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.root]))
+        self.clone = os.path.join(self.root, "clone")
+
+    def put(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    def wt(self, head, name="wt", gitdir=None):
+        path = os.path.join(self.root, name)
+        gitdir = gitdir or os.path.join(self.clone, ".git", "worktrees", name)
+        self.put(os.path.join(path, ".git"), f"gitdir: {gitdir}\n")
+        self.put(os.path.join(gitdir, "HEAD"), head)
+        return path
+
+    def test_detached(self):
+        self.assertEqual(eng.locate(self.wt(self.SHA + "\n")), (self.clone, None, self.SHA))
+
+    def test_branch(self):
+        self.assertEqual(eng.locate(self.wt("ref: refs/heads/TASK-1-x\n")), (self.clone, "TASK-1-x", "ref: refs/heads/TASK-1-x"))
+
+    def test_relative_gitdir(self):
+        path = self.wt(self.SHA + "\n")
+        self.put(os.path.join(path, ".git"), "gitdir: ../clone/.git/worktrees/wt\n")
+        self.assertEqual(eng.locate(path), (self.clone, None, self.SHA))
+
+    def test_refusals(self):
+        self.put(os.path.join(self.root, "dir", ".git", "x"), "")
+        self.put(os.path.join(self.root, "text", ".git"), "not a gitdir\n")
+        self.put(os.path.join(self.root, "elsewhere", ".git"), f"gitdir: {self.root}/elsewhere/x\n")
+        bare = os.path.join(self.root, "clone", "worktrees", "w")
+        self.put(os.path.join(bare, "HEAD"), self.SHA)
+        self.put(os.path.join(self.root, "bare", ".git"), f"gitdir: {bare}\n")
+        for path, reason in (("missing", "clone unknown: .git is not a gitdir file"), ("dir", "clone unknown: .git is not a gitdir file"),
+                             ("text", "clone unknown: .git is not a gitdir file"),
+                             ("elsewhere", "clone unknown: gitdir is not <clone>/.git/worktrees/<name>"),
+                             ("bare", "clone unknown: gitdir is not <clone>/.git/worktrees/<name>")):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError) as cm:
+                    eng.locate(os.path.join(self.root, path))
+                self.assertEqual(str(cm.exception), reason)
+        with self.assertRaises(ValueError) as cm:
+            eng.locate(self.wt("ref: refs/heads/-D\n", name="bad"))
+        self.assertEqual(str(cm.exception), "unsafe branch name")
+
+    def test_a_missing_head_is_empty_and_detached(self):
+        path = self.wt("")
+        os.remove(os.path.join(self.clone, ".git", "worktrees", "wt", "HEAD"))
+        self.assertEqual(eng.locate(path), (self.clone, None, ""))
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
