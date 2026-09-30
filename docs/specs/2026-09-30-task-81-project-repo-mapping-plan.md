@@ -1,6 +1,6 @@
 # TASK-81: project → repo mapping — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktrees/TASK-81-build branch=TASK-81-build base_ref=0651ba0e2469f8607ff782b9a0001a9c10da8736 review_round=0 spec_file=docs/specs/2026-09-30-task-81-project-repo-mapping-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktrees/TASK-81-build branch=TASK-81-build base_ref=0651ba0e2469f8607ff782b9a0001a9c10da8736 review_round=0 spec_file=docs/specs/2026-09-30-task-81-project-repo-mapping-design.md
 
 ## Progress
 
@@ -15,6 +15,9 @@ RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-81/worktr
 - S5: tasks 1-4 done via subagent-driven-development, each task review Approved (b63097a, 0ecffd7, 88b5594, 7c3be8a); deferred minors: loop-only-last-call assertions in test_eng, eng.main catches only SystemExit from load_config, engineering.md step 2 parenthetical wording.
 - S6: unittest 302 OK, no warnings; read-only live check with the real pipeline.toml: Agent PM + no Repo: line -> Ok ophis/agent-pm mapped=True; unmapped / no project -> today's Invalid; Repo: line wins (mapped=False); gh access to ophis/claude-autopilot OK (push, main); 404 mapping -> `project mapping ophis/…: not found or no access (HTTP 404)`.
 - S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[test,code-quality] (performance: one config load per CLI call, marginal; architecture: structure reviewed at S3 and follows spec) transport=Workflow
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS test=PASS code-quality=PASS -> converged
+- S8: skipped (keep the commits, per the requirement)
+- Residual non-blocking: `eng.main` catches only `SystemExit` from `load_config` (a missing or unparseable `pipeline.toml` gives a traceback, exit 1, as in the other scripts); `project_repos.<key>` in the error message is not quoted; `tasks/product-design.md` still asks for `Repo:` in the Handoff comment (unchanged per the PRD's non-goal, still true for unmapped projects); `NO_LINE = parse_repo("")` sentinel and the `mapped`/`tag` pair in `resolve` could be tighter; some `test_eng` loops check `run_.calls == []` only for the last call; most `Cli` tests read the real `pipeline.toml`.
 
 ## Implementation plan
 
