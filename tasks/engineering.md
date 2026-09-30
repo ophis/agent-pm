@@ -17,7 +17,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 1. **Read** the issue, all its comments, the PRD from `## Source` (local `~/playground/private_docs` clone), `## Instructions`. The user's comments outrank `## Instructions` and the PRD.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs (the cwd, `<clone>`, `<worktree>`, `~/playground/private_docs`). On `Repo check failed: <reason>`, bounce and stop:
-   - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review (reviewer assigned); on this issue comment the same and move it to Canceled.
+   - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review; on this issue comment the same and move it to Canceled.
    - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.
 3. **Status.** `<eng> status`; if it shows a PR, also `<eng> comments --since <the issue's creation time>` (its `kept` comments count as the user's).
 4. **Which build.** From `plan_docs` (autopilot's plan doc and its `RESUME: phase=` line) and the comments:
@@ -36,7 +36,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
    - Comment `Build docs:` with the GitHub links of the build's spec and plan doc on the branch (`https://github.com/<owner>/<name>/blob/<branch>/<path>`, paths from `<eng> status`; the spec is the plan doc's `spec_file=`).
    - Write `work/<ID>/pr.md`: what changed, PRD and spec links, how to verify, residual non-blocking items.
    - If `<eng> status` shows no PR, `gh pr create --repo <owner>/<name> --head <branch> --base <default> --title '<pr_title>' --body-file work/<ID>/pr.md`, else `gh pr edit <number> --repo <owner>/<name> --body-file work/<ID>/pr.md`.
-   - Attach the PR URL to the issue; comment `Build ready:` + 3–5 lines incl. how to verify; assign the reviewer.
+   - Attach the PR URL to the issue; subscribe the humans (principles); comment `Build ready:` + 3–5 lines incl. how to verify.
    - The GitHub integration moves the issue to In Review when the PR opens, so do not move it: read its state and move it to In Review only if it is not there (e.g. the PR already existed, or the integration lagged).
    - Fallbacks: push denied → comment `Build failed:` "push not permitted" and move to In Review; PR creation denied → attach `https://github.com/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `Build ready:` that the user must open the PR.
 8. **Failure** (build stopped or capped, or an action it needs was denied by the permission classifier): push the branch (`git -C <worktree> push -u origin <branch>`); comment `Build docs:` with the spec and plan links as in step 7 (whatever exists); comment `Build failed:` with the failing tests, open blockers or denied action, and the branch URL (`https://github.com/<owner>/<name>/tree/<branch>`); move to In Review.
