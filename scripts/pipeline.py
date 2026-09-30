@@ -305,8 +305,9 @@ def runnable(cfg, root=ROOT):
             continue
         if nxt not in roles:
             raise SystemExit(f"pipeline.toml: next of {name!r} names undefined role {nxt!r}")
-        if not tasks[roles[nxt].tasks[0]].get("prefix"):
-            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {roles[nxt].tasks[0]!r} has no prefix")
+        nxt_task = roles[nxt].tasks[0]
+        if not tasks[nxt_task].get("prefix"):
+            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {nxt_task!r} has no prefix")
     out = {}
     for name, r in roles.items():
         task = r.tasks[0]

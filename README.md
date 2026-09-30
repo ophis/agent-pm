@@ -10,7 +10,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 
 ## Using the board
 
-- **New work:** create an issue in the product's project, assigned to the role account that should do it, in Todo; unassigned issues are never picked. Researcher and pm issues take the brief from the description; a direct engineer issue needs a `Repo: <owner>/<name>` line in its description.
+- **New work:** create an issue in the product's project, assigned to the role account that should do it, in Todo; an issue not assigned to a role account (unassigned, or to a person) is never picked. Researcher and pm issues take the brief from the description; a direct engineer issue needs a `Repo: <owner>/<name>` line in its description.
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>`. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
@@ -47,7 +47,7 @@ Each role in `roles/*.toml` acts in Linear as its own `account`, with its API ke
 3. Signed in as the role account, create a personal API key in its account settings.
 4. `security add-generic-password -s <key> -a <account> -w` and paste the key at the prompt.
 
-The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in its project log.
+The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in `logs/projects/<task>.log`.
 
 ## Operating
 
@@ -74,7 +74,7 @@ Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-p
 
 - `pipeline.toml`: the Linear team and workflow states, both by id; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`.
 - `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only`, `memory`.
-- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, optional title `prefix`).
+- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, title `prefix`, required on the default task of any role that is some role's `next`).
 - `templates/`: the report and PRD skeletons.
 
 ## Cutover (TASK-62 PR-C)
@@ -84,9 +84,9 @@ Moving a running pipeline from stage projects to assignees:
 1. Merge the PR without deploying.
 2. Create a Linear project per product.
 3. Stop the pipeline: no `agent-pm` tmux session, every `start` in `logs/runs.log` has an `end`, and don't run the router by hand.
-4. Reassign every open issue (Todo, In Progress, In Review, Handoff) by its stage project: 1-Research → researcher, 2-Product Design → pm, 3-Engineering → engineer. An unassigned issue is never picked, recovered or handed off again.
+4. Reassign every open issue (Todo, In Progress, In Review, Handoff) by its stage project: 1-Research → researcher, 2-Product Design → pm, 3-Engineering → engineer. An issue not assigned to a role account (unassigned, or to a person) is never picked, recovered or handed off.
 5. `git pull --ff-only` in `~/playground/agent-pm`.
-6. `python3 scripts/router.py --now --dry-run` shows the role accounts' Todo issues; after the next promote tick, `logs/promote.log` has no error.
+6. `python3 scripts/router.py --now --dry-run` logs a `plan:` line counting the role accounts' Todo issues (`plan: new (N in queue)`); after the next promote tick, `logs/promote.log` has no error.
 
 ## Development
 
