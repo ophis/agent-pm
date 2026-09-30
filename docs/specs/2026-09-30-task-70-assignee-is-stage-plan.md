@@ -1,6 +1,6 @@
 # TASK-70: the assignee is the stage — plan
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktrees/TASK-70-the-assignee-is-the-stage-claim-recover branch=TASK-70-the-assignee-is-the-stage-claim-recover base_ref=be21167bcace11ed397c373c30f40da188817c21 review_round=0 spec_file=docs/specs/2026-09-30-task-70-assignee-is-stage-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktrees/TASK-70-the-assignee-is-the-stage-claim-recover branch=TASK-70-the-assignee-is-the-stage-claim-recover base_ref=be21167bcace11ed397c373c30f40da188817c21 review_round=1 spec_file=docs/specs/2026-09-30-task-70-assignee-is-stage-design.md
 
 ## Implementation plan
 
@@ -446,3 +446,7 @@ RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktr
 - S6: unittest 280 OK, no warnings; read-only live check: Board(dry) + Promoter init against Linear OK, todo queue = 7 role-assigned issues across projects Agent PM/MISC, filters accepted.
 - S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[test,code-quality] (performance: 3 users queries/tick marginal; architecture: structure reviewed at S3 and follows spec) transport=Workflow
 - S7 r0: correctness=PASS requirement-fidelity=PASS doc=FAIL test=PASS code-quality=PASS -> doc#1 README cutover: dry-run "shows" Todo issues (only logs plan/count); doc#2 README "unassigned issue never picked" too narrow (any issue not assigned to a role account); fix dispatched (pre-fix HEAD f1acda3)
+- S7 fix r0->r1: fixer=a54e6a7714b5c757f commit 4d5a657 (doc#1 README.md:89, doc#2 README.md:13,87; NB: README:50,77, CLAUDE.md:25, pipeline.py:308); r1 re-review = all 5 (cores + *.py touched)
+- S7 r1: doc=PASS (doc#1, doc#2 RESOLVED) correctness=PASS requirement-fidelity=PASS test=PASS code-quality=PASS -> converged
+- S8: skipped (keep the commits, per the requirement)
+- Residual non-blocking: a resume after reassigning an In Progress issue to another role runs as the new role (launch.py docstring); an In Progress issue reassigned to a non-role account is never recovered (FR-9); a non-table `[roles]` entry raises a Python error, not a SystemExit; two roles sharing an account collapse (non-goal); tests' fakes reimplement the Linear filters (filter shapes asserted); the order test checks only the winner.
