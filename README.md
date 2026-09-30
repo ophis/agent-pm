@@ -18,7 +18,7 @@ agent-pm/
 │   ├── router.py          # picks and starts the next run
 │   ├── launch.py          # starts one claude run
 │   ├── promote.py         # Handoff to the next role
-│   ├── prune.py           # deletes finished issues' worktrees
+│   ├── prune.py           # deletes finished issues' worktrees, archives pm and engineer ones
 │   ├── eng.py             # engineering repo resolution and CLI
 │   ├── pipeline.py        # shared Linear client and config
 │   ├── *.plist            # launchd schedules for router and promote
@@ -54,7 +54,7 @@ The Python scripts in `scripts/` that turn the board into runs. launchd runs the
 | `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
 | `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, runs the task named by `--task` (one of the role's tasks), checks the `[docs]` clone exists, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files and the docs repo in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
-| `prune.py` | End of each promote tick | Deletes the worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work. |
+| `prune.py` | End of each promote tick | Deletes the worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
 | `eng.py` | Launcher and engineer runs | Resolves an Engineering issue's target repo and branch; its `status` and `comments` commands feed the engineer run. |
 | `pipeline.py` | Shared | Linear API client, and loading and validating the config. |
 
@@ -65,7 +65,7 @@ The Python scripts in `scripts/` that turn the board into runs. launchd runs the
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff, with a comment saying what to do next (optional for a PRD). A PRD's target repo is the project's `[project_repos]` entry, which the PM's hand-off comment names; without one, comment `Repo: <owner>/<name>`. A `Repo:` line in your comment always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
-- **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's docs worktree) are deleted 24 hours later, along with any unpushed work.
+- **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's docs worktree) are deleted 24 hours later, along with any unpushed work; pm and engineer issues are archived then too, so restore one in Linear before reworking it.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 

@@ -17,7 +17,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 1. **Read** the issue, the PRD from `## Source` (principles), `## Instructions`. The comments that count come from step 3; earlier user comments (before the latest `Build started`) are context, already built into the branch and its spec, not new requirements. The user's comments outrank `## Instructions` and the PRD.
 2. **Repo.** From the prompt's `Repo check` line; never inspect paths outside the run's dirs (the cwd, `<clone>`, `<worktree>`, `<docs clone>`). A reason starting `project mapping ` means the fix is the project's `[project_repos]` entry in `pipeline.toml` or a `Repo:` line/comment. On `Repo check failed: <reason>`, bounce and stop:
-   - Description starts with `Handoff from <ID>:` → on that PRD issue comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review; on this issue comment the same and move it to Canceled.
+   - Description starts with `Handoff from <ID>:` → on that PRD issue first call `issueUnarchive` (prune may have archived it; if it fails, e.g. it is not archived, continue), then comment the reason and ask the user to Handoff again with a correct `Repo:` comment, move it to In Review; on this issue comment the same and move it to Canceled.
    - Otherwise → comment `Question:` with the reason, asking the user to fix the `Repo:` line in the description and then move the issue back to Todo; move the issue to In Review.
 3. **Status.** `<eng> status` and `<eng> comments`.
 4. **Which build.** From `plan_docs` (autopilot's plan doc and its `RESUME: phase=` line) and the comments:
