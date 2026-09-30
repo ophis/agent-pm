@@ -372,6 +372,8 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy])
     run = board.next_run()
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
+        if board.is_blocked(issue_id):
+            return 0
         run = ("new",)
     kind = run[0] if run else None
     if not kind and not dry:
