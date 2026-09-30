@@ -1181,6 +1181,9 @@ class Tick(Base):
 
 class TaskLabels(Base):
     """A copy of the repo's roles/ and tasks/ where researcher also runs light-research and orphan is no role's task."""
+    ORPHAN = ('Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
+              "Fix the label or the assignee, then move the issue back to Todo.")
+
     def setUp(self):
         super().setUp()
         self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
@@ -1249,6 +1252,46 @@ class TaskLabels(Base):
             self.assertEqual([line.split()[2:4] for line in self.state.splitlines()], [["start", "TASK-2"]], names)
             self.assertTrue(self.state.endswith(" task=deep-research\n"), names)
 
+    def test_fr6_issue_flag_takes_the_labelled_task(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
+                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Light Research")])])
+        self.tick(fake, "--now", "--issue", "TASK-2")
+        (launch,) = self.sh.launches()
+        sid = launch[launch.index("--sid") + 1]
+        self.assertEqual(launch[2:4], ["--issue", "TASK-2"])
+        self.assertEqual(launch[launch.index("--sid"):], ["--sid", sid, "--task", "light-research", "--mode", "new"])
+        self.assertRegex(self.state, rf"^\S+ \S+ start TASK-2 session={sid} transcript=\S+ task=light-research\n$")
+        self.assertIn("claim: TASK-2 task=light-research", self.said())
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-2"]["state"]), ("Todo", "In Progress"))
+
+    def test_fr7_issue_flag_invalid_label_goes_to_review(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
+                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Orphan")])])
+        self.tick(fake, "--now", "--issue", "TASK-2")
+        t = fake.issues["TASK-2"]
+        self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
+                         ("In Review", who("researcher"), [self.ORPHAN], ["me@x.com"]))
+        self.assertEqual(ops(fake), ["issueSubscribe", "commentCreate", "issueUpdate"])
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        self.assertEqual(self.said(), ["plan: new (2 in queue)", "pick: TASK-2 (1 in queue)", "claim: TASK-2 bad task label; In Review",
+                                       "pick: nothing claimable", "skip: nothing claimed"])
+        self.assertEqual((self.sh.launches(), self.state), ([], ""))
+
+    def test_blocked_invalid_label_waits_for_its_blocker(self):
+        for argv, skip in (((), ["skip: nothing to do"]), (("--now", "--issue", "TASK-1"), [])):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan")], inverse=[blocker("TASK-7")])])
+            self.tick(fake, *argv)
+            self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7", "plan: nothing to do"] + skip, argv)
+            self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations, self.sh.launches()), ("Todo", [], []), argv)
+            self.assertNotIn(RECHECK, [q for q, _ in fake.queries], argv)
+            fake.issues["TASK-1"]["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "completed"
+            self.tick(fake, *argv)
+            t = fake.issues["TASK-1"]
+            self.assertEqual((t["state"], t["comments"]), ("In Review", [self.ORPHAN]), argv)
+            self.assertEqual(self.said(), ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)", "claim: TASK-1 bad task label; In Review",
+                                           "pick: nothing claimable", "skip: nothing claimed"], argv)
+            self.assertEqual((self.sh.launches(), self.state), ([], ""), argv)
+
     def test_fr4_label_read_from_recheck(self):
         class Relabel(FakeLinear):
             def __call__(self, query, **v):
@@ -1292,6 +1335,19 @@ class TaskLabels(Base):
             self.assertIn("claim: TASK-2 bad task label; In Review", said, argv)
             self.assertIn("claim: TASK-3 task=deep-research", said, argv)
 
+    def test_nothing_claimable_after_bounce_or_skip(self):
+        for sid in "abcd":
+            self.add("start", "TASK-3", sid, 300)
+        for argv in (("--pick", "--role", "researcher"), ("--claim",)):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research")]),
+                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan")]),
+                               issue("TASK-3", "Todo", "researcher", priority=3)])
+            self.assertEqual(self.run_main(fake, *argv), (0, ""), argv)
+            self.assertEqual(self.said(), ["pick: TASK-1 (3 in queue)", "claim: TASK-1 task=light-research is not researcher's default; skipping",
+                                           "pick: TASK-2 (3 in queue)", "claim: TASK-2 bad task label; In Review",
+                                           "pick: TASK-3 reached 4 attempts; In Review", "pick: nothing claimable"], argv)
+            self.assertEqual([fake.issues[i]["state"] for i in ("TASK-1", "TASK-2", "TASK-3")], ["Todo", "In Review", "In Review"], argv)
+
     def test_fr1_board_stops_on_bad_task_group(self):
         for group, msg in ((None, f"not found in Linear: linear api error: [{{'message': 'Entity not found'}}]"),
                            ({"isGroup": False}, "is not a label group")):
@@ -1301,6 +1357,18 @@ class TaskLabels(Base):
                 self.run_main(fake, "--claim")
             self.assertEqual(cm.exception.code, f"pipeline.toml: task_label_group {TASK_GROUP} {msg}")
             self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []))
+
+    def test_fr1_tick_stops_on_bad_task_group(self):
+        for group, msg in ((None, f"not found in Linear: linear api error: [{{'message': 'Entity not found'}}]"),
+                           ({"isGroup": False}, "is not a label group")):
+            for argv in (("--now",), ("--now", "--issue", "TASK-1")):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                fake.group = group
+                with self.assertRaises(SystemExit) as cm:
+                    self.tick(fake, *argv)
+                self.assertEqual(cm.exception.code, f"pipeline.toml: task_label_group {TASK_GROUP} {msg}", argv)
+                self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []), argv)
+                self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3, argv)
 
     def test_fr1_one_group_query_per_board(self):
         for argv in (("--claim",), ("--plan",), ("--pick",), ()):

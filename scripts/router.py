@@ -379,7 +379,10 @@ class Board:
             self.gql("mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }",
                      i=issue["id"], s=self.states["in_progress"])
             return issue, task
-        log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
+        if queue:
+            log("pick: nothing claimable")
+        else:
+            log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
         return None
 
     def claim(self, only=None, default_only=False):
