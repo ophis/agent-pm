@@ -38,7 +38,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3` because macOS
 
 - Runs get `--setting-sources user --strict-mcp-config`, so this file and project settings don't load in them. A run reaches only `work/<ID>/` and its `--add-dir`s (`roles/`, `tasks/`, `templates/`, the task's `add_dirs`, the role's `memory`; the docs clone reaches runs through `add_dirs`' `{docs_clone}`); give a task any new path through `add_dirs`, or the run stalls on a permission nobody can grant.
 - `test_launch.py` asserts exact prompt strings and `claude` flags; update it with any prompt or flag change.
-- `pipeline.toml` refers to the team and states by Linear id (names are labels; code and tasks act by id), and to roles by name.
+- Code, config and tasks identify Linear entities (team, states, label groups, labels, projects, users) by id, never by name; names appear only in logs and comments. Exceptions: a role's `account` is its user's email, and task labels match by name until TASK-110. Roles are referred to by name.
 - `logs/` (gitignored) is runner state: keep it; launchd can't start a job whose log dir is missing.
 - Schedules are `scripts/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload with `launchctl bootout` + `bootstrap`); they hold absolute paths. The router plist passes `--now`, which skips `router.py`'s 01–06 hours check; drop it to run only at night.
 - Linear's issue lists can lag a just-made state change; re-read the issue's state before acting on it.
