@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Router: decides what runs next across the runnable projects in pipeline.toml, then calls launch.py.
+"""Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
 docs/specs/2026-09-27-router-launcher-design.md
 
 (no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one.
---pick [--project ID] [RUNS_LOG]  Recover, then Pick + Claim; print "<ID> <url>" (manual use).
+--pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, humans, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, runnable, stage_order, team, transcript)
+                      parse_time, role_ids, runnable, stage_order, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -34,7 +34,7 @@ SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
-USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--project ID] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
+USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROLE] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
          " | --gate resume|new | --prune RUNS_LOG")
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
@@ -159,26 +159,25 @@ class Board:
     def __init__(self, gql, entries, tdir, now, dry, cfg, only=None):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist = {}
-        self.projects = sorted(p for p in runnable(cfg) if only in (None, p))
+        runs = runnable(cfg)
+        if only is not None and only not in runs:
+            raise SystemExit(f"no role {only!r} in roles/")
         self.stage = stage_order(cfg)
-        self.me = gql("query { viewer { id } }")["viewer"]["id"]
         t = team(gql, cfg)
-        self.states = t.states
+        self.team, self.states = t.id, t.states
         self.humans = set(humans(gql, cfg))
         self.emails = cfg.get("human_members") or []
-        if not self.projects:
-            raise SystemExit(f"no runnable project in pipeline.toml{f' with id {only!r}' if only else ''}")
-        missing = [p for p in self.projects if p not in t.projects]
-        if missing:
-            raise SystemExit(f"runnable projects not found in Linear: {', '.join(missing)}")
+        self.roles = role_ids(gql, {r: run for r, run in runs.items() if only in (None, r)})
 
-    def issues(self, state, extra=None):
-        flt = {"project": {"id": {"in": self.projects}}, "state": {"id": {"eq": self.states[state]}}, **(extra or {})}
+    def issues(self, state):
+        flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
+               "assignee": {"id": {"in": list(self.roles)}}, "state": {"id": {"eq": self.states[state]}}}
         return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt project { id name } } } }""", f=flt)["issues"]["nodes"]
+                    nodes { id identifier url priority createdAt updatedAt project { id name } assignee { id email } } } }""",
+                        f=flt)["issues"]["nodes"]
 
     def later(self, issue):
-        return -self.stage.get(issue["project"]["id"], 0)
+        return -self.stage.get(self.roles[issue["assignee"]["id"]], 0)
 
     def last_move(self, issue, state, by_user=False):
         """Latest time the issue was moved to state (by_user: by a `human_members` user)."""
@@ -202,7 +201,7 @@ class Board:
         moved = self.last_move(issue, "in_progress")
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
-    def comment_and_move(self, issue, body, state, **extra):
+    def comment_and_move(self, issue, body, state):
         if self.dry:
             return
         if state == "in_review":
@@ -212,11 +211,11 @@ class Board:
         self.gql("mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
                  i=issue["id"], b=body)
         self.gql("mutation($i: String!, $u: IssueUpdateInput!) { issueUpdate(id: $i, input: $u) { success } }",
-                 i=issue["id"], u={"stateId": self.states[state], **extra})
+                 i=issue["id"], u={"stateId": self.states[state]})
 
     def recover(self):
-        """Walk our In Progress issues; returns the resume candidate (issue, sid, k) or None."""
-        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress", {"assignee": {"id": {"eq": self.me}}})]
+        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k) or None."""
+        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress")]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
         cand = None
@@ -233,10 +232,10 @@ class Board:
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
-                    self.comment_and_move(issue, INTERRUPTED, "todo", assigneeId=None)
+                    self.comment_and_move(issue, INTERRUPTED, "todo")
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
-                self.comment_and_move(issue, INTERRUPTED, "todo", assigneeId=None)
+                self.comment_and_move(issue, INTERRUPTED, "todo")
         return cand
 
     def next_run(self):
@@ -262,7 +261,7 @@ class Board:
 
     def take(self, only=None):
         """The claimed Todo issue, or None."""
-        # Pick: highest priority first, then later stage, then oldest.
+        # Pick: highest priority first, then later role, then oldest.
         queue = sorted(self.issues("todo"), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
             queue = [i for i in queue if i["identifier"] == only]
@@ -279,10 +278,10 @@ class Board:
             if current != self.states["todo"]:
                 log(f"claim: {issue['identifier']} is no longer Todo; skipping")
                 return None
-            self.gql("mutation($i: String!, $s: String!, $a: String!) { issueUpdate(id: $i, input: { stateId: $s, assigneeId: $a }) { success } }",
-                     i=issue["id"], s=self.states["in_progress"], a=self.me)
+            self.gql("mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }",
+                     i=issue["id"], s=self.states["in_progress"])
             return issue
-        log(f"pick: {only} is not a Todo issue in a runnable project" if only else "pick: queue empty")
+        log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
         return None
 
     def claim(self, only=None):
@@ -346,8 +345,8 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         append(runs, f"start {issue['identifier']} session={sid} transcript={transcript(issue['identifier'], sid, tdir)}")
         mode = ["--mode", "new"]
     ident, project = issue["identifier"], issue["project"]
-    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"], "--sid", sid]
-            + mode).returncode
+    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"],
+             "--assignee", issue["assignee"]["email"], "--sid", sid] + mode).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
 
@@ -370,7 +369,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
         return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour)
     if args[0] == "--pick":
         rest, only = args[1:], None
-        if rest[:1] == ["--project"] and len(rest) >= 2:
+        if rest[:1] == ["--role"] and len(rest) >= 2:
             only, rest = rest[1], rest[2:]
         if len(rest) > 1 or any(a.startswith("-") for a in rest):
             print(USAGE, file=sys.stderr)
