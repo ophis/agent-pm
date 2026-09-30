@@ -16,17 +16,7 @@ import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
 
-CONFIG = HEADER + """human_members = ["me@x.com"]
-[projects.p-dr]
-role = "researcher"
-task = "deep-research"
-[projects.p-pd]
-prefix = "PRD"
-[projects.p-eng]
-prefix = "ENG"
-role = "engineer"
-task = "engineering"
-"""
+CONFIG = HEADER + 'human_members = ["me@x.com"]\n'
 RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
 ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
@@ -95,8 +85,9 @@ class Launch(unittest.TestCase):
         self.err = err.getvalue()
         return rc
 
-    def args(self, mode="new", project="p-dr"):
-        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project, "--sid", SID, "--mode", mode]
+    def args(self, mode="new", assignee="r@x.com", project="p-dr"):
+        base = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project, "--assignee", assignee,
+                "--sid", SID, "--mode", mode]
         return base + (["--k", "2"] if mode == "resume" else [])
 
     def claude(self):
@@ -158,12 +149,12 @@ class Launch(unittest.TestCase):
                 raise AssertionError(cmd)
             security.append(cmd)
             return SimpleNamespace(returncode=0, stdout=secret if "-w" in cmd else "", stderr="")
-        for project, key in (("p-dr", "k-researcher"), ("p-eng", "k-engineer")):
-            with self.subTest(project):
+        for assignee, key in (("r@x.com", "k-researcher"), ("e@x.com", "k-engineer")):
+            with self.subTest(assignee):
                 self.calls = []
                 with mock.patch.object(launch.subprocess, "run", run), \
                         mock.patch.object(eng, "resolve", return_value=eng.Invalid("x")):
-                    self.assertEqual(self.run_launch(*self.args(project=project), keychain=launch.has_key), 0)
+                    self.assertEqual(self.run_launch(*self.args(assignee=assignee), keychain=launch.has_key), 0)
                 (cmd,) = self.calls
                 self.assertFalse([part for part in cmd if secret in part])
                 self.assertIn(f"LINEAR_KEYCHAIN_SERVICE={key}", self.exports())
@@ -200,11 +191,11 @@ class Launch(unittest.TestCase):
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
-    def test_every_project_locked_down(self):
-        for project in ("p-dr", "p-eng"):
+    def test_every_role_locked_down(self):
+        for assignee in ("r@x.com", "e@x.com"):
             self.calls = []
             with mock.patch.object(eng, "resolve", return_value=eng.Invalid("x")):
-                self.run_launch(*self.args(project=project))
+                self.run_launch(*self.args(assignee=assignee))
             argv = self.claude()
             self.assertIn("--strict-mcp-config", argv)
             self.assertEqual(self.after(argv, "--setting-sources"), ["user"])
@@ -213,7 +204,7 @@ class Launch(unittest.TestCase):
             self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
-            self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, project == "p-eng")
+            self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, assignee == "e@x.com")
 
     def test_deny(self):
         self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
@@ -266,7 +257,7 @@ class Launch(unittest.TestCase):
     def launch_eng(self, result, mode="new"):
         error = result if isinstance(result, Exception) else None
         with mock.patch.object(eng, "resolve", return_value=result, side_effect=error) as resolve:
-            rc = self.run_launch(*self.args(mode, "p-eng"))
+            rc = self.run_launch(*self.args(mode, "e@x.com", "p-eng"))
         resolve.assert_called_once_with("TASK-1", self.gql, self.run)
         return rc
 
@@ -311,11 +302,19 @@ class Launch(unittest.TestCase):
         self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: gh api: TimeoutExpired\n$")
         self.assertIn("transient TASK-1: gh api: TimeoutExpired", self.err)
 
-    def test_unknown_or_non_runnable_project(self):
-        for project in ("p-nope", "p-pd"):
-            self.assertEqual(self.run_launch(*self.args(project=project)), 2)
-            self.assertIn("not a runnable project", self.err)
+    def test_assignee_not_a_role_account(self):
+        for assignee in ("nobody@x.com", ""):
+            self.assertEqual(self.run_launch(*self.args(assignee=assignee)), 2)
+            self.assertIn("is not a role account", self.err)
         self.assertEqual(self.calls, [])
+
+    def test_assignee_matches_ignoring_case(self):
+        self.assertEqual(self.run_launch(*self.args(assignee="R@X.com")), 0)
+        self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
+
+    def test_project_only_fills_the_prompt(self):
+        self.assertEqual(self.run_launch(*self.args(project="p-anything")), 0)
+        self.assertIn(" Project: p-anything.", self.claude()[2])
 
     def test_script_logs_output_and_end_lines(self):
         self.run_launch(*self.args())
@@ -452,8 +451,7 @@ class Launch(unittest.TestCase):
 
 class RealConfig(unittest.TestCase):
     """NFR-1: the three runs of the repo's pipeline.toml, command for command."""
-    DR, PD, ENG = ("03495382-48f7-4280-a11c-4375df80a561", "ba0738ba-ade7-4525-8d79-1b9944334e74",
-                   "ddbff8bf-b633-4b8c-9272-d1d5ee923747")
+    PROJECT = "p-x"
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -467,8 +465,9 @@ class RealConfig(unittest.TestCase):
         self.calls = []
         self.humans = pipeline.load_config()["human_members"]
 
-    def launch(self, project, mode="new", repo=None):
-        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project, "--sid", SID, "--mode", mode]
+    def launch(self, role, mode="new", repo=None):
+        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", self.PROJECT,
+                "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode]
         if mode == "resume":
             argv += ["--k", "2"]
             path = pipeline.transcript("TASK-1", SID, self.projects)
@@ -485,7 +484,7 @@ class RealConfig(unittest.TestCase):
         i = toks.index("claude")
         return toks[i:toks.index("<", i)], cmd[9]
 
-    def expected(self, project, role, task, effort, extra_deny=(), tail=""):
+    def expected(self, role, task, effort, extra_deny=(), tail=""):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         humans, cfg = self.humans, pipeline.load_config()
         real = f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
@@ -493,7 +492,7 @@ class RealConfig(unittest.TestCase):
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
             " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-            f" Humans: {', '.join(humans)}. Project: {project}." + real + tail,
+            f" Humans: {', '.join(humans)}. Project: {self.PROJECT}." + real + tail,
             "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
@@ -501,23 +500,23 @@ class RealConfig(unittest.TestCase):
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)", *extra_deny]
 
     def test_deep_research(self):
-        argv, script = self.launch(self.DR)
-        self.assertEqual(argv, self.expected(self.DR, "researcher", "deep-research", "xhigh"))
+        argv, script = self.launch("researcher")
+        self.assertEqual(argv, self.expected("researcher", "deep-research", "xhigh"))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "deep-research.log"), script)
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-researcher", script.split(";")[0])
 
     def test_product_design(self):
-        argv, script = self.launch(self.PD)
-        self.assertEqual(argv, self.expected(self.PD, "pm", "product-design", "high"))
+        argv, script = self.launch("pm")
+        self.assertEqual(argv, self.expected("pm", "product-design", "high"))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "product-design.log"), script)
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-pm", script.split(";")[0])
 
     def test_engineering(self):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
         ok = eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", "/u/playground/demo", "main", "TASK-1-demo", wt)
-        argv, script = self.launch(self.ENG, repo=ok)
+        argv, script = self.launch("engineer", repo=ok)
         self.assertEqual(argv, self.expected(
-            self.ENG, "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(PRIVATE)}/**)"],
+            "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(PRIVATE)}/**)"],
             tail=" Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
                  f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
@@ -525,7 +524,7 @@ class RealConfig(unittest.TestCase):
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "engineering.log"), script)
 
     def test_real_config_resume_prompt(self):
-        argv, _ = self.launch(self.DR, mode="resume")
+        argv, _ = self.launch("researcher", mode="resume")
         root = pipeline.ROOT
         self.assertEqual(argv[2].split(" Humans:")[0],
                          f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {root}/roles/principles.md,"
