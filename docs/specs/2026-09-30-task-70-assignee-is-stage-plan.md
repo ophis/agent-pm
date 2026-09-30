@@ -1,6 +1,6 @@
 # TASK-70: the assignee is the stage — plan
 
-RESUME: phase=S6 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktrees/TASK-70-the-assignee-is-the-stage-claim-recover branch=TASK-70-the-assignee-is-the-stage-claim-recover base_ref=be21167bcace11ed397c373c30f40da188817c21 review_round=0 spec_file=docs/specs/2026-09-30-task-70-assignee-is-stage-design.md
+RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktrees/TASK-70-the-assignee-is-the-stage-claim-recover branch=TASK-70-the-assignee-is-the-stage-claim-recover base_ref=be21167bcace11ed397c373c30f40da188817c21 review_round=0 spec_file=docs/specs/2026-09-30-task-70-assignee-is-stage-design.md
 
 ## Implementation plan
 
@@ -443,3 +443,5 @@ RESUME: phase=S6 worktree=/Users/francis/playground/agent-pm/work/TASK-70/worktr
 - S3 r0: architecture=PASS spec-fitness=PASS -> converged; folded NB: load_config docstring, CLAUDE.md promote validates registry
 - S4: plan written (5 tasks: pipeline, router, launch, promote, docs); tasks 2-4 depend on task 1's runnable/role_ids.
 - S5: tasks 1-5 done via subagent-driven-development, each task review Approved (065840e, 69f5389, ffdb2ae, fb2666d, 7d44f0d); ruling: promote prefix-exit test uses [roles.engineer] next=researcher (plan's config was a cycle).
+- S6: unittest 280 OK, no warnings; read-only live check: Board(dry) + Promoter init against Linear OK, todo queue = 7 role-assigned issues across projects Agent PM/MISC, filters accepted.
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[test,code-quality] (performance: 3 users queries/tick marginal; architecture: structure reviewed at S3 and follows spec) transport=Workflow
