@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Engineering runs: resolve an issue's target repo, and a CLI for the stage (spec docs/specs/2026-09-27-task-38-…-design.md)."""
+"""Engineering runs: resolve an issue's target repo, and a CLI for the stage."""
 import json, os, re, subprocess, sys
 from dataclasses import dataclass
 
