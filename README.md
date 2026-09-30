@@ -4,8 +4,8 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 
 | Role | Agent produces | Published to |
 |---|---|---|
-| researcher | A verified research report | `private_docs/Research/` |
-| pm | A PRD | `private_docs/Product Design/` |
+| researcher | A verified research report | `Research/` in the docs repo (`[docs]`) |
+| pm | A PRD | `Product Design/` in the docs repo (`[docs]`) |
 | engineer | A pull request that builds the PRD | The target repo |
 
 ## Using the board
@@ -14,7 +14,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>` unless the project has a `[project_repos]` entry; a `Repo:` line always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
-- **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's `private_docs` worktree) are deleted 24 hours later, along with any unpushed work.
+- **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's docs worktree) are deleted 24 hours later, along with any unpushed work.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 
@@ -25,7 +25,7 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
@@ -73,9 +73,9 @@ Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-p
 
 ## Configuration
 
-- `pipeline.toml`: the Linear team and workflow states, both by id; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering issues that have no `Repo:` line.
-- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only`, `memory`.
-- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs, title `prefix`, required on the default task of any role that is some role's `next`).
+- `pipeline.toml`: the Linear team and workflow states, both by id; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering issues that have no `Repo:` line; `[docs]`, the docs repo: `repo` (`<owner>/<name>`), `clone` (local clone path, `~` allowed, must exist when a run starts) and `branch`, e.g. `ophis/private_docs`, `~/playground/private_docs`, `main`.
+- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only` (an entry `{docs_clone}` is the `[docs]` clone), `memory`.
+- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs (`{docs_clone}` is the `[docs]` clone), title `prefix`, required on the default task of any role that is some role's `next`).
 - `templates/`: the report and PRD skeletons.
 
 ## Cutover (TASK-62 PR-C)

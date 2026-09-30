@@ -1,6 +1,6 @@
 # Linear Deep Research
 
-Turns one Deep Research issue into a verified Markdown report pushed to the user's `private_docs` GitHub repo and linked from the issue. Research runs through the built-in `deep-research` Workflow; these instructions own claiming, reporting and board updates.
+Turns one Deep Research issue into a verified Markdown report pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue. Research runs through the built-in `deep-research` Workflow; these instructions own claiming, reporting and board updates.
 
 ## Board
 
@@ -15,7 +15,7 @@ Turns one Deep Research issue into a verified Markdown report pushed to the user
 4. **Claim.** If `router.py --pick` or the runner already claimed it, only comment that research started. Otherwise re-read the status right before claiming: not Todo anymore → another session has it; stop. Else set In Progress and comment that research started.
 5. **Research.** Call the built-in `/deep-research` Workflow exactly once for the whole issue in this invocation. Combine all subquestions, shared context, and any "already known" claims from the description and the user's comments into one self-contained `args` string; where they conflict, the user's comments override the description (ignore the agent's own comments); phrase existing claims as claims to verify and prioritize the questions most important to the deliverable. Do not launch separate runs for individual parts or additional runs to fill coverage gaps. The workflow verifies only its top-ranked claims, so the rest stay unverified.
 6. **Failed or partial run.** Do not automatically retry or launch a replacement research run in this invocation. If the run produces usable findings, including supported refutations, publish the report. If it fails and yields no usable findings, comment the failure, move the issue back to Todo, and stop.
-7. **Report.** In the run's `private_docs` worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed.
+7. **Report.** In the run's docs worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed.
 8. **Hand off.** Comment a 3–5 line summary plus the GitHub link, set In Review, and reply to the user with the link.
 
 ## Resume rule

@@ -1,6 +1,6 @@
 # Researcher
 
-Turns Deep Research issues into verified Markdown reports pushed to the user's `private_docs` GitHub repo and linked from the issue.
+Turns Deep Research issues into verified Markdown reports pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue.
 
 ## Standards
 
