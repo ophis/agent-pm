@@ -26,7 +26,7 @@ Mutation: `mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail
 
 ## G1/G2 — Rules
 
-- `roles/principles.md`: replace the reviewer rule with: every move to In Review also subscribes each email in the prompt's `Humans:` list to the issue (`issueSubscribe(id:, userEmail:)`, one call per email) and leaves the assignee as is; `none` → subscribe no one.
+- `roles/principles.md`: replace the reviewer rule with: every move to In Review also subscribes each email in the prompt's `Humans:` list to the issue (`issueSubscribe(id:, userEmail:)`, one call per email) and leaves the assignee as is; `none` → subscribe no one; a failed subscribe → comment that and move anyway (replaces the old rule's unknown-email clause; a session gets no retry tick).
 - `tasks/engineering.md`: step 2 drops "(reviewer assigned)"; step 7's "assign the reviewer" becomes "subscribe the humans" (the GitHub integration makes that move, not the session, so the principles rule alone would not fire).
 
 ## G3 — Launch

@@ -244,3 +244,4 @@ delete `self.reviewer = reviewer(gql, cfg)`; `move`:
 - decision(engineering step 7): replace "assign the reviewer" with "subscribe the humans" - the GitHub integration makes that move, so the principles rule would not fire; dissent: none
 - S3 panel: core=[architecture,spec-fitness] +optional=[] transport=Workflow (security dropped: no auth/key/IO surface change)
 - S3 r0: architecture=PASS spec-fitness=PASS -> converged; non-blockers applied: grep widened to scripts/, router comment non-idempotence noted
+- decision(session subscribe failure): principles says comment and move anyway - mirrors the old unknown-email clause; the harness instead stays unmoved and retries next tick; dissent: none
