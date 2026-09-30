@@ -3,8 +3,8 @@
 
 launch.py --issue ID --url URL --project PROJECT_ID --sid SID --mode new|resume [--k K]
 Every run works in work/<ID>/. Exits 2 for an unknown or non-runnable project or a config error (a role memory
-overlapping the issue's repo; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the
-Engineering repo step failed transiently). Needs Python 3.11+.
+overlapping the issue's repo, or a role key missing from the Keychain; logged), 3 when the run cannot start yet
+(transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -78,6 +78,12 @@ def script(a, cmd, env, plog, runs):
             f'ts=$(date "+%F %T"); echo {end} >> {q(plog)}; echo {end} >> {q(runs)}')
 
 
+def has_key(service):
+    """True when the Keychain has an item for service; the secret is never read (no -w)."""
+    return subprocess.run(["security", "find-generic-password", "-s", service],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
 def fail(plog, issue, kind, reason, rc):
     """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
     line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {kind} {issue}: {reason}"
@@ -106,7 +112,8 @@ def repo_step(a, task, gql, run):
     return tail, {"AGENT_PM_ISSUE": a.issue}, [t.format(**values) for t in task.get("allowed_tools", [])], r
 
 
-def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT):
+def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
+         keychain=has_key):
     ap = argparse.ArgumentParser(prog="launch.py")
     for f in ("--issue", "--url", "--project", "--sid"):
         ap.add_argument(f, required=True)
@@ -129,6 +136,8 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
             return fail(plog, a.issue, "transient", f"no transcript to resume at {path}", 3)
+    if not keychain(job.key):
+        return fail(plog, a.issue, "config-error", f"no Keychain item for role key {job.key}", 2)
     humans = cfg.get("human_members") or []
     states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
     tail = (f" Reviewer: {(humans or ['none'])[0]}. Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
@@ -147,7 +156,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo)
-    sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, **env}, plog, runs)],
+    sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs)],
        check=True)
     return 0
 
