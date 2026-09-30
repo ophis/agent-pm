@@ -15,7 +15,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
 ## Steps
 
 1. **Read** the issue, its comments, the source reports, and issues the description links to.
-2. **Judge.** The issue is too vague (principles) only if what to build can't be determined; an unclear audience or depth calls for self-grilling. Otherwise judge, one sentence each under 假设 in the PRD:
+2. **Judge.** If what to build can't be determined, the issue is too vague (principles); an unclear audience or depth calls for self-grilling instead. Otherwise judge, one sentence each under 假设 in the PRD:
    - Research: does the PRD need more material (outside facts, the current state)?
    - Self-grill: is the need vague, with decisions to settle, or are there several viable approaches whose trade-off isn't obvious?
 3. **Start.** The runner has already claimed the issue; comment that the PRD was started.
