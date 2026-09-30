@@ -2,7 +2,7 @@
 
 Spec: `docs/specs/2026-09-30-task-53-rework-comments-design.md`
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr branch=TASK-53-build-started-pr base_ref=8b826cacafcca2445a286c74fd827d1705bba93b review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr/docs/specs/2026-09-30-task-53-rework-comments-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr branch=TASK-53-build-started-pr base_ref=8b826cacafcca2445a286c74fd827d1705bba93b review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr/docs/specs/2026-09-30-task-53-rework-comments-design.md
 
 ## Progress
 
@@ -20,6 +20,9 @@ RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktr
 - S5: Task 1 da214b9, Task 2 7abc6c2; per-task reviews approved. Deferred minors: human_members built for every command outside try (non-string entry -> traceback); `others` ordering untested alone; null PR body untested; engineering.md Inputs window/`since` wording, step 4 repeats user/others clause
 - S6: `python3 -m unittest discover -s scripts/tests` 313 OK; live `AGENT_PM_ISSUE=TASK-53 eng.py comments` -> since = this run's Build started, `--since` refused
 - S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[code-quality,test,security] transport=Workflow (performance, architecture dropped: small CLI change, architecture reviewed at S3; security added: untrusted-comment rules)
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS code-quality=PASS test=PASS security=PASS -> converged
+- S8: skipped (keep the commits)
+- Residual non-blocking: human_members unvalidated (non-string entry -> traceback, also on status); empty marker set silently falls back to issue creation; Linear shape errors exit 3 not 2; step 1 doesn't say where earlier comments are read; step 4 resume wording could read as others driving spec edits (step 6 governs); step 4/1/6 repeat the others rule; `others` sort and null PR body untested; tests take marker accounts from the real roles/ registry; _command param count, Note placement; no size cap on others; harness key for Linear reads
 
 ## Implementation plan
 
