@@ -38,7 +38,7 @@ USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROL
          " | --gate resume|new | --prune RUNS_LOG")
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)")
+LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
@@ -52,7 +52,8 @@ def local_time(s):
 
 
 def parse_log(path):
-    """(time, kind, issue, sid) of every start/resume line, in file order. runs.log timestamps are local time."""
+    """(time, kind, issue, sid, task) of every start/resume line, in file order; task is None without a trailing task= field.
+    runs.log timestamps are local time."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -62,7 +63,7 @@ def parse_log(path):
     for line in lines:
         m = LINE.match(line)
         if m:
-            entries.append((local_time(m[1]), m[2], m[3], m[4]))
+            entries.append((local_time(m[1]), m[2], m[3], m[4], m[5]))
     return entries
 
 
@@ -95,6 +96,10 @@ def prune(path, now):
 
 def latest_sid(entries, issue):
     return next((e[3] for e in reversed(entries) if e[2] == issue), None)
+
+
+def logged_task(entries, sid):
+    return next((e[4] for e in reversed(entries) if e[3] == sid and e[4]), None)
 
 
 def sid_times(entries, sid):
@@ -287,7 +292,7 @@ class Board:
                  i=issue["id"], u={"stateId": self.states[state]})
 
     def recover(self):
-        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k) or None."""
+        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k, task) or None."""
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress")]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
@@ -301,7 +306,15 @@ class Board:
                 log(f"recover: {ident} reached {CAP} attempts; In Review")
                 self.comment_and_move(issue, CAP_COMMENT, "in_review")
             elif sid and has_transcript(self.tdir, ident, sid):
-                cand = cand or (issue, sid, resume_count(self.entries, sid) + 1)
+                role = self.role(issue)
+                run = self.runs[role]
+                task = logged_task(self.entries, sid) or run.task_name
+                if task not in run.tasks:
+                    log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
+                    self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
+                                                 f'({", ".join(run.tasks)}); needs a look.', "in_review")
+                else:
+                    cand = cand or (issue, sid, resume_count(self.entries, sid) + 1, task)
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
@@ -312,12 +325,12 @@ class Board:
         return cand
 
     def next_run(self):
-        """("resume", issue, sid, k), ("new",) or None, after Recover."""
+        """("resume", issue, sid, k, task), ("new",) or None, after Recover."""
         cand = self.recover()
         if cand:
-            issue, sid, k = cand
+            issue, sid, k, task = cand
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return ("resume", issue, sid, k)
+            return ("resume", issue, sid, k, task)
         todo = self.todo()
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
@@ -328,7 +341,7 @@ class Board:
     def plan(self):
         run = self.next_run()
         if run and run[0] == "resume":
-            _, issue, sid, k = run
+            _, issue, sid, k, _ = run
             return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
         return run and "new"
 
@@ -428,9 +441,8 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
     if kind == "resume":
-        _, issue, sid, k = run
-        task = board.runs[board.role(issue)].task_name
-        append(runs, f"resume {issue['identifier']} session={sid} n={k}")
+        _, issue, sid, k, task = run
+        append(runs, f"resume {issue['identifier']} session={sid} n={k} task={task}")
         mode = ["--mode", "resume", "--k", str(k)]
     else:
         taken = board.take(issue_id)

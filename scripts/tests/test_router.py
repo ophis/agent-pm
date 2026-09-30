@@ -159,17 +159,18 @@ class Base(unittest.TestCase):
     def moved(self, ident, minutes_ago, state=STATES["In Progress"], actor=AGENT):
         self.hist.setdefault(ident, []).insert(0, {"createdAt": ago(minutes=minutes_ago), "actorId": actor, "toStateId": state})
 
-    def resumable(self, ident, sid, minutes_ago):
+    def resumable(self, ident, sid, minutes_ago, task=None):
         """A start line for sid, an old <sid>.jsonl, and a move to In Progress just before the start."""
         self.moved(ident, minutes_ago + 1)
-        self.add("start", ident, sid, minutes_ago)
+        self.add("start", ident, sid, minutes_ago, task)
         self.touch(ident, sid, 40)
 
-    def add(self, kind, ident, sid, minutes_ago):
+    def add(self, kind, ident, sid, minutes_ago, task=None):
+        """A runs.log line; without task it is a line from before task= was recorded."""
         ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         s = self.sid(sid)
         extra = "n=1" if kind == "resume" else f"transcript={pipeline.transcript(ident, s, self.tdir)}"
-        self.lines.append(f"{ts} {kind} {ident} session={s} {extra}")
+        self.lines.append(f"{ts} {kind} {ident} session={s} {extra}" + (f" task={task}" if task else ""))
 
     def touch(self, ident, sid, minutes_ago, sub=None):
         """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
@@ -228,6 +229,23 @@ class ParseAndLiveness(Base):
 
     def test_missing_log_is_empty(self):
         self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])
+
+    def test_fr9_parse_task(self):
+        self.add("start", "TASK-1", "a", 60, "deep-research")
+        self.add("start", "TASK-2", "b", 50)
+        self.add("resume", "TASK-1", "a", 40, "light-research")
+        self.add("resume", "TASK-1", "a", 30)
+        self.lines.append("2026-09-26 23:00:00 resume TASK-3 session=c n=1 task=x extra")
+        with open(self.log, "w") as f:
+            f.write("\n".join(self.lines) + "\n")
+        entries = router.parse_log(self.log)
+        self.assertEqual([e[1:] for e in entries], [("start", "TASK-1", self.sid("a"), "deep-research"),
+                                                    ("start", "TASK-2", self.sid("b"), None),
+                                                    ("resume", "TASK-1", self.sid("a"), "light-research"),
+                                                    ("resume", "TASK-1", self.sid("a"), None),
+                                                    ("resume", "TASK-3", "c", None)])
+        self.assertEqual([router.logged_task(entries, s) for s in (self.sid("a"), self.sid("b"), "c", "nope")],
+                         ["light-research", None, None, None])
 
     def test_liveness(self):
         s, t = self.sid("s"), self.sid("t")
@@ -1101,7 +1119,7 @@ class Tick(Base):
                                         "--assignee", ROLE["researcher"]])
         self.assertEqual(launch[-4:], ["--mode", "resume", "--k", "1"])
         self.assertIn("--sid", launch)
-        self.assertTrue(self.state.endswith("resume TASK-1 session=a n=1\n"))
+        self.assertTrue(self.state.endswith("resume TASK-1 session=a n=1 task=deep-research\n"))
 
     def test_issue_flag_wins_over_resume(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher")], self.hist)
@@ -1299,6 +1317,67 @@ class TaskLabels(Base):
         self.tick(fake)
         (launch,) = self.sh.launches()
         self.assertEqual(launch[-6:], ["--task", "deep-research", "--mode", "resume", "--k", "1"])
+
+    def test_fr9_fr13_resume_passes_the_recorded_task(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
+        self.moved("TASK-1", 61)
+        self.add("resume", "TASK-1", "a", 60, "light-research")
+        self.add("resume", "TASK-1", "a", 50)
+        self.touch("TASK-1", "a", 40)
+        self.tick(fake)
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[launch.index("--sid"):], ["--sid", self.sid("a"), "--task", "light-research", "--mode", "resume", "--k", "3"])
+        self.assertTrue(self.state.endswith(" resume TASK-1 session=a n=3 task=light-research\n"))
+        self.assertIn("plan: resume TASK-1 session=a n=3", self.said())
+
+    def test_fr14_no_record_resumes_the_assignee_roles_default(self):
+        for role, project, task in (("researcher", DR, "deep-research"), ("pm", PD, "product-design")):
+            self.lines, self.hist = [], {}
+            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project, labels=[label("Light Research")])], self.hist)
+            self.resumable("TASK-1", "a", 60)
+            self.tick(fake)
+            (launch,) = self.sh.launches()
+            self.assertEqual(launch[-6:], ["--task", task, "--mode", "resume", "--k", "1"], role)
+            self.assertTrue(self.state.endswith(f" resume TASK-1 session=a n=1 task={task}\n"), role)
+
+    def test_fr15_recorded_task_no_longer_the_roles_goes_to_review(self):
+        for role, project, task, tasks in (("researcher", DR, "orphan", "deep-research, light-research"),
+                                           ("pm", PD, "light-research", "product-design")):
+            self.lines, self.hist = [], {}
+            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project)], self.hist)
+            self.resumable("TASK-1", "a", 60, task)
+            before = self.unmap("\n".join(self.lines) + "\n")
+            self.tick(fake)
+            t = fake.issues["TASK-1"]
+            self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
+                             ("In Review", who(role), [f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks ({tasks}); needs a look.'],
+                              ["me@x.com"]), role)
+            self.assertEqual(ops(fake), ["issueSubscribe", "commentCreate", "issueUpdate"], role)
+            self.assertEqual(fake.mutations[2][1]["u"], {"stateId": STATES["In Review"]}, role)
+            self.assertEqual(self.said(), [f"recover: TASK-1 task={task} is not one of {role}'s tasks; In Review",
+                                           "plan: nothing to do", "skip: nothing to do"], role)
+            self.assertEqual((self.sh.launches(), self.state), ([], before), role)
+
+    def test_fr15_every_resumable_issue_is_checked(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", priority=1),
+                           issue("TASK-2", "In Progress", "researcher", priority=2)], self.hist)
+        self.resumable("TASK-1", "a", 60, "light-research")
+        self.resumable("TASK-2", "b", 60, "orphan")
+        self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-1 a 1 https://linear.app/x/TASK-1 Deep Research")
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-2"]["state"]), ("In Progress", "In Review"))
+        self.assertIn("recover: TASK-2 task=orphan is not one of researcher's tasks; In Review", self.said())
+
+    def test_fr16_requeued_issue_resolved_again_at_claim(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research")])], self.hist)
+        self.moved("TASK-1", 61)
+        self.add("start", "TASK-1", "a", 60, "deep-research")
+        self.tick(fake)
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+        self.assertIn("claim: TASK-1 task=light-research", self.said())
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[-4:], ["--task", "light-research", "--mode", "new"])
+        self.assertTrue(self.state.endswith(" task=light-research\n"))
+        self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
 
 if __name__ == "__main__":
