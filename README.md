@@ -20,7 +20,7 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ## Schedule
 
-- **Router:** hourly, all day. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Router:** every 30 minutes, all day. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
 - **Promote:** every 5 minutes. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
