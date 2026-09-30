@@ -324,9 +324,11 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         return 0
     if busy:
         log(f"busy: {', '.join(busy)}")
-        if issue_id and (role := role_for(roles, assignee_email(gql, cfg["team"], issue_id))) in busy:
-            log(f"skip: {issue_id} belongs to busy role {role}")
-            return 0
+        if issue_id:
+            role = role_for(roles, assignee_email(gql, cfg["team"], issue_id))
+            if role in busy:
+                log(f"skip: {issue_id} belongs to busy role {role}")
+                return 0
     if not dry:
         try:
             prune(runs, now)

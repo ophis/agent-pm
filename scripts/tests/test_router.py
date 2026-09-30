@@ -731,12 +731,13 @@ class MultiRole(Base):
 class FakeShell:
     """active: the busy roles; has-session finds only the exact target =agent-pm-<role> of one."""
     def __init__(self, active=(), probe_five=0.2):
-        self.calls, self.active, self.five = [], set(active), probe_five
+        self.calls, self.five = [], probe_five
+        self.busy = {("-t", f"=agent-pm-{r}") for r in active}
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         if cmd[:2] == ["tmux", "has-session"]:
-            return subprocess.CompletedProcess(cmd, 0 if cmd[2:] in [["-t", f"=agent-pm-{r}"] for r in self.active] else 1)
+            return subprocess.CompletedProcess(cmd, 0 if tuple(cmd[2:]) in self.busy else 1)
         if cmd[0] == "claude":
             ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
                 "five_hour": {"utilization": self.five}, "seven_day": {"utilization": 0.1}}}}
@@ -806,7 +807,7 @@ class Tick(Base):
         sh = FakeShell({"researcher", "engineer"})
         self.assertEqual(router.busy_roles(["researcher", "pm", "engineer"], sh), ["engineer", "researcher"])
         self.assertEqual(sh.calls, [["tmux", "has-session", "-t", f"=agent-pm-{r}"] for r in ("researcher", "pm", "engineer")])
-        self.assertEqual(sh(["tmux", "has-session", "-t", "agent-pm-pm"]).returncode, 1)
+        self.assertEqual(sh(["tmux", "has-session", "-t", "agent-pm-researcher"]).returncode, 1)
         self.tick(FakeLinear([]))
         self.assertCountEqual([c for c in self.sh.calls if c[0] == "tmux"],
                               [["tmux", "has-session", "-t", f"=agent-pm-{r}"] for r in ROLE])
