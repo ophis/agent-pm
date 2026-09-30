@@ -4,17 +4,18 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Worktrees: for each finished issue, every worktree under work/<ID>/worktrees/ is
-force-deleted with any uncommitted or unpushed work: `git worktree remove --force
---force` (dirty and locked ones too), then `git branch -D` of its local branch.
-An entry must be a real directory inside work/<ID>/worktrees/, and its clone is
-read from its .git file (<clone>/.git/worktrees/<n>); anything else is skipped.
+Worktrees: for each finished issue, every worktree under work/<ID>/worktrees/ and
+work/<ID>/src/ (a researcher's detached, read-only checkouts) is force-deleted with any
+uncommitted or unpushed work: `git worktree remove --force --force` (dirty and locked
+ones too), then `git branch -D` of its local branch, if it has one (src/ ones are detached).
+An entry must be a real directory inside its own folder, and its clone is read from
+its .git file (<clone>/.git/worktrees/<n>); anything else is skipped.
 Remote branches, main workspaces and work/<ID>/ itself are never touched.
 
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
-Runs at the end of promote's tick; an issue is queried on its own only when it has a worktree.
+Runs at the end of promote's tick; an issue is queried on its own only when it has a worktree or src/ entry.
 --dry-run   Print the plan; change nothing.
 Needs Python 3.11+ (tomllib).
 Exit 0 = done, 2 = bad arguments, 3 = an error (Linear or git), retried next run.
@@ -32,6 +33,7 @@ from pipeline import WORK, linear_gql, load_config, parse_time, role_ids, runnab
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
 ARCHIVE_ROLES = ("pm", "engineer")
+FOLDERS = ("worktrees", "src")
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250, orderBy: createdAt) { nodes { createdAt toStateId } } } }"""
@@ -75,19 +77,22 @@ class Pruner:
             raise TransientError(f"git {args[0]} {args[1]}: {_stderr(res)}")
 
     def entries(self, ident):
-        base = os.path.join(self.work, ident, "worktrees")
-        try:
-            return [os.path.join(base, n) for n in sorted(os.listdir(base)) if not n.startswith(".")]
-        except OSError:
-            return []
+        found = []
+        for folder in FOLDERS:
+            base = os.path.join(self.work, ident, folder)
+            try:
+                found += [os.path.join(base, n) for n in sorted(os.listdir(base)) if not n.startswith(".")]
+            except OSError:
+                pass
+        return found
 
     def prune(self, ident, entry):
-        name = os.path.basename(entry)
-        key = f"{ident}/{name}"
-        path = os.path.join(os.path.realpath(self.work), ident, "worktrees", name)
+        folder, name = os.path.basename(os.path.dirname(entry)), os.path.basename(entry)
+        key = f"{ident}/{name}" if folder == "worktrees" else f"{ident}/{folder}/{name}"
+        path = os.path.join(os.path.realpath(self.work), ident, folder, name)
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip(f"not a real directory inside {ident}/worktrees/, refusing to touch")
+                raise Skip(f"not a real directory inside {ident}/{folder}/, refusing to touch")
             try:
                 clone, branch, _ = locate(path)
             except ValueError as e:
