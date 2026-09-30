@@ -20,8 +20,8 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ## Schedule
 
-- **Router:** hourly 01:00–06:00. Resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
-- **Promote:** at :05, :20, :35 and :50. Handles Handoff, then prunes finished worktrees.
+- **Router:** hourly, all day. Resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Promote:** every 5 minutes. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
 
@@ -36,7 +36,7 @@ for job in router promote; do
 done
 ```
 
-To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+To change a schedule, edit the plist in `scripts/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ### Role accounts
 
