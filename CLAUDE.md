@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Unattended agent pipeline driven by a Linear board: launchd-scheduled Python scripts pick Todo issues assigned to a role account (any project; the project is the product, the assignee is the stage: researcher → pm → engineer) and start one `claude -p` run per issue; each run is that role (`roles/<role>.md`) doing one of its tasks (`tasks/<task>.md`): the one the issue's `Task` label names, else the role's default (first in `tasks`).
+Unattended agent pipeline driven by a Linear board: launchd-scheduled Python scripts pick Todo issues assigned to a role account (any project; the project is the product, the assignee is the stage: researcher → pm → engineer) and start one `claude -p` run per issue; each run is that role (`roles/<role>.md`) doing one of its tasks (`tasks/<task>.md`): the one the issue's `Tasks` label names, else the role's default (first in `tasks`).
 
 ## Commands
 
