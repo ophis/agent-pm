@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E402
+from board_ids import DOCS_CLONE, HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E402
 import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
@@ -22,11 +22,11 @@ RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-resear
 ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
     "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["{docs_clone}"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
-    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
+    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n',
     "tasks/engineering.md": "",
-    "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["~/playground/private_docs"]\nrepo_from_issue = true\n',
+    "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["{docs_clone}"]\nrepo_from_issue = true\n',
 }
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -194,7 +194,7 @@ class Launch(unittest.TestCase):
                             "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + IDS,
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", DOCS_CLONE,
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
@@ -211,7 +211,7 @@ class Launch(unittest.TestCase):
             self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
-            self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, assignee == "e@x.com")
+            self.assertEqual(f"Edit({slashes(DOCS_CLONE)}/**)" in rules, assignee == "e@x.com")
 
     def test_deny(self):
         self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
@@ -278,7 +278,7 @@ class Launch(unittest.TestCase):
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
-        self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+        self.assertIn(f"Edit({slashes(DOCS_CLONE)}/**)", rules)
 
     def test_engineering_ok_from_project_mapping(self):
         mapped = dataclasses.replace(self.ok(), mapped=True)
@@ -403,7 +403,7 @@ class Launch(unittest.TestCase):
         rules = self.after(self.claude(), "--disallowedTools")
         rd = os.path.join(self.work, "TASK-1")
         self.assertEqual(rules[-2:], [f"Edit({slashes(self.ok().clone)}/**)", f"Edit({slashes(rd)}/worktrees/**)"])
-        self.assertNotIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+        self.assertNotIn(f"Edit({slashes(DOCS_CLONE)}/**)", rules)
 
     def test_repo_read_only_invalid(self):
         self.repo_config()
@@ -419,7 +419,7 @@ class Launch(unittest.TestCase):
 
     def eng_memory(self, mem):
         os.makedirs(mem, exist_ok=True)
-        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n' + ENGINEER_ID)
+        self.write("roles/engineer.toml", f'read_only = ["{{docs_clone}}"]\nmemory = "{mem}"\n' + ENGINEER_ID)
 
     def ok_at(self, clone):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")

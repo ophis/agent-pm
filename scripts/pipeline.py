@@ -144,6 +144,7 @@ TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", 
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REPO = "{repo}"
+DOCS_CLONE = "{docs_clone}"  # a static config value, resolved here; {repo} is per issue, resolved by the launcher
 # A clone with one of these would break the launcher's Edit(//<clone>/**) deny rule or the prompt's Docs: line.
 CLONE_BAD_RE = re.compile(r"[\x00-\x1f\x7f*?\[\](){},]")
 # Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
@@ -276,7 +277,7 @@ def _pairs(root, kind):
     return out
 
 
-def _role(name, r, root):
+def _role(name, r, root, resolve):
     """Role of roles/<name>.toml, normalized; a broken file stops the caller."""
     where = f"roles/{name}.toml"
     if extra := sorted(set(r) - ROLE_KEYS):
@@ -285,9 +286,9 @@ def _role(name, r, root):
         raise SystemExit(f"{where}: read_only must be a list")
     read_only = []
     for entry in r.get("read_only", []):
-        path = os.path.expanduser(entry)
+        path = os.path.expanduser(resolve(entry))
         if entry != REPO and (not os.path.isabs(path) or ".." in path.split(os.sep) or "{" in path or "}" in path):
-            raise SystemExit(f"{where}: read_only entries are absolute paths or {REPO}: {entry!r}")
+            raise SystemExit(f"{where}: read_only entries are absolute paths, {REPO} or {DOCS_CLONE}: {entry!r}")
         read_only.append(entry if entry == REPO else os.path.normpath(path))
     memory = r.get("memory")
     if memory is not None:
@@ -307,21 +308,37 @@ def _role(name, r, root):
     return Role(tuple(read_only), memory, tuple(tasks), account, key)
 
 
-def _task(name, t):
+def _task(name, t, resolve):
+    """Task table of tasks/<name>.toml with add_dirs resolved; a broken file stops the caller."""
     where = f"tasks/{name}.toml"
     if extra := sorted(set(t) - TASK_KEYS):
         raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
     if missing := [k for k in ("model", "effort") if not t.get(k)]:
         raise SystemExit(f"{where} has no {', '.join(missing)}")
     check_allowed_tools(where, t)
+    if "add_dirs" not in t:
+        return t
+    dirs = t["add_dirs"]
+    if not isinstance(dirs, list) or not all(isinstance(d, str) for d in dirs):
+        raise SystemExit(f"{where}: add_dirs must be a list of paths: {dirs!r}")
+    if bad := [d for d in dirs if d != DOCS_CLONE and ("{" in d or "}" in d)]:
+        raise SystemExit(f"{where}: add_dirs entries have no braces except {DOCS_CLONE}: {bad[0]!r}")
+    return {**t, "add_dirs": [resolve(d) for d in dirs]}
 
 
-def registry(root=ROOT):
-    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: Role}, {name: task table}."""
-    roles = {name: _role(name, r, root) for name, r in _pairs(root, "roles").items()}
-    tasks = _pairs(root, "tasks")
-    for name, t in tasks.items():
-        _task(name, t)
+def registry(root=ROOT, docs_clone=None):
+    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: Role}, {name: task table}.
+    {docs_clone} entries become docs_clone, else the repo's pipeline.toml clone, which is read only when one occurs."""
+    def resolve(entry):
+        nonlocal docs_clone
+        if entry != DOCS_CLONE:
+            return entry
+        if docs_clone is None:
+            docs_clone = load_config()["docs"]["clone"]
+        return docs_clone
+
+    roles = {name: _role(name, r, root, resolve) for name, r in _pairs(root, "roles").items()}
+    tasks = {name: _task(name, t, resolve) for name, t in _pairs(root, "tasks").items()}
     owner = {}
     for name, r in roles.items():
         if unknown := [t for t in r.tasks if t not in tasks]:
@@ -336,7 +353,7 @@ def runnable(cfg, root=ROOT):
     """{role: Run} of every role, running its default task; a broken pipeline.toml, role or task stops the caller (fail loud)."""
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
-    roles, tasks = registry(root)
+    roles, tasks = registry(root, cfg["docs"]["clone"])
     for name, r in roles.items():
         if r.key == cfg["harness_key"]:
             raise SystemExit(f"roles/{name}.toml: key {r.key!r} is pipeline.toml's harness_key")

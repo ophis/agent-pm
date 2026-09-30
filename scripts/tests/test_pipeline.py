@@ -179,9 +179,9 @@ ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\
 FILES = {
     "roles/principles.md": "",
     "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["{docs_clone}"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
-    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
+    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n',
     "tasks/engineering.md": "", "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nrepo_from_issue = true\nprefix = "ENG"\n',
 }
 ENGINEERING = FILES["tasks/engineering.toml"]
@@ -251,7 +251,8 @@ class Runnable(unittest.TestCase):
         self.assertEqual(r.charter, os.path.join(self.root, "roles", "researcher.md"))
         self.assertEqual(e.charter, os.path.join(self.root, "roles", "engineer.md"))
         self.assertEqual(r.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
-        self.assertEqual(e.read_only, (os.path.expanduser("~/playground/private_docs"),))
+        self.assertEqual(e.read_only, (DOCS_CLONE,))
+        self.assertEqual(r.task["add_dirs"], [DOCS_CLONE])
         self.assertTrue(e.task["repo_from_issue"])
 
     def test_read_only_normalized(self):
@@ -391,6 +392,76 @@ class Runnable(unittest.TestCase):
                 self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
                 self.rejects("read_only", prefix="roles/engineer.toml")
 
+    def test_docs_clone_in_read_only_and_add_dirs(self):
+        self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/a", "{docs_clone}", "/b/c/"]\n')
+        runs = self.runs()
+        self.assertEqual(runs["researcher"].task["add_dirs"], ["~/a", DOCS_CLONE, "/b/c/"])
+        self.assertEqual(runs["engineer"].read_only, (DOCS_CLONE,))
+        _, tasks = pipeline.registry(self.root, DOCS_CLONE)
+        self.assertEqual(tasks["engineering"], {"model": "opus", "effort": "high", "repo_from_issue": True, "prefix": "ENG"})
+
+    def test_docs_clone_follows_the_config(self):
+        clone = os.path.join(self.outside, "notes")
+        runs = self.runs(ROLES.replace(DOCS_CLONE, clone))
+        self.assertEqual(runs["engineer"].read_only, (clone,))
+        self.assertEqual(runs["researcher"].task["add_dirs"], [clone])
+
+    def test_docs_clone_normalized_like_a_literal_path(self):
+        self.assertEqual(pipeline.registry(self.root, "/nonexistent/notes/")[0]["engineer"].read_only, ("/nonexistent/notes",))
+        for bad in ("notes", "/nonexistent/../notes", "/nonexistent/{x}"):
+            with self.subTest(bad):
+                with self.assertRaises(SystemExit) as cm:
+                    pipeline.registry(self.root, bad)
+                self.assertTrue(str(cm.exception.code).startswith("roles/engineer.toml: read_only"), cm.exception.code)
+
+    def test_registry_reads_the_config_only_for_the_placeholder(self):
+        with mock.patch.object(pipeline, "load_config", side_effect=AssertionError("read the config")):
+            self.write("roles/engineer.toml", 'read_only = ["~/docs"]\n' + ENGINEER_ID)
+            self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/docs"]\n')
+            roles, tasks = pipeline.registry(self.root)
+            self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), ((os.path.expanduser("~/docs"),), ["~/docs"]))
+            self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n')
+            with self.assertRaises(AssertionError):
+                pipeline.registry(self.root)
+            self.assertEqual(pipeline.registry(self.root, "/d")[1]["deep-research"]["add_dirs"], ["/d"])
+
+    def test_registry_without_clone_loads_the_repo_config(self):
+        with mock.patch.object(pipeline, "load_config", return_value={"docs": {"clone": "/from/config"}}) as load:
+            roles, tasks = pipeline.registry(self.root)
+        load.assert_called_once_with()
+        self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), (("/from/config",), ["/from/config"]))
+
+    def test_docs_clone_read_only_rejected_forms(self):
+        for bad in ('["{docs_clone}/x"]', '["{docs_clone}", "{docs_clone}/x"]', '["x{docs_clone}"]', '["{docs_clone"]', '["{DOCS_CLONE}"]'):
+            with self.subTest(bad):
+                self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
+                self.rejects("read_only", prefix="roles/engineer.toml")
+
+    def test_docs_clone_add_dirs_rejected_forms(self):
+        for bad in ('["{docs_clone}/x"]', '["{repo}"]', '["x{docs_clone}"]', '["{docs_clone"]', '["a}"]', '"{docs_clone}"', '"~/a"', "[5]", '[["~/a"]]'):
+            with self.subTest(bad):
+                self.write("tasks/deep-research.toml", f'model = "opus"\neffort = "xhigh"\nadd_dirs = {bad}\n')
+                self.rejects("add_dirs", prefix="tasks/deep-research.toml")
+
+    def test_docs_clone_not_an_allowed_tools_placeholder(self):
+        rule = "Bash(git -C {docs_clone} status)"
+        self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
+        self.rejects("unknown placeholder {docs_clone}", prefix="tasks/engineering.toml")
+
+    def test_docs_clone_memory_overlap(self):
+        clone = os.path.join(self.outside, "docs")
+        os.makedirs(os.path.join(clone, "sub"))
+        text = ROLES.replace(DOCS_CLONE, clone)
+        cases = [("at clone", clone), ("under clone", os.path.join(clone, "sub")), ("ancestor of clone", self.outside)]
+        for label, path in cases:
+            with self.subTest(label):
+                self.memory(path, read_only="{docs_clone}")
+                self.rejects("memory", prefix="roles/engineer.toml", text=text)
+        apart = os.path.join(self.outside, "engineer")
+        os.makedirs(apart)
+        self.memory(apart, read_only="{docs_clone}")
+        self.assertEqual(self.runs(text)["engineer"].memory, apart)
+
     def test_repo_read_only(self):
         self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
         self.assertEqual(self.runs()["engineer"].read_only, ("{repo}",))
@@ -483,6 +554,15 @@ class RealConfig(unittest.TestCase):
     def test_real_docs(self):
         self.assertEqual(pipeline.load_config()["docs"], {
             "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
+
+    def test_real_docs_clone_reaches_runs(self):
+        private = os.path.expanduser("~/playground/private_docs")
+        roles, tasks = pipeline.registry()
+        self.assertEqual(roles["engineer"].read_only, (private,))
+        self.assertEqual({t: tasks[t]["add_dirs"] for t in ("deep-research", "product-design", "engineering")}, {
+            "deep-research": [private], "product-design": [private], "engineering": [private]})
+        self.assertEqual({k: r.task["add_dirs"] for k, r in pipeline.runnable(pipeline.load_config()).items()}, {
+            "researcher": [private], "pm": [private], "engineer": [private]})
 
     def test_real_config_ids(self):
         cfg = pipeline.load_config()
