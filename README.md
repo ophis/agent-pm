@@ -71,7 +71,7 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ### Task labels
 
-A role can have several tasks. The issue's label in the Linear `Task` label group (`task_label_group`) picks one; with no such label the issue runs the role's default task. A label matches a task name ignoring case, hyphens and spaces (`Deep Research` → `deep-research`), and the task must be one of the assignee role's. If the label matches no task, names another role's task, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
+A role can have several tasks. The issue's label in the Linear `Task` label group (`task_label_group`) picks one; with no such label the issue runs the role's default task. A label matches a task name ignoring case, hyphens and spaces (`Deep Research` → `deep-research`), and the task must be one of the assignee role's. If the label matches no task, isn't one of the assignee role's tasks, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
 
 The task is recorded in `logs/runs.log`, so a resumed run keeps it whatever the labels say (none recorded: the role's default). An interrupted run whose task is no longer one of the role's goes to In Review with a comment.
 
@@ -79,7 +79,7 @@ To add a task to a role: create `tasks/<task>.md` and `.toml`, add it to `roles/
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. Create the `Task` label group in Linear and set `task_label_group` in `pipeline.toml` to its id (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the committed value is a placeholder, and the router stops until it is a real label group.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. `task_label_group` in `pipeline.toml` is the id of the Linear `Task` label group (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the router stops if it isn't a label group.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
