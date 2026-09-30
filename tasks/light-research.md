@@ -43,6 +43,7 @@ Light vs Deep Research; the Light column is the acceptance yardstick.
 
 A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first; it overrides any earlier resume rule in your context. It is the one exception to steps 5–6:
 - No retrieval agent dispatched yet in this session → continue from step 5.
+- Report already committed → skip the re-dispatch.
 - Otherwise reuse every retrieval result this session already got back, and re-dispatch only the angles without a result (their Agent call returned nothing in this session, or an error): their original prompts, the (a) restrictions included, in one parallel batch, once.
 
 Then do steps 7–8, only what is missing: report committed and pushed (principles), link on the issue, hand-off comment, In Review. Never repeat the "research started" comment and never move the issue to Todo. If nothing usable exists even after the re-runs, publish no report: comment what failed and set In Review (a retried run goes to the user, not back to the queue).

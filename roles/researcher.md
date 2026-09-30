@@ -4,7 +4,7 @@ Turns research issues into Markdown reports pushed to the docs repo (`pipeline.t
 
 ## Standards
 
-- The report: in the run's docs worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed.
+- The report: in the run's docs worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed. A Deep Research run that reuses a Light report drops its 轻量调研 first line.
 - Claims the issue or the user lists as already known are claims to verify, not facts; correct them under 对已知说法的更正.
 - Every finding carries its confidence and sources.
 - Unverified or single-source points are presented as such, never as fact.
