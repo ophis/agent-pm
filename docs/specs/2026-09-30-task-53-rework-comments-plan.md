@@ -14,6 +14,12 @@ RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktr
 - decision(marker): Build started = non-human author + body prefix - a human's words must not reset the window; dissent: none
 - S3 panel: core=[architecture,spec-fitness] +optional=[security] transport=Workflow
 - S3 r0: architecture=PASS spec-fitness=PASS security=FAIL -> security#1 marker spoofable by any non-human author; security#2 others' bodies need delimited untrusted blocks, never verbatim into spec/plan; fixed in spec (marker = engineering role account; step 6 block rule; plus NB: exit 2 on broken registry, explicit params, earlier comments are context, tie/`at == since` test, residuals listed)
+- decision(marker, revised at S3 r0): Build started = engineering role account + body prefix - only the posting account may reset the window; dissent: none
+- S3 r1: architecture=PASS spec-fitness=PASS security=PASS -> converged. NB kept: security#4 no size cap on others (residual), security#6 harness key for Linear reads (as resolve); architecture: registry lookup stays in main, only the email set passed down
+- S4: task list written
+- S5: Task 1 da214b9, Task 2 7abc6c2; per-task reviews approved. Deferred minors: human_members built for every command outside try (non-string entry -> traceback); `others` ordering untested alone; null PR body untested; engineering.md Inputs window/`since` wording, step 4 repeats user/others clause
+- S6: `python3 -m unittest discover -s scripts/tests` 313 OK; live `AGENT_PM_ISSUE=TASK-53 eng.py comments` -> since = this run's Build started, `--since` refused
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[code-quality,test,security] transport=Workflow (performance, architecture dropped: small CLI change, architecture reviewed at S3; security added: untrusted-comment rules)
 
 ## Implementation plan
 
