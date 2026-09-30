@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
 
-(no mode)           One tick (launchd): hours, lock, prune, Recover, plan, usage gate, resume or claim, launch.
+(no mode)           One tick (launchd): hours, per-role locks (all busy -> skip), prune, Recover and plan over idle roles,
+                    usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
-  --issue ID        With --now: claim this Todo issue instead of the top one.
+  --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is busy.
 --pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim: print "<ID> <url> <project>" of the claimed issue, or nothing.
@@ -22,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, RUNS_LOG, SESSION, WORK, humans, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, role_ids, runnable, stage_order, team, transcript)
+from pipeline import (PATH, PROJECTS, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, role_for, role_ids, runnable, session, stage_order, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -38,6 +39,7 @@ USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROL
 LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)")
+Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
 
 
 def local_time(s):
@@ -128,6 +130,17 @@ def is_live(tdir, issue, sid, now):
     return False
 
 
+def busy_roles(roles, sh):
+    """Sorted names of the roles whose session agent-pm-<role> exists; "=" makes tmux match the name exactly, not as a prefix."""
+    return sorted(r for r in roles if sh(["tmux", "has-session", "-t", "=" + session(r)], capture_output=True).returncode == 0)
+
+
+def assignee_email(gql, team_id, ident):
+    """Email of the team issue's assignee; None for an unknown or unassigned issue."""
+    nodes = gql(Q_ASSIGNEE, f={"team": {"id": {"eq": team_id}}, "id": {"eq": ident}})["issues"]["nodes"]
+    return next((n["assignee"]["email"] for n in nodes if n["assignee"]), None)
+
+
 def rank(issue):
     return issue["priority"] or 5  # 0 = no priority = lowest
 
@@ -159,14 +172,17 @@ class Board:
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist = {}
         runs = runnable(cfg)
-        if only is not None and only not in runs:
-            raise SystemExit(f"no role {only!r} in roles/")
+        if only is not None:
+            if not only:
+                raise SystemExit("Board: only is empty")
+            if unknown := [r for r in only if r not in runs]:
+                raise SystemExit(f"no role {unknown[0]!r} in roles/")
         self.stage = stage_order(cfg)
         t = team(gql, cfg)
         self.team, self.states = t.id, t.states
         self.humans = set(humans(gql, cfg))
         self.emails = cfg.get("human_members") or []
-        self.roles = role_ids(gql, {r: run for r, run in runs.items() if only in (None, r)})
+        self.roles = role_ids(gql, {r: run for r, run in runs.items() if only is None or r in only})
 
     def issues(self, state):
         flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
@@ -301,17 +317,23 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour):
         log("skip: outside hours")
         if not dry:
             return 0
-    # Checked before Recover: Recover assumes no run is active.
-    if sh(["tmux", "has-session", "-t", SESSION], capture_output=True).returncode == 0:
-        log("skip: previous run still active")
-        if not dry:
+    roles = runnable(cfg)
+    busy = busy_roles(roles, sh)
+    if len(busy) == len(roles):
+        log(f"skip: all roles busy ({', '.join(busy)})")
+        return 0
+    if busy:
+        log(f"busy: {', '.join(busy)}")
+        if issue_id and (role := role_for(roles, assignee_email(gql, cfg["team"], issue_id))) in busy:
+            log(f"skip: {issue_id} belongs to busy role {role}")
             return 0
     if not dry:
         try:
             prune(runs, now)
         except Exception as e:
             log(f"skip: prune failed: {e}")
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg)
+    # Recover sees only idle roles' issues, so it never touches an issue whose session is running.
+    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy])
     run = board.next_run()
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
         run = ("new",)
@@ -369,7 +391,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
     if args[0] == "--pick":
         rest, only = args[1:], None
         if rest[:1] == ["--role"] and len(rest) >= 2:
-            only, rest = rest[1], rest[2:]
+            only, rest = [rest[1]], rest[2:]
         if len(rest) > 1 or any(a.startswith("-") for a in rest):
             print(USAGE, file=sys.stderr)
             return 2
