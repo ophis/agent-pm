@@ -2,7 +2,7 @@
 
 Spec: `docs/specs/2026-09-30-task-53-rework-comments-design.md`
 
-RESUME: phase=S5 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr branch=TASK-53-build-started-pr base_ref=8b826cacafcca2445a286c74fd827d1705bba93b review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr/docs/specs/2026-09-30-task-53-rework-comments-design.md
+RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr branch=TASK-53-build-started-pr base_ref=8b826cacafcca2445a286c74fd827d1705bba93b review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-53/worktrees/TASK-53-build-started-pr/docs/specs/2026-09-30-task-53-rework-comments-design.md
 
 ## Progress
 
