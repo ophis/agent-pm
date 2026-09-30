@@ -337,6 +337,12 @@ def runnable(cfg, root=ROOT):
     return out
 
 
+def hands_off_to_repo(cfg, runs, role):
+    """True when role's next role (pipeline.toml) runs a repo_from_issue task: the role's runs need the project's repo."""
+    nxt = cfg["roles"].get(role, {}).get("next")
+    return bool(nxt and runs[nxt].task.get("repo_from_issue"))
+
+
 Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }"
 
 
