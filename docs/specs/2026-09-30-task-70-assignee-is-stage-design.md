@@ -50,7 +50,7 @@ require_instructions = false     # a PRD carries enough context; Handoff comment
 `scripts/pipeline.py`:
 
 - `TOP_KEYS` = `{team, states, human_members, harness_key, roles}`; `PROJECT_KEYS` becomes `PIPELINE_ROLE_KEYS = {"next", "require_instructions"}`. A leftover `[projects]` table is an unknown top-level key (existing check).
-- `load_config`: `cfg.setdefault("roles", {})`; the next-chain cycle check runs over `cfg["roles"]` (kept). The project `prefix` check goes (replaced below).
+- `load_config`: `cfg.setdefault("roles", {})`; the next-chain cycle check runs over `cfg["roles"]` (kept). The project `prefix` check goes (replaced below); its docstring points at `runnable()` for the role checks, which every consumer (router, launcher, promote) calls.
 - `Run` gains `account` (the role's Linear email). `runnable(cfg, root)` returns `{role name: Run}` for every role in `registry(root)`, its `task_name` being the role's default task (`tasks[0]`); charter `roles/<role>.md`, instructions `tasks/<task>.md`. Checks (fail loud, `SystemExit`):
   - unknown top-level keys (kept);
   - a role's key equal to `harness_key` (kept);
@@ -93,7 +93,7 @@ require_instructions = false     # a PRD carries enough context; Handoff comment
 - `tasks/deep-research.md` step 1: `python3 ../scripts/router.py --pick --role researcher`. Step 4's claim drops "assignee `viewer`" (FR-8: claiming only moves to In Progress; a session started outside the launcher acts as the harness account, so assigning `viewer` would take the issue off the researcher's queue).
 - `tasks/*.md` `## Board` first bullet: "The <stage> project" becomes "Issues assigned to your role account, in any project".
 - README: the model (project = product, assignee = stage: researcher → pm → engineer), using the board (create in a product project, assign a role account; Handoff creates the next role's issue in the same project), schedule wording ("later role"), `--pick --role`, `pipeline.toml` contents, and a **Cutover** section with PRD step 7 (merge without deploying; create product projects; stop the pipeline; reassign open issues by stage project: 1-Research → researcher, 2-Product Design → pm, 3-Engineering → engineer; `git pull --ff-only`; `router.py --now --dry-run` and check `logs/promote.log`).
-- CLAUDE.md: intro, Architecture (router queue by assignee, launcher role by assignee, promote same-project hand-off, child id key), "Roles, tasks, rules" (every role is runnable; `[roles.<role>]` holds `next`/`require_instructions`), Gotchas (ids: team and states; roles by name).
+- CLAUDE.md: intro, Architecture (router queue by assignee, launcher role by assignee, promote same-project hand-off, child id key; promote now validates `roles/` and `tasks/` too, so a broken file stops hand-offs as well), "Roles, tasks, rules" (every role is runnable; `[roles.<role>]` holds `next`/`require_instructions`), Gotchas (ids: team and states; roles by name).
 - `pipeline.toml` comments; `router.py`, `launch.py` and `promote.py` docstrings.
 
 ## Testing
