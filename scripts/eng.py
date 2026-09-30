@@ -239,7 +239,7 @@ def _pr(ok, run, login):
         raise Malformed("gh pr list: a PR without a number")
     return {k: mine[0].get(k) for k in ("number", "url", "state")}
 
-def _plan_docs(worktree):
+def _plan_docs(worktree, branch):
     found = []
     for base, dirs, files in os.walk(worktree):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".claude")]
@@ -248,10 +248,10 @@ def _plan_docs(worktree):
                 p = os.path.join(base, f)
                 try:
                     with open(p, errors="replace") as fh:
-                        m = re.search(r"RESUME: phase=(S\d)", fh.read())
+                        m = re.search(r"RESUME: phase=(S\d)([^\n]*)", fh.read())
                 except OSError:
                     continue
-                if m:
+                if m and f"branch={branch}" in m.group(2).split():
                     found.append({"path": p, "phase": m.group(1)})
     return sorted(found, key=lambda d: d["path"])
 
@@ -271,7 +271,7 @@ def cmd_status(ok, run, out):
     json.dump({"repo": f"{ok.owner}/{ok.name}", "clone": ok.clone, "default": ok.default, "branch": ok.branch,
                "worktree": ok.worktree, "branch_exists": _branch_exists(ok, run), "worktree_exists": os.path.isdir(ok.worktree),
                "pr": _pr(ok, run, _login(run)), "pr_title": pr_title(ok), "worktrees_dir_ok": worktrees_dir_ok(ok.issue),
-               "plan_docs": _plan_docs(ok.worktree) if os.path.isdir(ok.worktree) else []}, out)
+               "plan_docs": _plan_docs(ok.worktree, ok.branch) if os.path.isdir(ok.worktree) else []}, out)
     out.write("\n")
     return 0
 

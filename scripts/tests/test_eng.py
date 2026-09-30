@@ -558,7 +558,7 @@ class Cli(unittest.TestCase):
     def test_status_json(self):
         os.makedirs(os.path.join(self.wt, "docs", "specs"))
         with open(os.path.join(self.wt, "docs", "specs", "p.md"), "w") as f:
-            f.write("x\nRESUME: phase=S5 worktree=...\n")
+            f.write("x\nRESUME: phase=S5 branch=TASK-26-x worktree=...\n")
         self.assertEqual(self.cli("status", prs=ok("[]")), 0)
         s = json.loads(self.out)
         self.assertEqual((s["repo"], s["branch"], s["branch_exists"], s["worktree_exists"], s["pr"]),
@@ -567,10 +567,23 @@ class Cli(unittest.TestCase):
         self.assertEqual(s["pr_title"], "TASK-26: X")
         self.assertTrue(s["worktrees_dir_ok"])
 
+    def test_status_plan_docs_only_this_branch(self):
+        os.makedirs(self.wt)
+        for name, line in (("other.md", "phase=S9 branch=TASK-5-y"), ("prefix.md", "phase=S4 branch=TASK-26-xy"),
+                           ("bare.md", "phase=S2 worktree=...")):
+            with open(os.path.join(self.wt, name), "w") as f:
+                f.write(f"x\nRESUME: {line}\n")
+        self.assertEqual(self.cli("status"), 0)
+        self.assertEqual(json.loads(self.out)["plan_docs"], [])
+        with open(os.path.join(self.wt, "mine.md"), "w") as f:
+            f.write("x\nRESUME: phase=S3 worktree=... branch=TASK-26-x\n")
+        self.assertEqual(self.cli("status"), 0)
+        self.assertEqual(json.loads(self.out)["plan_docs"], [{"path": os.path.join(self.wt, "mine.md"), "phase": "S3"}])
+
     def test_status_skips_unreadable_plan_docs(self):
         os.makedirs(self.wt)
         with open(os.path.join(self.wt, "p.md"), "w") as f:
-            f.write("RESUME: phase=S5\n")
+            f.write("RESUME: phase=S5 branch=TASK-26-x\n")
         os.symlink(os.path.join(self.root, "gone.md"), os.path.join(self.wt, "broken.md"))
         locked = os.path.join(self.wt, "locked.md")
         open(locked, "w").close()
