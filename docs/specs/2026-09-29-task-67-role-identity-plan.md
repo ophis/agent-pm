@@ -1,6 +1,6 @@
 # TASK-67: role identity — plan
 
-RESUME: phase=S5 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
+RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-67/worktrees/TASK-67-role-identity-per-role-config-and-linear branch=TASK-67-role-identity-per-role-config-and-linear base_ref=dd157f7631f98fd5a3c9070cef9c036d85ab8201 review_round=0 spec_file=docs/specs/2026-09-29-task-67-role-identity-design.md
 
 ## Implementation plan
 
@@ -427,3 +427,5 @@ The launcher never reads the key: it checks the item exists and sets `LINEAR_KEY
 - S3 panel: core=[architecture,spec-fitness] +optional=[security] transport=Workflow
 - S3 r0: architecture=PASS spec-fitness=PASS security=PASS -> converged; folded non-blockers: harness_service cached, harness_key/account checks in runnable, agents from all roles via user_id eqIgnoreCase, KEY_RE, account not in human_members, residual-risk note
 - S4: plan written, 5 tasks (config, harness key, launcher, router agents, docs); execution=subagent-driven-development
+- S5: 5 tasks done via SDD (65e8cd3 config, 62ea949 harness key, 9a1885d launcher, 26e13ea router agents, d6df89a+f2ec8e9 docs); per-task reviews clean
+- S6: 274 tests OK; Keychain items present (no -w); real runnable() gives each run its role key/account; linear_gql by service -> viewer frank.agent.w@gmail.com; role accounts resolve in Linear; each role service authenticates as its account; promote --dry-run OK
