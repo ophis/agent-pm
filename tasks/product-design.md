@@ -1,6 +1,6 @@
 # Product Design (PRD)
 
-Turns one Product Design issue into a PRD pushed to the user's `private_docs` GitHub repo and linked from the issue. After the user's review, a Handoff creates the Engineering (TDD) issue from it.
+Turns one Product Design issue into a PRD pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue. After the user's review, a Handoff creates the Engineering (TDD) issue from it.
 
 ## Board
 
@@ -24,7 +24,7 @@ Turns one Product Design issue into a PRD pushed to the user's `private_docs` Gi
    - Several viable approaches → list 2–3 with their trade-offs and choose one, stating why, for the PRD's 做法与取舍 section. Only one → no comparison.
    - Spawn one fresh grilling subagent with the brief and instructions text, the user's comments, any research findings and the chosen approach. It lists the key decisions (those whose answer changes the requirements or scope) and grills each with a suggested answer; it asks about decisions only, never facts it can look up. One round only.
    - Answer each: decide what you can in the PRD (your inferences under 假设); what only the user can decide goes under open questions.
-6. **Write** the PRD in the run's `private_docs` worktree (principles).
+6. **Write** the PRD in the run's docs worktree (principles).
    - Existing PRD (a `Product Design/*-<issue ID>-*.md` file there or a PRD link on the issue, e.g. after the user sent it back with feedback): revise that file in place, same path, addressing the user's newer comments; keep earlier decisions unless the user changed them.
    - Else create `Product Design/<YYYY-MM-DD-HHMM>-<issue ID>-<english-kebab-slug>.md` there (local time from `date +%Y-%m-%d-%H%M`; create the folder if missing) from the template `../templates/prd.md` (relative to this file), keeping its headings except an optional one that doesn't apply; the product name is a short name you choose from the brief and reuse unchanged in step 8.
 7. **Review.** Spawn one fresh subagent with the PRD path and the brief and instructions text; it reviews for missing requirements, contradictions, untestable requirements and scope beyond the brief, and flags mechanisms beyond what the requirements need (over-engineering); it asks for no more rigor than the issue itself does. Fix the findings that hold up against the brief, once.
@@ -38,5 +38,5 @@ If a step fails and you cannot finish (the push keeps failing, the file cannot b
 A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first, then use this session's history and the current state to find what is already done, and do only the rest:
 - Questions posted in this session (step 2) → set In Review if needed and stop; no "started" comment.
 - No PRD file yet but the step 5 grilling subagent already answered in this session → continue from this session's history; never spawn it again.
-- The PRD file (`Product Design/*-<issue ID>-*.md` in the run's `private_docs` worktree): incomplete or the step 7 review hasn't run → continue from it, never rewrite it; committed and pushed (principles); link attached; title set; summary comment posted; status In Review.
+- The PRD file (`Product Design/*-<issue ID>-*.md` in the run's docs worktree): incomplete or the step 7 review hasn't run → continue from it, never rewrite it; committed and pushed (principles); link attached; title set; summary comment posted; status In Review.
 Never repeat the "started" comment and never move the issue to Todo.

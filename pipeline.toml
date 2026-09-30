@@ -11,6 +11,12 @@ handoff     = "6d876dc6-7732-4473-a0b2-30041d93d0aa"
 done        = "414a4381-7260-46e7-8057-d8cec9d4b11f"
 canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 
+# The docs repo: researcher reports and pm PRDs are published here, engineer reads PRDs from here.
+[docs]
+repo = "ophis/private_docs"          # <owner>/<name> on GitHub
+clone = "~/playground/private_docs"  # local clone; ~ allowed
+branch = "main"
+
 # Each role's place in the pipeline, keyed by role name (roles/<role>.md + roles/<role>.toml);
 # an issue assigned to the role's account runs the role's default task.
 [roles.researcher]

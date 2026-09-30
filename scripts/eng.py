@@ -4,14 +4,13 @@ import json, os, re, subprocess, sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, NAME, OWNER, PATH, load_config, parse_time, repo_slug, run_dir  # noqa: E402
+from pipeline import CONFIG, NAME, OWNER, PATH, REF, load_config, parse_time, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description project { id } } }"
 Q_COMMENTS = "query($i: String!) { issue(id: $i) { createdAt comments(first: 250) { nodes { body createdAt user { email } } } } }"
 MAPPED = "project mapping "
 BUILD_STARTED = re.compile(r"Build started\b")
-REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 SHORT, LONG = 60, 600
 
 @dataclass(frozen=True)

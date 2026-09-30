@@ -2,6 +2,7 @@ import dataclasses, io, json, os, sys, subprocess, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from board_ids import DOCS_CLONE  # noqa: E402
 import eng  # noqa: E402
 import pipeline  # noqa: E402
 
@@ -51,6 +52,10 @@ def linear_for(nodes, created=CREATED):
 class Placeholders(unittest.TestCase):
     def test_placeholders_are_ok_fields(self):
         self.assertLessEqual(pipeline.PLACEHOLDERS, {f.name for f in dataclasses.fields(eng.Ok)})
+
+class Ref(unittest.TestCase):
+    def test_one_definition(self):
+        self.assertIs(eng.REF, pipeline.REF)
 
 class ParseRepo(unittest.TestCase):
     def test_forms(self):
@@ -312,7 +317,8 @@ class Cli(unittest.TestCase):
 
     def config_file(self, tail, head=""):
         uid = "00000000-0000-4000-8000-000000000000"
-        text = f'team = "{uid}"\nharness_key = "k"\n{head}[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
+        docs = f'docs = {{ repo = "acme/notes", clone = "{DOCS_CLONE}", branch = "trunk" }}\n'
+        text = f'team = "{uid}"\nharness_key = "k"\n{docs}{head}[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
         path = os.path.join(self.root, "pipeline.toml")
         with open(path, "w") as f:
             f.write(text)

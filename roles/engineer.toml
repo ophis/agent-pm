@@ -1,4 +1,4 @@
-read_only = ["~/playground/private_docs"]   # the PRDs
+read_only = ["{docs_clone}"]   # the PRDs
 tasks = ["engineering"]
 account = "frank.agent.w+engineer@gmail.com"
 key = "linear-api-key-engineer"

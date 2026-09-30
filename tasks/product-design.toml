@@ -1,4 +1,4 @@
 model = "opus"
 effort = "high"
-add_dirs = ["~/playground/private_docs"]
+add_dirs = ["{docs_clone}"]
 prefix = "PRD"   # title prefix of this task's issues

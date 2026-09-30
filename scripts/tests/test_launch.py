@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E402
+from board_ids import DOCS_CLONE, HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E402
 import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
@@ -22,15 +22,16 @@ RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-resear
 ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
 REGISTRY = {
     "roles/principles.md": "", "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["~/playground/private_docs"]\n' + ENGINEER_ID,
+    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["{docs_clone}"]\n' + ENGINEER_ID,
     "tasks/deep-research.md": "",
-    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/playground/private_docs"]\n',
+    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n',
     "tasks/engineering.md": "",
-    "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["~/playground/private_docs"]\nrepo_from_issue = true\n',
+    "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nadd_dirs = ["{docs_clone}"]\nrepo_from_issue = true\n',
 }
 MAPPED = "11111111-1111-1111-1111-111111111111"
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
+DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
 PRIVATE = os.path.expanduser("~/playground/private_docs")
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
 IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
@@ -58,6 +59,9 @@ class Launch(unittest.TestCase):
         self.root = os.path.join(self.tmp, "registry")
         for rel, text in REGISTRY.items():
             self.write(rel, text)
+        self.clone = os.path.join(self.tmp, "notes")
+        os.makedirs(self.clone)
+        self.ids = IDS + DOCS.format(repo="acme/notes", clone=self.clone, branch="trunk")
         self.write_config(CONFIG)
         self.runs = os.path.join(self.tmp, "logs", "runs.log")
         self.logs = os.path.join(self.tmp, "logs")
@@ -74,7 +78,7 @@ class Launch(unittest.TestCase):
     def write_config(self, text):
         self.config = os.path.join(self.tmp, "pipeline.toml")
         with open(self.config, "w") as f:
-            f.write(text)
+            f.write(text.replace(DOCS_CLONE, self.clone))
 
     def run_launch(self, *argv, keychain=None):
         err = io.StringIO()
@@ -134,6 +138,32 @@ class Launch(unittest.TestCase):
                                  r"^\S+ \S+ config-error TASK-1: no Keychain item for role key k-researcher$")
                 self.assertIn("config-error TASK-1", self.err)
 
+    def test_missing_docs_clone_is_config_error(self):
+        os.rmdir(self.clone)
+        self.make_transcript()
+        for mode in ("new", "resume"):
+            with self.subTest(mode):
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(mode)), 2)
+                self.assertEqual(self.calls, [])
+                self.assertRegex(self.plog().splitlines()[-1],
+                                 rf"^\S+ \S+ config-error TASK-1: docs clone {re.escape(self.clone)} is not a directory$")
+                self.assertIn("config-error TASK-1: docs clone", self.err)
+
+    def test_missing_docs_clone_before_repo_step(self):
+        os.rmdir(self.clone)
+        with mock.patch.object(eng, "resolve") as resolve:
+            self.assertEqual(self.run_launch(*self.args(assignee="e@x.com")), 2)
+        resolve.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_missing_role_key_reported_before_docs_clone(self):
+        os.rmdir(self.clone)
+        self.missing = {"k-researcher"}
+        self.assertEqual(self.run_launch(*self.args()), 2)
+        self.assertIn("no Keychain item for role key k-researcher", self.plog())
+        self.assertNotIn("docs clone", self.plog())
+
     def test_has_key_never_reads_the_secret(self):
         calls = []
         def run(cmd, **kw):
@@ -192,10 +222,10 @@ class Launch(unittest.TestCase):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         self.assertEqual(self.claude(), [
             "claude", "-p", f"Follow {launch.PRINCIPLES}, your role charter {charter} and the task {instructions} to handle TASK-1 (https://l/TASK-1). "
-                            "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + IDS,
+                            "The runner has already claimed it. Humans: me@x.com. Project: p-dr." + self.ids,
             "--session-id", SID, "--model", "opus", "--effort", "xhigh", "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", self.clone,
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
@@ -212,7 +242,7 @@ class Launch(unittest.TestCase):
             self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
             self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
-            self.assertEqual(f"Edit({slashes(PRIVATE)}/**)" in rules, assignee == "e@x.com")
+            self.assertEqual(f"Edit({slashes(self.clone)}/**)" in rules, assignee == "e@x.com")
 
     def test_deny(self):
         self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
@@ -220,12 +250,12 @@ class Launch(unittest.TestCase):
     def test_humans_none(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + self.ids))
 
     def test_humans_lists_every_member(self):
         self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + self.ids))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -235,12 +265,12 @@ class Launch(unittest.TestCase):
         charter = os.path.join(self.root, "roles/researcher.md")
         self.assertEqual(argv[2], f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {launch.PRINCIPLES}, your role charter {charter} "
                                   f"and the task {instructions} first (they may have changed since this session started) and follow the task's resume rule."
-                                  " Humans: me@x.com. Project: p-dr." + IDS)
+                                  " Humans: me@x.com. Project: p-dr." + self.ids)
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertEqual(self.calls[0][6], os.path.join(self.work, "TASK-1"))
         self.calls = []
         self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(IDS))
+        self.assertTrue(self.claude()[2].endswith(self.ids))
 
     def test_resume_without_transcript(self):
         legacy = os.path.join(self.projects, pipeline.escape(self.work), f"{SID}.jsonl")
@@ -275,18 +305,18 @@ class Launch(unittest.TestCase):
         argv = self.claude()
         wt = self.ok().worktree
         self.assertTrue(argv[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
+            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
             f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
-        self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+        self.assertIn(f"Edit({slashes(self.clone)}/**)", rules)
 
     def test_engineering_ok_from_project_mapping(self):
         mapped = dataclasses.replace(self.ok(), mapped=True)
         self.assertEqual(self.launch_eng(mapped), 0)
         wt = mapped.worktree
         self.assertTrue(self.claude()[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
+            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
             f" default branch main, branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
 
     def test_engineering_passes_project_repos_to_resolve(self):
@@ -305,7 +335,7 @@ class Launch(unittest.TestCase):
 
     def test_engineering_invalid_starts_run_to_bounce(self):
         self.assertEqual(self.launch_eng(eng.Invalid("no Repo: line")), 0)
-        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{IDS} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
+        self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{self.ids} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("AGENT_PM_ISSUE", self.exports())
 
     def test_engineering_resolve_error_is_transient(self):
@@ -337,7 +367,7 @@ class Launch(unittest.TestCase):
 
     def test_project_fills_the_prompt_tail(self):
         self.assertEqual(self.run_launch(*self.args(project="p-anything")), 0)
-        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com. Project: p-anything." + IDS))
+        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com. Project: p-anything." + self.ids))
 
     def hand_off(self, roles='[roles.researcher]\nnext = "engineer"\n', engineering=REGISTRY["tasks/engineering.toml"]):
         """Project MAPPED maps to ophis/demo; the engineering task needs a prefix to be a next."""
@@ -350,13 +380,13 @@ class Launch(unittest.TestCase):
             with self.subTest(project=project):
                 self.calls = []
                 self.assertEqual(self.run_launch(*self.args(project=project)), 0)
-                self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {project}. Project repo: {repo}." + IDS))
+                self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {project}. Project repo: {repo}." + self.ids))
 
     def test_project_repo_on_resume(self):
         self.hand_off()
         self.make_transcript()
         self.assertEqual(self.run_launch(*self.args("resume", project=MAPPED)), 0)
-        self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {MAPPED}. Project repo: ophis/demo." + IDS))
+        self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {MAPPED}. Project repo: ophis/demo." + self.ids))
 
     def test_no_project_repo_without_repo_hand_off(self):
         cases = {"no roles entry": dict(roles=""), "no next": dict(roles="[roles.researcher]\n"),
@@ -366,13 +396,13 @@ class Launch(unittest.TestCase):
                 self.hand_off(**kw)
                 self.calls = []
                 self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
-                self.assertTrue(self.claude()[2].endswith(f" Project: {MAPPED}." + IDS))
+                self.assertTrue(self.claude()[2].endswith(f" Project: {MAPPED}." + self.ids))
 
     def test_engineer_run_has_no_project_repo(self):
         self.hand_off()
         with mock.patch.object(eng, "resolve", return_value=self.ok()):
             self.assertEqual(self.run_launch(*self.args("new", "e@x.com", MAPPED)), 0)
-        self.assertIn(f" Project: {MAPPED}." + IDS + " Repo check: OK ", self.claude()[2])
+        self.assertIn(f" Project: {MAPPED}." + self.ids + " Repo check: OK ", self.claude()[2])
 
     def test_script_logs_output_and_end_lines(self):
         self.run_launch(*self.args())
@@ -439,7 +469,7 @@ class Launch(unittest.TestCase):
         rules = self.after(self.claude(), "--disallowedTools")
         rd = os.path.join(self.work, "TASK-1")
         self.assertEqual(rules[-2:], [f"Edit({slashes(self.ok().clone)}/**)", f"Edit({slashes(rd)}/worktrees/**)"])
-        self.assertNotIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+        self.assertNotIn(f"Edit({slashes(self.clone)}/**)", rules)
 
     def test_repo_read_only_invalid(self):
         self.repo_config()
@@ -455,7 +485,7 @@ class Launch(unittest.TestCase):
 
     def eng_memory(self, mem):
         os.makedirs(mem, exist_ok=True)
-        self.write("roles/engineer.toml", f'read_only = ["~/playground/private_docs"]\nmemory = "{mem}"\n' + ENGINEER_ID)
+        self.write("roles/engineer.toml", f'read_only = ["{{docs_clone}}"]\nmemory = "{mem}"\n' + ENGINEER_ID)
 
     def ok_at(self, clone):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
@@ -535,7 +565,7 @@ class RealConfig(unittest.TestCase):
                 mock.patch.object(eng, "resolve", return_value=repo):
             rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
                              logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects,
-                             keychain=lambda s: True)
+                             keychain=lambda s: True, docs_ok=lambda p: True)
         self.assertEqual(rc, 0)
         (cmd,) = self.calls
         toks = shlex.split(cmd[9])
@@ -545,7 +575,8 @@ class RealConfig(unittest.TestCase):
     def expected(self, role, task, effort, extra_deny=(), tail="", project=PROJECT, project_repo=""):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         humans, cfg = self.humans, pipeline.load_config()
-        real = f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
+        real = (f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
+                + DOCS.format(**cfg["docs"]))
         return [
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
