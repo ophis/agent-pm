@@ -17,7 +17,7 @@ Source: TASK-69 (https://linear.app/ophis-workgroup/issue/TASK-69), PR-B of the 
 
 ## G1 — Harness
 
-Mutation: `mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }`, once per email in `cfg["human_members"]`, in order, before the state change. Subscribing first is safe (idempotent) and a failed subscribe leaves the issue unmoved, so the next tick retries the whole move; the humans are also subscribed before the move's comment is posted.
+Mutation: `mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }`, once per email in `cfg["human_members"]`, in order, before the state change. Subscribing first is safe (idempotent) and a failed subscribe leaves the issue unmoved, so the next tick retries the whole move; the humans are also subscribed before the move's comment is posted. The router's comment still precedes its `issueUpdate`, so a failed update reposts it next tick (unchanged).
 
 - **router** (`Board.comment_and_move`): for `state == "in_review"`, subscribe, then comment, then `issueUpdate` (no `assigneeId`). Covers Recover's and `take`'s attempt-cap moves. `Board` keeps `self.humans` (ids, for `last_move(by_user=True)`) and drops `self.reviewer`; it reads the emails from `cfg`. Query inlined like its other mutations.
 - **promote** (`Promoter.move`): for `state == "in_review"`, subscribe (each checked with `ok(..., "issueSubscribe")`), then `M_STATE`. Covers the no-instructions bounce and `bounce_failed`. `M_REVIEW` and `self.reviewer` are deleted; a module constant `M_SUBSCRIBE` follows the file's idiom. Promote no longer imports `reviewer` or queries users.
@@ -48,5 +48,5 @@ Mutation: `mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail
 ## Done when
 
 - An issue moved to In Review by a session, router or promote keeps its assignee and has every `human_members` user subscribed.
-- `grep -rniE 'reviewer|assigneeId' roles tasks scripts/*.py README.md CLAUDE.md pipeline.toml` finds no reviewer assignment (the claim's and Recover's `assigneeId` remain).
+- `grep -rniE 'reviewer|assigneeId' roles tasks scripts README.md CLAUDE.md pipeline.toml` finds no reviewer assignment (left: the claim's and Recover's `assigneeId`, and test_pipeline's `roles/Reviewer.md` naming case).
 - `python3 -m unittest discover -s scripts/tests` passes.
