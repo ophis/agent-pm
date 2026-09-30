@@ -7,7 +7,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 ```
 agent-pm/
 ├── CLAUDE.md              # architecture notes for Claude working on this repo
-├── pipeline.toml          # Linear team and state ids, humans, role order, project → repo map
+├── pipeline.toml          # Linear team and state ids, humans, role order, project → repo map, docs repo
 ├── roles/
 │   ├── principles.md      # rules for every role and task
 │   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks
@@ -29,7 +29,7 @@ agent-pm/
 
 ## Roles
 
-A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to `private_docs` in Chinese, ask the user when an issue is too vague.
+A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to the docs repo (`[docs]`) in Chinese, ask the user when an issue is too vague.
 
 | Role | Default task | Does | Next |
 |---|---|---|---|
@@ -41,8 +41,8 @@ A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, stan
 
 A task is the steps a run follows for one issue (`tasks/<task>.md`), including how to resume after an interruption.
 
-- **`deep-research`:** runs the built-in `/deep-research` Workflow once over all the issue's questions, writes the report from `templates/research-report.md` to `private_docs/Research/`, attaches its link and moves the issue to In Review.
-- **`product-design`:** reads the brief and source reports; researches and grills itself with a subagent when needed; writes the PRD from `templates/prd.md` to `private_docs/Product Design/`, has a fresh subagent review it and fixes what holds up; publishes it, retitles the issue `PRD: <product name>`, and asks you to approve it with a Handoff, naming the project's mapped repo if there is one.
+- **`deep-research`:** runs the built-in `/deep-research` Workflow once over all the issue's questions, writes the report from `templates/research-report.md` to `Research/` in the docs repo, attaches its link and moves the issue to In Review.
+- **`product-design`:** reads the brief and source reports; researches and grills itself with a subagent when needed; writes the PRD from `templates/prd.md` to `Product Design/` in the docs repo, has a fresh subagent review it and fixes what holds up; publishes it, retitles the issue `PRD: <product name>`, and asks you to approve it with a Handoff, naming the project's mapped repo if there is one.
 - **`engineering`:** runs `autopilot:build` on the PRD in a worktree on an `<ID>-<slug>` branch of the target repo, pushes the branch, posts the build's spec and plan on the issue, opens the PR and links it. A failed build still pushes the branch and reports what failed.
 
 ## Harness
@@ -52,7 +52,7 @@ The Python scripts in `scripts/` that turn the board into runs. launchd runs the
 | Script | Runs | Does |
 |---|---|---|
 | `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
-| `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. |
+| `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, checks the `[docs]` clone exists, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files and the docs repo in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work. |
 | `eng.py` | Launcher and engineer runs | Resolves an Engineering issue's target repo and branch; its `status` and `comments` commands feed the engineer run. |
