@@ -1,3 +1,4 @@
+import dataclasses
 import io
 import os
 import re
@@ -258,7 +259,7 @@ class Launch(unittest.TestCase):
         error = result if isinstance(result, Exception) else None
         with mock.patch.object(eng, "resolve", return_value=result, side_effect=error) as resolve:
             rc = self.run_launch(*self.args(mode, "e@x.com", "p-eng"))
-        resolve.assert_called_once_with("TASK-1", self.gql, self.run)
+        resolve.assert_called_once_with("TASK-1", self.gql, self.run, repos=pipeline.load_config(self.config)["project_repos"])
         return rc
 
     def test_engineering_ok(self):
@@ -272,6 +273,21 @@ class Launch(unittest.TestCase):
         self.assertNotIn("--allowedTools", argv)
         rules = self.after(argv, "--disallowedTools")
         self.assertIn(f"Edit({slashes(PRIVATE)}/**)", rules)
+
+    def test_engineering_ok_from_project_mapping(self):
+        mapped = dataclasses.replace(self.ok(), mapped=True)
+        self.assertEqual(self.launch_eng(mapped), 0)
+        wt = mapped.worktree
+        self.assertTrue(self.claude()[2].endswith(
+            " Humans: me@x.com. Project: p-eng." + IDS + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
+            f" default branch main, branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
+
+    def test_engineering_passes_project_repos_to_resolve(self):
+        repos = {"11111111-1111-1111-1111-111111111111": "ophis/demo"}
+        self.write_config(CONFIG + '[project_repos]\n"11111111-1111-1111-1111-111111111111" = "ophis/demo"\n')
+        with mock.patch.object(eng, "resolve", return_value=self.ok()) as resolve:
+            self.assertEqual(self.run_launch(*self.args("new", "e@x.com", "p-eng")), 0)
+        resolve.assert_called_once_with("TASK-1", self.gql, self.run, repos=repos)
 
     def test_engineering_ok_fills_allowed_tools(self):
         self.write("tasks/engineering.toml", REGISTRY["tasks/engineering.toml"] + f'allowed_tools = ["{PUSH_RULE}"]\n')
