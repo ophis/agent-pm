@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue at a time overnight and hands its output back to you for review.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
 
 | Role | Agent produces | Published to |
 |---|---|---|
@@ -14,18 +14,18 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>` unless the project has a `[project_repos]` entry; a `Repo:` line always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
-- **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
+- **Finish:** Done and Canceled are yours to set. Worktrees of finished issues (an engineer's repo worktree, a researcher's or pm's `private_docs` worktree) are deleted 24 hours later, along with any unpushed work.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 
 ## Schedule
 
-- **Router:** hourly, all day. Resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Router:** hourly, all day. Starts at most one run per tick, for a role with no run going: resumes an interrupted run or claims the top Todo issue (priority, then later role, then oldest). Skips the tick when every role has a run going, or while 5-hour usage is at 90% or more, or a weekly limit is full.
 - **Promote:** every 5 minutes. Handles Handoff, then prunes finished worktrees.
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
@@ -57,7 +57,8 @@ python3 scripts/router.py --now                     # run a tick now, outside th
 python3 scripts/router.py --now --issue TASK-12     # start a specific Todo issue
 python3 scripts/router.py --pick --role researcher  # recover, then claim the role's top Todo issue
 python3 scripts/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
-tmux attach -t agent-pm                             # watch the live run
+tmux ls                                             # running sessions, agent-pm-<role>
+tmux attach -t agent-pm-<role>                      # watch a role's live run
 cd work/TASK-12 && claude --resume <session-id>     # open a run's session (id from logs/runs.log)
 ```
 

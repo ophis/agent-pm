@@ -123,6 +123,17 @@ class Runnable(unittest.TestCase):
         self.assertTrue(msg.startswith(prefix + ":") or msg.startswith(prefix + " "), msg)
         self.assertIn(fragment, msg)
 
+    def test_session_per_role(self):
+        self.assertEqual(pipeline.session("engineer"), "agent-pm-engineer")
+
+    def test_role_for(self):
+        runs = self.runs()
+        for email in ("r@x.com", "R@X.COM"):
+            self.assertEqual(pipeline.role_for(runs, email), "researcher")
+        self.assertEqual(pipeline.role_for(runs, "E@x.com"), "engineer")
+        for email in ("nobody@x.com", None, ""):
+            self.assertIsNone(pipeline.role_for(runs, email))
+
     def test_runs(self):
         runs = self.runs()
         self.assertEqual(sorted(runs), ["engineer", "researcher"])

@@ -19,9 +19,13 @@ WORK = os.path.join(ROOT, "work")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 LOGS = os.path.join(ROOT, "logs")
 RUNS_LOG = os.path.join(LOGS, "runs.log")
-SESSION = "agent-pm"
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
+
+
+def session(role):
+    """The tmux session of a role's runs."""
+    return f"agent-pm-{role}"
 
 
 @functools.cache
@@ -349,6 +353,11 @@ def humans(gql, cfg):
     if missing := [e for e, i in zip(emails, ids) if not i]:
         raise SystemExit(f"pipeline.toml: human_members not found in Linear: {', '.join(missing)}")
     return ids
+
+
+def role_for(runs, email):
+    """The role in runs ({role: Run}) whose account is email (case-insensitive), or None."""
+    return next((r for r, run in runs.items() if email and run.account.lower() == email.lower()), None)
 
 
 def role_ids(gql, runs):

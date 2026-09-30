@@ -18,8 +18,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, SESSION, STATES, linear_gql,  # noqa: E402
-                      load_config, overlaps, project_log, run_dir, runnable, transcript)
+from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, linear_gql,  # noqa: E402
+                      load_config, overlaps, project_log, role_for, run_dir, runnable, session, transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
@@ -130,7 +130,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     os.environ["PATH"] = PATH
     cfg = load_config(config) if config else load_config()
     jobs = runnable(cfg, root)
-    role = next((r for r, j in jobs.items() if j.account.lower() == a.assignee.lower()), None)
+    role = role_for(jobs, a.assignee)
     if role is None:
         print(f"launch.py: {a.assignee!r} is not a role account", file=sys.stderr)
         return 2
@@ -160,7 +160,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo)
-    sh(["tmux", "new-session", "-d", "-s", SESSION, "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs)],
+    sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs)],
        check=True)
     return 0
 
