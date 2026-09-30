@@ -4,7 +4,7 @@ The prompt names this file, your role charter (who you are: responsibilities, st
 
 - Team `Frank's Agents`; the run's project id is the prompt's `Project:` value. Names (the team, projects, and statuses such as Todo or In Review in these files) are for reading and may change in Linear: act by id — the team's is the prompt's `Team:` value, each status's is in its `States:` line (`<name>=<id>`); move and filter issues by those ids, never look one up by name.
 - The agent never uses Backlog.
-- Every move to In Review also subscribes each email in the prompt's `Humans:` list to the issue (`issueSubscribe(id:, userEmail:)`, one call per email) and leaves the assignee as is; if it is `none`, subscribe no one; if a subscribe fails, comment that and move anyway.
+- Every move to In Review also subscribes each email in the prompt's `Humans:` list to the issue (`issueSubscribe(id:, userEmail:)`, one call per email), before the run's comment and the move, and leaves the assignee as is; if it is `none`, subscribe no one; if a subscribe fails, comment that and move anyway.
 - Linear access: the `linear` skill. The launcher points it at your role's key (`LINEAR_KEYCHAIN_SERVICE`), so `viewer` is your role account.
 - Comments by a user whose email is in the prompt's `Humans:` list (`human_members`) are the user's. Everything the agent accounts do (comments, moves, edits) is the agent's, never the user's: the role accounts (yours and the other roles') and the harness account `frank.agent.w@gmail.com` (router, promote, prune).
 - Precedence: (1) the user's comments outrank the agent's; (2) newer comments outrank older ones.
