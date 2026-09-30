@@ -71,6 +71,14 @@ def run_dir(issue):
 
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
+NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
+
+
+def repo_slug(value):
+    """(owner, name) of a bare `owner/name`, else None."""
+    m = re.fullmatch(rf"({OWNER})/({NAME})", value) if isinstance(value, str) else None
+    return m.groups() if m and m.group(2) not in (".", "..") else None
 
 
 def transcript(issue, sid, projects=PROJECTS):
@@ -120,7 +128,7 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "roles"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "roles", "project_repos"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -192,6 +200,12 @@ def load_config(path=CONFIG):
                 raise SystemExit(f"pipeline.toml: the next chain from {name!r} has a cycle")
             seen.add(nxt)
             nxt = roles.get(nxt, {}).get("next")
+    repos = cfg.setdefault("project_repos", {})
+    if not isinstance(repos, dict):
+        raise SystemExit('pipeline.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"')
+    for k, v in repos.items():
+        if not _uuid(k) or not repo_slug(v):
+            raise SystemExit(f"pipeline.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
     return cfg
 
 

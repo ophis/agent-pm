@@ -21,3 +21,8 @@ next = "engineer"
 require_instructions = false       # a PRD carries enough context; Handoff comments are optional
 
 [roles.engineer]                   # no next: the last stage
+
+# Target repo of an Engineering issue with no Repo: line, by its Linear project id; a Repo: line wins.
+[project_repos]
+"121166b1-191a-4461-bec4-42f1c2dc0ddd" = "ophis/agent-pm"           # Agent PM
+"ae72ede7-67a6-469d-a959-8ea51ab71fb8" = "ophis/claude-autopilot"   # Autopilot

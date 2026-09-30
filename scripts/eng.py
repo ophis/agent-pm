@@ -5,12 +5,10 @@ from dataclasses import dataclass
 from datetime import timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import PATH, parse_time, run_dir  # noqa: E402
+from pipeline import NAME, OWNER, PATH, parse_time, repo_slug, run_dir  # noqa: E402
 
 PLAYGROUND = os.path.expanduser("~/playground")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { identifier title description } }"
-OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
-NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 SHORT, LONG = 60, 600
 
@@ -40,12 +38,11 @@ def _one(value):
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    for pat in (rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?", rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?",
-                rf"({OWNER})/({NAME})"):
+    for pat in (rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?", rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?"):
         m = re.fullmatch(pat, v)
         if m and m.group(2) not in (".", ".."):
             return m.group(1), m.group(2)
-    return None
+    return repo_slug(v)
 
 def parse_repo(description):
     found = []
