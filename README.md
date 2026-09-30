@@ -1,0 +1,74 @@
+# agent-pm
+
+Runs Claude agents unattended from a Linear board. Each project on the board is a pipeline stage; the agent works one issue at a time overnight and hands its output back to you for review.
+
+| Stage | Agent produces | Published to |
+|---|---|---|
+| 1-Research | A verified research report | `private_docs/Research/` |
+| 2-Product Design | A PRD | `private_docs/Product Design/` |
+| 3-Engineering | A pull request that builds the PRD | The target repo |
+
+## Using the board
+
+- **New work:** create an issue in Todo in a stage's project. Research and Product Design take the brief from the description; a direct Engineering issue needs a `Repo: <owner>/<name>` line in its description.
+- **Your turn:** the agent moves an issue to In Review, assigned to you, when output is ready, it has questions, or it failed.
+- **Approve:** move the issue to Handoff with a comment saying what to do next. For a PRD, the comment must include `Repo: <owner>/<name>`. After 10 minutes (an undo window), promote creates the next stage's issue and marks this one Done.
+- **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off.
+- **Finish:** Done and Canceled are yours to set. Worktrees of finished Engineering issues are deleted 24 hours later, along with any unpushed work.
+
+An issue still unfinished after 4 attempts goes to In Review; moving it back to Todo resets the count.
+
+## Schedule
+
+- **Router:** hourly 01:00–06:00. Resumes an interrupted run or claims the top Todo issue (priority, then later stage, then oldest), one run at a time. Skips the tick while 5-hour usage is at 90% or more, or a weekly limit is full.
+- **Promote:** at :05, :20, :35 and :50. Handles Handoff, then prunes finished worktrees.
+
+## Setup
+
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill and the `autopilot` plugin. `~/playground/private_docs` must be a clone of `ophis/private_docs`.
+
+```bash
+security add-generic-password -a frank.agent.w -s linear-api-key -w   # Linear API key of the agent account
+mkdir -p logs                                                         # launchd can't start a job without it
+for job in router promote; do
+  cp scripts/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
+done
+```
+
+To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+
+## Operating
+
+```bash
+python3 scripts/router.py --now --dry-run           # what the next tick would do; changes nothing
+python3 scripts/router.py --now                     # run a tick now, outside the schedule
+python3 scripts/router.py --now --issue TASK-12     # start a specific Todo issue
+python3 scripts/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
+tmux attach -t agent-pm                             # watch the live run
+cd work/TASK-12 && claude --resume <session-id>     # open a run's session (id from logs/runs.log)
+```
+
+| Log | Contents |
+|---|---|
+| `logs/router.log` | Each tick's decisions |
+| `logs/projects/<task>.log` | Each run's output |
+| `logs/promote.log` | Handoff and prune actions |
+| `logs/runs.log` | Run start/resume/end; the router needs it to resume, so keep it |
+
+Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-progress runs and the installed plists.
+
+## Configuration
+
+- `pipeline.toml`: the Linear team, workflow states and projects, all by id; each project's `next` stage and its `role` + `task`.
+- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings.
+- `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs).
+- `templates/`: the report and PRD skeletons.
+
+## Development
+
+```bash
+python3 -m unittest discover -s scripts/tests   # no network, Keychain or Claude needed
+```
+
+Design docs are in `docs/specs/`; architecture notes for Claude are in `CLAUDE.md`.
