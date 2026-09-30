@@ -36,6 +36,8 @@ for job in router promote; do
 done
 ```
 
+To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+
 ### Role accounts
 
 Each role in `roles/*.toml` acts in Linear as its own `account`, with its API key in the Keychain under `key`:
@@ -46,8 +48,6 @@ Each role in `roles/*.toml` acts in Linear as its own `account`, with its API ke
 4. `security add-generic-password -s <key> -a <account> -w` and paste the key at the prompt.
 
 The launcher never reads the key: it checks the item exists and sets `LINEAR_KEYCHAIN_SERVICE=<key>` for the run's `linear` skill. A missing item stops that role's runs with a `config-error` line in its project log.
-
-To change a schedule, edit the plist in `scripts/` (for the router, also its hours check in `router.py`), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ## Operating
 
