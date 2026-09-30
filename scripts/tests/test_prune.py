@@ -12,19 +12,47 @@ import test_promote as tp  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
+CFG = {"team": TEAM, "states": dict(IDS_BY_KEY)}
+ROLES = {"u-researcher": "researcher", "u-pm": "pm", "u-engineer": "engineer"}
 
 
-def gql_for(issues):
-    """issues: {identifier: (state name, [(hours ago, state name moved to)])}."""
+def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
+    """issues: {identifier: (state name, [(hours ago, state name moved to)])}; owners: {identifier: assignee id}.
+    Q_FINISHED filters and pages like Linear, archived issues excluded; M_ARCHIVE of fail raises, of refuse fails."""
+    owners = owners or {}
+
+    def history(ident):
+        return {"nodes": [{"createdAt": (NOW - timedelta(hours=h)).isoformat(), "toStateId": STATE_IDS[s]}
+                          for h, s in issues[ident][1]]}
+
     def gql(query, **v):
         gql.calls.append(query)
         if query == pipeline.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
-        state, moves = issues[v["i"]]
-        return {"issue": {"state": {"id": STATE_IDS[state]}, "history": {"nodes": [
-            {"createdAt": (NOW - timedelta(hours=h)).isoformat(), "toStateId": STATE_IDS[s]} for h, s in moves]}}}
-    gql.calls = []
+        if query == prune.Q_FINISHED:
+            gql.finished.append(v)
+            hits = [i for i, (state, _) in issues.items()
+                    if i not in gql.gone and owners.get(i) in v["a"] and STATE_IDS[state] in v["s"]]
+            start = int(v["c"] or 0)
+            return {"issues": {"nodes": [{"id": f"id-{i}", "identifier": i, "history": history(i)}
+                                         for i in hits[start:start + page]],
+                               "pageInfo": {"hasNextPage": start + page < len(hits), "endCursor": str(start + page)}}}
+        if query == prune.M_ARCHIVE:
+            gql.archived.append(v["i"])
+            ident = v["i"].removeprefix("id-")
+            if ident in fail:
+                raise SystemExit("linear api error: boom")
+            if ident not in refuse:
+                gql.gone.add(ident)
+            return {"issueArchive": {"success": ident not in refuse}}
+        return {"issue": {"state": {"id": STATE_IDS[issues[v["i"]][0]]}, "history": history(v["i"])}}
+    gql.calls, gql.finished, gql.archived, gql.gone = [], [], [], set()
     return gql
+
+
+def msgs(out):
+    """Output lines without their timestamps."""
+    return [line.split(" ", 2)[2] for line in out.splitlines()]
 
 
 class FakeGit:
@@ -64,11 +92,18 @@ class PruneTest(unittest.TestCase):
         calls = [("git", "-C", self.clone, "worktree", "remove", "--force", "--force", "--", wt)]
         return calls + ([("git", "-C", self.clone, "branch", "-D", "--", branch)] if branch else [])
 
-    def prune(self, gql, team=None):
+    def prune(self, gql, team=None, roles=ROLES):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = prune.Pruner(gql, {"team": TEAM, "states": dict(IDS_BY_KEY)}, NOW, False, run=self.git, work=self.work,
-                                team=team).run()
+            code = prune.Pruner(gql, CFG, NOW, False, run=self.git, work=self.work, team=team, roles=roles).run()
+        return code, out.getvalue()
+
+    def main(self, gql, *argv):
+        """prune.main with roles resolved to ROLES."""
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch.object(prune, "load_config", return_value=CFG), \
+                mock.patch.object(prune, "runnable"), mock.patch.object(prune, "role_ids", return_value=ROLES):
+            code = prune.main(list(argv), gql=gql, run=self.git, work=self.work, now=NOW)
         return code, out.getvalue()
 
     def test_done_24h_force_deleted_even_dirty_or_unpushed(self):
@@ -121,21 +156,105 @@ class PruneTest(unittest.TestCase):
 
     def test_dry_run_changes_nothing(self):
         self.mkw("TASK-49", "TASK-49-x")
-        out = io.StringIO()
-        cfg = {"team": TEAM, "states": dict(IDS_BY_KEY)}
-        with redirect_stdout(out), mock.patch.object(prune, "load_config", return_value=cfg):
-            code = prune.main(["--dry-run"], gql=gql_for({"TASK-49": ("Done", [(30, "Done")])}),
-                              run=self.git, work=self.work, now=NOW)
+        code, out = self.main(gql_for({"TASK-49": ("Done", [(30, "Done")])}), "--dry-run")
         self.assertEqual(code, 0)
-        self.assertIn("dry-run: prune-plan TASK-49/TASK-49-x: force-delete the worktree and local branch TASK-49-x",
-                      out.getvalue())
+        self.assertIn("dry-run: prune-plan TASK-49/TASK-49-x: force-delete the worktree and local branch TASK-49-x", out)
         self.assertEqual(self.git.calls, [])
 
-    def test_no_worktree_no_linear(self):
+    def test_no_worktree_no_issue_query(self):
         os.makedirs(os.path.join(self.work, "TASK-49", "worktrees"))
-        gql = gql_for({})
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
-        self.assertEqual(gql.calls, [])
+        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+
+    def test_archives_pm_and_engineer_issues_finished_24h(self):
+        gql = gql_for({"TASK-1": ("Done", [(30, "In Progress"), (24, "Done")]), "TASK-2": ("Canceled", [(50, "Canceled")]),
+                       "TASK-3": ("Done", [(30, "Done")]), "TASK-4": ("Canceled", [(24, "Canceled")])},
+                      owners={"TASK-1": "u-pm", "TASK-2": "u-pm", "TASK-3": "u-engineer", "TASK-4": "u-engineer"})
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2", "id-TASK-3", "id-TASK-4"])
+        self.assertEqual(msgs(out), ["prune-archived TASK-1", "prune-archived TASK-2", "prune-archived TASK-3",
+                                     "prune-archived TASK-4"])
+
+    def test_not_archived(self):
+        done = ("Done", [(50, "Done")])
+        gql = gql_for({"TASK-1": ("Done", [(24 - 1 / 3600, "Done")]),
+                       "TASK-2": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
+                       "TASK-3": ("Done", []), "TASK-4": ("In Progress", [(50, "Done"), (30, "In Progress")]),
+                       "TASK-5": done, "TASK-6": done, "TASK-7": done},
+                      owners={"TASK-1": "u-pm", "TASK-2": "u-engineer", "TASK-3": "u-pm", "TASK-4": "u-pm",
+                              "TASK-5": "u-researcher", "TASK-6": "u-other", "TASK-7": None})
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(gql.archived, [])
+        self.assertEqual(msgs(out), ["prune-skip TASK-3: archive: finish time unknown"])
+        (v,) = gql.finished
+        self.assertEqual(sorted(v["a"]), ["u-engineer", "u-pm"])
+        self.assertEqual(sorted(v["s"]), sorted([IDS_BY_KEY["done"], IDS_BY_KEY["canceled"]]))
+
+    def test_dry_run_plans_archive(self):
+        gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
+        code, out = self.main(gql, "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-1: archive"])
+        self.assertNotIn(prune.M_ARCHIVE, gql.calls)
+
+    def test_archive_failure_others_archived(self):
+        done = ("Done", [(30, "Done")])
+        gql = gql_for({"TASK-1": done, "TASK-2": done, "TASK-3": done},
+                      owners=dict.fromkeys(("TASK-1", "TASK-2", "TASK-3"), "u-pm"), fail={"TASK-1"}, refuse={"TASK-2"})
+        code, out = self.prune(gql)
+        self.assertEqual(code, 3)
+        self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2", "id-TASK-3"])
+        self.assertEqual(msgs(out), ["prune-error TASK-1: archive: linear api error: boom",
+                                     "prune-error TASK-2: archive: success: false", "prune-archived TASK-3"])
+
+    def test_archive_reads_every_page_first(self):
+        done = ("Done", [(30, "Done")])
+        idents = ("TASK-1", "TASK-2", "TASK-3")
+        gql = gql_for(dict.fromkeys(idents, done), owners=dict.fromkeys(idents, "u-engineer"), page=2)
+        self.assertEqual(self.prune(gql)[0], 0)
+        self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2", "id-TASK-3"])
+        self.assertEqual([v["c"] for v in gql.finished], [None, "2"])
+
+    def test_candidate_query_failure_keeps_worktree_step(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        issues = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+
+        def gql(query, **v):
+            if query == prune.Q_FINISHED:
+                raise SystemExit("linear api error: down")
+            return issues(query, **v)
+        code, out = self.prune(gql)
+        self.assertEqual(code, 3)
+        self.assertIn("prune-error archive: Linear: linear api error: down", out)
+        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
+
+    def test_archivable_with_worktree_both_done(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-engineer"})
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
+        self.assertIn("prune-archived TASK-49", out)
+
+    def test_resolves_roles_itself(self):
+        gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
+        runs = object()
+        with mock.patch.object(prune, "runnable", return_value=runs) as runnable, \
+                mock.patch.object(prune, "role_ids", return_value=ROLES) as role_ids:
+            self.assertEqual(self.prune(gql, roles=None)[0], 0)
+        runnable.assert_called_once_with(CFG)
+        role_ids.assert_called_once_with(gql, runs)
+        self.assertEqual(gql.archived, ["id-TASK-1"])
+
+        with mock.patch.object(prune, "runnable"), \
+                mock.patch.object(prune, "role_ids", side_effect=SystemExit("roles/pm.toml: account 'x' not found")):
+            code, out = self.prune(gql, roles=None)
+        self.assertEqual(code, 3)
+        self.assertEqual(msgs(out), ["prune-error archive: Linear: roles/pm.toml: account 'x' not found"])
 
     def test_given_team_skips_team_query(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
@@ -163,7 +282,7 @@ class PruneTest(unittest.TestCase):
         write(config, tp.CONFIG)
 
         def gql(query, **v):
-            return (prune_gql if query == prune.Q_ISSUE else linear)(query, **v)
+            return (prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else linear)(query, **v)
         out = io.StringIO()
         with redirect_stdout(out):
             code = promote.main([], gql=gql, now=NOW, config=config,
