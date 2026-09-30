@@ -1,6 +1,6 @@
 # TASK-88 plan: plan_docs only for this branch, trim eng.py
 
-RESUME: phase=S7 worktree=/Users/francis/playground/agent-pm/work/TASK-88/worktrees/TASK-88-eng-py-plan-docs branch=TASK-88-eng-py-plan-docs base_ref=452ce156fd3d640967545a4f849322d562e9e5be review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-88/worktrees/TASK-88-eng-py-plan-docs/docs/specs/2026-09-30-task-88-plan-docs-branch-design.md
+RESUME: phase=S9 worktree=/Users/francis/playground/agent-pm/work/TASK-88/worktrees/TASK-88-eng-py-plan-docs branch=TASK-88-eng-py-plan-docs base_ref=452ce156fd3d640967545a4f849322d562e9e5be review_round=0 spec_file=/Users/francis/playground/agent-pm/work/TASK-88/worktrees/TASK-88-eng-py-plan-docs/docs/specs/2026-09-30-task-88-plan-docs-branch-design.md
 
 ## Progress
 
@@ -53,3 +53,7 @@ Tests: none (doc); the verify command still passes.
 Commit: `TASK-88: engineering.md: field names only, this branch's plan docs, dedupe`
 - S5: Tasks 1-4 done via SDD (db5d137, 986d24b, 35c4148, 2b5763b), each task review clean; minors deferred to S7.
 - S6: suite 305 OK; new test fails on 452ce15 (Task 1 test file vs old eng.py); live smoke: status/comments exit 0, no worktrees_dir_ok, AGENT_PM_ISSUE unset -> exit 1; _plan_docs on real worktree lists only this branch.
+- S7 panel: core=[correctness,requirement-fidelity,doc] +optional=[code-quality,test] transport=Workflow (dropped architecture, performance: pure simplification)
+- S7 r0: correctness=PASS requirement-fidelity=PASS doc=PASS code-quality=PASS test=PASS -> converged
+- S8: skipped (keep the commits, per the run's requirement).
+- S9: residual non-blocking: Linear node fields (`body`, `user`) read outside `_linear`'s wrapper, so a malformed node gives a traceback (still exit 1) and the `_linear` docstring overstates; no test left for the `eng.py: Linear: …` line or the body-rule negatives (PRD-mandated deletions); `_existing_branches` docstring run-on; `os.path.join(base, "worktrees")` repeated in `resolve`; engineering.md no longer defines `since`; a plan doc without `branch=` counts as no build.
