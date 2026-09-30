@@ -3,10 +3,10 @@
 
 launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --mode new|resume [--k K]
 The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs the role's
-default task. PROJECT_ID only fills the prompt's Project:. Every run works in work/<ID>/. Exits 2 for an assignee that
-is not a role account or a config error (a role memory overlapping the issue's repo, or a role key missing from the
-Keychain; logged), 3 when the run cannot start yet (transient: no transcript to resume, or the Engineering repo step
-failed transiently). Needs Python 3.11+.
+default task. PROJECT_ID fills the prompt's Project: and, for a role whose next role's default task has repo_from_issue,
+Project repo:. Every run works in work/<ID>/. Exits 2 for an assignee that is not a role account or a config error (a
+role memory overlapping the issue's repo, or a role key missing from the Keychain; logged), 3 when the run cannot start
+yet (transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -19,7 +19,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
 from pipeline import (PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, linear_gql,  # noqa: E402
-                      load_config, overlaps, project_log, role_for, run_dir, runnable, session, transcript)
+                      hands_off_to_repo, load_config, overlaps, project_log, role_for, run_dir, runnable, session, transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
@@ -144,7 +144,8 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=None, gql=Non
         return fail(plog, a.issue, "config-error", f"no Keychain item for role key {job.key}", 2)
     humans = cfg.get("human_members") or []
     states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
-    tail = (f" Humans: {', '.join(humans) or 'none'}. Project: {a.project}."
+    repo_line = f" Project repo: {cfg['project_repos'].get(a.project) or 'none'}." if hands_off_to_repo(cfg, jobs, role) else ""
+    tail = (f" Humans: {', '.join(humans) or 'none'}. Project: {a.project}.{repo_line}"
             f" Team: {cfg['team']}. States: {states}.")
     env, allowed, repo = {}, [], None
     if job.task.get("repo_from_issue"):
