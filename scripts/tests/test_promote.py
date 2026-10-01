@@ -192,7 +192,7 @@ class TestPromote(Base):
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
-        record = {"title": "Run s-1", "url": sessions.url("s-1")}
+        record = {"title": "Run s-1", "url": sessions.URL + "s-1"}
         self.ready("DR-1", attachments=[{"title": "Report", "url": "https://gh/r.md"}, record,
                                         {"title": "Run rate analysis", "url": "https://gh/rate.md"}])
         self.ready("DR-2", attachments=[record])

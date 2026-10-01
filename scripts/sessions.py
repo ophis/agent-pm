@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Session registry: one Linear attachment `Run <sid>` per Claude session on its issue, written by the harness account.
+"""Session registry: one comment per Claude session on its issue, written by the harness account.
 
 sessions.py start ISSUE RECORD_JSON      record the session as running (before claude starts)
 sessions.py end ISSUE RECORD_JSON RC     record its end: done for RC 0, else interrupted
-RECORD_JSON is base()'s record, built by launch.py. One write attempt, bounded by LIMIT seconds; a failure prints
-one registry-error line. Always exits 0.
+RECORD_JSON is base()'s record, built by launch.py. Each write finds the harness account's comments starting
+`Run <sid> · ` and updates the earliest, else creates one: one attempt, bounded by LIMIT seconds; a failure prints one
+registry-error line. Always exits 0.
 """
 import functools
 import json
 import os
+import re
 import shlex
 import sys
 import threading
@@ -17,46 +19,48 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pipeline  # noqa: E402
 
-URL = "https://agent-pm.invalid/run/"  # .invalid never resolves, so a click sends the sid nowhere
+SID = r"[0-9a-f-]{36}"
+URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
-M_ATTACH = "mutation($in: AttachmentCreateInput!) { attachmentCreate(input: $in) { success } }"
+Q_FIND = ("query($i: String!, $p: String!) { issue(id: $i) { comments(filter: { user: { isMe: { eq: true } }, "
+          "body: { startsWith: $p } }) { nodes { id createdAt } } } }")
+M_CREATE = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
+M_UPDATE = "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
 USAGE = "usage: sessions.py start ISSUE RECORD_JSON | end ISSUE RECORD_JSON RC"
 
 
-def url(sid):
-    return URL + sid
-
-
 def is_record(attachment):
-    """True for a session record. The URL alone identifies one: a source may be titled "Run rate analysis"."""
+    """True for an old attachment record. The URL alone identifies one: a source may be titled "Run rate analysis"."""
     return attachment["url"].startswith(URL)
 
 
-def base(*, sid, cwd, role, task, key, model, started_at, repo=None, branch=None, worktree=None):
-    """The record without status. key is the role's Keychain service name, never a secret; repo is "<owner>/<name>",
-    given with branch and worktree for an Engineering run only."""
+def is_comment(comment):
+    """True for a session comment: by the harness account and starting `Run <sid> · `. isMe means the harness account
+    because callers query with its key (pipeline.linear_gql)."""
+    return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {SID} · ", comment["body"]) is not None
+
+
+def base(*, sid, cwd, key, started_at):
+    """The record. key is the role's Keychain service name, never a secret."""
+    return {"sid": sid, "cwd": cwd, "key": key, "started_at": started_at}
+
+
+def command(rec):
     q = shlex.quote
-    rec = {"sid": sid, "cwd": cwd, "role": role, "task": task, "started_at": started_at,
-           "resume_command": f"cd {q(cwd)} && LINEAR_KEYCHAIN_SERVICE={q(key)} claude --resume {q(sid)}", "model": model}
-    if repo is not None:
-        rec.update(repo=repo, branch=branch, worktree=worktree)
-    return rec
+    return f"cd {q(rec['cwd'])} && LINEAR_KEYCHAIN_SERVICE={q(rec['key'])} claude --resume {q(rec['sid'])}"
 
 
-def started(rec):
-    rec = {k: v for k, v in rec.items() if k not in ("ended_at", "exit")}
-    return {**rec, "status": "running"}
+def prefix(sid):
+    return f"Run {sid} · "
 
 
-def ended(rec, rc, now):
-    return {**rec, "status": "done" if rc == 0 else "interrupted", "ended_at": now, "exit": rc}
-
-
-def attachment(issue, rec):
-    """The AttachmentCreateInput. Linear upserts it by (issueId, url) and replaces metadata wholesale."""
-    times = f"{rec['started_at']} → {rec['ended_at']} · exit {rec['exit']}" if "ended_at" in rec else rec["started_at"]
-    return {"issueId": issue, "url": url(rec["sid"]), "title": f"Run {rec['sid']}",
-            "subtitle": f"{rec['status']} · {times} · {rec['resume_command']}", "metadata": rec}
+def body(rec, rc=None, ended_at=None):
+    """The comment: a status line, then the resume command in a code block."""
+    if rc is None:
+        line = f"running · {rec['started_at']}"
+    else:
+        line = f"{'done' if rc == 0 else 'interrupted'} · {rec['started_at']} → {ended_at} · exit {rc}"
+    return f"{prefix(rec['sid'])}{line}\n\n```\n{command(rec)}\n```"
 
 
 def now():
@@ -68,13 +72,19 @@ def one_line(e):
     return " ".join(f"{type(e).__name__}: {e}".split())
 
 
-def write(gql, issue, rec, limit=LIMIT):
-    """None once Linear stored rec, else a one-line reason; never raises. The thread bounds key read and request."""
+def write(gql, issue, sid, text, limit=LIMIT):
+    """None once text is sid's comment on issue, else a one-line reason; never raises. A failed find writes nothing.
+    The thread bounds both calls, key reads included."""
     out = {}
 
     def call():
         try:
-            out["ok"] = gql(M_ATTACH, **{"in": attachment(issue, rec)})["attachmentCreate"]["success"]
+            found = gql(Q_FIND, i=issue, p=prefix(sid))["issue"]["comments"]["nodes"]
+            if found:
+                earliest = min(found, key=lambda c: c["createdAt"])  # uniform UTC ISO strings sort by time
+                out["ok"] = gql(M_UPDATE, c=earliest["id"], b=text)["commentUpdate"]["success"]
+            else:
+                out["ok"] = gql(M_CREATE, i=issue, b=text)["commentCreate"]["success"]
         except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
             out["error"] = e
 
@@ -99,7 +109,7 @@ def main(argv, gql=None):
         if not isinstance(rec, dict):
             raise ValueError("RECORD_JSON is not an object")
         sid = rec.get("sid", "?")
-        reason = write(gql, issue, started(rec) if cmd == "start" else ended(rec, int(argv[3]), now()))
+        reason = write(gql, issue, sid, body(rec) if cmd == "start" else body(rec, int(argv[3]), now()))
     except Exception as e:
         reason = one_line(e)
     if reason:
