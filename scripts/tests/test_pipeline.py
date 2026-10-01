@@ -20,6 +20,9 @@ next = "engineer"
 [roles.solo]
 """
 
+LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
+OTHER = "00000000-0000-4000-8000-000000000023"
+
 
 class ConfigFile:
     """setUp, load and rejects for TestCases that write a pipeline.toml into self.dir."""
@@ -91,6 +94,39 @@ class Config(ConfigFile, unittest.TestCase):
                                  f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {value}")
         self.assertEqual(self.load(BASE)["task_label_group"], TASK_GROUP)
         self.assertIn("task_label_group", pipeline.TOP_KEYS)
+
+    def test_task_labels_absent_is_empty(self):
+        self.assertEqual(self.load(BASE)["task_labels"], {})
+
+    def test_task_labels_loads(self):
+        cfg = self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n')
+        self.assertEqual(cfg["task_labels"], {"light-research": LABEL1, "deep-research": LABEL2})
+        self.assertIn("task_labels", pipeline.TOP_KEYS)
+
+    def test_task_labels_not_a_table_rejected(self):
+        body = BASE[BASE.index("[roles"):]
+        for value in ('"x"', "[1]", "5"):
+            with self.subTest(value):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(HEADER + f"task_labels = {value}\n" + body)
+                self.assertEqual(str(cm.exception.code),
+                                 'pipeline.toml: task_labels must be a table of <task> = "<Linear label id>"')
+
+    def test_task_labels_bad_value_rejected(self):
+        upper = "ABCDEF00-0000-4000-8000-000000000021"
+        cases = {"'Light Research'": '"Light Research"', repr(upper): f'"{upper}"', "5": "5", "['x']": '["x"]', "''": '""', "True": "true"}
+        for shown, value in cases.items():
+            with self.subTest(shown):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = {value}\n')
+                self.assertEqual(str(cm.exception.code),
+                                 f"pipeline.toml: task_labels.deep-research must be a Linear label id (UUID): {shown}")
+
+    def test_task_labels_duplicate_id_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\nother = "{LABEL2}"\ndeep-research = "{LABEL1}"\n')
+        self.assertEqual(str(cm.exception.code),
+                         f"pipeline.toml: task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}")
 
 
 DOCS = {"repo": "acme/notes", "clone": DOCS_CLONE, "branch": "trunk"}
@@ -549,20 +585,6 @@ class Runnable(unittest.TestCase):
         self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
         self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
 
-    def test_task_names_matching_ignoring_case_hyphens_spaces_rejected(self):
-        for name in ("light-research", "lightresearch"):
-            self.write(f"tasks/{name}.md", "")
-            self.write(f"tasks/{name}.toml", 'model = "opus"\neffort = "high"\n')
-        with self.assertRaises(SystemExit) as cm:
-            self.runs()
-        self.assertEqual(str(cm.exception.code),
-                         "tasks/light-research and tasks/lightresearch: task names match ignoring case, hyphens and spaces")
-        self.remove("tasks/light-research.md")
-        self.remove("tasks/light-research.toml")
-        self.write("tasks/deep-research-2.md", "")
-        self.write("tasks/deep-research-2.toml", 'model = "opus"\neffort = "high"\n')
-        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
-
     def memory(self, path, read_only="~/playground/private_docs"):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
@@ -621,6 +643,19 @@ class Runnable(unittest.TestCase):
     def test_load_config_does_not_need_files(self):
         self.remove("tasks/engineering.md")
         self.assertIn("researcher", self.load()["roles"])
+        self.assertEqual(self.load(ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')["task_labels"], {"ghost": LABEL1})
+
+    def test_task_labels_key_needs_task_pair(self):
+        self.rejects("pipeline.toml: task_labels.ghost has no tasks/ghost.md + .toml pair",
+                     text=ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')
+        self.rejects("pipeline.toml: task_labels.light-research has no tasks/light-research.md + .toml pair",
+                     text=ROLES + f'[task_labels]\nengineering = "{LABEL1}"\nlight-research = "{LABEL2}"\n')
+
+    def test_task_labels_accepts_existing_tasks(self):
+        self.two_tasks()
+        text = ROLES + f'[task_labels]\nlight-research = "{LABEL1}"\nengineering = "{LABEL2}"\n'
+        self.assertEqual(sorted(self.runs(text)), ["engineer", "researcher"])
+        self.assertEqual(self.load(text)["task_labels"], {"light-research": LABEL1, "engineering": LABEL2})
 
 
 class RealConfig(unittest.TestCase):
@@ -662,6 +697,11 @@ class RealConfig(unittest.TestCase):
             "deep-research": [private], "product-design": [private], "engineering": [private]})
         self.assertEqual({k: r.task["add_dirs"] for k, r in pipeline.runnable(pipeline.load_config()).items()}, {
             "researcher": [private], "pm": [private], "engineer": [private]})
+
+    def test_real_task_labels(self):
+        cfg = pipeline.load_config()
+        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
+        pipeline.runnable(cfg)
 
     def test_real_config_ids(self):
         cfg = pipeline.load_config()
@@ -714,16 +754,6 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
                          {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
 
 
-class Norm(unittest.TestCase):
-    def test_norm(self):
-        cases = {"Light Research": "lightresearch", "light-research": "lightresearch", "LightResearch": "lightresearch",
-                 "deep-research": "deepresearch", " Deep - Research ": "deepresearch", "light_research": "light_research",
-                 "x1-2": "x12", "": "", "-": "", "Ünï-cöde": "ünïcöde"}
-        for name, want in cases.items():
-            with self.subTest(name):
-                self.assertEqual(pipeline.norm(name), want)
-
-
 class RepoSlug(unittest.TestCase):
     def test_slug(self):
         cases = {"ophis/agent-pm": ("ophis", "agent-pm"), "ophis/.github": ("ophis", ".github"),
@@ -770,8 +800,10 @@ class TeamCheck(unittest.TestCase):
 
 
 class TaskGroupCheck(unittest.TestCase):
-    def cfg(self):
-        return {"task_label_group": TASK_GROUP}
+    LABELS = {"light-research": LABEL1, "deep-research": LABEL2}
+
+    def cfg(self, labels=LABELS):
+        return {"task_label_group": TASK_GROUP, "task_labels": labels}
 
     def gql(self, node=None, error=None):
         calls = []
@@ -784,27 +816,44 @@ class TaskGroupCheck(unittest.TestCase):
         gql.calls = calls
         return gql
 
+    def group(self, *ids):
+        return {"isGroup": True, "children": {"nodes": [{"id": i} for i in ids]}}
+
+    def fails(self, gql, cfg):
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.task_group(gql, cfg)
+        self.assertEqual(len(gql.calls), 1)
+        return str(cm.exception.code)
+
     def test_group_ok(self):
-        gql = self.gql({"isGroup": True})
+        gql = self.gql(self.group(LABEL1, LABEL2, OTHER))
         self.assertIsNone(pipeline.task_group(gql, self.cfg()))
         (query, v), = gql.calls
         self.assertEqual((query, v), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP}))
-        self.assertIn("issueLabel(id: $i) { isGroup }", query)
+        self.assertIn("issueLabel(id: $i) { isGroup children(first: 250) { nodes { id } } }", query)
+
+    def test_one_label_not_in_group(self):
+        msg = self.fails(self.gql(self.group(LABEL1)), self.cfg())
+        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: deep-research {LABEL2}")
+
+    def test_several_labels_not_in_group_in_table_order(self):
+        msg = self.fails(self.gql(self.group(OTHER)), self.cfg({"deep-research": LABEL2, "light-research": LABEL1, "ok": OTHER}))
+        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: "
+                              f"deep-research {LABEL2}, light-research {LABEL1}")
+
+    def test_no_task_labels_checks_only_the_group(self):
+        gql = self.gql(self.group())
+        self.assertIsNone(pipeline.task_group(gql, self.cfg({})))
+        self.assertEqual(len(gql.calls), 1)
 
     def test_not_found(self):
         gql = self.gql(error="linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.task_group(gql, self.cfg())
-        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
+        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
                          "linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-        self.assertEqual(len(gql.calls), 1)
 
     def test_not_a_group(self):
-        gql = self.gql({"isGroup": False})
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.task_group(gql, self.cfg())
-        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
-        self.assertEqual(len(gql.calls), 1)
+        gql = self.gql({"isGroup": False, "children": {"nodes": [{"id": LABEL1}, {"id": LABEL2}]}})
+        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
 
 
 class Paths(unittest.TestCase):
