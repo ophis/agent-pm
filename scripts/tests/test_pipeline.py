@@ -585,20 +585,6 @@ class Runnable(unittest.TestCase):
         self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
         self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
 
-    def test_task_names_matching_ignoring_case_hyphens_spaces_rejected(self):
-        for name in ("light-research", "lightresearch"):
-            self.write(f"tasks/{name}.md", "")
-            self.write(f"tasks/{name}.toml", 'model = "opus"\neffort = "high"\n')
-        with self.assertRaises(SystemExit) as cm:
-            self.runs()
-        self.assertEqual(str(cm.exception.code),
-                         "tasks/light-research and tasks/lightresearch: task names match ignoring case, hyphens and spaces")
-        self.remove("tasks/light-research.md")
-        self.remove("tasks/light-research.toml")
-        self.write("tasks/deep-research-2.md", "")
-        self.write("tasks/deep-research-2.toml", 'model = "opus"\neffort = "high"\n')
-        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
-
     def memory(self, path, read_only="~/playground/private_docs"):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
@@ -766,16 +752,6 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
     def test_real_config(self):
         self.assertEqual(pipeline.load_config()["project_repos"],
                          {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
-
-
-class Norm(unittest.TestCase):
-    def test_norm(self):
-        cases = {"Light Research": "lightresearch", "light-research": "lightresearch", "LightResearch": "lightresearch",
-                 "deep-research": "deepresearch", " Deep - Research ": "deepresearch", "light_research": "light_research",
-                 "x1-2": "x12", "": "", "-": "", "Ünï-cöde": "ünïcöde"}
-        for name, want in cases.items():
-            with self.subTest(name):
-                self.assertEqual(pipeline.norm(name), want)
 
 
 class RepoSlug(unittest.TestCase):

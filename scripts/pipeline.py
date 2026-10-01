@@ -55,11 +55,6 @@ def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def norm(name):
-    """A task or label name compared ignoring case, hyphens and spaces."""
-    return re.sub(r"[- ]", "", name.lower())
-
-
 def slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
@@ -365,11 +360,6 @@ def registry(root=ROOT, docs_clone=None):
 
     roles = {name: _role(name, r, root, resolve) for name, r in _pairs(root, "roles").items()}
     tasks = {name: _task(name, t, resolve) for name, t in _pairs(root, "tasks").items()}
-    seen = {}
-    for name in sorted(tasks):
-        if (n := norm(name)) in seen:
-            raise SystemExit(f"tasks/{seen[n]} and tasks/{name}: task names match ignoring case, hyphens and spaces")
-        seen[n] = name
     owner = {}
     for name, r in roles.items():
         if unknown := [t for t in r.tasks if t not in tasks]:
