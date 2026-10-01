@@ -695,7 +695,7 @@ class RealConfig(unittest.TestCase):
             "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(self.cfg['docs']['clone'])}/**)"], project_repo="",
             tail=" Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
                  f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}.")
-        cases = [("researcher", "deep-research", None, self.research("deep-research", "ultracode"), True),
+        cases = [("researcher", "deep-research", None, self.research("deep-research", "high"), True),
                  ("researcher", "light-research", None, self.research("light-research", "high"), True),
                  ("pm", "product-design", None, self.expected("pm", "product-design", "high"), False),
                  ("engineer", "engineering", ok, engineering, True)]
