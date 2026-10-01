@@ -533,7 +533,7 @@ class RealConfig(unittest.TestCase):
     """The repo's pipeline.toml values that test_launch's RealConfig does not pin."""
     def test_real_config(self):
         cfg = pipeline.load_config()
-        pipeline.runnable(cfg)
+        self.assertEqual(sorted(pipeline.runnable(cfg)), ["engineer", "pm", "researcher"])
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
         self.assertEqual(cfg["docs"], {
             "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
