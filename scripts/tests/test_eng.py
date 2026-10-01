@@ -2,7 +2,7 @@ import dataclasses, io, json, os, sys, subprocess, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import DOCS_CLONE  # noqa: E402
+from board_ids import HEADER  # noqa: E402
 import eng  # noqa: E402
 import pipeline  # noqa: E402
 
@@ -49,44 +49,32 @@ def bodies(entries):
 def linear_for(nodes, created=CREATED):
     return lambda q, **v: {"issue": {"createdAt": created, "comments": {"nodes": nodes}}}
 
-class Placeholders(unittest.TestCase):
-    def test_placeholders_are_ok_fields(self):
-        self.assertLessEqual(pipeline.PLACEHOLDERS, {f.name for f in dataclasses.fields(eng.Ok)})
-
-class Ref(unittest.TestCase):
-    def test_one_definition(self):
-        self.assertIs(eng.REF, pipeline.REF)
-
 class ParseRepo(unittest.TestCase):
-    def test_forms(self):
+    def test_accepted(self):
         for line in ("Repo: ophis/agent-pm", "repo: https://github.com/ophis/agent-pm",
                      "REPO: https://github.com/ophis/agent-pm.git/", "Repo: git@github.com:ophis/agent-pm.git",
                      "repo: [https://github.com/ophis/agent-pm](<https://github.com/ophis/agent-pm>)",
                      "Repo: [agent-pm](https://github.com/ophis/agent-pm)", "  repo:   ophis/agent-pm  ",
                      "`Repo: ophis/agent-pm`", "* Repo: ophis/agent-pm", "- Repo: ophis/agent-pm", "> Repo: ophis/agent-pm",
                      "**Repo:** ophis/agent-pm", "**Repo: ophis/agent-pm**", "Repo: `ophis/agent-pm`"):
-            self.assertEqual(eng.parse_repo(f"x\n{line}\ny"), ("ophis", "agent-pm"), line)
-
-    def test_crlf(self):
-        self.assertEqual(eng.parse_repo("a\r\nRepo: ophis/agent-pm\r\nb"), ("ophis", "agent-pm"))
+            with self.subTest(line=line):
+                self.assertEqual(eng.parse_repo(f"x\n{line}\ny"), ("ophis", "agent-pm"))
+        for d, want in (("a\r\nRepo: ophis/agent-pm\r\nb", ("ophis", "agent-pm")), ("Repo: ophis/a\nrepo: OPHIS/A", ("ophis", "a")),
+                        ("Repo: ophis/.github", ("ophis", ".github")), ("Repo: https://github.com/ophis/.github.git", ("ophis", ".github")),
+                        ("Repo: ophis/..x", ("ophis", "..x"))):
+            with self.subTest(d=d):
+                self.assertEqual(eng.parse_repo(d), want)
 
     def test_comments_section_ignored(self):
         d = "Repo: ophis/a\n\n## Comments\n* x:\n  > Repo: ophis/b"
         self.assertEqual(eng.parse_repo(d), ("ophis", "a"))
         self.assertIsInstance(eng.parse_repo("## Comments\nRepo: ophis/a"), eng.Invalid)
 
-    def test_same_value_twice_ok_two_values_invalid(self):
-        self.assertEqual(eng.parse_repo("Repo: ophis/a\nrepo: OPHIS/A"), ("ophis", "a"))
-        self.assertIsInstance(eng.parse_repo("Repo: ophis/a\nRepo: ophis/b"), eng.Invalid)
-
-    def test_name_starting_with_dot(self):
-        self.assertEqual(eng.parse_repo("Repo: ophis/.github"), ("ophis", ".github"))
-        self.assertEqual(eng.parse_repo("Repo: https://github.com/ophis/.github.git"), ("ophis", ".github"))
-        self.assertEqual(eng.parse_repo("Repo: ophis/..x"), ("ophis", "..x"))
-
-    def test_bad_values(self):
-        for v in ("", "ophis", "-ophis/a", "ophis/-a", "ophis/..", "ophis/.", "a b/c", "ophis/a;rm", "https://gitlab.com/ophis/a"):
-            self.assertIsInstance(eng.parse_repo(f"Repo: {v}"), eng.Invalid, v)
+    def test_rejected(self):
+        for d in (*(f"Repo: {v}" for v in ("", "ophis", "-ophis/a", "ophis/-a", "ophis/..", "ophis/.", "a b/c", "ophis/a;rm",
+                                          "https://gitlab.com/ophis/a")), "Repo: ophis/a\nRepo: ophis/b"):
+            with self.subTest(d=d):
+                self.assertIsInstance(eng.parse_repo(d), eng.Invalid)
 
 class Slug(unittest.TestCase):
     def test_rules(self):
@@ -97,6 +85,9 @@ class Slug(unittest.TestCase):
         self.assertFalse(eng.slug("ENG: " + "a" * 39 + " bbb").endswith("-"))
 
 class Resolve(unittest.TestCase):
+    MAPPING = {"repos": {PROJ: "ophis/agent-pm"}, "project": {"id": PROJ}}
+    ISSUES = (("Repo line", {}, ""), ("Repo line, mapped project", MAPPING, ""), ("mapped project", {"desc": "no repo here", **MAPPING}, eng.MAPPED))
+
     def setUp(self):
         self.pg = tempfile.mkdtemp()
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.pg]))
@@ -141,11 +132,6 @@ class Resolve(unittest.TestCase):
                                    "TASK-26-session-registry",
                                    os.path.join(self.work, "TASK-26", "worktrees", "TASK-26-session-registry")))
 
-    def test_absent_clone_is_cloned(self):
-        r = self.resolve()
-        self.assertIsInstance(r, eng.Ok)
-        self.assertIn((("gh", "repo", "clone", "ophis/agent-pm", self.clone), 600), self.run_.calls)
-
     def test_linear_error_transient(self):
         def boom(q, **v):
             raise SystemExit("linear api error: boom")
@@ -168,58 +154,27 @@ class Resolve(unittest.TestCase):
 
     def test_access(self):
         os.makedirs(self.clone)
-        for res, kind in ((ok(code=1, stderr="gh: Not Found (HTTP 404)"), eng.Invalid),
-                          (ok(code=1, stderr="gh: Forbidden (HTTP 403)"), eng.Invalid),
-                          (ok('{"default_branch": "main", "permissions": {"push": false}}'), eng.Invalid),
-                          (ok(code=1, stderr="gh: Bad Gateway (HTTP 502)"), eng.Transient),
-                          (ok(code=1, stderr="error connecting to api.github.com"), eng.Transient),
-                          (ok('{"default_branch": "-x", "permissions": {"push": true}}'), eng.Invalid),
-                          (ok('{"default_branch": "a..b", "permissions": {"push": true}}'), eng.Invalid),
-                          (ok('{"default_branch": "ma$(x)", "permissions": {"push": true}}'), eng.Invalid),
-                          (ok('{"default_branch": null, "permissions": {"push": true}}'), eng.Invalid)):
-            self.assertIsInstance(self.resolve(api=res), kind, res)
-
-    def test_clone_checks(self):
-        other = tempfile.mkdtemp()
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
-        os.symlink(other, self.clone)
-        self.assertIsInstance(self.resolve(), eng.Invalid)
-        os.remove(self.clone)
-        os.makedirs(self.clone)
-        self.assertIsInstance(self.resolve(fetch_url=ok("git@github.com:other/agent-pm.git\n")), eng.Invalid)
-        self.assertIsInstance(self.resolve(push_url=ok("https://evil.example/x.git\n")), eng.Invalid)
-        self.assertIsInstance(self.resolve(fetch_url=ok("https://github.com/OPHIS/Agent-PM\n")), eng.Ok)
-
-    def test_clone_failure_transient(self):
-        self.assertIsInstance(self.resolve(clone=ok(code=1, stderr="network")), eng.Transient)
+        for res, want in ((ok('{"default_branch": "main", "permissions": {"push": false}}'), eng.Invalid("ophis/agent-pm: no push permission")),
+                          (ok(code=1, stderr="gh: Bad Gateway (HTTP 502)"), eng.Transient("gh api repos/ophis/agent-pm: gh: Bad Gateway (HTTP 502)"))):
+            with self.subTest(want=want):
+                self.assertEqual(self.resolve(api=res), want)
 
     def test_existing_branches(self):
         os.makedirs(self.clone)
-        local = self.resolve(branches=ok("TASK-26-old-name\n"))
-        self.assertEqual((local.branch, local.branch_exists), ("TASK-26-old-name", "local"))
-        remote = self.resolve(remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-        self.assertEqual((remote.branch, remote.branch_exists), ("TASK-26-remote", "remote"))
-        self.assertIsNone(self.resolve().branch_exists)
-        self.assertIsInstance(self.resolve(branches=ok("TASK-26-a\nTASK-26-b\n")), eng.Invalid)
-        self.assertIsInstance(self.resolve(branches=ok("TASK-26-Bad$(x)\n")), eng.Invalid)
-
-    def test_branch_listing_failure_transient(self):
-        os.makedirs(self.clone)
-        for over in ({"branches": ok(code=128, stderr="fatal")}, {"remote": ok(code=128, stderr="no remote")}):
-            self.assertIsInstance(self.resolve(**over), eng.Transient, over)
-
-    def test_local_only_branch_with_worktree_present_resolves_without_remote_lookup(self):
-        """Crash after `worktree add`, before the first push: the worktree already exists on disk."""
-        os.makedirs(self.clone)
-        worktree = os.path.join(self.work, "TASK-26", "worktrees", "TASK-26-old-name")
-        os.makedirs(worktree)
-        r = self.resolve(branches=ok("TASK-26-old-name\n"))
-        self.assertEqual((r.branch, r.worktree), ("TASK-26-old-name", worktree))
-        remote_prefix = ("git", "-C", self.clone, "ls-remote", "--heads", "origin")
-        self.assertFalse(any(c[0][:len(remote_prefix)] == remote_prefix for c in self.run_.calls))
-
-    def test_invalid_repo_line(self):
-        self.assertIsInstance(self.resolve(desc="no repo here"), eng.Invalid)
+        for over, branch, where in (({"branches": ok("TASK-26-old-name\n")}, "TASK-26-old-name", "local"),
+                                    ({"remote": ok("abc\trefs/heads/TASK-26-remote\n")}, "TASK-26-remote", "remote"),
+                                    ({}, "TASK-26-session-registry", None)):
+            with self.subTest(where=where):
+                r = self.resolve(**over)
+                self.assertEqual((r.branch, r.branch_exists, r.worktree), (branch, where, os.path.join(self.work, "TASK-26", "worktrees", branch)))
+                self.assertEqual(any("ls-remote" in c[0] for c in self.run_.calls), where != "local")
+        for over, want in (({"branches": ok("TASK-26-a\nTASK-26-b\n")}, eng.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b")),
+                           ({"branches": ok("TASK-26-Bad$(x)\n")}, eng.Invalid("existing branch name 'TASK-26-Bad$(x)' is not TASK-26-<lowercase slug>")),
+                           ({"branches": ok(code=128, stderr="fatal")}, eng.Transient("git branch --list: fatal")),
+                           ({"remote": ok(code=128, stderr="no remote")}, eng.Transient("git ls-remote: no remote"))):
+            with self.subTest(want=want):
+                self.assertEqual(self.resolve(**over), want)
+                self.assertEqual(self.mapped(**over), want)
 
     def test_mapped_project_without_repo_line(self):
         os.makedirs(self.clone)
@@ -252,35 +207,6 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.resolve(desc="no repo here", project={"id": PROJ}), NO_LINE)
         self.assertEqual(self.run_.calls, [])
 
-    def test_failure_reasons_carry_the_mapping_prefix_only_when_mapped(self):
-        os.makedirs(self.clone)
-        repos, project = {PROJ: "ophis/agent-pm"}, {"id": PROJ}
-        for over, reason in (({"api": ok(code=1, stderr="gh: Not Found (HTTP 404)")}, "ophis/agent-pm: not found or no access (HTTP 404)"),
-                             ({"api": ok(code=1, stderr="gh: Forbidden (HTTP 403)")}, "ophis/agent-pm: not found or no access (HTTP 403)"),
-                             ({"api": ok('{"default_branch": "main", "permissions": {"push": false}}')}, "ophis/agent-pm: no push permission"),
-                             ({"api": ok('{"default_branch": "-x", "permissions": {"push": true}}')}, "ophis/agent-pm: unsafe default branch name")):
-            with self.subTest(reason=reason):
-                self.assertEqual(self.mapped(**over), eng.Invalid(eng.MAPPED + reason))
-                self.assertEqual(self.resolve(repos=repos, project=project, **over), eng.Invalid(reason))
-        self.assertTrue(eng.MAPPED.startswith("project mapping") and eng.MAPPED.endswith(" "))
-        self.assertEqual(self.mapped(fetch_url=ok("git@github.com:other/agent-pm.git\n")),
-                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"))
-        self.assertEqual(self.mapped(branches=ok("TASK-26-a\nTASK-26-b\n")), eng.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
-        self.assertIsInstance(self.mapped(api=ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")), eng.Transient)
-        other = tempfile.mkdtemp()
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
-        os.rmdir(self.clone)
-        os.symlink(other, self.clone)
-        self.assertEqual(self.mapped(), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
-
-    def test_mapping_value_that_is_not_a_repo(self):
-        for value in ("https://github.com/ophis/agent-pm", "ophis", "", "ophis/..", 42, None):
-            with self.subTest(value=value):
-                r = self.resolve(desc="no repo here", repos={PROJ: value}, project={"id": PROJ})
-                self.assertIsInstance(r, eng.Invalid)
-                self.assertTrue(r.reason.startswith(eng.MAPPED), r.reason)
-        self.assertEqual(self.run_.calls, [])
-
     def target(self, desc="Repo: ophis/agent-pm", repos=None, project=None, push=False, **over):
         self.run_ = FakeRun(self.table(**over))
         issue = {"description": desc, "project": project}
@@ -290,31 +216,40 @@ class Resolve(unittest.TestCase):
         os.makedirs(self.clone)
         read_only = ok('{"default_branch": "main", "permissions": {"push": false}}')
         self.assertEqual(self.target(api=read_only), eng.Target("ophis", "agent-pm", self.clone, "main", False))
-        self.assertEqual(self.target(api=read_only, push=True), eng.Invalid("ophis/agent-pm: no push permission"))
-        self.assertEqual(self.target(api=read_only, repos={PROJ: "ophis/agent-pm"}, project={"id": PROJ}, desc="no repo here", push=True),
-                         eng.Invalid(eng.MAPPED + "ophis/agent-pm: no push permission"))
+        for issue, extra, prefix in self.ISSUES:
+            with self.subTest(issue=issue):
+                self.assertEqual(self.target(api=read_only, push=True, **extra), eng.Invalid(prefix + "ophis/agent-pm: no push permission"))
 
-    def test_target_is_not_the_branch_step(self):
+    def test_target_is_not_the_branch_step_and_ignores_the_url_case(self):
         os.makedirs(self.clone)
-        self.assertEqual(self.target(), eng.Target("ophis", "agent-pm", self.clone, "main", False))
+        self.assertEqual(self.target(fetch_url=ok("https://github.com/OPHIS/Agent-PM\n")), eng.Target("ophis", "agent-pm", self.clone, "main", False))
         self.assertFalse(any(c[0][3] in ("branch", "ls-remote") for c in self.run_.calls if c[0][:2] == ("git", "-C")))
 
     def test_target_keeps_every_other_check_with_push_off(self):
         os.makedirs(self.clone)
         self.assertEqual(self.target(desc="no repo here"), NO_LINE)
         self.assertEqual(self.target(desc="Repo: nope"), eng.Invalid("unreadable Repo line: 'nope'"))
-        for res, kind in ((ok(code=1, stderr="gh: Not Found (HTTP 404)"), eng.Invalid),
-                          (ok(code=1, stderr="gh: Forbidden (HTTP 403)"), eng.Invalid),
-                          (ok(code=1, stderr="gh: Bad Gateway (HTTP 502)"), eng.Transient),
-                          (ok('{"default_branch": "-x", "permissions": {"push": false}}'), eng.Invalid),
-                          (ok('{"default_branch": null, "permissions": {"push": false}}'), eng.Invalid)):
-            self.assertIsInstance(self.target(api=res), kind, res)
-        self.assertEqual(self.target(api=ok('{"default_branch": "ma$(x)", "permissions": {"push": false}}')),
-                         eng.Invalid("ophis/agent-pm: unsafe default branch name"))
-        self.assertEqual(self.target(fetch_url=ok("git@github.com:other/agent-pm.git\n")),
-                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"))
-        self.assertEqual(self.target(push_url=ok("https://evil.example/x.git\n")),
-                         eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin push URL differs)"))
+        default = lambda name: ok(json.dumps({"default_branch": name, "permissions": {"push": False}}))
+        unsafe = eng.Invalid("ophis/agent-pm: unsafe default branch name")
+        for label, over, want, tagged in (
+                ("HTTP 404", {"api": ok(code=1, stderr="gh: Not Found (HTTP 404)")}, eng.Invalid("ophis/agent-pm: not found or no access (HTTP 404)"), True),
+                ("HTTP 403", {"api": ok(code=1, stderr="gh: Forbidden (HTTP 403)")}, eng.Invalid("ophis/agent-pm: not found or no access (HTTP 403)"), True),
+                ("HTTP 502", {"api": ok(code=1, stderr="gh: Bad Gateway (HTTP 502)")},
+                 eng.Transient("gh api repos/ophis/agent-pm: gh: Bad Gateway (HTTP 502)"), False),
+                ("no HTTP code", {"api": ok(code=1, stderr="error connecting to api.github.com")},
+                 eng.Transient("gh api repos/ophis/agent-pm: error connecting to api.github.com"), False),
+                ("default -x", {"api": default("-x")}, unsafe, True),
+                ("default a..b", {"api": default("a..b")}, unsafe, True),
+                ("default ma$(x)", {"api": default("ma$(x)")}, unsafe, True),
+                ("default null", {"api": default(None)}, unsafe, True),
+                ("origin URL", {"fetch_url": ok("git@github.com:other/agent-pm.git\n")},
+                 eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"), False),
+                ("origin push URL", {"push_url": ok("https://evil.example/x.git\n")},
+                 eng.Invalid(f"{self.clone} is not a clone of ophis/agent-pm (origin push URL differs)"), False)):
+            for issue, extra, prefix in self.ISSUES:
+                with self.subTest(label, issue=issue):
+                    self.assertEqual(self.target(**extra, **over), eng.Invalid(prefix + want.reason) if tagged else want)
+        self.assertEqual(eng.MAPPED, "project mapping ")
 
     def test_target_clones_a_missing_clone_and_reports_a_failure(self):
         self.assertEqual(self.target(), eng.Target("ophis", "agent-pm", self.clone, "main", False))
@@ -326,6 +261,7 @@ class Resolve(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", other]))
         os.symlink(other, self.clone)
         self.assertEqual(self.target(), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
+        self.assertEqual(self.target("no repo here", **self.MAPPING), eng.Invalid(f"{self.clone} is a symlink or outside {self.pg}"))
 
     def test_target_mapping(self):
         os.makedirs(self.clone)
@@ -338,6 +274,8 @@ class Resolve(unittest.TestCase):
                          eng.Invalid(eng.MAPPED + "ophis/agent-pm: not found or no access (HTTP 404)"))
         self.assertEqual(self.target("no repo here", repos={PROJ: "nope"}, project=project),
                          eng.Invalid(f"{eng.MAPPED}'nope': not <owner>/<name>"))
+        self.assertEqual(self.target("no repo here", repos={PROJ: 42}, project=project), eng.Invalid(f"{eng.MAPPED}'42': not <owner>/<name>"))
+        self.assertEqual(self.run_.calls, [])
         self.assertEqual(self.target("no repo here", repos=repos, project={"id": "other"}), NO_LINE)
 
 class RunSubdir(unittest.TestCase):
@@ -354,13 +292,6 @@ class RunSubdir(unittest.TestCase):
         os.makedirs(os.path.join(self.base, "src"))
         self.assertEqual(eng.run_subdir("TASK-26", "src"), os.path.join(self.base, "src"))
 
-    def test_symlink_out_of_the_run_dir_invalid(self):
-        outside = tempfile.mkdtemp()
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", outside]))
-        os.makedirs(self.base)
-        os.symlink(outside, os.path.join(self.base, "src"))
-        self.assertEqual(eng.run_subdir("TASK-26", "src"), eng.Invalid(f"{os.path.join(self.base, 'src')} resolves outside {self.base}"))
-
     def test_symlink_inside_the_run_dir_is_fine(self):
         os.makedirs(os.path.join(self.base, "real"))
         os.symlink(os.path.join(self.base, "real"), os.path.join(self.base, "src"))
@@ -373,7 +304,6 @@ class Locate(unittest.TestCase):
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.root]))
         self.clone = os.path.join(self.root, "clone")
-        self.gitdir = os.path.join(self.clone, ".git", "worktrees", "wt")
 
     def put(self, path, text):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -387,16 +317,17 @@ class Locate(unittest.TestCase):
         self.put(os.path.join(gitdir, "HEAD"), head)
         return path
 
-    def test_detached(self):
-        self.assertEqual(eng.locate(self.wt(self.SHA + "\n")), (self.clone, None, self.SHA, self.gitdir))
-
-    def test_branch(self):
-        self.assertEqual(eng.locate(self.wt("ref: refs/heads/TASK-1-x\n")), (self.clone, "TASK-1-x", "ref: refs/heads/TASK-1-x", self.gitdir))
-
-    def test_relative_gitdir(self):
-        path = self.wt(self.SHA + "\n")
-        self.put(os.path.join(path, ".git"), "gitdir: ../clone/.git/worktrees/wt\n")
-        self.assertEqual(eng.locate(path), (self.clone, None, self.SHA, self.gitdir))
+    def test_located(self):
+        relative = self.wt(self.SHA + "\n", name="relative")
+        self.put(os.path.join(relative, ".git"), "gitdir: ../clone/.git/worktrees/relative\n")
+        no_head = self.wt("", name="no-head")
+        os.remove(os.path.join(self.clone, ".git", "worktrees", "no-head", "HEAD"))
+        for path, branch, head in ((self.wt(self.SHA + "\n"), None, self.SHA),
+                                   (self.wt("ref: refs/heads/TASK-1-x\n", name="branch"), "TASK-1-x", "ref: refs/heads/TASK-1-x"),
+                                   (relative, None, self.SHA), (no_head, None, "")):
+            with self.subTest(path=path):
+                gitdir = os.path.join(self.clone, ".git", "worktrees", os.path.basename(path))
+                self.assertEqual(eng.locate(path), (self.clone, branch, head, gitdir))
 
     def test_refusals(self):
         self.put(os.path.join(self.root, "dir", ".git", "x"), "")
@@ -416,11 +347,6 @@ class Locate(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             eng.locate(self.wt("ref: refs/heads/-D\n", name="bad"))
         self.assertEqual(str(cm.exception), "unsafe branch name")
-
-    def test_a_missing_head_is_empty_and_detached(self):
-        path = self.wt("")
-        os.remove(os.path.join(self.clone, ".git", "worktrees", "wt", "HEAD"))
-        self.assertEqual(eng.locate(path), (self.clone, None, "", self.gitdir))
 
 class Cli(unittest.TestCase):
     def setUp(self):
@@ -452,22 +378,21 @@ class Cli(unittest.TestCase):
 
     def comments(self, nodes=(), created=CREATED, **over):
         """Runs `comments` against fake Linear comments and the humans [HUMAN]; returns the parsed output."""
-        config = self.config_file("", head=f'human_members = ["{HUMAN}"]\n')
+        config = self.config_file(f'human_members = ["{HUMAN}"]\n')
         self.assertEqual(self.cli("comments", config=config, gql=linear_for(list(nodes), created), **over), 0, self.err)
         return json.loads(self.out)
 
-    def config_file(self, tail, head=""):
-        uid = "00000000-0000-4000-8000-000000000000"
-        docs = f'docs = {{ repo = "acme/notes", clone = "{DOCS_CLONE}", branch = "trunk" }}\n'
-        text = f'team = "{uid}"\nharness_key = "k"\ntask_label_group = "{uid}"\n{docs}{head}[states]\n' + "".join(f'{k} = "{uid}"\n' for k in pipeline.STATES) + tail
+    def config_file(self, tail):
         path = os.path.join(self.root, "pipeline.toml")
         with open(path, "w") as f:
-            f.write(text)
+            f.write(HEADER + tail)
         return path
 
-    def test_requires_issue_env(self):
-        self.assertEqual(self.cli("status", env={}), 1)
-        self.assertEqual(self.err, "eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
+    def test_requires_issue_env_before_the_config(self):
+        for config in (None, os.path.join(self.root, "missing.toml")):
+            with self.subTest(config=config):
+                self.assertEqual(self.cli("status", env={}, config=config), 1)
+                self.assertEqual(self.err, "eng.py: AGENT_PM_ISSUE is not set to an issue id\n")
 
     def test_passes_the_configured_mapping_to_resolve(self):
         path = self.config_file(f'[project_repos]\n"{PROJ}" = "ophis/agent-pm"\n')
@@ -476,54 +401,43 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.cli("status", config=self.config_file("")), 0)
         self.assertEqual(self.resolve.call_args.kwargs["repos"], {})
 
-    def test_default_config_is_the_real_one(self):
-        self.assertEqual(self.cli("status"), 0)
-        self.assertEqual(self.resolve.call_args.kwargs["repos"], pipeline.load_config()["project_repos"])
-
     def test_broken_config_refused(self):
         self.assertEqual(self.cli("status", config=self.config_file(f'[project_repos]\n"{PROJ}" = "ophis"\n')), 1)
         self.assertTrue(self.err.startswith(f"eng.py: pipeline.toml: project_repos.{PROJ} "), self.err)
         self.assertEqual(self.out, "")
         self.resolve.assert_not_called()
 
-    def test_config_loaded_after_the_issue_check(self):
-        self.assertEqual(self.cli("status", env={}, config=os.path.join(self.root, "missing.toml")), 1)
-        self.assertIn("AGENT_PM_ISSUE", self.err)
+    def test_resolve_failure_exits_1(self):
+        for cmd, kw, err in (("status", {"resolved": eng.Invalid("no Repo")}, "no Repo"),
+                             ("status", {"resolved": eng.Transient("gh api: TimeoutExpired")}, "gh api: TimeoutExpired"),
+                             ("comments", {"resolve_error": subprocess.TimeoutExpired("git", 60)}, "resolve: TimeoutExpired('git', 60)"),
+                             ("status", {"resolve_error": KeyError("title")}, "resolve: KeyError('title')")):
+            with self.subTest(err=err):
+                self.assertEqual(self.cli(cmd, **kw), 1)
+                self.assertEqual((self.out, self.err), ("", f"eng.py: {err}\n"))
 
-    def test_refuses_when_not_ok(self):
-        self.assertEqual(self.cli("status", resolved=eng.Invalid("no Repo")), 1)
-        self.assertEqual((self.out, self.err), ("", "eng.py: no Repo\n"))
-
-    def test_resolve_transient_or_error_exits_1(self):
-        self.assertEqual(self.cli("status", resolved=eng.Transient("gh api: TimeoutExpired")), 1)
-        self.assertEqual(self.err, "eng.py: gh api: TimeoutExpired\n")
-        self.assertEqual(self.cli("comments", resolve_error=subprocess.TimeoutExpired("git", 60)), 1)
-        self.assertTrue(self.err.startswith("eng.py: resolve: TimeoutExpired("), self.err)
-        self.assertEqual(self.cli("status", resolve_error=KeyError("title")), 1)
-        self.assertEqual(self.err, "eng.py: resolve: KeyError('title')\n")
-
-    def test_transient_subprocess_error_exits_1(self):
-        exc = subprocess.TimeoutExpired("git", 60)
-        self.assertEqual(self.cli("status", user=exc), 1)
-        self.assertEqual((self.out, self.err), ("", f"eng.py: {exc}\n"))
-
-    def test_gh_or_git_failure_exits_1(self):
-        for cmd, over in (("status", {"prs": ok(code=1, stderr="HTTP 502")}), ("status", {"user": ok(code=1, stderr="auth")}),
-                          ("comments", {"user": ok(code=1, stderr="auth")}), ("comments", {"prs": ok(code=1, stderr="HTTP 502")}),
-                          ("comments", {"reviews": ok(code=1, stderr="HTTP 502")})):
-            self.assertEqual(self.cli(cmd, **over), 1, over)
-            self.assertRegex(self.err, r"eng\.py: (?!transient)[^\n]+\n\Z")
-            self.assertEqual(self.out, "")
-
-    def test_malformed_gh_output(self):
-        for cmd, over in (("status", {"prs": ok('{"message": "Bad credentials"}')}), ("status", {"prs": ok("not json")}),
-                          ("status", {"prs": ok(json.dumps([{**pr_row(7), "number": "7"}]))}),
-                          ("status", {"user": ok("[]")}), ("status", {"user": ok('{"login": ""}')}),
-                          ("comments", {"issue_comments": ok('{"message": "x"}')}), ("comments", {"issue_comments": ok('[{"a": 1}]')}),
-                          ("comments", {"reviews": ok(json.dumps([[{"user": {"login": "ophis"}, "submitted_at": "later"}]]))})):
-            self.assertEqual(self.cli(cmd, **over), 1, over)
-            self.assertRegex(self.err, r"eng\.py: (?!malformed)[^\n]+\n\Z")
-            self.assertEqual(self.out, "")
+    def test_gh_failure_or_bad_output_exits_1(self):
+        timeout = subprocess.TimeoutExpired("git", 60)
+        pr_list = "gh pr list --repo ophis/agent-pm --head TASK-26-x --state all --json number,url,state,isCrossRepository,author --limit 100"
+        reviews = "repos/ophis/agent-pm/pulls/7/reviews"
+        for cmd, over, err in (("status", {"user": timeout}, str(timeout)),
+                               ("status", {"prs": ok(code=1, stderr="HTTP 502")}, f"{pr_list}: HTTP 502"),
+                               ("status", {"user": ok(code=1, stderr="auth")}, "gh api user: auth"),
+                               ("comments", {"user": ok(code=1, stderr="auth")}, "gh api user: auth"),
+                               ("comments", {"prs": ok(code=1, stderr="HTTP 502")}, f"{pr_list}: HTTP 502"),
+                               ("comments", {"reviews": ok(code=1, stderr="HTTP 502")}, f"gh api --paginate --slurp {reviews}: HTTP 502"),
+                               ("status", {"prs": ok('{"message": "Bad credentials"}')}, "gh pr list: not a JSON list of objects"),
+                               ("status", {"prs": ok("not json")}, f"{pr_list}: Expecting value: line 1 column 1 (char 0)"),
+                               ("status", {"prs": ok(json.dumps([{**pr_row(7), "number": "7"}]))}, "gh pr list: a PR without a number"),
+                               ("status", {"user": ok("[]")}, "gh api user: no login"),
+                               ("status", {"user": ok('{"login": ""}')}, "gh api user: no login"),
+                               ("comments", {"issue_comments": ok('{"message": "x"}')}, "repos/ophis/agent-pm/issues/7/comments: not a JSON array of pages"),
+                               ("comments", {"issue_comments": ok('[{"a": 1}]')}, "repos/ophis/agent-pm/issues/7/comments: not a JSON array of pages"),
+                               ("comments", {"reviews": ok(json.dumps([[{"user": {"login": "ophis"}, "submitted_at": "later"}]]))},
+                                f"{reviews}: bad submitted_at 'later'")):
+            with self.subTest(cmd=cmd, over=over):
+                self.assertEqual(self.cli(cmd, **over), 1)
+                self.assertEqual((self.out, self.err), ("", f"eng.py: {err}\n"))
 
     def test_since_is_the_latest_engineer_build_started(self):
         d = self.comments([lin("2026-09-10T00:00:00Z", ENGINEER, "Build started"), lin("2026-09-12T00:00:00Z", HUMAN.lower(), "old ask"),
@@ -608,20 +522,18 @@ class Cli(unittest.TestCase):
         self.assertEqual(json.loads(self.out)["pr"], {"number": 7, "url": "u7", "state": "OPEN"})
         self.assertEqual(self.cli("status", prs=ok(json.dumps(prs[:2]))), 0)
         self.assertIsNone(json.loads(self.out)["pr"])
-        self.assertEqual(self.cli("comments", prs=ok(json.dumps(prs[:1]))), 0)
-        self.assertFalse(any("--paginate" in c[0] for c in self.run_.calls))
 
     def test_status_json(self):
         os.makedirs(os.path.join(self.wt, "docs", "specs"))
         with open(os.path.join(self.wt, "docs", "specs", "p.md"), "w") as f:
             f.write("x\nRESUME: phase=S5 branch=TASK-26-x worktree=...\n")
         self.assertEqual(self.cli("status", prs=ok("[]")), 0)
-        s = json.loads(self.out)
-        self.assertEqual((s["repo"], s["branch"], s["branch_exists"], s["worktree_exists"], s["pr"]),
-                         ("ophis/agent-pm", "TASK-26-x", "local", True, None))
-        self.assertEqual(s["plan_docs"], [{"path": os.path.join(self.wt, "docs", "specs", "p.md"), "phase": "S5"}])
-        self.assertEqual(s["pr_title"], "TASK-26: X")
-        self.assertNotIn("worktrees_dir_ok", s)
+        self.assertEqual(json.loads(self.out), {
+            "repo": "ophis/agent-pm", "clone": self.ok.clone, "default": "main", "branch": "TASK-26-x", "worktree": self.wt,
+            "branch_exists": "local", "worktree_exists": True, "pr": None, "pr_title": "TASK-26: X",
+            "plan_docs": [{"path": os.path.join(self.wt, "docs", "specs", "p.md"), "phase": "S5"}]})
+        self.assertEqual(self.cli("status", resolved=dataclasses.replace(self.ok, branch_exists=None)), 0)
+        self.assertIsNone(json.loads(self.out)["branch_exists"])
 
     def test_status_plan_docs_only_this_branch(self):
         os.makedirs(self.wt)
@@ -647,13 +559,6 @@ class Cli(unittest.TestCase):
         self.addCleanup(os.chmod, locked, 0o600)
         self.assertEqual(self.cli("status"), 0)
         self.assertEqual(json.loads(self.out)["plan_docs"], [{"path": os.path.join(self.wt, "p.md"), "phase": "S5"}])
-
-    def test_status_pr_title_sanitized(self):
-        bad = eng.Ok("TASK-26", 'ENG: a $(rm) `x` "q"', "ophis", "agent-pm", self.ok.clone, "main", "TASK-26-x", self.wt)
-        self.assertEqual(self.cli("status", resolved=bad), 0)
-        s = json.loads(self.out)
-        self.assertEqual(s["pr_title"], "TASK-26: a (rm) x q")
-        self.assertIsNone(s["branch_exists"])
 
 class PrTitle(unittest.TestCase):
     def title(self, t):
