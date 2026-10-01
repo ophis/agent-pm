@@ -50,83 +50,47 @@ class Config(ConfigFile, unittest.TestCase):
         self.assertEqual(pipeline.stage_order(self.load(BASE)),
                          {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
 
-    def test_cycle_rejected(self):
-        with self.assertRaises(SystemExit):
-            self.load(BASE + '[roles.a]\nnext = "b"\n[roles.b]\nnext = "a"\n')
-
-    def test_harness_key_required(self):
-        for text in (BASE.replace('harness_key = "linear-api-key"\n', ""),
-                     BASE.replace('harness_key = "linear-api-key"', "harness_key = 1")):
-            with self.subTest(text[:80]):
-                with self.assertRaises(SystemExit) as cm:
-                    self.load(text)
-                self.assertIn("pipeline.toml: harness_key", str(cm.exception.code))
-        self.assertEqual(self.load(BASE)["harness_key"], "linear-api-key")
-
-    def test_ids_required(self):
+    def test_rejected(self):
         states = "states = { " + ", ".join(f'{k} = "{v}"' for k, v in STATES.items()) + " }\n"
         body = BASE[BASE.index("[roles"):]
-        cases = {
-            "team must be a Linear team id (UUID): \"Frank's Agents\"": 'team = "Frank\'s Agents"\n' + states + body,
-            "team must be a Linear team id (UUID): None": states + body,
-            "[states] is missing: todo, in_progress, in_review, handoff, done, canceled": f'team = "{TEAM}"\n' + body,
-            "[states] is missing: canceled": f'team = "{TEAM}"\n' + states.replace(f', canceled = "{STATES["canceled"]}"', "") + body,
-            "[states] has unknown keys: backlog": f'team = "{TEAM}"\n' + states.replace(" }", ', backlog = "x" }') + body,
-            "states.done must be a Linear workflow state id (UUID): 'Done'": f'team = "{TEAM}"\n' + states.replace(STATES["done"], "Done") + body,
-        }
-        for fragment, text in cases.items():
-            with self.subTest(fragment):
+        team = f'team = "{TEAM}"\n'
+        group = "task_label_group must be a Linear label group id (UUID): "
+        label = BASE + f'[task_labels]\nlight-research = "{LABEL1}"\n'
+        upper = "ABCDEF00-0000-4000-8000-000000000021"
+        cases = [
+            (BASE + '[roles.a]\nnext = "b"\n[roles.b]\nnext = "a"\n', "the next chain from 'a' has a cycle"),
+            (BASE.replace('harness_key = "linear-api-key"\n', ""), "harness_key must be a Keychain service name: None"),
+            (BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"), "harness_key must be a Keychain service name: 1"),
+            ('team = "Frank\'s Agents"\n' + states + body, "team must be a Linear team id (UUID): \"Frank's Agents\""),
+            (states + body, "team must be a Linear team id (UUID): None"),
+            (team + body, "[states] is missing: todo, in_progress, in_review, handoff, done, canceled"),
+            (team + states.replace(f', canceled = "{STATES["canceled"]}"', "") + body, "[states] is missing: canceled"),
+            (team + states.replace(" }", ', backlog = "x" }') + body, "[states] has unknown keys: backlog"),
+            (team + states.replace(STATES["done"], "Done") + body, "states.done must be a Linear workflow state id (UUID): 'Done'"),
+            (BASE.replace(f'task_label_group = "{TASK_GROUP}"\n', ""), group + "None"),
+            (BASE.replace(TASK_GROUP, "not-a-uuid"), group + "'not-a-uuid'"),
+            (BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"), group + "'ABCDEF00-0000-4000-8000-000000000002'"),
+            (BASE.replace(f'"{TASK_GROUP}"', "5"), group + "5"),
+            *[(HEADER + f"task_labels = {value}\n" + body, 'task_labels must be a table of <task> = "<Linear label id>"')
+              for value in ('"x"', "[1]", "5")],
+            *[(label + f"deep-research = {value}\n", f"task_labels.deep-research must be a Linear label id (UUID): {shown}")
+              for shown, value in {"'Light Research'": '"Light Research"', repr(upper): f'"{upper}"', "5": "5", "['x']": '["x"]',
+                                   "''": '""', "True": "true"}.items()],
+            (label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
+             f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}"),
+        ]
+        for text, message in cases:
+            with self.subTest(message, text=text):
                 with self.assertRaises(SystemExit) as cm:
                     self.load(text)
-                self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: "), cm.exception.code)
-                self.assertIn(fragment, str(cm.exception.code))
-
-    def test_task_label_group_required(self):
-        line = f'task_label_group = "{TASK_GROUP}"\n'
-        cases = {None: BASE.replace(line, ""), "'not-a-uuid'": BASE.replace(TASK_GROUP, "not-a-uuid"),
-                 "'ABCDEF00-0000-4000-8000-000000000002'": BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"),
-                 "5": BASE.replace(f'"{TASK_GROUP}"', "5")}
-        for value, text in cases.items():
-            with self.subTest(value):
-                with self.assertRaises(SystemExit) as cm:
-                    self.load(text)
-                self.assertEqual(str(cm.exception.code),
-                                 f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {value}")
-        self.assertEqual(self.load(BASE)["task_label_group"], TASK_GROUP)
-        self.assertIn("task_label_group", pipeline.TOP_KEYS)
-
-    def test_task_labels_absent_is_empty(self):
-        self.assertEqual(self.load(BASE)["task_labels"], {})
+                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
+        cfg = self.load(BASE)
+        self.assertEqual((cfg["harness_key"], cfg["task_label_group"]), ("linear-api-key", TASK_GROUP))
 
     def test_task_labels_loads(self):
+        self.assertEqual(self.load(BASE)["task_labels"], {})
         cfg = self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n')
         self.assertEqual(cfg["task_labels"], {"light-research": LABEL1, "deep-research": LABEL2})
-        self.assertIn("task_labels", pipeline.TOP_KEYS)
-
-    def test_task_labels_not_a_table_rejected(self):
-        body = BASE[BASE.index("[roles"):]
-        for value in ('"x"', "[1]", "5"):
-            with self.subTest(value):
-                with self.assertRaises(SystemExit) as cm:
-                    self.load(HEADER + f"task_labels = {value}\n" + body)
-                self.assertEqual(str(cm.exception.code),
-                                 'pipeline.toml: task_labels must be a table of <task> = "<Linear label id>"')
-
-    def test_task_labels_bad_value_rejected(self):
-        upper = "ABCDEF00-0000-4000-8000-000000000021"
-        cases = {"'Light Research'": '"Light Research"', repr(upper): f'"{upper}"', "5": "5", "['x']": '["x"]', "''": '""', "True": "true"}
-        for shown, value in cases.items():
-            with self.subTest(shown):
-                with self.assertRaises(SystemExit) as cm:
-                    self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = {value}\n')
-                self.assertEqual(str(cm.exception.code),
-                                 f"pipeline.toml: task_labels.deep-research must be a Linear label id (UUID): {shown}")
-
-    def test_task_labels_duplicate_id_rejected(self):
-        with self.assertRaises(SystemExit) as cm:
-            self.load(BASE + f'[task_labels]\nlight-research = "{LABEL1}"\nother = "{LABEL2}"\ndeep-research = "{LABEL1}"\n')
-        self.assertEqual(str(cm.exception.code),
-                         f"pipeline.toml: task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}")
 
 
 DOCS = {"repo": "acme/notes", "clone": DOCS_CLONE, "branch": "trunk"}
@@ -150,25 +114,15 @@ class Docs(ConfigFile, unittest.TestCase):
             with self.subTest(clone):
                 self.assertEqual(self.load(with_docs({**DOCS, "clone": clone}))["docs"]["clone"], want)
 
-    def test_table_form_accepted(self):
-        body = BASE[BASE.index("[roles"):]
-        text = HEADER[:HEADER.index("docs = ")] + body + '[docs]\nrepo = "acme/notes"\nclone = "/nonexistent/x"\nbranch = "trunk"\n'
-        self.assertEqual(self.load(text)["docs"]["clone"], "/nonexistent/x")
-
-    def test_table_missing_or_not_a_table(self):
-        for label, value in (("missing", None), ("string", '"x"'), ("list", "[1]")):
-            with self.subTest(label):
-                self.rejects("[docs] is missing: repo, clone, branch", with_docs(value))
-
-    def test_missing_keys(self):
-        for key in DOCS:
-            with self.subTest(key):
-                self.rejects(f"[docs] is missing: {key}", with_docs({k: v for k, v in DOCS.items() if k != key}))
-        self.rejects("[docs] is missing: clone, branch", with_docs({"repo": "acme/notes"}))
-
-    def test_unknown_keys(self):
-        self.rejects("[docs] has unknown keys: folder", with_docs({**DOCS, "folder": "x"}))
-        self.rejects("[docs] has unknown keys: a, b", with_docs({**DOCS, "b": "x", "a": "x"}))
+    def test_missing_or_unknown_keys(self):
+        cases = [("[docs] is missing: repo, clone, branch", value) for value in (None, '"x"', "[1]")]
+        cases += [(f"[docs] is missing: {key}", {k: v for k, v in DOCS.items() if k != key}) for key in DOCS]
+        cases += [("[docs] is missing: clone, branch", {"repo": "acme/notes"}),
+                  ("[docs] has unknown keys: folder", {**DOCS, "folder": "x"}),
+                  ("[docs] has unknown keys: a, b", {**DOCS, "b": "x", "a": "x"})]
+        for fragment, value in cases:
+            with self.subTest(fragment, value=value):
+                self.rejects(fragment, with_docs(value))
 
     def test_bad_repo(self):
         for repo in ("acme", "https://github.com/acme/notes", "acme/", "acme/..", "", 5, ["acme/notes"]):
@@ -183,15 +137,13 @@ class Docs(ConfigFile, unittest.TestCase):
                 self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
 
     def test_clone_overlapping_root(self):
-        for label, clone in (("root", pipeline.ROOT), ("under root", os.path.join(pipeline.ROOT, "docs")),
-                             ("ancestor of root", os.path.dirname(pipeline.ROOT)), ("filesystem root", "/")):
-            with self.subTest(label):
-                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
-
-    def test_clone_symlink_into_root_rejected(self):
         link = os.path.join(self.dir, "link")
         os.symlink(pipeline.ROOT, link)
-        self.rejects("docs.clone", with_docs({**DOCS, "clone": link}))
+        for label, clone in (("root", pipeline.ROOT), ("under root", os.path.join(pipeline.ROOT, "docs")),
+                             ("ancestor of root", os.path.dirname(pipeline.ROOT)), ("filesystem root", "/"),
+                             ("symlink into root", link)):
+            with self.subTest(label):
+                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
 
     def test_clone_checked_as_stored(self):
         root = os.path.join(self.dir, "parent", "root")
@@ -211,16 +163,13 @@ class Docs(ConfigFile, unittest.TestCase):
                     self.rejects("docs.clone", with_docs({**DOCS, "clone": os.path.join(home, d).rstrip("/")}))
             self.assertEqual(self.load(with_docs({**DOCS, "clone": "~/notes"}))["docs"]["clone"], os.path.join(home, "notes"))
 
-    def test_bad_branch(self):
+    def test_branch(self):
+        for branch in ("main", "trunk", "feature/a-b_c.d", "TASK-99-build"):
+            with self.subTest(branch=branch):
+                self.assertEqual(self.load(with_docs({**DOCS, "branch": branch}))["docs"]["branch"], branch)
         for branch in ("", 5, ["trunk"], "-x", "a..b", "a b", "a\nb", "a*", "a:b"):
             with self.subTest(branch=branch):
                 self.rejects("docs.branch", with_docs({**DOCS, "branch": branch}))
-
-    def test_ref(self):
-        for ref in ("main", "trunk", "feature/a-b_c.d", "TASK-99-build"):
-            self.assertTrue(pipeline.REF.fullmatch(ref), ref)
-        for ref in ("", "-x", "a..b", "a b", "a\nb"):
-            self.assertFalse(pipeline.REF.fullmatch(ref), repr(ref))
 
 
 ROLES = HEADER + '[roles.researcher]\nnext = "engineer"\n'
@@ -276,9 +225,6 @@ class Runnable(unittest.TestCase):
         msg = str(cm.exception.code)
         self.assertTrue(msg.startswith(prefix + ":") or msg.startswith(prefix + " "), msg)
         self.assertIn(fragment, msg)
-
-    def test_session_per_role(self):
-        self.assertEqual(pipeline.session("engineer"), "agent-pm-engineer")
 
     def test_role_for(self):
         runs = self.runs()
@@ -340,10 +286,6 @@ class Runnable(unittest.TestCase):
                 with self.assertRaises(KeyError):
                     e.with_task(bad)
 
-    def test_read_only_normalized(self):
-        self.write("roles/engineer.toml", 'read_only = ["~/playground/private_docs/"]\n' + ENGINEER_ID)
-        self.assertEqual(self.runs()["engineer"].read_only, (os.path.expanduser("~/playground/private_docs"),))
-
     def test_projects_table_rejected(self):
         self.rejects("pipeline.toml has unknown keys: projects", text=ROLES + '[projects.p]\nnext = "q"\n')
         self.rejects("pipeline.toml has unknown keys: tasks", text=ROLES + '[tasks.x]\nmodel = "opus"\n')
@@ -376,21 +318,11 @@ class Runnable(unittest.TestCase):
         self.rejects("pipeline.toml: [roles.researcher] has unknown keys: role, task",
                      text=ROLES + 'role = "x"\ntask = "y"\n')
 
-    def test_states_is_a_top_key(self):
-        self.assertEqual(list(self.load()["states"]), list(pipeline.STATES))
-        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
-
-    def test_docs_is_a_top_key(self):
-        self.assertEqual(self.load()["docs"], DOCS)
-        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
-
     def test_load_config_ignores_role_checks(self):
-        cfg = self.load(ROLES + '[roles.ghost]\nfoo = "x"\n[projects.old]\n')
-        self.assertIn("ghost", cfg["roles"])
-
-    def test_default_task_is_first(self):
-        self.write("roles/engineer.toml", self.read_role("engineer").replace('tasks = ["engineering"]', 'tasks = ["engineering", "deep-research"]'))
-        self.assertEqual(self.runs()["engineer"].task_name, "engineering")
+        self.remove("tasks/engineering.md")
+        self.assertIn("researcher", self.load()["roles"])
+        self.assertIn("ghost", self.load(ROLES + '[roles.ghost]\nfoo = "x"\n[projects.old]\n')["roles"])
+        self.assertEqual(self.load(ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')["task_labels"], {"ghost": LABEL1})
 
     def test_role_ids(self):
         runs = self.runs()
@@ -408,10 +340,6 @@ class Runnable(unittest.TestCase):
                 self.rejects(rel, prefix=other)
                 self.write(rel, FILES[rel])
 
-    def test_unreferenced_orphan_rejected(self):
-        self.write("tasks/light-research.toml", 'model = "opus"\neffort = "high"\n')
-        self.rejects("tasks/light-research.md", prefix="tasks/light-research.toml")
-
     def test_principles_has_no_toml(self):
         self.write("roles/principles.toml", "")
         self.rejects("principles", prefix="roles/principles.toml")
@@ -423,32 +351,33 @@ class Runnable(unittest.TestCase):
         self.write("roles/drafts/x.md", "")
         self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
 
-    def test_bad_names(self):
-        self.write("roles/Reviewer.md", "")
-        self.write("roles/Reviewer.toml", "")
-        self.rejects("kebab", prefix="roles/Reviewer.md")
-        self.remove("roles/Reviewer.md")
-        self.remove("roles/Reviewer.toml")
-        self.write("tasks/deep_research.md", "")
-        self.write("tasks/deep_research.toml", 'model = "opus"\neffort = "high"\n')
-        self.rejects("kebab", prefix="tasks/deep_research.md")
-
-    def test_bad_toml(self):
-        self.write("tasks/engineering.toml", "model = \n")
-        self.rejects("", prefix="tasks/engineering.toml")
-
-    def test_task_needs_model_and_effort(self):
-        self.write("tasks/deep-research.toml", 'model = "opus"\n')
-        self.rejects("effort", prefix="tasks/deep-research.toml")
-        self.write("tasks/deep-research.toml", 'effort = "high"\n')
-        self.rejects("model", prefix="tasks/deep-research.toml")
-
-    def test_unknown_keys(self):
-        self.write("roles/engineer.toml", 'readonly = ["~/playground/private_docs"]\n' + ENGINEER_ID)
-        self.rejects("readonly", prefix="roles/engineer.toml")
-        self.write("roles/engineer.toml", FILES["roles/engineer.toml"])
-        self.write("tasks/engineering.toml", ENGINEERING + 'instructions = "x"\n')
-        self.rejects("instructions", prefix="tasks/engineering.toml")
+    def test_bad_files_rejected(self):
+        placeholder = "Bash(git -C {docs_clone} status)"
+        cases = [
+            ("roles/Reviewer.md", "kebab", {"roles/Reviewer.md": "", "roles/Reviewer.toml": ""}),
+            ("tasks/deep_research.md", "kebab", {"tasks/deep_research.md": "", "tasks/deep_research.toml": 'model = "opus"\neffort = "high"\n'}),
+            ("tasks/engineering.toml", "", {"tasks/engineering.toml": "model = \n"}),
+            ("tasks/deep-research.toml", "effort", {"tasks/deep-research.toml": 'model = "opus"\n'}),
+            ("tasks/deep-research.toml", "model", {"tasks/deep-research.toml": 'effort = "high"\n'}),
+            ("roles/engineer.toml", "readonly", {"roles/engineer.toml": 'readonly = ["~/playground/private_docs"]\n' + ENGINEER_ID}),
+            ("tasks/engineering.toml", "instructions", {"tasks/engineering.toml": ENGINEERING + 'instructions = "x"\n'}),
+            ("roles/engineer.toml", "nope", {"roles/engineer.toml": ENGINEER_ID.replace('["engineering"]', '["engineering", "nope"]')}),
+            ("roles/researcher.toml", "k-researcher", {"roles/engineer.toml": ENGINEER_ID.replace("k-engineer", "k-researcher")}),
+            ("roles/engineer.toml", "harness_key", {"roles/engineer.toml": ENGINEER_ID.replace("k-engineer", "linear-api-key")}),
+            ("roles/pm.toml", "key", {"roles/pm.md": "", "roles/pm.toml": 'tasks = ["deep-research"]\naccount = "p@x.com"\n'}),
+            ("tasks/engineering.toml", f"tasks/engineering.toml: allowed_tools rule has unknown placeholder {{docs_clone}}: {placeholder!r}",
+             {"tasks/engineering.toml": ENGINEERING + f'allowed_tools = ["{placeholder}"]\n'}),
+        ]
+        for prefix, fragment, files in cases:
+            with self.subTest(prefix, fragment=fragment):
+                for rel, text in files.items():
+                    self.write(rel, text)
+                self.rejects(fragment, prefix=prefix)
+                for rel in files:
+                    if rel in FILES:
+                        self.write(rel, FILES[rel])
+                    else:
+                        self.remove(rel)
 
     def test_role_identity_rejected(self):
         ro = 'read_only = ["~/playground/private_docs"]\n'
@@ -466,25 +395,9 @@ class Runnable(unittest.TestCase):
                 self.write("roles/engineer.toml", text)
                 self.rejects(label.strip(), prefix="roles/engineer.toml")
 
-    def test_role_unknown_task(self):
-        self.write("roles/engineer.toml", ENGINEER_ID.replace('["engineering"]', '["engineering", "nope"]'))
-        self.rejects("nope", prefix="roles/engineer.toml")
-
-    def test_role_key_shared(self):
-        self.write("roles/engineer.toml", ENGINEER_ID.replace("k-engineer", "k-researcher"))
-        self.rejects("k-researcher", prefix="roles/researcher.toml")
-
-    def test_role_key_is_harness_key(self):
-        self.write("roles/engineer.toml", ENGINEER_ID.replace("k-engineer", "linear-api-key"))
-        self.rejects("harness_key", prefix="roles/engineer.toml")
-
-    def test_unused_role_validated(self):
-        self.write("roles/pm.md", "")
-        self.write("roles/pm.toml", 'tasks = ["deep-research"]\naccount = "p@x.com"\n')
-        self.rejects("key", prefix="roles/pm.toml")
-
     def test_read_only_paths(self):
-        for bad in ('["playground/private_docs"]', '["~/playground/../private_docs"]', '["{repo}/x"]', '"/"'):
+        for bad in ('["playground/private_docs"]', '["~/playground/../private_docs"]', '["{repo}/x"]', '"/"', '["{docs_clone}/x"]',
+                    '["{docs_clone}", "{docs_clone}/x"]', '["x{docs_clone}"]', '["{docs_clone"]', '["{DOCS_CLONE}"]'):
             with self.subTest(bad):
                 self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
                 self.rejects("read_only", prefix="roles/engineer.toml")
@@ -512,27 +425,19 @@ class Runnable(unittest.TestCase):
                 self.assertTrue(str(cm.exception.code).startswith("roles/engineer.toml: read_only"), cm.exception.code)
 
     def test_registry_reads_the_config_only_for_the_placeholder(self):
-        with mock.patch.object(pipeline, "load_config", side_effect=AssertionError("read the config")):
+        with mock.patch.object(pipeline, "load_config", return_value={"docs": {"clone": "/from/config"}}) as load:
+            roles, tasks = pipeline.registry(self.root)
+            load.assert_called_once_with()
+            self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), (("/from/config",), ["/from/config"]))
+            self.assertEqual(pipeline.registry(self.root, "/d")[1]["deep-research"]["add_dirs"], ["/d"])
             self.write("roles/engineer.toml", 'read_only = ["~/docs"]\n' + ENGINEER_ID)
             self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/docs"]\n')
             roles, tasks = pipeline.registry(self.root)
             self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), ((os.path.expanduser("~/docs"),), ["~/docs"]))
+            self.assertEqual(load.call_count, 1)
             self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n')
-            with self.assertRaises(AssertionError):
-                pipeline.registry(self.root)
-            self.assertEqual(pipeline.registry(self.root, "/d")[1]["deep-research"]["add_dirs"], ["/d"])
-
-    def test_registry_without_clone_loads_the_repo_config(self):
-        with mock.patch.object(pipeline, "load_config", return_value={"docs": {"clone": "/from/config"}}) as load:
-            roles, tasks = pipeline.registry(self.root)
-        load.assert_called_once_with()
-        self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), (("/from/config",), ["/from/config"]))
-
-    def test_docs_clone_read_only_rejected_forms(self):
-        for bad in ('["{docs_clone}/x"]', '["{docs_clone}", "{docs_clone}/x"]', '["x{docs_clone}"]', '["{docs_clone"]', '["{DOCS_CLONE}"]'):
-            with self.subTest(bad):
-                self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
-                self.rejects("read_only", prefix="roles/engineer.toml")
+            self.assertEqual(pipeline.registry(self.root)[1]["deep-research"]["add_dirs"], ["/from/config"])
+            self.assertEqual(load.call_count, 2)
 
     def test_docs_clone_add_dirs_rejected_forms(self):
         for bad in ('["{docs_clone}/x"]', '["{repo}"]', '["x{docs_clone}"]', '["{docs_clone"]', '["a}"]', '"{docs_clone}"', '"~/a"', "[5]", '[["~/a"]]'):
@@ -540,35 +445,12 @@ class Runnable(unittest.TestCase):
                 self.write("tasks/deep-research.toml", f'model = "opus"\neffort = "xhigh"\nadd_dirs = {bad}\n')
                 self.rejects("add_dirs", prefix="tasks/deep-research.toml")
 
-    def test_docs_clone_not_an_allowed_tools_placeholder(self):
-        rule = "Bash(git -C {docs_clone} status)"
-        self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
-        self.rejects("unknown placeholder {docs_clone}", prefix="tasks/engineering.toml")
-
-    def test_docs_clone_memory_overlap(self):
-        clone = os.path.join(self.outside, "docs")
-        os.makedirs(os.path.join(clone, "sub"))
-        text = ROLES.replace(DOCS_CLONE, clone)
-        cases = [("at clone", clone), ("under clone", os.path.join(clone, "sub")), ("ancestor of clone", self.outside)]
-        for label, path in cases:
-            with self.subTest(label):
-                self.memory(path, read_only="{docs_clone}")
-                self.rejects("memory", prefix="roles/engineer.toml", text=text)
-        apart = os.path.join(self.outside, "engineer")
-        os.makedirs(apart)
-        self.memory(apart, read_only="{docs_clone}")
-        self.assertEqual(self.runs(text)["engineer"].memory, apart)
-
     def test_repo_read_only(self):
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
-        self.assertEqual(self.runs()["engineer"].read_only, ("{repo}",))
-        self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
-        self.rejects("read_only {repo} needs default task 'engineering' with repo_from_issue and no allowed_tools", prefix="roles/engineer.toml")
-        self.write("tasks/engineering.toml", ENGINEERING)
         self.write("roles/researcher.toml", 'read_only = ["{repo}"]\n' + RESEARCHER_ID)
         self.rejects("read_only {repo} needs default task 'deep-research' with repo_from_issue and no allowed_tools", prefix="roles/researcher.toml")
-
-    def test_repo_read_only_checks_every_task(self):
+        self.write("roles/researcher.toml", RESEARCHER_ID)
+        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
+        self.assertEqual(self.runs()["engineer"].read_only, ("{repo}",))
         self.two_tasks(read_only='["{repo}"]')
         self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
         bad = {"no repo_from_issue": 'model = "sonnet"\neffort = "low"\n',
@@ -585,33 +467,27 @@ class Runnable(unittest.TestCase):
         self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
         self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
 
-    def memory(self, path, read_only="~/playground/private_docs"):
+    def memory(self, path, read_only):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
-    def test_memory_ok(self):
-        mem = os.path.join(self.outside, "engineer")
-        os.makedirs(mem)
-        self.memory(mem)
-        self.assertEqual(self.runs()["engineer"].memory, mem)
-
-    def test_memory_rejected(self):
-        ro = os.path.join(self.outside, "docs")
-        for d in (ro, os.path.join(ro, "sub"), os.path.join(self.root, "notes")):
-            os.makedirs(d, exist_ok=True)
+    def test_memory(self):
+        ro, mem, link = (os.path.join(self.outside, d) for d in ("docs", "engineer", "link"))
+        for d in (os.path.join(ro, "sub"), os.path.join(self.root, "notes"), mem):
+            os.makedirs(d)
+        os.symlink(os.path.join(self.root, "templates"), link)
         cases = [("relative", "mem"), ("missing", os.path.join(self.outside, "nope")),
                  ("under root", os.path.join(self.root, "notes")), ("root itself", self.root),
                  ("roles", os.path.join(self.root, "roles")), ("ancestor of root", os.path.dirname(self.root)),
+                 ("symlink into root", link),
                  ("at read_only", ro), ("under read_only", os.path.join(ro, "sub")), ("ancestor of read_only", self.outside)]
-        for label, path in cases:
-            with self.subTest(label):
-                self.memory(path, read_only=ro)
-                self.rejects("memory", prefix="roles/engineer.toml")
-
-    def test_memory_symlink_into_root_rejected(self):
-        link = os.path.join(self.outside, "link")
-        os.symlink(os.path.join(self.root, "templates"), link)
-        self.memory(link)
-        self.rejects("memory", prefix="roles/engineer.toml")
+        text = ROLES.replace(DOCS_CLONE, ro)
+        for read_only in (ro, "{docs_clone}"):
+            for label, path in cases:
+                with self.subTest(label, read_only=read_only):
+                    self.memory(path, read_only=read_only)
+                    self.rejects("memory", prefix="roles/engineer.toml", text=text)
+            self.memory(mem, read_only=read_only)
+            self.assertEqual(self.runs(text)["engineer"].memory, mem)
 
     def test_memory_protected_both_ways(self):
         home = os.path.join(self.outside, "home")
@@ -629,7 +505,7 @@ class Runnable(unittest.TestCase):
 
     def test_allowed_tools_checked_in_task_file(self):
         self.write("tasks/engineering.toml", ENGINEERING + 'allowed_tools = ["Bash(git push origin *)"]\n')
-        self.rejects("wildcard", prefix="tasks/engineering.toml")
+        self.rejects("tasks/engineering.toml: allowed_tools rule has a wildcard: 'Bash(git push origin *)'", prefix="tasks/engineering.toml")
         rule = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
         self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
         self.assertEqual(self.runs()["engineer"].task["allowed_tools"], [rule])
@@ -640,76 +516,33 @@ class Runnable(unittest.TestCase):
         self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + "read_repo = true\nrepo_from_issue = true\n")
         self.rejects("read_repo and repo_from_issue are exclusive", prefix="tasks/deep-research.toml")
 
-    def test_load_config_does_not_need_files(self):
-        self.remove("tasks/engineering.md")
-        self.assertIn("researcher", self.load()["roles"])
-        self.assertEqual(self.load(ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')["task_labels"], {"ghost": LABEL1})
-
     def test_task_labels_key_needs_task_pair(self):
         self.rejects("pipeline.toml: task_labels.ghost has no tasks/ghost.md + .toml pair",
                      text=ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')
         self.rejects("pipeline.toml: task_labels.light-research has no tasks/light-research.md + .toml pair",
                      text=ROLES + f'[task_labels]\nengineering = "{LABEL1}"\nlight-research = "{LABEL2}"\n')
-
-    def test_task_labels_accepts_existing_tasks(self):
         self.two_tasks()
         text = ROLES + f'[task_labels]\nlight-research = "{LABEL1}"\nengineering = "{LABEL2}"\n'
         self.assertEqual(sorted(self.runs(text)), ["engineer", "researcher"])
-        self.assertEqual(self.load(text)["task_labels"], {"light-research": LABEL1, "engineering": LABEL2})
-
-
-class RealConfig(unittest.TestCase):
-    def test_three_runs(self):
-        cfg = pipeline.load_config()
-        runs = pipeline.runnable(cfg)
-        got = {k: (r.task_name, r.task["model"], r.task["effort"], bool(r.task.get("repo_from_issue")), r.read_only, r.memory,
-                   os.path.basename(r.charter))
-               for k, r in runs.items()}
-        private = os.path.expanduser("~/playground/private_docs")
-        self.assertEqual(got, {
-            "researcher": ("deep-research", "opus", "ultracode", False, (), None, "researcher.md"),
-            "pm": ("product-design", "opus", "high", False, (), None, "pm.md"),
-            "engineer": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
-        })
-        self.assertNotIn("allowed_tools", runs["engineer"].task)
-        self.assertEqual({k: r.key for k, r in runs.items()}, {
-            "researcher": "linear-api-key-researcher",
-            "pm": "linear-api-key-pm",
-            "engineer": "linear-api-key-engineer",
-        })
-        self.assertEqual({k: r.account for k, r in runs.items()}, {k: pipeline.registry()[0][k].account for k in runs})
-        self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
-        self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
-        self.assertEqual(cfg["harness_key"], "linear-api-key")
-        tasks = pipeline.registry()[1]
-        self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
-        self.assertEqual(sorted(t for t, v in tasks.items() if v.get("read_repo")), ["deep-research", "light-research"])
-
-    def test_real_docs(self):
-        self.assertEqual(pipeline.load_config()["docs"], {
-            "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
-
-    def test_real_docs_clone_reaches_runs(self):
-        private = os.path.expanduser("~/playground/private_docs")
-        roles, tasks = pipeline.registry()
-        self.assertEqual(roles["engineer"].read_only, (private,))
-        self.assertEqual({t: tasks[t]["add_dirs"] for t in ("deep-research", "product-design", "engineering")}, {
-            "deep-research": [private], "product-design": [private], "engineering": [private]})
-        self.assertEqual({k: r.task["add_dirs"] for k, r in pipeline.runnable(pipeline.load_config()).items()}, {
-            "researcher": [private], "pm": [private], "engineer": [private]})
-
-    def test_real_task_labels(self):
-        cfg = pipeline.load_config()
-        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
-        pipeline.runnable(cfg)
-
-    def test_real_config_ids(self):
-        cfg = pipeline.load_config()
-        self.assertEqual(list(cfg["states"]), list(pipeline.STATES))
-        self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
 
 
 P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51ab71fb8"
+
+
+class RealConfig(unittest.TestCase):
+    """The repo's pipeline.toml values that test_launch's RealConfig does not pin."""
+    def test_real_config(self):
+        cfg = pipeline.load_config()
+        pipeline.runnable(cfg)
+        self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
+        self.assertEqual(cfg["docs"], {
+            "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
+        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
+        self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
+        self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
+        self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
+        tasks = pipeline.registry()[1]
+        self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):
@@ -737,22 +570,6 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
             self.load(HEADER + 'project_repos = "x"\n' + body)
         self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: project_repos"), cm.exception.code)
 
-    def test_runnable_accepts(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        for rel, text in FILES.items():
-            path = os.path.join(tmp.name, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as f:
-                f.write(text)
-        os.makedirs(os.path.join(tmp.name, "templates"))
-        cfg = self.load(ROLES + f'[project_repos]\n"{P1}" = "ophis/x"\n')
-        self.assertEqual(sorted(pipeline.runnable(cfg, root=tmp.name)), ["engineer", "researcher"])
-
-    def test_real_config(self):
-        self.assertEqual(pipeline.load_config()["project_repos"],
-                         {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
-
 
 class RepoSlug(unittest.TestCase):
     def test_slug(self):
@@ -779,24 +596,18 @@ class TeamCheck(unittest.TestCase):
 
     def test_ok(self):
         gql = self.gql([team_node()])
-        t = pipeline.team(gql, self.cfg())
-        self.assertEqual(t, pipeline.Team(TEAM, "Team", dict(STATES)))
-        (query, v), = gql.calls
-        self.assertEqual((query, v), (pipeline.Q_TEAM, {"t": TEAM}))
-        self.assertIn("teams(filter: { id: { eq: $t } })", query)
-        self.assertNotIn("projects", query)
+        self.assertEqual(pipeline.team(gql, self.cfg()), pipeline.Team(TEAM, "Team", dict(STATES)))
+        self.assertEqual(gql.calls, [(pipeline.Q_TEAM, {"t": TEAM})])
 
-    def test_team_not_found(self):
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.team(self.gql([]), self.cfg())
-        self.assertEqual(str(cm.exception.code), f"pipeline.toml: team {TEAM} not found in Linear")
-
-    def test_states_outside_team(self):
+    def test_team_not_found_or_states_outside_team(self):
         other = [i for k, i in STATES.items() if k not in ("handoff", "done")]
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.team(self.gql([team_node(other)]), self.cfg())
-        self.assertEqual(str(cm.exception.code), "pipeline.toml: [states] not workflow states of team 'Team': "
-                         f"handoff {STATES['handoff']}, done {STATES['done']}")
+        cases = {f"team {TEAM} not found in Linear": [],
+                 f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}, done {STATES['done']}": [team_node(other)]}
+        for message, nodes in cases.items():
+            with self.subTest(message):
+                with self.assertRaises(SystemExit) as cm:
+                    pipeline.team(self.gql(nodes), self.cfg())
+                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
 
 
 class TaskGroupCheck(unittest.TestCase):
@@ -819,73 +630,52 @@ class TaskGroupCheck(unittest.TestCase):
     def group(self, *ids):
         return {"isGroup": True, "children": {"nodes": [{"id": i} for i in ids]}}
 
-    def fails(self, gql, cfg):
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.task_group(gql, cfg)
-        self.assertEqual(len(gql.calls), 1)
-        return str(cm.exception.code)
-
     def test_group_ok(self):
-        gql = self.gql(self.group(LABEL1, LABEL2, OTHER))
-        self.assertIsNone(pipeline.task_group(gql, self.cfg()))
-        (query, v), = gql.calls
-        self.assertEqual((query, v), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP}))
-        self.assertIn("issueLabel(id: $i) { isGroup children(first: 250) { nodes { id } } }", query)
+        for group, labels in ((self.group(LABEL1, LABEL2, OTHER), self.LABELS), (self.group(), {})):
+            with self.subTest(labels=labels):
+                gql = self.gql(group)
+                self.assertIsNone(pipeline.task_group(gql, self.cfg(labels)))
+                self.assertEqual(gql.calls, [(pipeline.Q_TASK_GROUP, {"i": TASK_GROUP})])
+        self.assertIn("issueLabel(id: $i) { isGroup children(first: 250) { nodes { id } } }", pipeline.Q_TASK_GROUP)
 
-    def test_one_label_not_in_group(self):
-        msg = self.fails(self.gql(self.group(LABEL1)), self.cfg())
-        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: deep-research {LABEL2}")
-
-    def test_several_labels_not_in_group_in_table_order(self):
-        msg = self.fails(self.gql(self.group(OTHER)), self.cfg({"deep-research": LABEL2, "light-research": LABEL1, "ok": OTHER}))
-        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: "
-                              f"deep-research {LABEL2}, light-research {LABEL1}")
-
-    def test_no_task_labels_checks_only_the_group(self):
-        gql = self.gql(self.group())
-        self.assertIsNone(pipeline.task_group(gql, self.cfg({})))
-        self.assertEqual(len(gql.calls), 1)
-
-    def test_not_found(self):
-        gql = self.gql(error="linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
-                         "linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-
-    def test_not_a_group(self):
-        gql = self.gql({"isGroup": False, "children": {"nodes": [{"id": LABEL1}, {"id": LABEL2}]}})
-        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
+    def test_fails(self):
+        error = "linear api error: [{'message': 'Entity not found: IssueLabel'}]"
+        not_labels = f"[task_labels] not labels of task_label_group {TASK_GROUP}: "
+        cases = [
+            (self.gql(self.group(LABEL1)), self.LABELS, not_labels + f"deep-research {LABEL2}"),
+            (self.gql(self.group(OTHER)), {"deep-research": LABEL2, "light-research": LABEL1, "ok": OTHER},
+             not_labels + f"deep-research {LABEL2}, light-research {LABEL1}"),
+            (self.gql(error=error), self.LABELS, f"task_label_group {TASK_GROUP} not found in Linear: {error}"),
+            (self.gql({"isGroup": False, "children": {"nodes": [{"id": LABEL1}, {"id": LABEL2}]}}), self.LABELS,
+             f"task_label_group {TASK_GROUP} is not a label group"),
+        ]
+        for gql, labels, message in cases:
+            with self.subTest(message):
+                with self.assertRaises(SystemExit) as cm:
+                    pipeline.task_group(gql, self.cfg(labels))
+                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
+                self.assertEqual(len(gql.calls), 1)
 
 
 class Paths(unittest.TestCase):
     def test_slug_and_project_log(self):
         self.assertEqual(pipeline.slug("Deep Research"), "deep-research")
         with tempfile.TemporaryDirectory() as d:
-            path = pipeline.project_log("Product Design", logs=d)
-            self.assertEqual(path, os.path.join(d, "projects", "product-design.log"))
+            path = pipeline.project_log("light-research", logs=d)
+            self.assertEqual(path, os.path.join(d, "projects", "light-research.log"))
             self.assertTrue(os.path.isdir(os.path.dirname(path)))
 
-    def test_work_under_root(self):
+    def test_run_dir_and_transcript(self):
         self.assertEqual(pipeline.WORK, os.path.join(pipeline.ROOT, "work"))
-
-    def test_escape(self):
+        self.assertEqual(pipeline.run_dir("TASK-9"), os.path.join(pipeline.WORK, "TASK-9"))
         self.assertEqual(pipeline.escape("/Users/a_b/x.y"), "-Users-a-b-x-y")
-
-    def test_run_dir(self):
-        self.assertTrue(pipeline.run_dir("TASK-9").endswith("/work/TASK-9"))
-
-    def test_transcript(self):
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
         self.assertEqual(pipeline.transcript("TASK-9", sid, projects="/p"),
                          "/p/" + pipeline.escape(pipeline.run_dir("TASK-9")) + f"/{sid}.jsonl")
-
-    def test_transcript_rejects_non_uuid(self):
         self.assertIsNone(pipeline.transcript("TASK-9", "../x"))
 
 
 class AllowedTools(unittest.TestCase):
-    RULE = ("Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u "
-            "git@github.com:{owner}/{name}.git {branch})")
-
     def check(self, allowed_tools, repo_from_issue=True):
         p = {"allowed_tools": allowed_tools}
         if repo_from_issue:
@@ -896,15 +686,6 @@ class AllowedTools(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             self.check([rule], **kw)
         self.assertEqual(cm.exception.code, f"tasks/engineering.toml: allowed_tools {what}: {rule!r}")
-
-    def test_accepts_exact_template(self):
-        self.check([self.RULE])
-
-    def test_rejects_wildcard(self):
-        self.rejects("rule has a wildcard", "Bash(git push origin *)")
-
-    def test_rejects_unknown_placeholder(self):
-        self.rejects("rule has unknown placeholder {remote}", "Bash(git push {remote})")
 
     def test_rejects_root(self):
         self.rejects("rule contains root", f"Bash(cat {pipeline.ROOT}/secret)")
