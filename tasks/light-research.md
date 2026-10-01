@@ -14,10 +14,10 @@ Light vs Deep Research; the Light column is the acceptance yardstick.
 | | Light Research | Deep Research |
 |---|---|---|
 | Trigger | `Tasks` label `Light Research` | default (no task label) |
-| Retrieval | 3–6 web or worktree angles, one round | web: `deep-research` Workflow; local or mixed: Ultra Code workflows |
-| Verification | each retrieval agent checks its own sources | web: independent votes on the top claims |
+| Retrieval | 3–6 web or worktree angles, one round | web: `deep-research` Workflow; local: one Ultra Code workflow; mixed: ≤ 1 Ultra Code workflow + ≤ 1 `deep-research` Workflow |
+| Verification | each retrieval agent checks its own sources | web: independent votes on the top claims; local or mixed: 3 votes on each key claim inside the Ultra Code workflow |
 | Wall-clock target | ≤ 10 min | web: about 20–30 min |
-| Usage target | ≤ 10% of the 5-hour window | web: about 40% |
+| Usage target | ≤ 10% of the 5-hour window | web: about 40%; local or mixed: Ultra Code ≤ 100 agents; total about 200; no second round once 5-hour usage ≥ 80% |
 
 ## Steps
 
