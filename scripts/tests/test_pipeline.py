@@ -899,6 +899,20 @@ class LinearGql(unittest.TestCase):
         self.assertEqual(calls, [["security", "find-generic-password", "-s", "svc-h", "-w"]])
         self.assertEqual(urlopen.call_args[0][0].get_header("Authorization"), "secret")
 
+    def test_timeout_bounds_keychain_and_request(self):
+        for kw, want in (({}, 30), ({"timeout": 5}, 5)):
+            with self.subTest(timeout=want):
+                run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
+                resp = mock.MagicMock()
+                resp.__enter__.return_value = io.BytesIO(b'{"data": {}}')
+                with mock.patch.object(pipeline, "harness_service", return_value="svc-h"), \
+                        mock.patch.object(pipeline.subprocess, "run", run), \
+                        mock.patch.object(pipeline.urllib.request, "urlopen", return_value=resp) as urlopen:
+                    pipeline.linear_gql("query($i: String!) { issue(id: $i) { id } }", i="TASK-1", **kw)
+                self.assertEqual(run.call_args.kwargs["timeout"], want)
+                self.assertEqual(urlopen.call_args.kwargs["timeout"], want)
+                self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {"i": "TASK-1"})
+
     def test_harness_service_reads_pipeline_toml(self):
         pipeline.harness_service.cache_clear()
         self.addCleanup(pipeline.harness_service.cache_clear)
