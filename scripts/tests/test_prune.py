@@ -110,29 +110,44 @@ class PruneTest(unittest.TestCase):
             code = prune.main(list(argv), gql=gql, run=self.git, work=self.work, now=NOW)
         return code, out.getvalue()
 
-    def test_done_24h_force_deleted_even_dirty_or_unpushed(self):
+    def fresh(self):
+        """An empty work dir and no clone, for the next subTest."""
+        shutil.rmtree(self.work)
+        shutil.rmtree(self.clone, ignore_errors=True)
+        os.makedirs(self.work)
+
+    def test_finished_24h_force_deleted_even_dirty_or_unpushed(self):
+        canceled = self.mkw("TASK-37", "TASK-37-x", head="0123abcd\n")
+        src_only = self.mkw("TASK-48", "repo48", head="0123abcd\n", folder="src")
         dirty = self.mkw("TASK-49", "TASK-49-dirty")
         write(os.path.join(dirty, "notes.txt"), "uncommitted")
         unpushed = self.mkw("TASK-49", "TASK-49-unpushed")
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "In Progress"), (24, "Done")])}))
+        src = self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
+        done = ("Done", [(30, "In Progress"), (24, "Done")])
+        gql = gql_for({"TASK-37": ("Canceled", [(50, "Canceled")]), "TASK-48": done, "TASK-49": done},
+                      owners={"TASK-49": "u-engineer"})
+        code, out = self.prune(gql)
         self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, self.removed(dirty, "TASK-49-dirty") + self.removed(unpushed, "TASK-49-unpushed"))
-        self.assertIn("prune-removed TASK-49/TASK-49-dirty: worktree", out)
-        self.assertIn("prune-removed TASK-49/TASK-49-unpushed: local branch TASK-49-unpushed", out)
-
-    def test_canceled_24h_cleaned_detached_has_no_branch(self):
-        wt = self.mkw("TASK-37", "TASK-37-x", head="0123abcd\n")
-        code, _ = self.prune(gql_for({"TASK-37": ("Canceled", [(50, "Canceled")])}))
-        self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, self.removed(wt))
+        self.assertEqual(self.git.calls, self.removed(canceled) + self.removed(src_only) + self.removed(dirty, "TASK-49-dirty")
+                         + self.removed(unpushed, "TASK-49-unpushed") + self.removed(src))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
+        self.assertEqual(msgs(out), ["prune-removed TASK-37/TASK-37-x: worktree", "prune-removed TASK-48/src/repo48: worktree",
+                                     "prune-removed TASK-49/TASK-49-dirty: worktree",
+                                     "prune-removed TASK-49/TASK-49-dirty: local branch TASK-49-dirty",
+                                     "prune-removed TASK-49/TASK-49-unpushed: worktree",
+                                     "prune-removed TASK-49/TASK-49-unpushed: local branch TASK-49-unpushed",
+                                     "prune-removed TASK-49/src/repo: worktree", "prune-archived TASK-49"])
 
     def test_young_and_in_progress_untouched(self):
-        self.mkw("TASK-48", "TASK-48-x")
-        self.mkw("TASK-50", "TASK-50-x")
-        gql = gql_for({"TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
-                       "TASK-50": ("In Progress", [(50, "Done"), (30, "In Progress")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertEqual(self.git.calls, [])
+        for folder, head in (("worktrees", None), ("src", "0123abcd\n")):
+            with self.subTest(folder=folder):
+                self.fresh()
+                self.mkw("TASK-48", "TASK-48-x", head=head, folder=folder)
+                self.mkw("TASK-50", "TASK-50-x", head=head, folder=folder)
+                gql = gql_for({"TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
+                               "TASK-50": ("In Progress", [(50, "Done"), (30, "In Progress")])})
+                self.assertEqual(self.prune(gql), (0, ""))
+                self.assertEqual(self.git.calls, [])
 
     def test_unknown_finish_time_skipped(self):
         self.mkw("TASK-49", "TASK-49-x")
@@ -142,34 +157,29 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(self.git.calls, [])
 
     def test_unsafe_entries_refused(self):
-        victim = self.mkw("TASK-50", "TASK-50-x")
-        base = os.path.join(self.work, "TASK-49", "worktrees")
-        os.makedirs(os.path.join(base, "planted", ".git"))
-        os.symlink(victim, os.path.join(base, "link"))
-        self.mkw("TASK-49", "bad", head="ref: refs/heads/-D\n")
-        os.makedirs(os.path.join(self.work, "TASK-48"))
-        os.symlink(os.path.dirname(victim), os.path.join(self.work, "TASK-48", "worktrees"))
-        done = ("Done", [(30, "Done")])
-        code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
-        self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, [])
-        for line in ("TASK-48/TASK-50-x: not a real directory", "TASK-49/link: not a real directory",
-                     "TASK-49/planted: clone unknown", "TASK-49/bad: unsafe branch name"):
-            self.assertIn(f"prune-skip {line}", out)
-        self.assertTrue(os.path.isdir(victim))
-
-    def test_src_detached_worktree_force_deleted_without_branch(self):
-        wt = self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "In Progress"), (24, "Done")])}))
-        self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, self.removed(wt))
-        self.assertEqual(msgs(out), ["prune-removed TASK-49/src/repo: worktree"])
-
-    def test_worktrees_and_src_both_pruned(self):
-        wt = self.mkw("TASK-49", "TASK-49-x")
-        src = self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
-        self.assertEqual(self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))[0], 0)
-        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x") + self.removed(src))
+        for folder, head in (("worktrees", None), ("src", "0123abcd\n")):
+            with self.subTest(folder=folder):
+                self.fresh()
+                victim = self.mkw("TASK-50", "TASK-50-x", head=head, folder=folder)
+                base = os.path.join(self.work, "TASK-49", folder)
+                os.makedirs(os.path.join(base, "planted", ".git"))
+                os.symlink(victim, os.path.join(base, "link"))
+                write(os.path.join(base, "file"), "x")
+                self.mkw("TASK-49", "bad", head="ref: refs/heads/-D\n", folder=folder)
+                os.makedirs(os.path.join(self.work, "TASK-48"))
+                os.symlink(os.path.dirname(victim), os.path.join(self.work, "TASK-48", folder))
+                done = ("Done", [(30, "Done")])
+                code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
+                self.assertEqual(code, 0)
+                self.assertEqual(self.git.calls, [])
+                key = "" if folder == "worktrees" else "src/"
+                for line in (f"TASK-48/{key}TASK-50-x: not a real directory inside TASK-48/{folder}/, refusing to touch",
+                             f"TASK-49/{key}link: not a real directory inside TASK-49/{folder}/, refusing to touch",
+                             f"TASK-49/{key}file: not a real directory inside TASK-49/{folder}/, refusing to touch",
+                             f"TASK-49/{key}planted: clone unknown: .git is not a gitdir file",
+                             f"TASK-49/{key}bad: unsafe branch name"):
+                    self.assertIn(f"prune-skip {line}", out)
+                self.assertTrue(os.path.isdir(victim))
 
     def test_git_failures_log_the_error_and_exit_3(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
@@ -191,70 +201,26 @@ class PruneTest(unittest.TestCase):
                 self.assertEqual(msgs(out), ([f"prune-removed {key}: worktree"] if worktree_removed else [])
                                  + [f"prune-error {key}: {error}"])
 
-    def test_src_young_and_in_progress_untouched(self):
-        self.mkw("TASK-48", "repo", head="0123abcd\n", folder="src")
-        self.mkw("TASK-50", "repo50", head="0123abcd\n", folder="src")
-        gql = gql_for({"TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
-                       "TASK-50": ("In Progress", [(50, "Done"), (30, "In Progress")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertEqual(self.git.calls, [])
-
-    def test_src_unsafe_entries_refused(self):
-        victim = self.mkw("TASK-50", "repo", head="0123abcd\n", folder="src")
-        base = os.path.join(self.work, "TASK-49", "src")
-        os.makedirs(base)
-        os.symlink(victim, os.path.join(base, "link"))
-        write(os.path.join(base, "file"), "x")
-        os.makedirs(os.path.join(self.work, "TASK-48"))
-        os.symlink(os.path.dirname(victim), os.path.join(self.work, "TASK-48", "src"))
-        done = ("Done", [(30, "Done")])
-        code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
-        self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, [])
-        for line in ("TASK-48/src/repo: not a real directory inside TASK-48/src/, refusing to touch",
-                     "TASK-49/src/link: not a real directory inside TASK-49/src/, refusing to touch",
-                     "TASK-49/src/file: not a real directory inside TASK-49/src/, refusing to touch"):
-            self.assertIn(f"prune-skip {line}", out)
-        self.assertTrue(os.path.isdir(victim))
-
-    def test_worktrees_refusal_message_unchanged(self):
-        victim = self.mkw("TASK-50", "TASK-50-x")
-        os.makedirs(os.path.join(self.work, "TASK-49", "worktrees"))
-        os.symlink(victim, os.path.join(self.work, "TASK-49", "worktrees", "link"))
-        out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))[1]
-        self.assertIn("prune-skip TASK-49/link: not a real directory inside TASK-49/worktrees/, refusing to touch", out)
-
-    def test_src_only_issue_is_queried(self):
-        self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.prune(gql)
-        self.assertIn(prune.Q_ISSUE, gql.calls)
-
-    def test_empty_src_no_issue_query(self):
-        os.makedirs(os.path.join(self.work, "TASK-49", "src"))
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
-
-    def test_dry_run_plans_src(self):
-        self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
-        code, out = self.main(gql_for({"TASK-49": ("Done", [(30, "Done")])}), "--dry-run")
-        self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-49/src/repo: force-delete the worktree"])
-        self.assertEqual(self.git.calls, [])
+    def test_empty_folder_no_issue_query(self):
+        for folder in ("worktrees", "src"):
+            with self.subTest(folder=folder):
+                self.fresh()
+                os.makedirs(os.path.join(self.work, "TASK-49", folder))
+                gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+                self.assertEqual(self.prune(gql), (0, ""))
+                self.assertNotIn(prune.Q_ISSUE, gql.calls)
 
     def test_dry_run_changes_nothing(self):
         self.mkw("TASK-49", "TASK-49-x")
-        code, out = self.main(gql_for({"TASK-49": ("Done", [(30, "Done")])}), "--dry-run")
+        self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
+        code, out = self.main(gql, "--dry-run")
         self.assertEqual(code, 0)
-        self.assertIn("dry-run: prune-plan TASK-49/TASK-49-x: force-delete the worktree and local branch TASK-49-x", out)
+        self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-49/TASK-49-x: force-delete the worktree and local branch TASK-49-x",
+                                     "dry-run: prune-plan TASK-49/src/repo: force-delete the worktree",
+                                     "dry-run: prune-plan TASK-49: archive"])
         self.assertEqual(self.git.calls, [])
-
-    def test_no_worktree_no_issue_query(self):
-        os.makedirs(os.path.join(self.work, "TASK-49", "worktrees"))
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+        self.assertNotIn(prune.M_ARCHIVE, gql.calls)
 
     def test_archives_pm_and_engineer_issues_finished_24h(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "In Progress"), (24, "Done")]), "TASK-2": ("Canceled", [(50, "Canceled")]),
@@ -281,13 +247,6 @@ class PruneTest(unittest.TestCase):
         (v,) = gql.finished
         self.assertEqual(sorted(v["a"]), ["u-engineer", "u-pm"])
         self.assertEqual(sorted(v["s"]), sorted([IDS_BY_KEY["done"], IDS_BY_KEY["canceled"]]))
-
-    def test_dry_run_plans_archive(self):
-        gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
-        code, out = self.main(gql, "--dry-run")
-        self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-1: archive"])
-        self.assertNotIn(prune.M_ARCHIVE, gql.calls)
 
     def test_archive_failure_others_archived(self):
         done = ("Done", [(30, "Done")])
@@ -320,15 +279,6 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-error archive: Linear: linear api error: down", out)
         self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
 
-    def test_archivable_with_worktree_both_done(self):
-        wt = self.mkw("TASK-49", "TASK-49-x")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-engineer"})
-        code, out = self.prune(gql)
-        self.assertEqual(code, 0)
-        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
-        self.assertEqual(gql.archived, ["id-TASK-49"])
-        self.assertIn("prune-archived TASK-49", out)
-
     def test_resolves_roles_itself(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
         runs = object()
@@ -352,12 +302,6 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(self.prune(gql, team=given)[0], 0)
         self.assertNotIn(pipeline.Q_TEAM, gql.calls)
         self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
-
-    def test_resolves_team_itself(self):
-        self.mkw("TASK-49", "TASK-49-x")
-        gql = gql_for({"TASK-49": ("Canceled", [(30, "Canceled")])})
-        self.prune(gql)
-        self.assertEqual(gql.calls[0], pipeline.Q_TEAM)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
     def test_main_bad_arguments_exit_2_before_anything_runs(self):
@@ -402,11 +346,6 @@ class PruneTest(unittest.TestCase):
             code = promote.main([], gql=gql, now=NOW, config=config,
                                 pruner=partial(prune.Pruner, run=self.git, work=self.work))
         return code, linear.issues["DR-1"]["state"], out.getvalue()
-
-    def test_promote_tick_prunes(self):
-        wt = self.mkw("TASK-49", "TASK-49-x")
-        self.assertEqual(self.tick(gql_for({"TASK-49": ("Done", [(30, "Done")])}))[:2], (0, "Done"))
-        self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x"))
 
     def test_promote_tick_archives_with_its_roles(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
