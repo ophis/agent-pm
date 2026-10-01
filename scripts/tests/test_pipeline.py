@@ -892,45 +892,51 @@ class AllowedTools(unittest.TestCase):
             p["repo_from_issue"] = True
         pipeline.check_allowed_tools("tasks/engineering.toml", p)
 
+    def rejects(self, what, rule, **kw):
+        with self.assertRaises(SystemExit) as cm:
+            self.check([rule], **kw)
+        self.assertEqual(cm.exception.code, f"tasks/engineering.toml: allowed_tools {what}: {rule!r}")
+
     def test_accepts_exact_template(self):
         self.check([self.RULE])
 
     def test_rejects_wildcard(self):
-        with self.assertRaises(SystemExit):
-            self.check(["Bash(git push origin *)"])
+        self.rejects("rule has a wildcard", "Bash(git push origin *)")
 
     def test_rejects_unknown_placeholder(self):
-        with self.assertRaises(SystemExit):
-            self.check(["Bash(git push {remote})"])
+        self.rejects("rule has unknown placeholder {remote}", "Bash(git push {remote})")
 
     def test_rejects_root(self):
-        with self.assertRaises(SystemExit):
-            self.check([f"Bash(cat {pipeline.ROOT}/secret)"])
+        self.rejects("rule contains root", f"Bash(cat {pipeline.ROOT}/secret)")
 
     def test_rejects_root_in_home_forms(self):
         home = os.path.expanduser("~")
         for form in ("~", "$HOME", "${HOME}"):
-            with self.assertRaises(SystemExit, msg=form):
-                pipeline.check_allowed_tools("tasks/e.toml", {"repo_from_issue": True, "allowed_tools": [f"Bash(cat {form}/x/agent-pm/secret)"]},
+            rule = f"Bash(cat {form}/x/agent-pm/secret)"
+            with self.assertRaises(SystemExit, msg=form) as cm:
+                pipeline.check_allowed_tools("tasks/e.toml", {"repo_from_issue": True, "allowed_tools": [rule]},
                                              root=os.path.join(home, "x", "agent-pm"))
+            self.assertEqual(cm.exception.code, f"tasks/e.toml: allowed_tools rule contains root: {rule!r}", form)
 
     def test_rejects_interpreter_on_script(self):
         for rule in ("Bash(python3 /tmp/x.py)", "Bash(bash ./do.sh)", "Bash(node x.js)", "Bash(python3.12 x.py)",
                      "Bash(make)", "Bash(make -C {worktree} test)", "Bash(npm test)", "Bash(npx jest)",
                      "Bash(pnpm test)", "Bash(yarn build)", "Bash(bun run x)", "Bash(cargo test)", "Bash(go test ./...)",
                      "Bash(pytest)", "Bash(uv run x)"):
-            with self.assertRaises(SystemExit, msg=rule):
-                self.check([rule])
+            with self.subTest(rule):
+                self.rejects("rule runs an interpreter on a script", rule)
 
     def test_malformed_template_is_config_error(self):
         for rule in ("Bash(git -C {worktree push)", "Bash(git -C worktree} push)"):
             with self.assertRaises(SystemExit) as cm:
                 self.check([rule])
-            self.assertTrue(str(cm.exception.code).startswith("tasks/engineering.toml: "), cm.exception.code)
+            self.assertTrue(str(cm.exception.code).startswith("tasks/engineering.toml: allowed_tools rule is not a valid template ("),
+                            cm.exception.code)
 
     def test_rejects_without_repo_from_issue(self):
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit) as cm:
             self.check(["Bash(git status)"], repo_from_issue=False)
+        self.assertEqual(cm.exception.code, "tasks/engineering.toml: allowed_tools without repo_from_issue")
 
 
 class LinearGql(unittest.TestCase):

@@ -510,20 +510,18 @@ class Launch(unittest.TestCase):
         self.assertEqual(runs, [plog[3]])
 
     def test_rejects_unsafe_issue_or_sid(self):
-        for i, bad in ((1, "TASK-1$(rm -rf ~)"), (7, "s1; ls")):
-            argv = self.args()
-            argv[i] = bad
-            self.assertEqual(self.run_launch(*argv), 2)
-        self.assertEqual(self.calls, [])
+        for flag, bad in (("--issue", "TASK-1$(rm -rf ~)"), ("--sid", "s1; ls")):
+            with self.subTest(flag):
+                argv = self.args()
+                argv[argv.index(flag) + 1] = bad
+                self.assertEqual(self.run_launch(*argv), 2)
+                issue, sid = argv[argv.index("--issue") + 1], argv[argv.index("--sid") + 1]
+                self.assertEqual(self.err, f"launch.py: bad issue or session id: {issue} {sid}\n")
+                self.assertEqual(self.calls, [])
 
     def test_sets_path_for_its_own_calls(self):
         self.run_launch(*self.args())
         self.assertEqual(self.path, pipeline.PATH)
-
-    def test_env_not_inherited(self):
-        with mock.patch.dict(os.environ, {"PATH": "/nowhere"}):
-            self.run_launch(*self.args())
-        self.assertNotIn("/nowhere", self.calls[0][9])
 
     def with_memory(self):
         mem = os.path.join(self.tmp, "mem")

@@ -27,6 +27,12 @@ def ago(minutes):
     return (NOW - timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
 
 
+def instructions(description):
+    """The `## Instructions` section; `## Comments` repeats every comment, so never search the whole description."""
+    start = description.index("\n## Instructions\n") + 1
+    return description[start:].split("\n\n## ", 1)[0]
+
+
 class FakeLinear:
     def __init__(self):
         self.issues, self.children, self.mutations, self.fail = {}, {}, [], set()
@@ -213,8 +219,7 @@ class TestPromote(Base):
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
         (child,) = self.fake.children.values()
-        instructions = child["description"].split("## Instructions\n")[1].split("\n\n## Comments")[0]
-        self.assertEqual(instructions, f"Me, {ago(46)}:\nmine")
+        self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(46)}:\nmine")
         comments = child["description"].split("## Comments\n")[1]
         for body in ("before cutoff", "agent", "other", "bot", "mine"):
             self.assertIn(f"  > {body}", comments)
@@ -256,7 +261,7 @@ class TestPromote(Base):
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["Todo"])
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertIn("old", child["description"])
+        self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(500)}:\nold")
 
     def test_no_instructions_bounces(self):
         src = self.fake.add("DR-1")
@@ -297,8 +302,8 @@ class TestPromote(Base):
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
         self.run_main()
         (child,) = self.fake.children.values()
-        self.assertIn("old", child["description"])
-        self.assertIn("new", child["description"])
+        self.assertEqual(instructions(child["description"]),
+                         f"## Instructions\nMe, {ago(110)}:\nold\n\nMe, {ago(80)}:\nnew")
         self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(100)))
         self.assertEqual(src["state"], "Done")
 
