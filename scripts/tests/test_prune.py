@@ -1,5 +1,5 @@
-import io, os, shutil, sys, tempfile, unittest
-from contextlib import redirect_stdout
+import io, os, shutil, subprocess, sys, tempfile, unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -56,12 +56,16 @@ def msgs(out):
 
 
 class FakeGit:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, results=None):
+        """results: {(git subcommand, its first argument): the result to return, or an exception to raise}."""
+        self.calls, self.results = [], results or {}
 
     def __call__(self, argv, timeout):
         self.calls.append(tuple(argv))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        res = self.results.get(tuple(argv[3:5]), SimpleNamespace(returncode=0, stdout="", stderr=""))
+        if isinstance(res, Exception):
+            raise res
+        return res
 
 
 def write(path, text):
@@ -99,9 +103,9 @@ class PruneTest(unittest.TestCase):
         return code, out.getvalue()
 
     def main(self, gql, *argv):
-        """prune.main with roles resolved to ROLES."""
-        out = io.StringIO()
-        with redirect_stdout(out), mock.patch.object(prune, "load_config", return_value=CFG), \
+        """prune.main with roles resolved to ROLES; its stderr is self.err."""
+        out, self.err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(self.err), mock.patch.object(prune, "load_config", return_value=CFG), \
                 mock.patch.object(prune, "runnable"), mock.patch.object(prune, "role_ids", return_value=ROLES):
             code = prune.main(list(argv), gql=gql, run=self.git, work=self.work, now=NOW)
         return code, out.getvalue()
@@ -166,6 +170,26 @@ class PruneTest(unittest.TestCase):
         src = self.mkw("TASK-49", "repo", head="0123abcd\n", folder="src")
         self.assertEqual(self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))[0], 0)
         self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x") + self.removed(src))
+
+    def test_git_failures_log_the_error_and_exit_3(self):
+        wt = self.mkw("TASK-49", "TASK-49-x")
+        key = "TASK-49/TASK-49-x"
+        failed = lambda err: SimpleNamespace(returncode=1, stdout="", stderr=err)
+        timeout = subprocess.TimeoutExpired(["git"], 600)
+        cases = (
+            (("worktree", "remove"), failed("fatal: cannot remove\n"), "git worktree remove: fatal: cannot remove", False),
+            (("worktree", "remove"), timeout, "git worktree remove: TimeoutExpired", False),
+            (("branch", "-D"), failed("error: branch not found\n"), "git branch -D: error: branch not found", True),
+            (("branch", "-D"), timeout, "git branch -D: TimeoutExpired", True),
+        )
+        for sub, result, error, worktree_removed in cases:
+            with self.subTest(error=error):
+                self.git = FakeGit({sub: result})
+                code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
+                self.assertEqual(code, 3)
+                self.assertEqual(self.git.calls, self.removed(wt, "TASK-49-x" if worktree_removed else None))
+                self.assertEqual(msgs(out), ([f"prune-removed {key}: worktree"] if worktree_removed else [])
+                                 + [f"prune-error {key}: {error}"])
 
     def test_src_young_and_in_progress_untouched(self):
         self.mkw("TASK-48", "repo", head="0123abcd\n", folder="src")
@@ -335,6 +359,29 @@ class PruneTest(unittest.TestCase):
         self.prune(gql)
         self.assertEqual(gql.calls[0], pipeline.Q_TEAM)
         self.assertIn("state { id }", prune.Q_ISSUE)
+
+    def test_main_bad_arguments_exit_2_before_anything_runs(self):
+        gql = gql_for({})
+        with self.assertRaises(SystemExit) as cm:
+            self.main(gql, "--bogus")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("unrecognized arguments: --bogus", self.err.getvalue())
+        self.assertEqual((gql.calls, self.git.calls), ([], []))
+
+    def test_main_transient_errors_exit_3(self):
+        for exc in (SystemExit("linear api error: down"), subprocess.TimeoutExpired(["curl"], 30), OSError("network down")):
+            with self.subTest(exc=repr(exc)):
+                def gql(query, **v):
+                    raise exc
+                self.assertEqual(self.main(gql), (3, ""))
+                self.assertEqual(self.err.getvalue(), f"prune.py: transient: {exc}\n")
+                self.assertEqual(self.git.calls, [])
+
+    def test_main_config_error_propagates(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.main(lambda query, **v: {"teams": {"nodes": []}})
+        self.assertEqual(cm.exception.code, f"pipeline.toml: team {TEAM} not found in Linear")
+        self.assertEqual(self.err.getvalue(), "")
 
     def tick(self, prune_gql):
         """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output)."""
