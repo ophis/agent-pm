@@ -34,7 +34,7 @@ A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, stan
 
 | Role | Tasks (first is default) | Does | Next |
 |---|---|---|---|
-| researcher | `deep-research`, `light-research` | Judges the issue web, local (needs one repo's code, read from a read-only checkout) or mixed (both), and answers its questions with a report: every finding with its confidence and sources (a URL, or `path:line` at the commit the report names), claims you list as known re-checked, gaps listed | pm |
+| researcher | `deep-research`, `light-research` | Judges the issue web, local (needs one repo's code, read from a read-only checkout) or mixed (both), and answers its questions with a report: every finding with its confidence and sources (a URL; for code, a GitHub permalink at the commit the report names), claims you list as known re-checked, gaps listed | pm |
 | pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions | engineer |
 | engineer | `engineering` | Builds a PRD into a pull request on the target repo, following that repo's conventions; never merges, force-pushes or touches the default branch | — |
 
