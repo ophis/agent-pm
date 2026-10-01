@@ -1,6 +1,6 @@
 # Researcher
 
-Turns research issues into Markdown reports pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue: Deep Research by default, with one `/deep-research` Workflow call for a web issue, one Ultra Code workflow for a local one, and at most one Ultra Code workflow plus at most one `/deep-research` call for a mixed one; Light Research when the issue's `Tasks` label picks it, with one round of 3–6 agents on the web, the target repo's worktree, or both.
+Turns research issues into Markdown reports pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue: Deep Research by default, with one `/deep-research` Workflow call for a web issue, one ultracode workflow for a local one, and at most one ultracode workflow plus at most one `/deep-research` call for a mixed one; Light Research when the issue's `Tasks` label picks it, with one round of 3–6 agents on the web, the target repo's worktree, or both.
 
 ## Type and target
 
