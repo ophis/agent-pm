@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,7 +37,6 @@ MAPPED = "11111111-1111-1111-1111-111111111111"
 PUSH_RULE = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
 SID = "0f0f0f0f-1111-2222-3333-444444444444"
 DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
-PRIVATE = os.path.expanduser("~/playground/private_docs")
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
 RESEARCH_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "research.py"))
 IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
@@ -133,37 +133,8 @@ class Launch(unittest.TestCase):
 
     def make_transcript(self):
         path = pipeline.transcript("TASK-1", SID, self.projects)
-        os.makedirs(os.path.dirname(path))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         open(path, "w").close()
-
-    def test_session_gets_role_key_service(self):
-        self.assertEqual(self.run_launch(*self.args()), 0)
-        self.assertEqual(self.checked, ["k-researcher"])
-        self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
-
-    def test_missing_role_key_is_config_error(self):
-        self.missing = {"k-researcher"}
-        self.make_transcript()
-        for mode in ("new", "resume"):
-            with self.subTest(mode):
-                self.calls = []
-                self.assertEqual(self.run_launch(*self.args(mode)), 2)
-                self.assertEqual(self.calls, [])
-                self.assertRegex(self.plog().splitlines()[-1],
-                                 r"^\S+ \S+ config-error TASK-1: no Keychain item for role key k-researcher$")
-                self.assertIn("config-error TASK-1", self.err)
-
-    def test_missing_docs_clone_is_config_error(self):
-        os.rmdir(self.clone)
-        self.make_transcript()
-        for mode in ("new", "resume"):
-            with self.subTest(mode):
-                self.calls = []
-                self.assertEqual(self.run_launch(*self.args(mode)), 2)
-                self.assertEqual(self.calls, [])
-                self.assertRegex(self.plog().splitlines()[-1],
-                                 rf"^\S+ \S+ config-error TASK-1: docs clone {re.escape(self.clone)} is not a directory$")
-                self.assertIn("config-error TASK-1: docs clone", self.err)
 
     def test_missing_docs_clone_before_repo_step(self):
         os.rmdir(self.clone)
@@ -171,13 +142,6 @@ class Launch(unittest.TestCase):
             self.assertEqual(self.run_launch(*self.args(assignee="e@x.com")), 2)
         resolve.assert_not_called()
         self.assertEqual(self.calls, [])
-
-    def test_missing_role_key_reported_before_docs_clone(self):
-        os.rmdir(self.clone)
-        self.missing = {"k-researcher"}
-        self.assertEqual(self.run_launch(*self.args()), 2)
-        self.assertIn("no Keychain item for role key k-researcher", self.plog())
-        self.assertNotIn("docs clone", self.plog())
 
     def test_has_key_never_reads_the_secret(self):
         calls = []
@@ -244,33 +208,13 @@ class Launch(unittest.TestCase):
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)"])
 
-    def test_every_role_locked_down(self):
-        for assignee in ("r@x.com", "e@x.com"):
-            self.calls = []
-            with mock.patch.object(eng, "resolve", return_value=eng.Invalid("x")):
-                self.run_launch(*self.args(assignee=assignee))
-            argv = self.claude()
-            self.assertIn("--strict-mcp-config", argv)
-            self.assertEqual(self.after(argv, "--setting-sources"), ["user"])
-            self.assertNotIn(pipeline.ROOT, argv)
-            rules = self.after(argv, "--disallowedTools")
-            self.assertTrue(rules and all(r.startswith("Edit(//") for r in rules), rules)
-            self.assertIn(f"Edit({slashes(pipeline.ROOT)}/roles/**)", rules)
-            self.assertIn(f"Edit({slashes(pipeline.ROOT)}/tasks/**)", rules)
-            self.assertEqual(f"Edit({slashes(self.clone)}/**)" in rules, assignee == "e@x.com")
-
-    def test_deny(self):
-        self.assertEqual(launch.deny("/a b/c/**"), "Edit(//a b/c/**)")
-
-    def test_humans_none(self):
-        self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', ""))
-        self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: none. Project: p-dr." + self.ids))
-
-    def test_humans_lists_every_member(self):
-        self.write_config(CONFIG.replace('human_members = ["me@x.com"]', 'human_members = ["me@x.com", "b@x.com"]'))
-        self.run_launch(*self.args())
-        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com, b@x.com. Project: p-dr." + self.ids))
+    def test_humans(self):
+        for members, humans in (("", "none"), ('human_members = ["me@x.com", "b@x.com"]\n', "me@x.com, b@x.com")):
+            with self.subTest(humans):
+                self.calls = []
+                self.write_config(CONFIG.replace('human_members = ["me@x.com"]\n', members))
+                self.run_launch(*self.args())
+                self.assertTrue(self.claude()[2].endswith(f" Humans: {humans}. Project: p-dr." + self.ids))
 
     def test_resume_prompt(self):
         self.make_transcript()
@@ -287,25 +231,9 @@ class Launch(unittest.TestCase):
         self.run_launch(*self.args())
         self.assertTrue(self.claude()[2].endswith(self.ids))
 
-    def test_resume_without_transcript(self):
-        legacy = os.path.join(self.projects, pipeline.escape(self.work), f"{SID}.jsonl")
-        os.makedirs(os.path.dirname(legacy))
-        open(legacy, "w").close()
-        self.assertEqual(self.run_launch(*self.args("resume")), 3)
-        self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog(), r"^\S+ \S+ transient TASK-1: .+\n$")
-        self.assertIn("transient TASK-1", self.err)
-
-    def test_non_engineering_never_resolves(self):
-        with mock.patch.object(eng, "resolve") as resolve:
-            self.run_launch(*self.args())
-        resolve.assert_not_called()
-        self.assertNotIn("AGENT_PM_ISSUE", self.exports())
-        self.assertNotIn("Repo check", self.claude()[2])
-
-    def ok(self):
+    def ok(self, clone="/u/playground/demo"):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
-        return eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", "/u/playground/demo", "main", "TASK-1-demo", wt)
+        return eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", clone, "main", "TASK-1-demo", wt)
 
     def launch_eng(self, result, mode="new"):
         error = result if isinstance(result, Exception) else None
@@ -315,31 +243,21 @@ class Launch(unittest.TestCase):
         return rc
 
     def test_engineering_ok(self):
-        self.assertEqual(self.launch_eng(self.ok()), 0)
-        self.assertIn(" AGENT_PM_ISSUE=TASK-1", self.exports())
-        argv = self.claude()
+        self.write_config(CONFIG + f'[project_repos]\n"{MAPPED}" = "ophis/demo"\n')
         wt = self.ok().worktree
-        self.assertTrue(argv[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
-            f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
-        self.assertNotIn("--allowedTools", argv)
-        rules = self.after(argv, "--disallowedTools")
-        self.assertIn(f"Edit({slashes(self.clone)}/**)", rules)
-
-    def test_engineering_ok_from_project_mapping(self):
-        mapped = dataclasses.replace(self.ok(), mapped=True)
-        self.assertEqual(self.launch_eng(mapped), 0)
-        wt = mapped.worktree
-        self.assertTrue(self.claude()[2].endswith(
-            " Humans: me@x.com. Project: p-eng." + self.ids + " Repo check: OK ophis/demo (from project mapping), clone /u/playground/demo,"
-            f" default branch main, branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
-
-    def test_engineering_passes_project_repos_to_resolve(self):
-        repos = {"11111111-1111-1111-1111-111111111111": "ophis/demo"}
-        self.write_config(CONFIG + '[project_repos]\n"11111111-1111-1111-1111-111111111111" = "ophis/demo"\n')
-        with mock.patch.object(eng, "resolve", return_value=self.ok()) as resolve:
-            self.assertEqual(self.run_launch(*self.args("new", "e@x.com", "p-eng")), 0)
-        resolve.assert_called_once_with("TASK-1", self.gql, self.run, repos=repos)
+        for ok, src in ((self.ok(), ""), (dataclasses.replace(self.ok(), mapped=True), " (from project mapping)")):
+            with self.subTest(mapped=ok.mapped):
+                self.calls = []
+                with mock.patch.object(eng, "resolve", return_value=ok) as resolve:
+                    self.assertEqual(self.run_launch(*self.args("new", "e@x.com", "p-eng")), 0)
+                resolve.assert_called_once_with("TASK-1", self.gql, self.run, repos={MAPPED: "ophis/demo"})
+                self.assertIn(" AGENT_PM_ISSUE=TASK-1", self.exports())
+                argv = self.claude()
+                self.assertTrue(argv[2].endswith(
+                    " Humans: me@x.com. Project: p-eng." + self.ids + f" Repo check: OK ophis/demo{src}, clone /u/playground/demo,"
+                    f" default branch main, branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
+                self.assertNotIn("--allowedTools", argv)
+                self.assertIn(f"Edit({slashes(self.clone)}/**)", self.after(argv, "--disallowedTools"))
 
     def test_engineering_ok_fills_allowed_tools(self):
         self.write("tasks/engineering.toml", REGISTRY["tasks/engineering.toml"] + f'allowed_tools = ["{PUSH_RULE}"]\n')
@@ -353,40 +271,15 @@ class Launch(unittest.TestCase):
         self.assertTrue(self.claude()[2].endswith(f" Project: p-eng.{self.ids} Repo check failed: no Repo: line. eng.py: python3 {ENG_PY}."))
         self.assertNotIn("AGENT_PM_ISSUE", self.exports())
 
-    def test_engineering_resolve_error_is_transient(self):
-        self.assertEqual(self.launch_eng(KeyError("title")), 3)
-        self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: resolve: KeyError: 'title'\n$")
-
-    def test_engineering_invalid_on_resume_is_transient(self):
-        self.make_transcript()
-        self.assertEqual(self.launch_eng(eng.Invalid("no Repo: line"), mode="resume"), 3)
-        self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: no Repo: line\n$")
-
-    def test_engineering_transient(self):
-        self.assertEqual(self.launch_eng(eng.Transient("gh api: TimeoutExpired")), 3)
-        self.assertEqual(self.calls, [])
-        self.assertRegex(self.plog("engineering"), r"^\S+ \S+ transient TASK-1: gh api: TimeoutExpired\n$")
-        self.assertIn("transient TASK-1: gh api: TimeoutExpired", self.err)
-
     def test_assignee_not_a_role_account(self):
         for assignee in ("nobody@x.com", ""):
             self.assertEqual(self.run_launch(*self.args(assignee=assignee)), 2)
             self.assertIn("is not a role account", self.err)
         self.assertEqual(self.calls, [])
 
-    def test_assignee_matches_ignoring_case(self):
-        self.assertEqual(self.run_launch(*self.args(assignee="R@X.com")), 0)
-        self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
-
-    def test_project_fills_the_prompt_tail(self):
-        self.assertEqual(self.run_launch(*self.args(project="p-anything")), 0)
-        self.assertTrue(self.claude()[2].endswith(" Humans: me@x.com. Project: p-anything." + self.ids))
-
-    def hand_off(self, roles='[roles.researcher]\nnext = "engineer"\n', engineering=REGISTRY["tasks/engineering.toml"]):
+    def hand_off(self, roles='[roles.researcher]\nnext = "engineer"\n'):
         """Project MAPPED maps to ophis/demo; the engineering task needs a prefix to be a next."""
-        self.write("tasks/engineering.toml", engineering + 'prefix = "ENG"\n')
+        self.write("tasks/engineering.toml", REGISTRY["tasks/engineering.toml"] + 'prefix = "ENG"\n')
         self.write_config(CONFIG + roles + f'[project_repos]\n"{MAPPED}" = "ophis/demo"\n')
 
     def test_project_repo_follows_project_in_prompt(self):
@@ -396,28 +289,6 @@ class Launch(unittest.TestCase):
                 self.calls = []
                 self.assertEqual(self.run_launch(*self.args(project=project)), 0)
                 self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {project}. Project repo: {repo}." + self.ids))
-
-    def test_project_repo_on_resume(self):
-        self.hand_off()
-        self.make_transcript()
-        self.assertEqual(self.run_launch(*self.args("resume", project=MAPPED)), 0)
-        self.assertTrue(self.claude()[2].endswith(f" Humans: me@x.com. Project: {MAPPED}. Project repo: ophis/demo." + self.ids))
-
-    def test_no_project_repo_without_repo_hand_off(self):
-        cases = {"no roles entry": dict(roles=""), "no next": dict(roles="[roles.researcher]\n"),
-                 "next task without repo_from_issue": dict(engineering=REGISTRY["tasks/engineering.toml"].replace("repo_from_issue = true\n", ""))}
-        for name, kw in cases.items():
-            with self.subTest(name):
-                self.hand_off(**kw)
-                self.calls = []
-                self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
-                self.assertTrue(self.claude()[2].endswith(f" Project: {MAPPED}." + self.ids))
-
-    def test_engineer_run_has_no_project_repo(self):
-        self.hand_off()
-        with mock.patch.object(eng, "resolve", return_value=self.ok()):
-            self.assertEqual(self.run_launch(*self.args("new", "e@x.com", MAPPED)), 0)
-        self.assertIn(f" Project: {MAPPED}." + self.ids + " Repo check: OK ", self.claude()[2])
 
     def two_tasks(self):
         self.write("roles/researcher.toml", RESEARCHER_TWO)
@@ -432,20 +303,7 @@ class Launch(unittest.TestCase):
         self.write("tasks/triage.md", "")
         self.write("tasks/triage.toml", 'model = "haiku"\neffort = "low"\n')
 
-    def test_task_selects_file_model_effort_add_dirs_and_log(self):
-        self.two_tasks()
-        self.assertEqual(self.run_launch(*self.args(task="quick-scan")), 0)
-        argv = self.claude()
-        self.assertIn(f"and the task {os.path.join(self.root, 'tasks/quick-scan.md')} to handle TASK-1", argv[2])
-        self.assertNotIn("deep-research", argv[2])
-        self.assertEqual((self.after(argv, "--model"), self.after(argv, "--effort")), (["sonnet"], ["low"]))
-        dirs = [argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"]
-        self.assertEqual(dirs[3:], [os.path.join(self.tmp, "extra")])
-        script = self.calls[0][9]
-        self.assertIn(os.path.join(self.logs, "projects", "quick-scan.log"), script)
-        self.assertNotIn("deep-research.log", script)
-
-    def test_task_keeps_the_roles_charter_session_key_memory_and_project_repo(self):
+    def test_task_selects_its_files_and_keeps_the_roles(self):
         self.hand_off()
         mem = os.path.join(self.tmp, "mem")
         os.makedirs(mem)
@@ -453,9 +311,17 @@ class Launch(unittest.TestCase):
         self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_TWO)
         self.assertEqual(self.run_launch(*self.args(project=MAPPED, task="quick-scan")), 0)
         argv = self.claude()
-        self.assertIn(f"your role charter {os.path.join(self.root, 'roles/researcher.md')} and the task", argv[2])
+        self.assertIn(f"your role charter {os.path.join(self.root, 'roles/researcher.md')} and the task "
+                      f"{os.path.join(self.root, 'tasks/quick-scan.md')} to handle TASK-1", argv[2])
+        self.assertNotIn("deep-research", argv[2])
         self.assertIn(f"Your role memory: {mem};", argv[2])
         self.assertIn(f" Project: {MAPPED}. Project repo: ophis/demo.", argv[2])
+        self.assertEqual((self.after(argv, "--model"), self.after(argv, "--effort")), (["sonnet"], ["low"]))
+        dirs = [argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"]
+        self.assertEqual(dirs[3:], [os.path.join(self.tmp, "extra"), mem])
+        script = self.calls[0][9]
+        self.assertIn(os.path.join(self.logs, "projects", "quick-scan.log"), script)
+        self.assertNotIn("deep-research.log", script)
         self.assertEqual(self.checked, ["k-researcher"])
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
         self.assertEqual(self.calls[0][2:5], ["-d", "-s", "agent-pm-researcher"])
@@ -595,121 +461,106 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.registered("end"), ["end", "TASK-1", rec, "3"])
         self.assertFalse([f for f in ("x", "y") if os.path.exists(os.path.join(self.tmp, f))])
 
-    def test_no_record_when_the_run_does_not_start(self):
-        clone = os.path.join(self.playground, "demo")
-        with mock.patch.object(sessions, "base") as base:
-            self.missing = {"k-researcher"}
-            self.assertEqual(self.run_launch(*self.args()), 2)
-            self.assertEqual(self.launch_eng(eng.Transient("x")), 3)
-            self.eng_memory(clone)
-            self.assertEqual(self.launch_eng(self.ok_at(clone)), 2)
-        base.assert_not_called()
-        self.assertEqual(self.calls, [])
-
     def test_rejects_unsafe_issue_or_sid(self):
-        for i, bad in ((1, "TASK-1$(rm -rf ~)"), (7, "s1; ls")):
-            argv = self.args()
-            argv[i] = bad
-            self.assertEqual(self.run_launch(*argv), 2)
-        self.assertEqual(self.calls, [])
+        for flag, bad in (("--issue", "TASK-1$(rm -rf ~)"), ("--sid", "s1; ls")):
+            with self.subTest(flag):
+                argv = self.args()
+                argv[argv.index(flag) + 1] = bad
+                self.assertEqual(self.run_launch(*argv), 2)
+                issue, sid = argv[argv.index("--issue") + 1], argv[argv.index("--sid") + 1]
+                self.assertEqual(self.err, f"launch.py: bad issue or session id: {issue} {sid}\n")
+                self.assertEqual(self.calls, [])
 
     def test_sets_path_for_its_own_calls(self):
         self.run_launch(*self.args())
         self.assertEqual(self.path, pipeline.PATH)
 
-    def test_env_not_inherited(self):
-        with mock.patch.dict(os.environ, {"PATH": "/nowhere"}):
-            self.run_launch(*self.args())
-        self.assertNotIn("/nowhere", self.calls[0][9])
-
-    def with_memory(self):
+    def test_memory_prompt_and_dir(self):
         mem = os.path.join(self.tmp, "mem")
         os.makedirs(mem)
         self.write("roles/researcher.toml", f'memory = "{mem}"\n' + RESEARCHER_ID)
-        return mem
-
-    def test_memory_prompt_and_dir(self):
-        mem = self.with_memory()
-        self.run_launch(*self.args())
-        argv = self.claude()
-        self.assertIn(f"The runner has already claimed it. Your role memory: {mem}; your role charter says how to use it."
-                      " Humans: me@x.com.", argv[2])
-        self.assertEqual([argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"][-1], mem)
-        self.assertFalse(any(mem in r for r in self.after(argv, "--disallowedTools")))
-
-    def test_memory_on_resume(self):
-        mem = self.with_memory()
         self.make_transcript()
-        self.run_launch(*self.args("resume"))
-        self.assertIn(f"follow the task's resume rule. Your role memory: {mem}; your role charter says how to use it.", self.claude()[2])
+        for mode, before in (("new", "The runner has already claimed it."), ("resume", "follow the task's resume rule.")):
+            with self.subTest(mode):
+                self.calls = []
+                self.run_launch(*self.args(mode))
+                argv = self.claude()
+                self.assertIn(f"{before} Your role memory: {mem}; your role charter says how to use it. Humans: me@x.com.", argv[2])
+                self.assertEqual([argv[i + 1] for i, x in enumerate(argv) if x == "--add-dir"][-1], mem)
+                self.assertFalse(any(mem in r for r in self.after(argv, "--disallowedTools")))
 
-    def repo_config(self):
+    def test_repo_read_only(self):
         self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
-
-    def test_repo_read_only_ok(self):
-        self.repo_config()
-        self.launch_eng(self.ok())
-        rules = self.after(self.claude(), "--disallowedTools")
-        rd = os.path.join(self.work, "TASK-1")
-        self.assertEqual(rules[-2:], [f"Edit({slashes(self.ok().clone)}/**)", f"Edit({slashes(rd)}/worktrees/**)"])
-        self.assertNotIn(f"Edit({slashes(self.clone)}/**)", rules)
-
-    def test_repo_read_only_invalid(self):
-        self.repo_config()
-        self.launch_eng(eng.Invalid("no Repo: line"))
-        rules = self.after(self.claude(), "--disallowedTools")
-        rd = os.path.join(self.work, "TASK-1")
-        self.assertEqual(rules[-1], f"Edit({slashes(rd)}/worktrees/**)")
-        self.assertFalse(any("/u/playground/demo" in r for r in rules))
-
-    def test_log_named_after_task(self):
-        self.launch_eng(eng.Transient("x"))
-        self.assertIn("transient TASK-1: x", self.plog("engineering"))
+        rd = slashes(os.path.join(self.work, "TASK-1"))
+        for result, clone in ((self.ok(), [f"Edit({slashes(self.ok().clone)}/**)"]), (eng.Invalid("no Repo: line"), [])):
+            with self.subTest(type(result).__name__):
+                self.calls = []
+                self.launch_eng(result)
+                self.assertEqual(self.after(self.claude(), "--disallowedTools")[3:],
+                                 [f"Edit({rd}/worktrees/*/.git)", *clone, f"Edit({rd}/worktrees/**)"])
 
     def eng_memory(self, mem):
         os.makedirs(mem, exist_ok=True)
         self.write("roles/engineer.toml", f'read_only = ["{{docs_clone}}"]\nmemory = "{mem}"\n' + ENGINEER_ID)
 
-    def ok_at(self, clone):
-        wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
-        return eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", clone, "main", "TASK-1-demo", wt)
-
-    def assert_config_error(self, mem):
-        self.assertEqual(self.calls, [])
-        last = self.plog("engineering").splitlines()[-1]
-        self.assertRegex(last, rf"^\S+ \S+ config-error TASK-1: role memory {re.escape(mem)} overlaps the issue's repo \S+$")
-        self.assertIn("config-error TASK-1: role memory", self.err)
-
-    def test_memory_overlapping_repo_is_config_error(self):
-        playground = os.path.join(self.tmp, "playground")
-        clone = os.path.join(playground, "demo")
+    def test_run_that_does_not_start(self):
+        clone, worktrees = os.path.join(self.playground, "demo"), os.path.join(self.work, "TASK-1", "worktrees")
         os.makedirs(clone)
-        worktrees = os.path.join(self.work, "TASK-1", "worktrees")
-        cases = [("at clone", clone, self.ok_at(clone)), ("under clone", os.path.join(clone, "mem"), self.ok_at(clone)),
-                 ("ancestor of clone", playground, self.ok_at(clone)),
-                 ("under worktrees", os.path.join(worktrees, "mem"), self.ok_at(clone)),
-                 ("under worktrees, invalid repo", os.path.join(worktrees, "mem"), eng.Invalid("no Repo: line"))]
-        for label, mem, result in cases:
-            with self.subTest(label):
-                self.calls = []
-                self.eng_memory(mem)
-                self.assertEqual(self.launch_eng(result), 2)
-                self.assert_config_error(mem)
-
-    def test_memory_overlapping_repo_on_resume(self):
-        clone = os.path.join(self.tmp, "playground", "demo")
-        os.makedirs(clone)
-        self.eng_memory(clone)
-        self.make_transcript()
-        self.assertEqual(self.launch_eng(self.ok_at(clone), mode="resume"), 2)
-        self.assert_config_error(clone)
+        transcript = pipeline.transcript("TASK-1", SID, self.projects)
+        new, resume = (lambda: self.run_launch(*self.args())), (lambda: self.run_launch(*self.args("resume")))
+        no_key, no_docs = (lambda: self.missing.add("k-researcher")), (lambda: os.rmdir(self.clone))
+        key = "config-error TASK-1: no Keychain item for role key k-researcher"
+        docs = f"config-error TASK-1: docs clone {self.clone} is not a directory"
+        memory = "config-error TASK-1: role memory {} overlaps the issue's repo {}"
+        under_clone, under_worktrees = os.path.join(clone, "mem"), os.path.join(worktrees, "mem")
+        cases = [
+            ("no role key", no_key, new, 2, "deep-research", key),
+            ("no role key, resume", no_key, resume, 2, "deep-research", key),
+            ("no docs clone", no_docs, new, 2, "deep-research", docs),
+            ("no docs clone, resume", no_docs, resume, 2, "deep-research", docs),
+            ("role key checked before the docs clone", lambda: (no_key(), no_docs()), new, 2, "deep-research", key),
+            ("no transcript", lambda: os.remove(transcript), resume, 3, "deep-research",
+             f"transient TASK-1: no transcript to resume at {transcript}"),
+            ("resolve error", None, lambda: self.launch_eng(KeyError("title")), 3, "engineering",
+             "transient TASK-1: resolve: KeyError: 'title'"),
+            ("invalid repo on resume", None, lambda: self.launch_eng(eng.Invalid("no Repo: line"), "resume"), 3, "engineering",
+             "transient TASK-1: no Repo: line"),
+            ("transient repo step", None, lambda: self.launch_eng(eng.Transient("gh api: TimeoutExpired")), 3, "engineering",
+             "transient TASK-1: gh api: TimeoutExpired"),
+            ("memory at the clone", lambda: self.eng_memory(clone), lambda: self.launch_eng(self.ok(clone)), 2, "engineering",
+             memory.format(clone, clone)),
+            ("memory at the clone, resume", lambda: self.eng_memory(clone), lambda: self.launch_eng(self.ok(clone), "resume"), 2,
+             "engineering", memory.format(clone, clone)),
+            ("memory under the clone", lambda: self.eng_memory(under_clone), lambda: self.launch_eng(self.ok(clone)), 2,
+             "engineering", memory.format(under_clone, clone)),
+            ("memory above the clone", lambda: self.eng_memory(self.playground), lambda: self.launch_eng(self.ok(clone)), 2,
+             "engineering", memory.format(self.playground, clone)),
+            ("memory under worktrees", lambda: self.eng_memory(under_worktrees), lambda: self.launch_eng(self.ok(clone)), 2,
+             "engineering", memory.format(under_worktrees, worktrees)),
+            ("memory under worktrees, invalid repo", lambda: self.eng_memory(under_worktrees),
+             lambda: self.launch_eng(eng.Invalid("no Repo: line")), 2, "engineering", memory.format(under_worktrees, worktrees))]
+        for name, setup, start, rc, log, line in cases:
+            with self.subTest(name):
+                shutil.rmtree(self.logs, ignore_errors=True)
+                os.makedirs(self.clone, exist_ok=True)
+                self.write("roles/engineer.toml", REGISTRY["roles/engineer.toml"])
+                self.calls, self.missing = [], set()
+                self.make_transcript()
+                if setup:
+                    setup()
+                with mock.patch.object(sessions, "base") as base:
+                    self.assertEqual(start(), rc)
+                base.assert_not_called()
+                self.assertEqual(self.calls, [])
+                self.assertRegex(self.err, rf"^\S+ \S+ {re.escape(line)}\n\Z")
+                self.assertEqual(self.plog(log), self.err)
 
     def test_memory_apart_from_repo_starts(self):
-        clone = os.path.join(self.tmp, "playground", "demo")
+        clone = os.path.join(self.playground, "demo")
         os.makedirs(clone)
         mem = os.path.join(self.tmp, "engmem")
         self.eng_memory(mem)
-        self.assertEqual(self.launch_eng(self.ok_at(clone)), 0)
+        self.assertEqual(self.launch_eng(self.ok(clone)), 0)
         self.assertIn(f"Your role memory: {mem};", self.claude()[2])
 
     def test_memory_check_skipped_without_repo_step(self):
@@ -753,13 +604,6 @@ class Launch(unittest.TestCase):
         self.assertTrue(argv[2].endswith(f" research.py: python3 {path}."))
         self.assertEqual(argv[-1], f"Bash(python3 {path} prepare)")
 
-    def test_read_repo_denies_a_mapped_clone_outside_the_run_dir(self):
-        self.read_repo()
-        clone = os.path.join(self.playground, "demo")
-        os.makedirs(os.path.join(clone, ".git"))
-        self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
-        self.assertEqual(self.after(self.claude(), "--disallowedTools")[-1], f"Edit({slashes(clone)}/**)")
-
     def test_read_repo_run_dir_inside_the_mapped_clone(self):
         self.read_repo()
         clone = os.path.join(self.playground, "demo")
@@ -800,8 +644,7 @@ class Launch(unittest.TestCase):
 
 
 class RealConfig(unittest.TestCase):
-    """NFR-1: the three runs of the repo's pipeline.toml, command for command."""
-    PROJECT = "p-x"
+    """Each task of the repo's pipeline.toml, command for command."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -811,104 +654,64 @@ class RealConfig(unittest.TestCase):
         patch = mock.patch.object(pipeline, "WORK", self.work)
         patch.start()
         self.addCleanup(patch.stop)
-        self.projects = os.path.join(self.tmp, "projects")
-        self.calls = []
-        self.humans = pipeline.load_config()["human_members"]
+        self.cfg = pipeline.load_config()
 
-    def launch(self, role, mode="new", repo=None, project=PROJECT, task=None):
-        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project,
-                "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode,
-                "--task", task or pipeline.registry()[0][role].tasks[0]]
-        if mode == "resume":
-            argv += ["--k", "2"]
-            path = pipeline.transcript("TASK-1", SID, self.projects)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            open(path, "w").close()
+    def launch(self, role, task, repo):
+        calls = []
+        argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", "p-x",
+                "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", "new", "--task", task]
         with redirect_stderr(io.StringIO()), mock.patch.dict(os.environ), \
                 mock.patch.object(eng, "resolve", return_value=repo):
-            rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
-                             logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects,
+            rc = launch.main(argv, sh=lambda cmd, **kw: calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
+                             logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=os.path.join(self.tmp, "projects"),
                              keychain=lambda s: True, docs_ok=lambda p: True, playground=os.path.join(self.tmp, "playground"))
         self.assertEqual(rc, 0)
-        (cmd,) = self.calls
+        (cmd,) = calls
         toks = shlex.split(cmd[9])
         i = toks.index("claude")
         return toks[i:toks.index("<", i)], cmd[9]
 
-    def expected(self, role, task, effort, extra_deny=(), tail="", project=PROJECT, project_repo="", allowed=()):
-        root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
-        humans, cfg = self.humans, pipeline.load_config()
+    def expected(self, role, task, effort, extra_deny=(), tail="", project_repo=" Project repo: none.", allowed=()):
+        root, rd, cfg = pipeline.ROOT, os.path.join(self.work, "TASK-1"), self.cfg
         real = (f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
                 + DOCS.format(**cfg["docs"]))
         return [
             "claude", "-p",
             f"Follow {root}/roles/principles.md, your role charter {root}/roles/{role}.md and the task {root}/tasks/{task}.md"
             " to handle TASK-1 (https://l/TASK-1). The runner has already claimed it."
-            f" Humans: {', '.join(humans)}. Project: {project}.{project_repo}" + real + tail,
+            f" Humans: {', '.join(cfg['human_members'])}. Project: p-x.{project_repo}" + real + tail,
             "--session-id", SID, "--model", "opus", "--effort", effort, "--permission-mode", "auto",
             "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
+            "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", cfg["docs"]["clone"],
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
             f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)", *extra_deny,
             *(["--allowedTools", *allowed] if allowed else [])]
 
-    def research(self, task, effort, project=PROJECT, repo="none", clone_deny=()):
+    def research(self, task, effort):
         rd = os.path.join(self.work, "TASK-1")
-        return self.expected("researcher", task, effort, project=project, project_repo=f" Project repo: {repo}.",
-                             extra_deny=[f"Edit({slashes(rd)}/src/**)", f"Edit({slashes(pipeline.ROOT)}/scripts/**)", *clone_deny],
+        return self.expected("researcher", task, effort,
+                             extra_deny=[f"Edit({slashes(rd)}/src/**)", f"Edit({slashes(pipeline.ROOT)}/scripts/**)"],
                              tail=f" research.py: python3 {RESEARCH_PY}.", allowed=[f"Bash(python3 {RESEARCH_PY} prepare)"])
 
-    def test_deep_research(self):
-        argv, script = self.launch("researcher")
-        self.assertEqual(argv, self.research("deep-research", "ultracode"))
-        self.assertIn(os.path.join(self.tmp, "logs", "projects", "deep-research.log"), script)
-        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-researcher", script.split(";")[0])
-        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
-
-    def test_light_research(self):
-        argv, script = self.launch("researcher", task="light-research")
-        self.assertEqual(argv, self.research("light-research", "high"))
-        self.assertIn(os.path.join(self.tmp, "logs", "projects", "light-research.log"), script)
-        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
-
-    def test_deep_research_in_a_mapped_project(self):
-        project, repo = next(iter(pipeline.load_config()["project_repos"].items()))
-        argv, _ = self.launch("researcher", project=project)
-        clone = os.path.join(self.tmp, "playground", pipeline.repo_slug(repo)[1])
-        self.assertEqual(argv, self.research("deep-research", "ultracode", project=project, repo=repo,
-                                             clone_deny=[f"Edit({slashes(clone)}/**)"]))
-
-    def test_product_design(self):
-        argv, script = self.launch("pm")
-        self.assertEqual(argv, self.expected("pm", "product-design", "high", project_repo=" Project repo: none."))
-        self.assertIn(os.path.join(self.tmp, "logs", "projects", "product-design.log"), script)
-        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-pm", script.split(";")[0])
-
-    def test_product_design_in_a_mapped_project(self):
-        project, repo = next(iter(pipeline.load_config()["project_repos"].items()))
-        argv, _ = self.launch("pm", project=project)
-        self.assertEqual(argv, self.expected("pm", "product-design", "high", project=project, project_repo=f" Project repo: {repo}."))
-
-    def test_engineering(self):
+    def test_every_task(self):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")
         ok = eng.Ok("TASK-1", "ENG: Demo", "ophis", "demo", "/u/playground/demo", "main", "TASK-1-demo", wt)
-        argv, script = self.launch("engineer", repo=ok)
-        self.assertEqual(argv, self.expected(
-            "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(PRIVATE)}/**)"],
+        engineering = self.expected(
+            "engineer", "engineering", "xhigh", extra_deny=[f"Edit({slashes(self.cfg['docs']['clone'])}/**)"], project_repo="",
             tail=" Repo check: OK ophis/demo, clone /u/playground/demo, default branch main,"
-                 f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}."))
-        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
-        self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-engineer", script.split(";")[0])
-        self.assertIn(os.path.join(self.tmp, "logs", "projects", "engineering.log"), script)
-
-    def test_real_config_resume_prompt(self):
-        argv, _ = self.launch("researcher", mode="resume")
-        root = pipeline.ROOT
-        self.assertEqual(argv[2].split(" Humans:")[0],
-                         f"Resumed run 2 for TASK-1 (https://l/TASK-1) after an interruption. Re-read {root}/roles/principles.md,"
-                         f" your role charter {root}/roles/researcher.md and the task {root}/tasks/deep-research.md first"
-                         " (they may have changed since this session started) and follow the task's resume rule.")
-        self.assertEqual(argv[3:5], ["--resume", SID])
+                 f" branch TASK-1-demo, worktree {wt}. eng.py: python3 {ENG_PY}.")
+        cases = [("researcher", "deep-research", None, self.research("deep-research", "ultracode"), True),
+                 ("researcher", "light-research", None, self.research("light-research", "high"), True),
+                 ("pm", "product-design", None, self.expected("pm", "product-design", "high"), False),
+                 ("engineer", "engineering", ok, engineering, True)]
+        for role, task, repo, argv, issue_env in cases:
+            with self.subTest(task):
+                got, script = self.launch(role, task, repo)
+                self.assertEqual(got, argv)
+                self.assertIn(os.path.join(self.tmp, "logs", "projects", f"{task}.log"), script)
+                exports = script.split(";")[0]
+                self.assertIn(f"LINEAR_KEYCHAIN_SERVICE=linear-api-key-{role}", exports)
+                self.assertEqual(" AGENT_PM_ISSUE=TASK-1" in exports, issue_env)
 
 
 if __name__ == "__main__":

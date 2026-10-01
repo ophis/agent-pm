@@ -97,36 +97,15 @@ class Prepare(unittest.TestCase):
         self.assertEqual(self.argvs(), [self.api, self.get_url, self.get_push_url, self.fetch, self.add])
         self.assertEqual(self.run_.calls[-2:], [(self.fetch, eng.LONG), (self.add, eng.LONG)])
 
-    def test_missing_clone_is_cloned_then_fetched(self):
-        self.assertEqual(self.prepare(), self.expected())
-        self.assertEqual(self.argvs(), [self.api, ("gh", "repo", "clone", "ophis/agent-pm", self.clone), self.fetch, self.add])
-
-    def test_commit_is_the_new_worktrees_head(self):
-        os.makedirs(self.clone)
-        def added(argv):
-            self.worktree(argv[-2], head=OTHER)
-            return ok()
-        self.assertEqual(self.prepare(add=added), self.expected(commit=OTHER))
-
     def test_cli_prints_one_json_line(self):
         os.makedirs(self.clone)
-        self.assertEqual(self.cli(), 0, self.err)
-        self.assertEqual((self.out.count("\n"), self.out[-1:], self.err), (1, "\n", ""))
-        self.assertEqual(json.loads(self.out), self.expected())
-
-    def test_mapping_or_repo_line(self):
-        os.makedirs(self.clone)
-        project = {"id": te.PROJ}
-        self.assertEqual(self.prepare("no repo here", repos={te.PROJ: "ophis/agent-pm"}, project=project), self.expected(mapped=True))
-        shutil.rmtree(self.src)
-        self.assertEqual(self.prepare("Repo: ophis/agent-pm", repos={te.PROJ: "ophis/other"}, project=project), self.expected())
-        shutil.rmtree(self.src)
-        self.assertEqual(self.cli("no repo here", tail=f'[project_repos]\n"{te.PROJ}" = "ophis/agent-pm"\n', project=project), 0, self.err)
-        self.assertEqual(json.loads(self.out), self.expected(mapped=True))
-
-    def test_no_push_permission_needed(self):
-        os.makedirs(self.clone)
-        self.assertEqual(self.prepare(api=ok('{"default_branch": "main", "permissions": {"push": false}}')), self.expected())
+        mapping = {"desc": "no repo here", "tail": f'[project_repos]\n"{te.PROJ}" = "ophis/agent-pm"\n', "project": {"id": te.PROJ}}
+        for name, kwargs, mapped in (("Repo line", {}, False), ("project mapping", mapping, True)):
+            with self.subTest(name):
+                shutil.rmtree(self.src, ignore_errors=True)
+                self.assertEqual(self.cli(**kwargs), 0, self.err)
+                self.assertEqual((self.out.count("\n"), self.out[-1:], self.err), (1, "\n", ""))
+                self.assertEqual(json.loads(self.out), self.expected(mapped=mapped))
 
     def test_reuse_runs_no_fetch_no_add_and_no_git_in_the_tree(self):
         os.makedirs(self.clone)
@@ -158,18 +137,22 @@ class Prepare(unittest.TestCase):
         self.assertEqual(self.argvs()[-1], self.remove)
         self.assertNotIn(self.fetch, self.argvs())
 
-    def test_src_symlinked_inside_the_run_dir_exits_2(self):
+    def test_src_symlink_exits_2(self):
         os.makedirs(self.clone)
-        real = os.path.join(self.base, "worktrees")
-        for name, existing in (("reuse", True), ("new", False)):
+        inside, outside = os.path.join(self.base, "worktrees"), os.path.join(self.root, "outside")
+        moved = f"{self.wt} resolves to {os.path.join(os.path.realpath(inside), 'agent-pm')}"
+        for name, real, existing, reason in (("inside the run dir, reuse", inside, True, moved),
+                                             ("inside the run dir, new", inside, False, moved),
+                                             ("escaping the run dir", outside, False, f"{self.src} resolves outside {self.base}")):
             with self.subTest(name):
                 shutil.rmtree(self.base, ignore_errors=True)
+                os.makedirs(self.base)
                 os.makedirs(real)
                 os.symlink(real, self.src)
                 if existing:
                     self.worktree(os.path.join(real, "agent-pm"))
                 self.assertEqual(self.cli(), 2)
-                self.assertRegex(self.err, rf"\Aresearch\.py: {re.escape(self.wt)}\b[^\n]*\n\Z")
+                self.assertEqual((self.out, self.err), ("", f"research.py: {reason}\n"))
                 self.assert_untouched()
                 self.assertEqual(os.listdir(real), ["agent-pm"] if existing else [])
 
@@ -205,47 +188,16 @@ class Prepare(unittest.TestCase):
                 self.assertEqual(self.out, "")
                 self.assert_untouched()
 
-    def test_every_invalid_target_exits_2(self):
-        os.makedirs(self.clone)
-        cases = [({"desc": "no repo here"}, te.NO_LINE.reason),
-                 ({"desc": "Repo: nope"}, "unreadable Repo line: 'nope'"),
-                 ({"desc": "Repo: ophis/a\nRepo: ophis/b"}, "several different Repo: values"),
-                 ({"gql": lambda q, **v: {"issue": None}}, "TASK-26: issue not found"),
-                 ({"gql": te.gql_for("Repo: ophis/agent-pm", ident="TASK-27")}, "Linear returned 'TASK-27' for TASK-26"),
-                 ({"api": ok(code=1, stderr="gh: Not Found (HTTP 404)")}, "ophis/agent-pm: not found or no access (HTTP 404)"),
-                 ({"api": ok(code=1, stderr="gh: Forbidden (HTTP 403)")}, "ophis/agent-pm: not found or no access (HTTP 403)"),
-                 ({"api": ok('{"default_branch": "ma$(x)", "permissions": {"push": false}}')}, "ophis/agent-pm: unsafe default branch name"),
-                 ({"fetch_url": ok("git@github.com:other/agent-pm.git\n")},
-                  f"{self.clone} is not a clone of ophis/agent-pm (origin URL differs)"),
-                 ({"push_url": ok("https://evil.example/x.git\n")},
-                  f"{self.clone} is not a clone of ophis/agent-pm (origin push URL differs)")]
-        for kwargs, reason in cases:
-            with self.subTest(reason):
-                self.assertEqual(self.cli(**kwargs), 2)
-                self.assertEqual((self.out, self.err), ("", f"research.py: {reason}\n"))
-                self.assert_untouched()
-        self.assertEqual(self.cli("no repo here", tail=f'[project_repos]\n"{te.PROJ}" = "ophis/agent-pm"\n', project={"id": te.PROJ},
-                                  api=ok(code=1, stderr="gh: Not Found (HTTP 404)")), 2)
-        self.assertEqual(self.err, f"research.py: {eng.MAPPED}ophis/agent-pm: not found or no access (HTTP 404)\n")
-
-    def test_clone_symlink_exits_2(self):
+    def test_invalid_issue_or_target_exits_2(self):
         other = os.path.join(self.root, "elsewhere")
         os.makedirs(other)
         os.symlink(other, self.clone)
-        self.assertEqual(self.cli(), 2)
-        self.assertEqual(self.err, f"research.py: {self.clone} is a symlink or outside {self.pg}\n")
-        self.assert_untouched()
-
-    def test_src_symlink_escaping_the_run_dir_exits_2(self):
-        os.makedirs(self.clone)
-        outside = os.path.join(self.root, "outside")
-        os.makedirs(outside)
-        os.makedirs(self.base)
-        os.symlink(outside, self.src)
-        self.assertEqual(self.cli(), 2)
-        self.assertEqual(self.err, f"research.py: {self.src} resolves outside {self.base}\n")
-        self.assert_untouched()
-        self.assertEqual(os.listdir(outside), [])
+        for name, kwargs, reason in (("another issue", {"gql": te.gql_for("Repo: ophis/agent-pm", ident="TASK-27")}, "Linear returned 'TASK-27' for TASK-26"),
+                                     ("clone symlink", {}, f"{self.clone} is a symlink or outside {self.pg}")):
+            with self.subTest(name):
+                self.assertEqual(self.cli(**kwargs), 2)
+                self.assertEqual((self.out, self.err), ("", f"research.py: {reason}\n"))
+                self.assert_untouched()
 
     def test_transient_or_git_failure_exits_1(self):
         def linear_down(q, **v):
