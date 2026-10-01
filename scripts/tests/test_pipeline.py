@@ -21,6 +21,7 @@ next = "engineer"
 """
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
+OTHER = "00000000-0000-4000-8000-000000000023"
 
 
 class ConfigFile:
@@ -823,8 +824,10 @@ class TeamCheck(unittest.TestCase):
 
 
 class TaskGroupCheck(unittest.TestCase):
-    def cfg(self):
-        return {"task_label_group": TASK_GROUP}
+    LABELS = {"light-research": LABEL1, "deep-research": LABEL2}
+
+    def cfg(self, labels=LABELS):
+        return {"task_label_group": TASK_GROUP, "task_labels": labels}
 
     def gql(self, node=None, error=None):
         calls = []
@@ -837,27 +840,44 @@ class TaskGroupCheck(unittest.TestCase):
         gql.calls = calls
         return gql
 
+    def group(self, *ids):
+        return {"isGroup": True, "children": {"nodes": [{"id": i} for i in ids]}}
+
+    def fails(self, gql, cfg):
+        with self.assertRaises(SystemExit) as cm:
+            pipeline.task_group(gql, cfg)
+        self.assertEqual(len(gql.calls), 1)
+        return str(cm.exception.code)
+
     def test_group_ok(self):
-        gql = self.gql({"isGroup": True})
+        gql = self.gql(self.group(LABEL1, LABEL2, OTHER))
         self.assertIsNone(pipeline.task_group(gql, self.cfg()))
         (query, v), = gql.calls
         self.assertEqual((query, v), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP}))
-        self.assertIn("issueLabel(id: $i) { isGroup }", query)
+        self.assertIn("issueLabel(id: $i) { isGroup children(first: 250) { nodes { id } } }", query)
+
+    def test_one_label_not_in_group(self):
+        msg = self.fails(self.gql(self.group(LABEL1)), self.cfg())
+        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: deep-research {LABEL2}")
+
+    def test_several_labels_not_in_group_in_table_order(self):
+        msg = self.fails(self.gql(self.group(OTHER)), self.cfg({"deep-research": LABEL2, "light-research": LABEL1, "ok": OTHER}))
+        self.assertEqual(msg, f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: "
+                              f"deep-research {LABEL2}, light-research {LABEL1}")
+
+    def test_no_task_labels_checks_only_the_group(self):
+        gql = self.gql(self.group())
+        self.assertIsNone(pipeline.task_group(gql, self.cfg({})))
+        self.assertEqual(len(gql.calls), 1)
 
     def test_not_found(self):
         gql = self.gql(error="linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.task_group(gql, self.cfg())
-        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
+        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} not found in Linear: "
                          "linear api error: [{'message': 'Entity not found: IssueLabel'}]")
-        self.assertEqual(len(gql.calls), 1)
 
     def test_not_a_group(self):
-        gql = self.gql({"isGroup": False})
-        with self.assertRaises(SystemExit) as cm:
-            pipeline.task_group(gql, self.cfg())
-        self.assertEqual(str(cm.exception.code), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
-        self.assertEqual(len(gql.calls), 1)
+        gql = self.gql({"isGroup": False, "children": {"nodes": [{"id": LABEL1}, {"id": LABEL2}]}})
+        self.assertEqual(self.fails(gql, self.cfg()), f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
 
 
 class Paths(unittest.TestCase):

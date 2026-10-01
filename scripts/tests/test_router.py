@@ -25,6 +25,7 @@ DR, PD = "Deep Research", "Product Design"
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
 CONFIG = HEADER + '[roles.researcher]\nnext = "pm"\n[roles.pm]\nnext = "engineer"\n[roles.engineer]\n'
+LABEL, STRAY = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000023"
 RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { name parent { id } } } } }"
 
 
@@ -47,7 +48,7 @@ class FakeLinear:
         self.missing = set()
         self.todo_error = False
         self.unreadable = set()
-        self.group = {"isGroup": True}   # the task_label_group's issueLabel node; None = not found
+        self.group = {"isGroup": True, "children": {"nodes": []}}   # the task_label_group's issueLabel node; None = not found
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
@@ -1363,6 +1364,18 @@ class TaskLabels(Base):
                 self.assertEqual(cm.exception.code, f"pipeline.toml: task_label_group {TASK_GROUP} {msg}", argv)
                 self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []), argv)
                 self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3, argv)
+
+    def test_fr1_stops_on_task_label_outside_the_group(self):
+        self.config = self.write_config(CONFIG + f'[task_labels]\nlight-research = "{LABEL}"\n')
+        msg = f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: light-research {LABEL}"
+        for argv in (("--claim",), ("--now",), ("--now", "--issue", "TASK-1")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+            fake.group = {"isGroup": True, "children": {"nodes": [{"id": STRAY}]}}
+            run = self.run_main if argv == ("--claim",) else self.tick
+            with self.assertRaises(SystemExit) as cm:
+                run(fake, *argv)
+            self.assertEqual(cm.exception.code, msg, argv)
+            self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []), argv)
 
     def test_fr1_one_group_query_per_board(self):
         for argv in (("--claim",), ("--plan",), ("--pick",), ()):

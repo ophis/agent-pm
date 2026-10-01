@@ -482,11 +482,11 @@ def team(gql, cfg):
     return Team(t["id"], t["name"], {k: cfg["states"][k] for k in STATES})
 
 
-Q_TASK_GROUP = "query($i: String!) { issueLabel(id: $i) { isGroup } }"
+Q_TASK_GROUP = "query($i: String!) { issueLabel(id: $i) { isGroup children(first: 250) { nodes { id } } } }"
 
 
 def task_group(gql, cfg):
-    """Checks pipeline.toml's task_label_group is a Linear label group, in one query; a missing label or a non-group stops the caller."""
+    """Checks, in one query, that task_label_group is a Linear label group and every [task_labels] id is one of its children; a failure stops the caller. Children are unpaginated (250): beyond that a valid id fails."""
     group = cfg["task_label_group"]
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
@@ -494,6 +494,9 @@ def task_group(gql, cfg):
         raise SystemExit(f"pipeline.toml: task_label_group {group} not found in Linear: {e.code}") from None
     if not label["isGroup"]:
         raise SystemExit(f"pipeline.toml: task_label_group {group} is not a label group")
+    ids = {c["id"] for c in label["children"]["nodes"]}
+    if bad := [f"{task} {i}" for task, i in cfg["task_labels"].items() if i not in ids]:
+        raise SystemExit(f"pipeline.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}")
 
 
 def stage_order(cfg):
