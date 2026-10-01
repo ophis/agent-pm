@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
 import pipeline  # noqa: E402
 import promote  # noqa: E402
+import sessions  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
@@ -197,6 +198,23 @@ class TestPromote(Base):
 
     def test_no_attachments_omits_source(self):
         self.ready()
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertNotIn("## Source", child["description"])
+
+    def test_run_records_left_out_of_source(self):
+        self.ready(attachments=[
+            {"title": "Report", "url": "https://gh/r.md"},
+            {"title": "Run s-1", "url": sessions.url("s-1")},
+            {"title": "Run rate analysis", "url": "https://gh/rate.md"}])
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertIn("## Source\n- Report: https://gh/r.md\n- Run rate analysis: https://gh/rate.md\n\n## Instructions\n",
+                      child["description"])
+        self.assertNotIn("s-1", child["description"])
+
+    def test_only_run_records_omits_source(self):
+        self.ready(attachments=[{"title": "Run s-1", "url": sessions.url("s-1")}])
         self.run_main()
         (child,) = self.fake.children.values()
         self.assertNotIn("## Source", child["description"])
