@@ -36,6 +36,7 @@ SID = "0f0f0f0f-1111-2222-3333-444444444444"
 DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
 PRIVATE = os.path.expanduser("~/playground/private_docs")
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
+RESEARCH_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "research.py"))
 IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
 FAKE_CLAUDE = """#!/bin/bash
 echo "claude says hi"
@@ -58,6 +59,7 @@ class Launch(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         self.projects = os.path.join(self.tmp, "projects")
+        self.playground = os.path.join(self.tmp, "playground")
         self.root = os.path.join(self.tmp, "registry")
         for rel, text in REGISTRY.items():
             self.write(rel, text)
@@ -87,7 +89,7 @@ class Launch(unittest.TestCase):
         with redirect_stderr(err), mock.patch.dict(os.environ):
             rc = launch.main(list(argv), sh=lambda cmd, **kw: self.calls.append(cmd), config=self.config,
                              runs=self.runs, logs=self.logs, gql=self.gql, run=self.run, projects=self.projects,
-                             root=self.root,
+                             root=self.root, playground=self.playground,
                              keychain=keychain or (lambda s: self.checked.append(s) or s not in self.missing))
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
@@ -620,6 +622,85 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.run_launch(*self.args()), 0)
         self.assertEqual(len(self.calls), 1)
 
+    def read_repo(self):
+        """deep-research gets read_repo; project MAPPED maps to ophis/demo."""
+        self.hand_off(roles="")
+        self.write("tasks/deep-research.toml", REGISTRY["tasks/deep-research.toml"] + "read_repo = true\n")
+
+    def test_read_repo_extras_on_new_and_resume(self):
+        self.read_repo()
+        self.make_transcript()
+        rd = os.path.join(self.work, "TASK-1")
+        clone = f"Edit({slashes(self.playground)}/demo/**)"
+        for mode in ("new", "resume"):
+            for project, repo, mapped in ((MAPPED, "ophis/demo", [clone]), ("p-other", "none", [])):
+                with self.subTest(mode=mode, project=project):
+                    self.calls = []
+                    self.assertEqual(self.run_launch(*self.args(mode, project=project)), 0)
+                    argv = self.claude()
+                    self.assertTrue(argv[2].endswith(
+                        f" Humans: me@x.com. Project: {project}. Project repo: {repo}." + self.ids + f" research.py: python3 {RESEARCH_PY}."))
+                    self.assertIn(" AGENT_PM_ISSUE=TASK-1", self.exports())
+                    self.assertEqual(self.after(argv, "--disallowedTools")[3:], [
+                        f"Edit({slashes(rd)}/worktrees/*/.git)", f"Edit({slashes(rd)}/src/**)",
+                        f"Edit({slashes(pipeline.ROOT)}/scripts/**)", *mapped])
+                    self.assertEqual(argv[-2:], ["--allowedTools", f"Bash(python3 {RESEARCH_PY} prepare)"])
+
+    def test_read_repo_quotes_the_script_path(self):
+        self.read_repo()
+        root = os.path.join(self.tmp, "a b")
+        with mock.patch.object(launch, "ROOT", root):
+            self.assertEqual(self.run_launch(*self.args()), 0)
+        path = shlex.quote(os.path.join(root, "scripts", "research.py"))
+        argv = self.claude()
+        self.assertTrue(argv[2].endswith(f" research.py: python3 {path}."))
+        self.assertEqual(argv[-1], f"Bash(python3 {path} prepare)")
+
+    def test_read_repo_denies_a_mapped_clone_outside_the_run_dir(self):
+        self.read_repo()
+        clone = os.path.join(self.playground, "demo")
+        os.makedirs(os.path.join(clone, ".git"))
+        self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
+        self.assertEqual(self.after(self.claude(), "--disallowedTools")[-1], f"Edit({slashes(clone)}/**)")
+
+    def test_read_repo_run_dir_inside_the_mapped_clone(self):
+        self.read_repo()
+        clone = os.path.join(self.playground, "demo")
+        for d in (".git", ".claude", "roles", "scripts", "work"):
+            os.makedirs(os.path.join(clone, d))
+        open(os.path.join(clone, "README.md"), "w").close()
+        link = os.path.join(self.tmp, "link")
+        os.symlink(clone, link)
+        c = slashes(clone)
+        for work in (os.path.join(clone, "work"), os.path.join(link, "work")):
+            with self.subTest(work=work), mock.patch.object(pipeline, "WORK", work), mock.patch.object(launch, "ROOT", clone):
+                self.calls = []
+                self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
+                rd = slashes(os.path.join(work, "TASK-1"))
+                self.assertEqual(self.after(self.claude(), "--disallowedTools"), [
+                    f"Edit({c}/roles/**)", f"Edit({c}/tasks/**)", f"Edit({c}/templates/**)", f"Edit({rd}/worktrees/*/.git)",
+                    f"Edit({rd}/src/**)", f"Edit({c}/scripts/**)", f"Edit({c}/.claude)", f"Edit({c}/.claude/**)",
+                    f"Edit({c}/.git)", f"Edit({c}/.git/**)", f"Edit({c}/README.md)", f"Edit({c}/roles)", f"Edit({c}/scripts)"])
+
+    def test_task_without_read_repo_gets_no_extras(self):
+        self.read_repo()
+        self.two_tasks()
+        os.makedirs(os.path.join(self.playground, "demo"))
+        self.assertEqual(self.run_launch(*self.args(project=MAPPED, task="quick-scan")), 0)
+        argv = self.claude()
+        self.assertTrue(argv[2].endswith(f" Humans: me@x.com. Project: {MAPPED}." + self.ids))
+        self.assertNotIn("AGENT_PM_ISSUE", self.exports())
+        self.assertNotIn("--allowedTools", argv)
+        self.assertEqual(self.after(argv, "--disallowedTools")[3:], [f"Edit({slashes(os.path.join(self.work, 'TASK-1'))}/worktrees/*/.git)"])
+
+    def test_project_repo_once_for_read_repo_and_repo_hand_off(self):
+        self.read_repo()
+        self.hand_off()
+        self.assertEqual(self.run_launch(*self.args(project=MAPPED)), 0)
+        prompt = self.claude()[2]
+        self.assertEqual(prompt.count("Project repo:"), 1)
+        self.assertTrue(prompt.endswith(f" Project: {MAPPED}. Project repo: ophis/demo." + self.ids + f" research.py: python3 {RESEARCH_PY}."))
+
 
 class RealConfig(unittest.TestCase):
     """NFR-1: the three runs of the repo's pipeline.toml, command for command."""
@@ -637,10 +718,10 @@ class RealConfig(unittest.TestCase):
         self.calls = []
         self.humans = pipeline.load_config()["human_members"]
 
-    def launch(self, role, mode="new", repo=None, project=PROJECT):
+    def launch(self, role, mode="new", repo=None, project=PROJECT, task=None):
         argv = ["--issue", "TASK-1", "--url", "https://l/TASK-1", "--project", project,
                 "--assignee", pipeline.registry()[0][role].account, "--sid", SID, "--mode", mode,
-                "--task", pipeline.registry()[0][role].tasks[0]]
+                "--task", task or pipeline.registry()[0][role].tasks[0]]
         if mode == "resume":
             argv += ["--k", "2"]
             path = pipeline.transcript("TASK-1", SID, self.projects)
@@ -650,14 +731,14 @@ class RealConfig(unittest.TestCase):
                 mock.patch.object(eng, "resolve", return_value=repo):
             rc = launch.main(argv, sh=lambda cmd, **kw: self.calls.append(cmd), runs=os.path.join(self.tmp, "runs.log"),
                              logs=os.path.join(self.tmp, "logs"), gql=object(), run=object(), projects=self.projects,
-                             keychain=lambda s: True, docs_ok=lambda p: True)
+                             keychain=lambda s: True, docs_ok=lambda p: True, playground=os.path.join(self.tmp, "playground"))
         self.assertEqual(rc, 0)
         (cmd,) = self.calls
         toks = shlex.split(cmd[9])
         i = toks.index("claude")
         return toks[i:toks.index("<", i)], cmd[9]
 
-    def expected(self, role, task, effort, extra_deny=(), tail="", project=PROJECT, project_repo=""):
+    def expected(self, role, task, effort, extra_deny=(), tail="", project=PROJECT, project_repo="", allowed=()):
         root, rd = pipeline.ROOT, os.path.join(self.work, "TASK-1")
         humans, cfg = self.humans, pipeline.load_config()
         real = (f" Team: {cfg['team']}. States: " + ", ".join(f"{pipeline.STATES[k]}={cfg['states'][k]}" for k in pipeline.STATES) + "."
@@ -671,13 +752,34 @@ class RealConfig(unittest.TestCase):
             "--setting-sources", "user", "--strict-mcp-config",
             "--add-dir", f"{root}/roles", "--add-dir", f"{root}/tasks", "--add-dir", f"{root}/templates", "--add-dir", PRIVATE,
             "--disallowedTools", f"Edit({slashes(root)}/roles/**)", f"Edit({slashes(root)}/tasks/**)",
-            f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)", *extra_deny]
+            f"Edit({slashes(root)}/templates/**)", f"Edit({slashes(rd)}/worktrees/*/.git)", *extra_deny,
+            *(["--allowedTools", *allowed] if allowed else [])]
+
+    def research(self, task, effort, project=PROJECT, repo="none", clone_deny=()):
+        rd = os.path.join(self.work, "TASK-1")
+        return self.expected("researcher", task, effort, project=project, project_repo=f" Project repo: {repo}.",
+                             extra_deny=[f"Edit({slashes(rd)}/src/**)", f"Edit({slashes(pipeline.ROOT)}/scripts/**)", *clone_deny],
+                             tail=f" research.py: python3 {RESEARCH_PY}.", allowed=[f"Bash(python3 {RESEARCH_PY} prepare)"])
 
     def test_deep_research(self):
         argv, script = self.launch("researcher")
-        self.assertEqual(argv, self.expected("researcher", "deep-research", "xhigh"))
+        self.assertEqual(argv, self.research("deep-research", "ultracode"))
         self.assertIn(os.path.join(self.tmp, "logs", "projects", "deep-research.log"), script)
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=linear-api-key-researcher", script.split(";")[0])
+        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
+
+    def test_light_research(self):
+        argv, script = self.launch("researcher", task="light-research")
+        self.assertEqual(argv, self.research("light-research", "high"))
+        self.assertIn(os.path.join(self.tmp, "logs", "projects", "light-research.log"), script)
+        self.assertIn(" AGENT_PM_ISSUE=TASK-1", script.split(";")[0])
+
+    def test_deep_research_in_a_mapped_project(self):
+        project, repo = next(iter(pipeline.load_config()["project_repos"].items()))
+        argv, _ = self.launch("researcher", project=project)
+        clone = os.path.join(self.tmp, "playground", pipeline.repo_slug(repo)[1])
+        self.assertEqual(argv, self.research("deep-research", "ultracode", project=project, repo=repo,
+                                             clone_deny=[f"Edit({slashes(clone)}/**)"]))
 
     def test_product_design(self):
         argv, script = self.launch("pm")

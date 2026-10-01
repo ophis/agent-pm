@@ -18,6 +18,10 @@ class Ok:
     issue: str; title: str; owner: str; name: str; clone: str; default: str; branch: str; worktree: str; mapped: bool = False; branch_exists: str | None = None
 
 @dataclass(frozen=True)
+class Target:
+    owner: str; name: str; clone: str; default: str; mapped: bool = False
+
+@dataclass(frozen=True)
 class Invalid:
     reason: str
 
@@ -103,18 +107,16 @@ def in_playground(clone, playground=PLAYGROUND):
     """True if clone is a real (non-symlink) entry directly in playground, where the repo step keeps clones."""
     return not os.path.islink(clone) and os.path.dirname(os.path.realpath(clone)) == os.path.realpath(playground)
 
-def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
-    try:
-        issue = gql(Q_ISSUE, i=issue_id)["issue"]
-    except (SystemExit, Exception) as e:
-        return Transient(f"Linear: {e}")
-    if issue is None:
-        return Invalid(f"{issue_id}: issue not found")
-    if issue.get("identifier") != issue_id:
-        return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+def run_subdir(issue_id, sub):
+    """<run dir>/sub, or Invalid if it resolves outside the run dir."""
     base = run_dir(issue_id)
-    if not os.path.realpath(os.path.join(base, "worktrees")).startswith(os.path.realpath(base) + os.sep):
-        return Invalid(f"{os.path.join(base, 'worktrees')} resolves outside {base}")
+    path = os.path.join(base, sub)
+    if not os.path.realpath(path).startswith(os.path.realpath(base) + os.sep):
+        return Invalid(f"{path} resolves outside {base}")
+    return path
+
+def target(issue, run, playground=PLAYGROUND, repos=None, push=True):
+    """The issue's repo (its Repo: line, else its project's mapping) and its clone in playground, cloned if missing; `push` also requires push permission."""
     repo = parse_repo(issue.get("description"))
     pid = (issue.get("project") or {}).get("id")
     mapped = repo == NO_LINE and pid in (repos or {})
@@ -129,8 +131,8 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         return Invalid(tag + info.reason)
     if isinstance(info, Transient):
         return info
-    push, default = info
-    if not push:
+    can_push, default = info
+    if push and not can_push:
         return Invalid(f"{tag}{owner}/{name}: no push permission")
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{tag}{owner}/{name}: unsafe default branch name")
@@ -147,7 +149,31 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
         res = run(["gh", "repo", "clone", f"{owner}/{name}", clone], LONG)
         if res.returncode != 0:
             return Transient(f"gh repo clone {owner}/{name}: {_stderr(res)}")
-    found = _existing_branches(issue_id, clone, run)
+    return Target(owner, name, clone, default, mapped)
+
+def read_issue(issue_id, gql):
+    """The issue's Q_ISSUE fields; Invalid if missing or another issue, Transient if Linear fails."""
+    try:
+        issue = gql(Q_ISSUE, i=issue_id)["issue"]
+    except (SystemExit, Exception) as e:
+        return Transient(f"Linear: {e}")
+    if issue is None:
+        return Invalid(f"{issue_id}: issue not found")
+    if issue.get("identifier") != issue_id:
+        return Invalid(f"Linear returned {str(issue.get('identifier'))[:40]!r} for {issue_id}")
+    return issue
+
+def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
+    issue = read_issue(issue_id, gql)
+    if isinstance(issue, (Invalid, Transient)):
+        return issue
+    worktrees = run_subdir(issue_id, "worktrees")
+    if isinstance(worktrees, Invalid):
+        return worktrees
+    t = target(issue, run, playground, repos)
+    if isinstance(t, (Invalid, Transient)):
+        return t
+    found = _existing_branches(issue_id, t.clone, run)
     if isinstance(found, Transient):
         return found
     names, where = found
@@ -156,8 +182,33 @@ def resolve(issue_id, gql, run, playground=PLAYGROUND, repos=None):
     if names and not re.fullmatch(rf"{re.escape(issue_id)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {issue_id}-<lowercase slug>")
     branch = names[0] if names else f"{issue_id}-{slug(issue['title'])}"
-    return Ok(issue_id, issue["title"], owner, name, clone, default, branch,
-              os.path.join(base, "worktrees", branch), mapped=mapped, branch_exists=where)
+    return Ok(issue_id, issue["title"], t.owner, t.name, t.clone, t.default, branch,
+              os.path.join(worktrees, branch), mapped=t.mapped, branch_exists=where)
+
+def _read(path):
+    """A regular file's stripped text, or "" (never blocks on a FIFO)."""
+    try:
+        if os.path.isfile(path):
+            with open(path) as f:
+                return f.read(4096).strip()
+    except (OSError, UnicodeDecodeError):
+        pass
+    return ""
+
+def locate(path):
+    """(clone, local branch or None if detached, HEAD text, gitdir) of the worktree at path, read from files only; ValueError if it is not a linked worktree."""
+    text = _read(os.path.join(path, ".git"))
+    if not text.startswith("gitdir: "):
+        raise ValueError("clone unknown: .git is not a gitdir file")
+    gitdir = os.path.realpath(os.path.join(path, text[len("gitdir: "):]))
+    parent = os.path.dirname(gitdir)
+    if os.path.basename(parent) != "worktrees" or os.path.basename(os.path.dirname(parent)) != ".git":
+        raise ValueError("clone unknown: gitdir is not <clone>/.git/worktrees/<name>")
+    head = _read(os.path.join(gitdir, "HEAD"))
+    branch = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else None
+    if branch is not None and not REF.fullmatch(branch):
+        raise ValueError("unsafe branch name")
+    return os.path.dirname(os.path.dirname(parent)), branch, head, gitdir
 
 def pr_title(ok):
     """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""

@@ -4,17 +4,18 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Worktrees: for each finished issue, every worktree under work/<ID>/worktrees/ is
-force-deleted with any uncommitted or unpushed work: `git worktree remove --force
---force` (dirty and locked ones too), then `git branch -D` of its local branch.
-An entry must be a real directory inside work/<ID>/worktrees/, and its clone is
-read from its .git file (<clone>/.git/worktrees/<n>); anything else is skipped.
+Worktrees: for each finished issue, every worktree under work/<ID>/worktrees/ and
+work/<ID>/src/ (a researcher's detached, read-only checkouts) is force-deleted with any
+uncommitted or unpushed work: `git worktree remove --force --force` (dirty and locked
+ones too), then `git branch -D` of its local branch, if it has one (src/ ones are detached).
+An entry must be a real directory inside its own folder, and its clone is read from
+its .git file (<clone>/.git/worktrees/<n>); anything else is skipped.
 Remote branches, main workspaces and work/<ID>/ itself are never touched.
 
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
-Runs at the end of promote's tick; an issue is queried on its own only when it has a worktree.
+Runs at the end of promote's tick; an issue is queried on its own only when it has a worktree or src/ entry.
 --dry-run   Print the plan; change nothing.
 Needs Python 3.11+ (tomllib).
 Exit 0 = done, 2 = bad arguments, 3 = an error (Linear or git), retried next run.
@@ -26,12 +27,13 @@ import sys
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from eng import LONG, REF, SHORT, TransientError, _stderr, sh_run  # noqa: E402
+from eng import LONG, SHORT, TransientError, _stderr, locate, sh_run  # noqa: E402
 from pipeline import WORK, linear_gql, load_config, parse_time, role_ids, runnable, team as linear_team  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
 ARCHIVE_ROLES = ("pm", "engineer")
+FOLDERS = ("worktrees", "src")
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250, orderBy: createdAt) { nodes { createdAt toStateId } } } }"""
@@ -50,33 +52,6 @@ def finished_at(nodes, finished):
 
 class Skip(Exception):
     """The worktree stays; the message says why."""
-
-
-def _read(path):
-    """A regular file's stripped text, or "" (never blocks on a FIFO)."""
-    try:
-        if os.path.isfile(path):
-            with open(path) as f:
-                return f.read(4096).strip()
-    except (OSError, UnicodeDecodeError):
-        pass
-    return ""
-
-
-def locate(path):
-    """(clone, local branch or None if detached) of the worktree at path, read from files only."""
-    text = _read(os.path.join(path, ".git"))
-    if not text.startswith("gitdir: "):
-        raise Skip("clone unknown: .git is not a gitdir file")
-    gitdir = os.path.realpath(os.path.join(path, text[len("gitdir: "):]))
-    parent = os.path.dirname(gitdir)
-    if os.path.basename(parent) != "worktrees" or os.path.basename(os.path.dirname(parent)) != ".git":
-        raise Skip("clone unknown: gitdir is not <clone>/.git/worktrees/<name>")
-    head = _read(os.path.join(gitdir, "HEAD"))
-    branch = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else None
-    if branch is not None and not REF.fullmatch(branch):
-        raise Skip("unsafe branch name")
-    return os.path.dirname(os.path.dirname(parent)), branch
 
 
 class Pruner:
@@ -102,20 +77,26 @@ class Pruner:
             raise TransientError(f"git {args[0]} {args[1]}: {_stderr(res)}")
 
     def entries(self, ident):
-        base = os.path.join(self.work, ident, "worktrees")
-        try:
-            return [os.path.join(base, n) for n in sorted(os.listdir(base)) if not n.startswith(".")]
-        except OSError:
-            return []
+        found = []
+        for folder in FOLDERS:
+            base = os.path.join(self.work, ident, folder)
+            try:
+                found += [os.path.join(base, n) for n in sorted(os.listdir(base)) if not n.startswith(".")]
+            except OSError:
+                pass
+        return found
 
     def prune(self, ident, entry):
-        name = os.path.basename(entry)
-        key = f"{ident}/{name}"
-        path = os.path.join(os.path.realpath(self.work), ident, "worktrees", name)
+        folder, name = os.path.basename(os.path.dirname(entry)), os.path.basename(entry)
+        key = f"{ident}/{name}" if folder == "worktrees" else f"{ident}/{folder}/{name}"
+        path = os.path.join(os.path.realpath(self.work), ident, folder, name)
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip(f"not a real directory inside {ident}/worktrees/, refusing to touch")
-            clone, branch = locate(path)
+                raise Skip(f"not a real directory inside {ident}/{folder}/, refusing to touch")
+            try:
+                clone, branch, _, _ = locate(path)
+            except ValueError as e:
+                raise Skip(e) from None
             if self.dry:
                 self.say(f"prune-plan {key}: force-delete the worktree" + (f" and local branch {branch}" if branch else ""))
                 return

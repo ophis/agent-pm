@@ -3,11 +3,11 @@
 
 launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
 The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs TASK, one of
-the role's tasks (the router resolves it). PROJECT_ID fills the prompt's Project: and, for a role whose next role's
-default task has repo_from_issue, Project repo:. Every run works in work/<ID>/. Exits 2 for an assignee that is not a
-role account or a config error (TASK not one of the role's tasks, a role memory overlapping the issue's repo, a role key
-missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot start yet (transient: no
-transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
+the role's tasks (the router resolves it). PROJECT_ID fills the prompt's Project: and, for a read_repo task or a role
+whose next role's default task has repo_from_issue, Project repo:. Every run works in work/<ID>/. Exits 2 for an
+assignee that is not a role account or a config error (TASK not one of the role's tasks, a role memory overlapping the
+issue's repo, a role key missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot
+start yet (transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
 """
 import argparse
 import os
@@ -19,8 +19,9 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
-from pipeline import (LOGS, PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, linear_gql,  # noqa: E402
-                      hands_off_to_repo, load_config, overlaps, project_log, role_for, run_dir, runnable, session, transcript)
+from pipeline import (LOGS, PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, _under, linear_gql,  # noqa: E402
+                      hands_off_to_repo, load_config, overlaps, project_log, repo_slug, role_for, run_dir, runnable, session,
+                      transcript)
 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
@@ -44,7 +45,20 @@ def deny(path):
     return "Edit(//" + path.lstrip("/") + ")"
 
 
-def command(a, run, tail="", allowed=(), repo=None):
+def clone_denied(clone, rd):
+    """Paths to deny in a read_repo run's mapped clone: all of it, or, with rd inside it, each top-level entry but rd's."""
+    real, rd = os.path.realpath(clone), os.path.realpath(rd)
+    if not _under(rd, real):
+        return [os.path.join(clone, "**")]
+    keep, out = os.path.relpath(rd, real).split(os.sep)[0], []
+    for e in sorted(os.listdir(clone)):
+        if e != keep:
+            p = os.path.join(clone, e)
+            out += [p, os.path.join(p, "**")] if os.path.isdir(p) else [p]
+    return out
+
+
+def command(a, run, tail="", allowed=(), repo=None, project_repo=None, playground=eng.PLAYGROUND):
     t, rd = run.task, run_dir(a.issue)
     dirs = [os.path.join(ROOT, d) for d in ("roles", "tasks", "templates")]
     dirs += [os.path.expanduser(d) for d in t.get("add_dirs", [])]
@@ -59,6 +73,11 @@ def command(a, run, tail="", allowed=(), repo=None):
         if isinstance(repo, eng.Ok):
             denied.append(os.path.join(repo.clone, "**"))
         denied.append(os.path.join(rd, "worktrees", "**"))
+    if t.get("read_repo"):
+        denied += [os.path.join(rd, "src", "**"), os.path.join(ROOT, "scripts", "**")]
+        if project_repo:
+            clone = os.path.join(playground, repo_slug(project_repo)[1])
+            denied += [p for p in clone_denied(clone, rd) if p not in denied]
     cmd = ["claude", "-p", prompt(a, run) + tail,
            "--resume" if a.mode == "resume" else "--session-id", a.sid,
            "--model", t["model"], "--effort", t["effort"], "--permission-mode", "auto",
@@ -117,7 +136,7 @@ def repo_step(a, task, gql, run, repos):
 
 
 def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=None, run=eng.sh_run, projects=PROJECTS, root=ROOT,
-         keychain=has_key, docs_ok=os.path.isdir):
+         keychain=has_key, docs_ok=os.path.isdir, playground=eng.PLAYGROUND):
     ap = argparse.ArgumentParser(prog="launch.py")
     for f in ("--issue", "--url", "--project", "--assignee", "--sid", "--task"):
         ap.add_argument(f, required=True)
@@ -153,11 +172,16 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
         return fail(plog, a.issue, "config-error", f"docs clone {docs['clone']} is not a directory", 2)
     humans = cfg.get("human_members") or []
     states = ", ".join(f"{STATES[k]}={cfg['states'][k]}" for k in STATES)
-    repo_line = f" Project repo: {cfg['project_repos'].get(a.project) or 'none'}." if hands_off_to_repo(cfg, jobs, role) else ""
+    read_repo, project_repo = job.task.get("read_repo"), cfg["project_repos"].get(a.project)
+    repo_line = f" Project repo: {project_repo or 'none'}." if hands_off_to_repo(cfg, jobs, role) or read_repo else ""
     tail = (f" Humans: {', '.join(humans) or 'none'}. Project: {a.project}.{repo_line}"
             f" Team: {cfg['team']}. States: {states}."
             f" Docs: {docs['repo']}, clone {docs['clone']}, branch {docs['branch']}.")
     env, allowed, repo = {}, [], None
+    if read_repo:
+        cli = shlex.quote(os.path.join(ROOT, "scripts", "research.py"))
+        tail += f" research.py: python3 {cli}."
+        env, allowed = {"AGENT_PM_ISSUE": a.issue}, [f"Bash(python3 {cli} prepare)"]
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run, cfg["project_repos"])
         if isinstance(step, eng.Transient):
@@ -170,7 +194,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
                 return fail(plog, a.issue, "config-error", f"role memory {job.memory} overlaps the issue's repo {hit}", 2)
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
-    cmd = command(a, job, tail, allowed, repo)
+    cmd = command(a, job, tail, allowed, repo, project_repo, playground)
     sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs)],
        check=True)
     return 0

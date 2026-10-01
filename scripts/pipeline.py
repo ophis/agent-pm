@@ -145,7 +145,7 @@ STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review"
 DOCS_KEYS = ("repo", "clone", "branch")
 PIPELINE_ROLE_KEYS = {"next", "require_instructions"}
 ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
-TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "allowed_tools", "prefix"}
+TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "read_repo", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 REPO = "{repo}"
@@ -329,6 +329,8 @@ def _task(name, t, resolve):
         raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
     if missing := [k for k in ("model", "effort") if not t.get(k)]:
         raise SystemExit(f"{where} has no {', '.join(missing)}")
+    if t.get("read_repo") and t.get("repo_from_issue"):
+        raise SystemExit(f"{where}: read_repo and repo_from_issue are exclusive")
     check_allowed_tools(where, t)
     if "add_dirs" not in t:
         return t

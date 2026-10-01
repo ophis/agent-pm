@@ -612,6 +612,12 @@ class Runnable(unittest.TestCase):
         self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
         self.assertEqual(self.runs()["engineer"].task["allowed_tools"], [rule])
 
+    def test_read_repo(self):
+        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + "read_repo = true\n")
+        self.assertIs(self.runs()["researcher"].task["read_repo"], True)
+        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + "read_repo = true\nrepo_from_issue = true\n")
+        self.rejects("read_repo and repo_from_issue are exclusive", prefix="tasks/deep-research.toml")
+
     def test_load_config_does_not_need_files(self):
         self.remove("tasks/engineering.md")
         self.assertIn("researcher", self.load()["roles"])
@@ -626,7 +632,7 @@ class RealConfig(unittest.TestCase):
                for k, r in runs.items()}
         private = os.path.expanduser("~/playground/private_docs")
         self.assertEqual(got, {
-            "researcher": ("deep-research", "opus", "xhigh", False, (), None, "researcher.md"),
+            "researcher": ("deep-research", "opus", "ultracode", False, (), None, "researcher.md"),
             "pm": ("product-design", "opus", "high", False, (), None, "pm.md"),
             "engineer": ("engineering", "opus", "xhigh", True, (private,), None, "engineer.md"),
         })
@@ -642,6 +648,7 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(cfg["harness_key"], "linear-api-key")
         tasks = pipeline.registry()[1]
         self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
+        self.assertEqual(sorted(t for t, v in tasks.items() if v.get("read_repo")), ["deep-research", "light-research"])
 
     def test_real_docs(self):
         self.assertEqual(pipeline.load_config()["docs"], {

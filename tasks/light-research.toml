@@ -1,3 +1,4 @@
 model = "opus"
 effort = "high"
 add_dirs = ["{docs_clone}"]
+read_repo = true                # runs may check out the issue's target repo read-only (research.py prepare)
