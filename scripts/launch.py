@@ -7,9 +7,12 @@ the role's tasks (the router resolves it). PROJECT_ID fills the prompt's Project
 whose next role's default task has repo_from_issue, Project repo:. Every run works in work/<ID>/. Exits 2 for an
 assignee that is not a role account or a config error (TASK not one of the role's tasks, a role memory overlapping the
 issue's repo, a role key missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot
-start yet (transient: no transcript to resume, or the Engineering repo step failed transiently). Needs Python 3.11+.
+start yet (transient: no transcript to resume, or the Engineering repo step failed transiently). A started run's tmux
+script records the session on the issue (sessions.py start before claude, end after the end lines) from the record built
+here; the registry's output goes to the project log and its status is never checked. Needs Python 3.11+.
 """
 import argparse
+import json
 import os
 import re
 import shlex
@@ -19,6 +22,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eng  # noqa: E402
+import sessions  # noqa: E402
 from pipeline import (LOGS, PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, STATES, _under, linear_gql,  # noqa: E402
                       hands_off_to_repo, load_config, overlaps, project_log, repo_slug, role_for, run_dir, runnable, session,
                       transcript)
@@ -26,6 +30,7 @@ from pipeline import (LOGS, PATH, PLACEHOLDERS, PROJECTS, REPO, ROOT, RUNS_LOG, 
 PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
+REGISTER = [sys.executable, os.path.join(ROOT, "scripts", "sessions.py")]
 
 
 def prompt(a, run):
@@ -90,14 +95,17 @@ def command(a, run, tail="", allowed=(), repo=None, project_repo=None, playgroun
     return cmd
 
 
-def script(a, cmd, env, plog, runs):
+def script(a, cmd, env, plog, runs, rec):
     q = shlex.quote
     exports = " ".join(f"{k}={q(v)}" for k, v in env.items())
     end = f'"$ts end {a.issue} session={a.sid} exit=$rc"'
+    reg = {verb: shlex.join([*REGISTER, verb, a.issue, json.dumps(rec)]) for verb in ("start", "end")}
     return (f"export {exports}; "
             f'echo "$(date "+%F %T") launch {a.issue} mode={a.mode} session={a.sid}" >> {q(plog)}; '
+            f"{reg['start']} >> {q(plog)} 2>&1; "
             f"{shlex.join(cmd)} < /dev/null 2>&1 | tee -a {q(plog)}; rc=${{PIPESTATUS[0]}}; "
-            f'ts=$(date "+%F %T"); echo {end} >> {q(plog)}; echo {end} >> {q(runs)}')
+            f'ts=$(date "+%F %T"); echo {end} >> {q(plog)}; echo {end} >> {q(runs)}; '
+            f'{reg["end"]} "$rc" >> {q(plog)} 2>&1')
 
 
 def has_key(service):
@@ -195,8 +203,11 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo, project_repo, playground)
-    sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c", script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs)],
-       check=True)
+    ok = {"repo": f"{repo.owner}/{repo.name}", "branch": repo.branch, "worktree": repo.worktree} if isinstance(repo, eng.Ok) else {}
+    rec = sessions.base(sid=a.sid, cwd=cwd, role=role, task=job.task_name, key=job.key, model=job.task["model"],
+                        started_at=sessions.now(), **ok)
+    sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c",
+        script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs, rec)], check=True)
     return 0
 
 
