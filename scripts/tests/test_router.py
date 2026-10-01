@@ -25,7 +25,9 @@ DR, PD = "Deep Research", "Product Design"
 IDS = {DR: "p-dr", PD: "p-pd", "Engineering": "p-eng"}
 ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
 CONFIG = HEADER + '[roles.researcher]\nnext = "pm"\n[roles.pm]\nnext = "engineer"\n[roles.engineer]\n'
-RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { name parent { id } } } } }"
+LIGHT, DEEP, STRAY, ORPHAN_LABEL = (f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24))   # label ids; STRAY maps to no task
+TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\norphan = "{ORPHAN_LABEL}"\n'
+RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
 
 
 def ago(**kw):
@@ -47,7 +49,8 @@ class FakeLinear:
         self.missing = set()
         self.todo_error = False
         self.unreadable = set()
-        self.group = {"isGroup": True}   # the task_label_group's issueLabel node; None = not found
+        # the task_label_group's issueLabel node, its children the labels TaskLabels maps; None = not found
+        self.group = {"isGroup": True, "children": {"nodes": [{"id": i} for i in (LIGHT, DEEP, ORPHAN_LABEL)]}}
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
@@ -117,9 +120,9 @@ def blocker(ident, state="started", kind="blocks"):
     return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
 
 
-def label(name, group=TASK_GROUP):
-    """A labels node of the re-check: name in the label group (None = not in a group)."""
-    return {"name": name, "parent": group and {"id": group}}
+def label(name, id, group=TASK_GROUP):
+    """A labels node of the re-check: id and name in the label group (None = not in a group)."""
+    return {"id": id, "name": name, "parent": group and {"id": group}}
 
 
 class Base(unittest.TestCase):
@@ -1186,7 +1189,7 @@ class TaskLabels(Base):
 
     def setUp(self):
         super().setUp()
-        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG + TASK_LABELS)
         self.root = os.path.join(self.tmp.name, "root")
         for d in ("roles", "tasks"):
             shutil.copytree(os.path.join(pipeline.ROOT, d), os.path.join(self.root, d))
@@ -1195,43 +1198,54 @@ class TaskLabels(Base):
                 f.write(text)
 
     def test_task_for(self):
-        other = [label("Urgent", None), label("Light Research", "00000000-0000-4000-8000-000000000003")]
+        outside = [label("Urgent", STRAY, None), label("Light Research", LIGHT, "00000000-0000-4000-8000-000000000003")]
         role_tasks = ["deep-research", "light-research"]
-        all_tasks = ["deep-research", "engineering", "light-research", "orphan", "product-design"]
+        label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "orphan"}
         fix = "Fix the label or the assignee, then move the issue back to Todo."
+        absent = "is not in pipeline.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (([], ("deep-research", None)),
-                 (other, ("deep-research", None)),
-                 ([label("Light Research")], ("light-research", None)),
-                 ([label("light-research")], ("light-research", None)),
-                 (other + [label("LightResearch")], ("light-research", None)),
-                 ([label("Deep Research")], ("deep-research", None)),
-                 ([label("Quick Look")], (None, 'Task label "Quick Look" matches no task in tasks/. Fix the label, then move the issue back to Todo.')),
-                 ([label("Orphan")], (None, f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}')),
-                 ([label("Engineering")], (None, f'Task label "Engineering" is not one of researcher\'s tasks (deep-research, light-research). {fix}')),
-                 ([label("Light Research"), other[0], label("Deep Research")],
+                 (outside, ("deep-research", None)),
+                 ([label("Light Research", LIGHT)], ("light-research", None)),
+                 ([label("Renamed in Linear", LIGHT)], ("light-research", None)),
+                 (outside + [label("Light Research", LIGHT)], ("light-research", None)),
+                 ([label("Whatever", DEEP)], ("deep-research", None)),
+                 ([label("Light Research", STRAY)], (None, f'Task label "Light Research" {absent}')),
+                 ([label("light-research", STRAY)], (None, f'Task label "light-research" {absent}')),
+                 ([label("Quick Look", STRAY)], (None, f'Task label "Quick Look" {absent}')),
+                 ([label("Orphan", ORPHAN_LABEL)], (None, f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}')),
+                 ([label("Light Research", LIGHT), outside[0], label("Deep Research", DEEP)],
                   (None, "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo.")))
         for labels, want in cases:
-            self.assertEqual(router.task_for(labels, TASK_GROUP, "researcher", role_tasks, all_tasks), want, labels)
+            self.assertEqual(router.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks), want, labels)
+        self.assertEqual(router.task_for([label("Light Research", LIGHT)], TASK_GROUP, "researcher", role_tasks, {}),
+                         (None, f'Task label "Light Research" {absent}'))
 
     def test_fr6_fr8_label_picks_the_task(self):
-        for labels, task in (([], "deep-research"), ([label("Light Research"), label("Urgent", None)], "light-research")):
+        for labels, task in (([], "deep-research"),
+                             ([label("Light Research", LIGHT), label("Urgent", STRAY, None)], "light-research"),
+                             ([label("Renamed in Linear", LIGHT)], "light-research"),
+                             ([label("Deep Research", DEEP)], "deep-research")):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=labels)])
             self.tick(fake)
             (launch,) = self.sh.launches()
             sid = launch[launch.index("--sid") + 1]
-            self.assertEqual(launch[launch.index("--sid"):], ["--sid", sid, "--task", task, "--mode", "new"], task)
-            self.assertRegex(self.state, rf"^\S+ \S+ start TASK-1 session={sid} transcript=\S+ task={task}\n$", task)
-            self.assertIn(f"claim: TASK-1 task={task}", self.said(), task)
-            self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress", task)
+            self.assertEqual(launch[launch.index("--sid"):], ["--sid", sid, "--task", task, "--mode", "new"], labels)
+            self.assertRegex(self.state, rf"^\S+ \S+ start TASK-1 session={sid} transcript=\S+ task={task}\n$", labels)
+            self.assertIn(f"claim: TASK-1 task={task}", self.said(), labels)
+            self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress", labels)
 
     def test_fr7_invalid_label_goes_to_review(self):
         fix = "then move the issue back to Todo."
-        cases = ((["Light Research", "Deep Research"], f"Several task labels (Light Research, Deep Research); keep one, {fix}"),
-                 (["Quick Look"], f'Task label "Quick Look" matches no task in tasks/. Fix the label, {fix}'),
-                 (["Orphan"], f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
-                              f"Fix the label or the assignee, {fix}"))
-        for names, comment in cases:
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label(n) for n in names]),
+        absent = f"is not in pipeline.toml's [task_labels]. Fix the label, {fix}"
+        light, deep = label("Light Research", LIGHT), label("Deep Research", DEEP)
+        cases = (([light, deep], f"Several task labels (Light Research, Deep Research); keep one, {fix}"),
+                 ([label("Quick Look", STRAY)], f'Task label "Quick Look" {absent}'),
+                 ([label("Light Research", STRAY)], f'Task label "Light Research" {absent}'),
+                 ([label("Orphan", ORPHAN_LABEL)], f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
+                                                  f"Fix the label or the assignee, {fix}"))
+        for labels, comment in cases:
+            names = [n["name"] for n in labels]
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=labels),
                                issue("TASK-2", "Todo", "researcher", priority=2)])
             self.tick(fake)
             t = fake.issues["TASK-1"]
@@ -1248,7 +1262,7 @@ class TaskLabels(Base):
 
     def test_fr6_issue_flag_takes_the_labelled_task(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
-                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Light Research")])])
+                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Light Research", LIGHT)])])
         self.tick(fake, "--now", "--issue", "TASK-2")
         (launch,) = self.sh.launches()
         sid = launch[launch.index("--sid") + 1]
@@ -1260,7 +1274,7 @@ class TaskLabels(Base):
 
     def test_fr7_issue_flag_invalid_label_goes_to_review(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
-                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Orphan")])])
+                           issue("TASK-2", "Todo", "researcher", priority=4, labels=[label("Orphan", ORPHAN_LABEL)])])
         self.tick(fake, "--now", "--issue", "TASK-2")
         t = fake.issues["TASK-2"]
         self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
@@ -1271,9 +1285,19 @@ class TaskLabels(Base):
                                        "pick: nothing claimable", "skip: nothing claimed"])
         self.assertEqual((self.sh.launches(), self.state), ([], ""))
 
+    def test_fr7_unmapped_label_goes_to_review_without_a_run(self):
+        absent = "is not in pipeline.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Light Research", STRAY)])])
+        self.tick(fake, "--now", "--issue", "TASK-1")
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["comments"]), ("In Review", [f'Task label "Light Research" {absent}']))
+        self.assertEqual(ops(fake), ["issueSubscribe", "commentCreate", "issueUpdate"])
+        self.assertIn("claim: TASK-1 bad task label; In Review", self.said())
+        self.assertEqual((self.sh.launches(), self.state), ([], ""))
+
     def test_blocked_invalid_label_waits_for_its_blocker(self):
         for argv, skip in (((), ["skip: nothing to do"]), (("--now", "--issue", "TASK-1"), [])):
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan")], inverse=[blocker("TASK-7")])])
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")])])
             self.tick(fake, *argv)
             self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7", "plan: nothing to do"] + skip, argv)
             self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations, self.sh.launches()), ("Todo", [], []), argv)
@@ -1291,7 +1315,7 @@ class TaskLabels(Base):
             def __call__(self, query, **v):
                 out = super().__call__(query, **v)
                 if "issues(filter" in query:
-                    self.issues["TASK-1"]["labels"] = [label("Light Research")]
+                    self.issues["TASK-1"]["labels"] = [label("Light Research", LIGHT)]
                 return out
 
         fake = Relabel([issue("TASK-1", "Todo", "researcher")])
@@ -1302,13 +1326,13 @@ class TaskLabels(Base):
 
     def test_fr8_dry_run_resolves_nothing(self):
         for argv in (("--claim", "--dry-run"), ("--pick", "--dry-run")):
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan")])])
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan", ORPHAN_LABEL)])])
             self.assertEqual(self.run_main(fake, *argv), (0, ""), argv)
             self.assertEqual(self.said(), ["pick: TASK-1 (1 in queue)"], argv)
             self.assertEqual(([q for q, _ in fake.queries if q == RECHECK], fake.mutations), ([], []), argv)
 
     def test_nfr1_claim_reads_one_query_per_issue(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Light Research")])])
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Light Research", LIGHT)])])
         self.tick(fake)
         self.assertEqual([(q, v) for q, v in fake.queries if "issue(id:" in q], [(RECHECK, {"i": "TASK-1"})])
         todo = [q for q, _ in fake.queries].index(fake.reads()[0])
@@ -1318,9 +1342,9 @@ class TaskLabels(Base):
         for argv, out in ((("--pick",), "TASK-3 https://linear.app/x/TASK-3"),
                           (("--pick", "--role", "researcher"), "TASK-3 https://linear.app/x/TASK-3"),
                           (("--claim",), "TASK-3 https://linear.app/x/TASK-3 Deep Research")):
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research")]),
-                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan")]),
-                               issue("TASK-3", "Todo", "researcher", priority=3, labels=[label("deep-research")])])
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research", LIGHT)]),
+                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan", ORPHAN_LABEL)]),
+                               issue("TASK-3", "Todo", "researcher", priority=3, labels=[label("Deep Research", DEEP)])])
             self.assertEqual(self.run_main(fake, *argv), (0, out), argv)
             self.assertEqual([fake.issues[i]["state"] for i in ("TASK-1", "TASK-2", "TASK-3")], ["Todo", "In Review", "In Progress"], argv)
             self.assertNotIn("TASK-1", [v["i"] for _, v in fake.mutations], argv)
@@ -1333,8 +1357,8 @@ class TaskLabels(Base):
         for sid in "abcd":
             self.add("start", "TASK-3", sid, 300)
         for argv in (("--pick", "--role", "researcher"), ("--claim",)):
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research")]),
-                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan")]),
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, labels=[label("Light Research", LIGHT)]),
+                               issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan", ORPHAN_LABEL)]),
                                issue("TASK-3", "Todo", "researcher", priority=3)])
             self.assertEqual(self.run_main(fake, *argv), (0, ""), argv)
             self.assertEqual(self.said(), ["pick: TASK-1 (3 in queue)", "claim: TASK-1 task=light-research is not researcher's default; skipping",
@@ -1364,6 +1388,18 @@ class TaskLabels(Base):
                 self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []), argv)
                 self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3, argv)
 
+    def test_fr1_stops_on_task_label_outside_the_group(self):
+        self.config = self.write_config(CONFIG + f'[task_labels]\nlight-research = "{LIGHT}"\n')
+        msg = f"pipeline.toml: [task_labels] not labels of task_label_group {TASK_GROUP}: light-research {LIGHT}"
+        for argv in (("--claim",), ("--now",), ("--now", "--issue", "TASK-1")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+            fake.group = {"isGroup": True, "children": {"nodes": [{"id": STRAY}]}}
+            run = self.run_main if argv == ("--claim",) else self.tick
+            with self.assertRaises(SystemExit) as cm:
+                run(fake, *argv)
+            self.assertEqual(cm.exception.code, msg, argv)
+            self.assertEqual(([q for q, _ in fake.queries], fake.mutations), ([pipeline.Q_TEAM, pipeline.Q_TASK_GROUP], []), argv)
+
     def test_fr1_one_group_query_per_board(self):
         for argv in (("--claim",), ("--plan",), ("--pick",), ()):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -1374,7 +1410,7 @@ class TaskLabels(Base):
             self.assertEqual([v for q, v in fake.queries if q == pipeline.Q_TASK_GROUP], [{"i": TASK_GROUP}], argv)
 
     def test_resume_passes_the_default_task(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research")])], self.hist)
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research", LIGHT)])], self.hist)
         self.resumable("TASK-1", "a", 60)
         self.tick(fake)
         (launch,) = self.sh.launches()
@@ -1395,7 +1431,7 @@ class TaskLabels(Base):
     def test_fr14_no_record_resumes_the_assignee_roles_default(self):
         for role, project, task in (("researcher", DR, "deep-research"), ("pm", PD, "product-design")):
             self.lines, self.hist = [], {}
-            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project, labels=[label("Light Research")])], self.hist)
+            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project, labels=[label("Light Research", LIGHT)])], self.hist)
             self.resumable("TASK-1", "a", 60)
             self.tick(fake)
             (launch,) = self.sh.launches()
@@ -1430,7 +1466,7 @@ class TaskLabels(Base):
         self.assertIn("recover: TASK-2 task=orphan is not one of researcher's tasks; In Review", self.said())
 
     def test_fr16_requeued_issue_resolved_again_at_claim(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research")])], self.hist)
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research", LIGHT)])], self.hist)
         self.moved("TASK-1", 61)
         self.add("start", "TASK-1", "a", 60, "deep-research")
         self.tick(fake)

@@ -7,7 +7,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 ```
 agent-pm/
 ├── CLAUDE.md              # architecture notes for Claude working on this repo
-├── pipeline.toml          # Linear team and state ids, task label group, humans, role order, project → repo map, docs repo
+├── pipeline.toml          # Linear team and state ids, task label group and label ids, humans, role order, project → repo map, docs repo
 ├── roles/
 │   ├── principles.md      # rules for every role and task
 │   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks
@@ -30,7 +30,7 @@ agent-pm/
 
 ## Roles
 
-A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the task its `Tasks` label names (see Task labels), else the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to the docs repo (`[docs]`) in Chinese, ask the user when an issue is too vague.
+A role is who the agent is: a charter (`roles/<role>.md`: responsibilities, standards, boundaries, memory) and its own Linear account. An issue assigned to that account runs the task its `Tasks` label picks (see Task labels), else the role's default task. `roles/principles.md` holds the rules every role follows: act by Linear id, publish documents to the docs repo (`[docs]`) in Chinese, ask the user when an issue is too vague.
 
 | Role | Tasks (first is default) | Does | Next |
 |---|---|---|---|
@@ -74,15 +74,15 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ### Task labels
 
-A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one; with no such label the issue runs the role's default task. A label matches a task name ignoring case, hyphens and spaces (`Deep Research` → `deep-research`), and the task must be one of the assignee role's. If the label matches no task, isn't one of the assignee role's tasks, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
+A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one by its id, through `pipeline.toml`'s `[task_labels]` (`<task> = "<label id>"`), so renaming a label keeps working; with no such label the issue runs the role's default task. The task must be one of the assignee role's. If the label isn't in `[task_labels]`, its task isn't one of the assignee role's, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
 
 The task is recorded in `logs/runs.log`, so a resumed run keeps it whatever the labels say (none recorded: the role's default). An interrupted run whose task is no longer one of the role's goes to In Review with a comment.
 
-To add a task to a role: create `tasks/<task>.md` and `.toml`, add it to `roles/<role>.toml`'s `tasks`, and create a label of the same name in the `Tasks` group.
+To add a task to a role: create `tasks/<task>.md` and `.toml`, add it to `roles/<role>.toml`'s `tasks`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. `task_label_group` in `pipeline.toml` is the id of the Linear `Tasks` label group (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the router stops if it isn't a label group.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you), and the `claude` CLI with the `linear` skill (honouring `LINEAR_KEYCHAIN_SERVICE`) and the `autopilot` plugin. `[docs]`'s `clone` must be a clone of its `repo`; agents publish through per-run worktrees and leave its files alone, so `git pull` there to see their documents locally. `task_label_group` in `pipeline.toml` is the id of the Linear `Tasks` label group (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under pipeline.toml's harness_key
@@ -131,7 +131,7 @@ Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-p
 
 ## Configuration
 
-- `pipeline.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering and local or mixed research issues that have no `Repo:` line; `[docs]`, the docs repo: `repo` (`<owner>/<name>`), `clone` (local clone path, `~` allowed, must exist when a run starts) and `branch`, e.g. `ophis/private_docs`, `~/playground/private_docs`, `main`.
+- `pipeline.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering and local or mixed research issues that have no `Repo:` line; `[docs]`, the docs repo: `repo` (`<owner>/<name>`), `clone` (local clone path, `~` allowed, must exist when a run starts) and `branch`, e.g. `ophis/private_docs`, `~/playground/private_docs`, `main`.
 - `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only` (an entry `{docs_clone}` is the `[docs]` clone), `memory`.
 - `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs (`{docs_clone}` is the `[docs]` clone), `read_repo` (runs may check out the issue's target repo read-only through `research.py`), title `prefix`, required on the default task of any role that is some role's `next`).
 - `templates/`: the report and PRD skeletons.

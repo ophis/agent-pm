@@ -23,8 +23,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log, norm,  # noqa: E402
-                      parse_time, registry, role_for, role_ids, runnable, session, stage_order, task_group, team, transcript)
+from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
+                      parse_time, role_for, role_ids, runnable, session, stage_order, task_group, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -44,7 +44,7 @@ DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
-Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { name parent { id } } } } }"
+Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
 
 
 def local_time(s):
@@ -162,20 +162,20 @@ def blockers(issue):
             if not n.get("issue") or n["issue"]["state"]["type"] not in DONE]
 
 
-def task_for(labels, group, role, role_tasks, all_tasks):
+def task_for(labels, group, role, role_tasks, label_tasks):
     """(task, None) from the issue's labels in the task label group (none -> role's default), or (None, comment) for an invalid one.
-    The task is a name from all_tasks; only the comment carries label text."""
-    names = [n["name"] for n in labels if n["parent"] and n["parent"]["id"] == group]
-    if not names:
+    The task is label_tasks[label id]; only the comment carries label names."""
+    found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
+    if not found:
         return role_tasks[0], None
-    if len(names) > 1:
-        return None, f"Several task labels ({', '.join(names)}); keep one, then move the issue back to Todo."
-    label = names[0]
-    task = next((t for t in all_tasks if norm(t) == norm(label)), None)
+    if len(found) > 1:
+        return None, f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+    name = found[0]["name"]
+    task = label_tasks.get(found[0]["id"])
     if task is None:
-        return None, f'Task label "{label}" matches no task in tasks/. Fix the label, then move the issue back to Todo.'
+        return None, f'Task label "{name}" is not in pipeline.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
     if task not in role_tasks:
-        return None, (f'Task label "{label}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
+        return None, (f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
                       "Fix the label or the assignee, then move the issue back to Todo.")
     return task, None
 
@@ -213,7 +213,7 @@ class Board:
             if unknown := [r for r in only if r not in self.runs]:
                 raise SystemExit(f"no role {unknown[0]!r} in roles/")
         self.stage = stage_order(cfg)
-        self.group, self.all_tasks = cfg["task_label_group"], list(registry(root, cfg["docs"]["clone"])[1])
+        self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
         t = team(gql, cfg)
         task_group(gql, cfg)
         self.team, self.states = t.id, t.states
@@ -367,7 +367,7 @@ class Board:
                 return None
             role = self.role(issue)
             role_tasks = list(self.runs[role].tasks)
-            task, comment = task_for(current["labels"]["nodes"], self.group, role, role_tasks, self.all_tasks)
+            task, comment = task_for(current["labels"]["nodes"], self.group, role, role_tasks, self.label_tasks)
             if comment:
                 log(f"claim: {ident} bad task label; In Review")
                 self.comment_and_move(issue, comment, "in_review")
