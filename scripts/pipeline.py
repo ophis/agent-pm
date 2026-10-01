@@ -138,7 +138,7 @@ def check_allowed_tools(where, p, root=ROOT):
                 raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "docs", "roles", "project_repos"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "docs", "roles", "project_repos"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -252,6 +252,16 @@ def load_config(path=CONFIG):
     for k, v in repos.items():
         if not _uuid(k) or not repo_slug(v):
             raise SystemExit(f"pipeline.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
+    labels = cfg.setdefault("task_labels", {})
+    if not isinstance(labels, dict):
+        raise SystemExit('pipeline.toml: task_labels must be a table of <task> = "<Linear label id>"')
+    seen = {}
+    for k, v in labels.items():
+        if not _uuid(v):
+            raise SystemExit(f"pipeline.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}")
+        if v in seen:
+            raise SystemExit(f"pipeline.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}")
+        seen[v] = k
     return cfg
 
 
@@ -391,6 +401,9 @@ def runnable(cfg, root=ROOT):
         nxt_task = roles[nxt].tasks[0]
         if not tasks[nxt_task].get("prefix"):
             raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {nxt_task!r} has no prefix")
+    for task in cfg["task_labels"]:
+        if task not in tasks:
+            raise SystemExit(f"pipeline.toml: task_labels.{task} has no tasks/{task}.md + .toml pair")
     out = {}
     for name, r in roles.items():
         role_tasks = {t: tasks[t] for t in r.tasks}
