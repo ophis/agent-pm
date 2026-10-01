@@ -29,7 +29,7 @@ def ago(minutes):
 
 
 def instructions(description):
-    """The `## Instructions` section; `## Comments` repeats every comment, so never search the whole description."""
+    """The `## Instructions` section; `## Comments` repeats the comments, so never search the whole description."""
     start = description.index("\n## Instructions\n") + 1
     return description[start:].split("\n\n## ", 1)[0]
 
@@ -192,7 +192,7 @@ class TestPromote(Base):
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
-        record = {"title": "Run s-1", "url": sessions.url("s-1")}
+        record = {"title": "Run s-1", "url": sessions.URL + "s-1"}
         self.ready("DR-1", attachments=[{"title": "Report", "url": "https://gh/r.md"}, record,
                                         {"title": "Run rate analysis", "url": "https://gh/rate.md"}])
         self.ready("DR-2", attachments=[record])
@@ -223,6 +223,21 @@ class TestPromote(Base):
         for body in ("before cutoff", "agent", "other", "bot", "mine", "caps"):
             self.assertIn(f"  > {body}", comments)
         self.assertIn(f"- integration, {ago(48)}:", comments)
+
+    def test_session_comments_left_out_of_comments(self):
+        run = "Run 0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d · running · 2026-09-27T10:00:00+08:00"
+        harness = {"email": "agent@x.com", "name": "Harness", "isMe": True}
+        self.fake.add("DR-1")
+        self.fake.said("DR-1", 48, user=harness, body=run)
+        self.fake.said("DR-1", 47, user=harness, body="Repo check failed: no Repo: line")
+        self.fake.said("DR-1", 46, body=run)
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(46)}:\n{run}")
+        comments = child["description"].split("## Comments\n")[1]
+        self.assertNotIn(f"- Harness, {ago(48)}:", comments)
+        self.assertIn(f"- Harness, {ago(47)}:\n  > Repo check failed: no Repo: line", comments)
+        self.assertIn(f"- Me, {ago(46)}:\n  > {run}", comments)
 
     def test_now_skips_the_wait(self):
         src = self.ready(handoff=1)

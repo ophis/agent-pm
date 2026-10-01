@@ -8,8 +8,9 @@ whose next role's default task has repo_from_issue, Project repo:. Every run wor
 assignee that is not a role account or a config error (TASK not one of the role's tasks, a role memory overlapping the
 issue's repo, a role key missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot
 start yet (transient: no transcript to resume, or the Engineering repo step failed transiently). A started run's tmux
-script records the session on the issue (sessions.py start before claude, end after the end lines) from the record built
-here; the registry's output goes to the project log and its status is never checked. Needs Python 3.11+.
+script records the session as a comment on its issue (sessions.py start before claude, end after the end lines) from
+the record built here (sid, cwd, key's service name, start time); the registry's output goes to the project log and its
+status is never checked. Needs Python 3.11+.
 """
 import argparse
 import json
@@ -154,7 +155,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
     ap.add_argument("--k", default="1")
     a = ap.parse_args(argv)
     # Issue and SID are interpolated into the tmux shell command.
-    if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", a.issue) or not re.fullmatch(r"[0-9a-f-]{36}", a.sid):
+    if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", a.issue) or not re.fullmatch(sessions.SID, a.sid):
         print(f"launch.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
     os.environ["PATH"] = PATH
@@ -206,9 +207,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
     cwd = run_dir(a.issue)
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo, project_repo, playground)
-    ok = {"repo": f"{repo.owner}/{repo.name}", "branch": repo.branch, "worktree": repo.worktree} if isinstance(repo, eng.Ok) else {}
-    rec = sessions.base(sid=a.sid, cwd=cwd, role=role, task=job.task_name, key=job.key, model=job.task["model"],
-                        started_at=sessions.now(), **ok)
+    rec = sessions.base(sid=a.sid, cwd=cwd, key=job.key, started_at=sessions.now())
     sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c",
         script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs, rec)], check=True)
     return 0

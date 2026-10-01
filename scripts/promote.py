@@ -31,7 +31,7 @@ Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: {
   nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
 Q_DETAIL = """query($i: String!) { issue(id: $i) { state { id }
   history(first: 250) { nodes { createdAt fromStateId toStateId } }
-  comments(first: 250) { nodes { body createdAt user { email name } } }
+  comments(first: 250) { nodes { body createdAt user { email name isMe } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
   inverseRelations(first: 250) { nodes { issue { id } } } } }"""
 Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
@@ -164,7 +164,8 @@ class Promoter:
         if comments:
             parts.append("## Instructions\n" + "\n\n".join(
                 f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
-        everything = sorted(detail["comments"]["nodes"], key=lambda c: parse_time(c["createdAt"]))
+        everything = sorted((c for c in detail["comments"]["nodes"] if not sessions.is_comment(c)),
+                            key=lambda c: parse_time(c["createdAt"]))
         if everything:
             # Quoted so agent-written text cannot pose as a section of this description.
             parts.append("## Comments\n" + "\n".join(

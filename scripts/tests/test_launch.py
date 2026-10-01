@@ -428,21 +428,16 @@ class Launch(unittest.TestCase):
         self.assertEqual(runs, [plog[5]])
 
     def test_registry_gets_the_record(self):
-        rd, wt = os.path.join(self.work, "TASK-1"), self.ok().worktree
-
-        def record(role, key, task, model="opus", **repo):
-            return {"sid": SID, "cwd": rd, "role": role, "task": task, "model": model,
-                    "resume_command": f"cd {rd} && LINEAR_KEYCHAIN_SERVICE={key} claude --resume {SID}", **repo}
+        rd = os.path.join(self.work, "TASK-1")
+        researcher, engineer = ({"sid": SID, "cwd": rd, "key": key} for key in ("k-researcher", "k-engineer"))
         self.two_tasks()
         self.make_transcript()
         cases = [
-            ("new", lambda: self.run_launch(*self.args()), record("researcher", "k-researcher", "deep-research")),
-            ("resume", lambda: self.run_launch(*self.args("resume")), record("researcher", "k-researcher", "deep-research")),
-            ("other task", lambda: self.run_launch(*self.args(task="quick-scan")),
-             record("researcher", "k-researcher", "quick-scan", "sonnet")),
-            ("engineering ok", lambda: self.launch_eng(self.ok()),
-             record("engineer", "k-engineer", "engineering", repo="ophis/demo", branch="TASK-1-demo", worktree=wt)),
-            ("engineering invalid", lambda: self.launch_eng(eng.Invalid("x")), record("engineer", "k-engineer", "engineering"))]
+            ("new", lambda: self.run_launch(*self.args()), researcher),
+            ("resume", lambda: self.run_launch(*self.args("resume")), researcher),
+            ("other task", lambda: self.run_launch(*self.args(task="quick-scan")), researcher),
+            ("engineering ok", lambda: self.launch_eng(self.ok()), engineer),
+            ("engineering invalid", lambda: self.launch_eng(eng.Invalid("x")), engineer)]
         for name, start_run, expected in cases:
             with self.subTest(name):
                 self.calls = []
@@ -455,19 +450,6 @@ class Launch(unittest.TestCase):
                 rec = json.loads(start[2])
                 self.assertRegex(rec.pop("started_at"), ISO)
                 self.assertEqual(rec, expected)
-
-    def test_hostile_repo_reaches_the_registry_verbatim(self):
-        hostile = dataclasses.replace(self.ok(), owner="a'$(touch x)", name='b"`touch y`')
-        when = "2026-09-30T20:00:00-04:00"
-        with self.register(), mock.patch.object(sessions, "now", return_value=when):
-            self.assertEqual(self.launch_eng(hostile), 0)
-        self.assertEqual(self.execute(), 0)
-        rec = json.dumps(sessions.base(sid=SID, cwd=os.path.join(self.work, "TASK-1"), role="engineer", task="engineering",
-                                       key="k-engineer", model="opus", started_at=when, repo="a'$(touch x)/b\"`touch y`",
-                                       branch="TASK-1-demo", worktree=hostile.worktree))
-        self.assertEqual(self.registered("start"), ["start", "TASK-1", rec])
-        self.assertEqual(self.registered("end"), ["end", "TASK-1", rec, "3"])
-        self.assertFalse([f for f in ("x", "y") if os.path.exists(os.path.join(self.tmp, f))])
 
     def test_rejects_unsafe_issue_or_sid(self):
         for flag, bad in (("--issue", "TASK-1$(rm -rf ~)"), ("--sid", "s1; ls")):
