@@ -265,16 +265,17 @@ class Gate(unittest.TestCase):
         self.assertEqual(router.gate("new", ['{"type":"system"}', "garbage"]), (False, "no rate_limit_event"))
 
     def test_ok_from_the_last_event(self):
-        for lines, ok in (([event(five=0.89)], True),
-                          ([event(five=0.9)], False),
-                          ([event(status="rejected", five=0.1)], False),
-                          ([event(five=0.1, seven_day=1.0)], False),
-                          ([event(five=0.89, seven_day=0.99, seven_day_opus=0.5)], True),
-                          ([event(five=0.1, seven_day=0.2, seven_day_opus=1.0)], False),
-                          ([event(status="allowed_warning", five=0.5)], True),
-                          ([event(five=0.1), event(five=0.9)], False),
-                          ([event(five=0.9), "{}", event(five=0.1)], True)):
-            with self.subTest(lines=lines):
+        rows = (([event(five=0.89)], True),
+                ([event(five=0.9)], False),
+                ([event(status="rejected", five=0.1)], False),
+                ([event(five=0.1, seven_day=1.0)], False),
+                ([event(five=0.89, seven_day=0.99, seven_day_opus=0.5)], True),
+                ([event(five=0.1, seven_day=0.2, seven_day_opus=1.0)], False),
+                ([event(status="allowed_warning", five=0.5)], True),
+                ([event(five=0.1), event(five=0.9)], False),
+                ([event(five=0.9), "{}", event(five=0.1)], True))
+        for row, (lines, ok) in enumerate(rows):
+            with self.subTest(row=row):
                 self.assertEqual(router.gate("new", lines)[0], ok)
 
     def test_main_reads_stdin(self):
@@ -313,20 +314,24 @@ class Plan(Base):
                 fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=1, updated=ago(hours=5)), *others)
                 self.resumable("TASK-1", "a", 300)
                 self.touch("TASK-1", "a", 5, "subagents/workflows/r/journal.jsonl")
-                self.resumable("TASK-3", "c", 100)
+                if any(i["state"] == "In Progress" for i in others):
+                    self.resumable("TASK-3", "c", 100)
                 self.assertEqual(self.run_main(fake, "--plan"), (0, out))
                 self.assertEqual(fake.mutations, [])
 
     def test_resume_order(self):
         r = "researcher"
-        for specs in ((("TASK-1", 3, 300, r), ("TASK-2", 2, 100, r)), (("TASK-1", 2, 100, r), ("TASK-2", 2, 300, r)),
-                      (("TASK-1", 0, 300, r), ("TASK-2", 4, 100, r)), (("TASK-1", 2, 120, r), ("TASK-2", 2, 60, "pm"))):
+        rows = (((("TASK-1", 3, 300, r, DR), ("TASK-2", 2, 100, r, DR)), DR),
+                ((("TASK-1", 2, 100, r, DR), ("TASK-2", 2, 300, r, DR)), DR),
+                ((("TASK-1", 0, 300, r, DR), ("TASK-2", 4, 100, r, DR)), DR),
+                ((("TASK-1", 2, 120, r, DR), ("TASK-2", 2, 60, "pm", PD)), PD))
+        for specs, project in rows:
             with self.subTest(specs=specs):
                 self.lines, self.hist = [], {}
-                fake = self.fake(*[issue(i, "In Progress", role, priority=p) for i, p, _, role in specs])
-                for ident, _, m, _ in specs:
+                fake = self.fake(*[issue(i, "In Progress", role, priority=p, project=proj) for i, p, _, role, proj in specs])
+                for ident, _, m, _, _ in specs:
                     self.resumable(ident, ident.lower(), m)
-                self.assertEqual(self.run_main(fake, "--plan")[1], "resume TASK-2 task-2 1 https://linear.app/x/TASK-2 Deep Research")
+                self.assertEqual(self.run_main(fake, "--plan")[1], f"resume TASK-2 task-2 1 https://linear.app/x/TASK-2 {project}")
 
     def test_no_current_sid_never_outranks(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=1), issue("TASK-2", "In Progress", "researcher", priority=4))
@@ -629,6 +634,14 @@ class Claim(Base):
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
         self.assertEqual((fake.issues["TASK-1"]["assignee"], fake.issues["TASK-1"]["subscribers"]), (who("researcher"), ["me@x.com"]))
+
+    def test_capped_todo_reset_by_user(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        hist = {"TASK-1": [{"createdAt": ago(minutes=200), "actorId": USER, "toStateId": STATES["Todo"]}]}
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")], hist)
+        for sid in "abcd":
+            self.add("start", "TASK-1", sid, 300)
+        self.assertEqual(self.run_main(fake, "--claim")[1], "TASK-1 https://linear.app/x/TASK-1 Deep Research")
 
     def test_claim_skipped_when_no_longer_todo(self):
         class Racy(FakeLinear):
