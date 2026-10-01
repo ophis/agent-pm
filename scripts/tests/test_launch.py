@@ -1,5 +1,6 @@
 import dataclasses
 import io
+import json
 import os
 import re
 import shlex
@@ -16,6 +17,7 @@ from board_ids import DOCS_CLONE, HEADER, STATES as IDS_BY_KEY, TEAM  # noqa: E4
 import eng  # noqa: E402
 import launch  # noqa: E402
 import pipeline  # noqa: E402
+import sessions  # noqa: E402
 
 CONFIG = HEADER + 'human_members = ["me@x.com"]\n'
 RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
@@ -43,6 +45,13 @@ echo "claude says hi"
 echo "oops" >&2
 exit 3
 """
+FAKE_REGISTER = """#!/bin/bash
+printf '%s\\0' "$@" > "{out}/$1.args"
+echo "reg $1 $2${{4:+ $4}}"
+[ {rc} = 0 ] || echo "reg failed" >&2
+exit {rc}
+"""
+ISO = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$"
 
 
 def slashes(path):
@@ -490,24 +499,112 @@ class Launch(unittest.TestCase):
             self.run_launch(*argv)
         self.assertEqual((e.exception.code, self.calls), (2, []))
 
-    def test_script_logs_output_and_end_lines(self):
-        self.run_launch(*self.args())
-        script = self.calls[0][9]
-        self.assertEqual(script.count("$(date"), 2)  # launch line, and one end time for both logs
+    def register(self, rc=0):
+        """Patches REGISTER with a fake that saves each call's argv to <tmp>/<start|end>.args and prints `reg <verb> <issue> [rc]`."""
+        fake = os.path.join(self.tmp, "reg")
+        with open(fake, "w") as f:
+            f.write(FAKE_REGISTER.format(out=self.tmp, rc=rc))
+        os.chmod(fake, 0o755)
+        return mock.patch.object(launch, "REGISTER", [fake])
+
+    def execute(self):
+        """Runs the tmux script with a fake claude (exit 3) in tmp; returns the script's exit status."""
         bindir = os.path.join(self.tmp, "bin")
-        os.makedirs(bindir)
+        os.makedirs(bindir, exist_ok=True)
         with open(os.path.join(bindir, "claude"), "w") as f:
             f.write(FAKE_CLAUDE)
         os.chmod(os.path.join(bindir, "claude"), 0o755)
-        script = script.replace("export PATH=", f"export PATH={bindir}:", 1)
-        subprocess.run(["bash", "-c", script], check=True, capture_output=True)
-        plog = self.plog().splitlines()
+        script = self.calls[0][9].replace("export PATH=", f"export PATH={bindir}:", 1)
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True).returncode
+
+    def registered(self, verb):
+        """The fake REGISTER's argv for verb, consumed so a later call cannot reuse it."""
+        path = os.path.join(self.tmp, f"{verb}.args")
+        with open(path, "rb") as f:
+            args = f.read().decode().split("\0")[:-1]
+        os.remove(path)
+        return args
+
+    def logs_after_run(self, name="deep-research"):
         with open(self.runs) as f:
-            runs = f.read().splitlines()
+            return self.plog(name).splitlines(), f.read().splitlines()
+
+    def test_script_logs_output_and_end_lines(self):
+        with self.register():
+            self.run_launch(*self.args())
+        self.assertEqual(self.calls[0][9].count("$(date"), 2)  # launch line, and one end time for both logs
+        self.assertEqual(self.execute(), 0)
+        plog, runs = self.logs_after_run()
         self.assertRegex(plog[0], r"^\S+ \S+ launch TASK-1 mode=new session=0f0f0f0f-1111-2222-3333-444444444444$")
-        self.assertEqual(sorted(plog[1:3]), ["claude says hi", "oops"])
-        self.assertRegex(plog[3], r"^\S+ \S+ end TASK-1 session=0f0f0f0f-1111-2222-3333-444444444444 exit=3$")
-        self.assertEqual(runs, [plog[3]])
+        self.assertEqual(plog[1], "reg start TASK-1")
+        self.assertEqual(sorted(plog[2:4]), ["claude says hi", "oops"])
+        self.assertRegex(plog[4], r"^\S+ \S+ end TASK-1 session=0f0f0f0f-1111-2222-3333-444444444444 exit=3$")
+        self.assertEqual(plog[5:], ["reg end TASK-1 3"])
+        self.assertEqual(runs, [plog[4]])
+
+    def test_failing_registry_leaves_the_end_lines(self):
+        with self.register(rc=1):
+            self.run_launch(*self.args())
+        self.assertEqual(self.execute(), 1)
+        plog, runs = self.logs_after_run()
+        self.assertEqual(plog[1:3], ["reg start TASK-1", "reg failed"])
+        self.assertEqual(sorted(plog[3:5]), ["claude says hi", "oops"])
+        self.assertRegex(plog[5], r"^\S+ \S+ end TASK-1 session=0f0f0f0f-1111-2222-3333-444444444444 exit=3$")
+        self.assertEqual(plog[6:], ["reg end TASK-1 3", "reg failed"])
+        self.assertEqual(runs, [plog[5]])
+
+    def test_registry_gets_the_record(self):
+        rd, wt = os.path.join(self.work, "TASK-1"), self.ok().worktree
+
+        def record(role, key, task, model="opus", **repo):
+            return {"sid": SID, "cwd": rd, "role": role, "task": task, "model": model,
+                    "resume_command": f"cd {rd} && LINEAR_KEYCHAIN_SERVICE={key} claude --resume {SID}", **repo}
+        self.two_tasks()
+        self.make_transcript()
+        cases = [
+            ("new", lambda: self.run_launch(*self.args()), record("researcher", "k-researcher", "deep-research")),
+            ("resume", lambda: self.run_launch(*self.args("resume")), record("researcher", "k-researcher", "deep-research")),
+            ("other task", lambda: self.run_launch(*self.args(task="quick-scan")),
+             record("researcher", "k-researcher", "quick-scan", "sonnet")),
+            ("engineering ok", lambda: self.launch_eng(self.ok()),
+             record("engineer", "k-engineer", "engineering", repo="ophis/demo", branch="TASK-1-demo", worktree=wt)),
+            ("engineering invalid", lambda: self.launch_eng(eng.Invalid("x")), record("engineer", "k-engineer", "engineering"))]
+        for name, start_run, expected in cases:
+            with self.subTest(name):
+                self.calls = []
+                with self.register():
+                    self.assertEqual(start_run(), 0)
+                self.assertEqual(self.execute(), 0)
+                start = self.registered("start")
+                self.assertEqual(start[:2], ["start", "TASK-1"])
+                self.assertEqual(self.registered("end"), ["end", "TASK-1", start[2], "3"])
+                rec = json.loads(start[2])
+                self.assertRegex(rec.pop("started_at"), ISO)
+                self.assertEqual(rec, expected)
+
+    def test_hostile_repo_reaches_the_registry_verbatim(self):
+        hostile = dataclasses.replace(self.ok(), owner="a'$(touch x)", name='b"`touch y`')
+        when = "2026-09-30T20:00:00-04:00"
+        with self.register(), mock.patch.object(sessions, "now", return_value=when):
+            self.assertEqual(self.launch_eng(hostile), 0)
+        self.assertEqual(self.execute(), 0)
+        rec = json.dumps(sessions.base(sid=SID, cwd=os.path.join(self.work, "TASK-1"), role="engineer", task="engineering",
+                                       key="k-engineer", model="opus", started_at=when, repo="a'$(touch x)/b\"`touch y`",
+                                       branch="TASK-1-demo", worktree=hostile.worktree))
+        self.assertEqual(self.registered("start"), ["start", "TASK-1", rec])
+        self.assertEqual(self.registered("end"), ["end", "TASK-1", rec, "3"])
+        self.assertFalse([f for f in ("x", "y") if os.path.exists(os.path.join(self.tmp, f))])
+
+    def test_no_record_when_the_run_does_not_start(self):
+        clone = os.path.join(self.playground, "demo")
+        with mock.patch.object(sessions, "base") as base:
+            self.missing = {"k-researcher"}
+            self.assertEqual(self.run_launch(*self.args()), 2)
+            self.assertEqual(self.launch_eng(eng.Transient("x")), 3)
+            self.eng_memory(clone)
+            self.assertEqual(self.launch_eng(self.ok_at(clone)), 2)
+        base.assert_not_called()
+        self.assertEqual(self.calls, [])
 
     def test_rejects_unsafe_issue_or_sid(self):
         for flag, bad in (("--issue", "TASK-1$(rm -rf ~)"), ("--sid", "s1; ls")):

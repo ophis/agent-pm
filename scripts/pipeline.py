@@ -34,13 +34,13 @@ def harness_service():
     return load_config()["harness_key"]
 
 
-def linear_gql(query, **variables):
+def linear_gql(query, *, timeout=30, **variables):
     key = subprocess.run(["security", "find-generic-password", "-s", harness_service(), "-w"],
-                         capture_output=True, text=True, check=True).stdout.strip()
+                         capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
     req = urllib.request.Request("https://api.linear.app/graphql",
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": key})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.load(resp)
     if body.get("errors"):
         raise SystemExit(f"linear api error: {body['errors']}")

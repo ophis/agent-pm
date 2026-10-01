@@ -17,6 +17,7 @@ agent-pm/
 ├── scripts/
 │   ├── router.py          # picks and starts the next run
 │   ├── launch.py          # starts one claude run
+│   ├── sessions.py        # records each run's session on its issue
 │   ├── promote.py         # Handoff to the next role
 │   ├── prune.py           # deletes finished issues' worktrees, archives pm and engineer ones
 │   ├── eng.py             # engineering repo resolution and CLI
@@ -55,6 +56,7 @@ The Python scripts in `scripts/` that turn the board into runs. launchd runs the
 |---|---|---|
 | `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
 | `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, runs the task named by `--task` (one of the role's tasks), checks the `[docs]` clone exists, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files and the docs repo in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. For a `read_repo` task (both research tasks), it names the project's mapped repo in the prompt, lets the run call `research.py prepare` without approval, and bars it from editing the checkout, `scripts/` and the mapped repo's clone. |
+| `sessions.py` | Each run's tmux session, before and after `claude` | Writes the session's `Run <sid>` record on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the worktrees (`worktrees/` and `src/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
 | `eng.py` | Launcher and engineer runs | Resolves an Engineering issue's target repo and branch; its `status` and `comments` commands feed the engineer run. |
@@ -117,8 +119,9 @@ python3 scripts/router.py --pick --role researcher  # recover, then claim the ro
 python3 scripts/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux ls                                             # running sessions, agent-pm-<role>
 tmux attach -t agent-pm-<role>                      # watch a role's live run
-cd work/TASK-12 && claude --resume <session-id>     # open a run's session (id from logs/runs.log)
 ```
+
+To open a run's session, copy the command from its issue's `Run <sid>` record (see Session records).
 
 | Log | Contents |
 |---|---|
@@ -128,6 +131,14 @@ cd work/TASK-12 && claude --resume <session-id>     # open a run's session (id f
 | `logs/runs.log` | Run start/resume/end; the router needs it to resume, so keep it |
 
 Every run works in `work/<ID>/`. Moving the repo or `work/` breaks resuming in-progress runs and the installed plists.
+
+### Session records
+
+Each session the launcher starts or resumes gets a `Run <sid>` attachment on its issue, written by the harness account: `running` just before `claude` starts, then `done` (exit 0) or `interrupted` when it ends. Its subtitle holds the status, times, exit code and the command that reopens the session as its role, `cd <work/ID> && LINEAR_KEYCHAIN_SERVICE=<key> claude --resume <sid>`; its metadata also holds the role, task, model and, for an Engineering run, the repo, branch and worktree. The router's resume of an interrupted session updates the same record; a new claim (e.g. after Revise) adds one. Sessions from before records existed have none.
+
+- Before opening a session by hand, move its issue out of In Progress, or the router may resume the same session once it has been idle 30 minutes.
+- A record stuck at `running` with no `agent-pm-<role>` tmux session was killed before `claude` exited; `tmux ls` is the truth.
+- A write is one attempt of at most 10 seconds; a failure only adds a `registry-error` line to `logs/projects/<task>.log` and never affects the run. Promote leaves records out of the next issue's `## Source`, and the router never reads them: it still resumes from `logs/runs.log`.
 
 ## Configuration
 

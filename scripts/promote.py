@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import CONFIG, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
+import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
@@ -157,7 +158,7 @@ class Promoter:
 
     def description(self, src, comments, detail):
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
-        attachments = src["attachments"]["nodes"]
+        attachments = [a for a in src["attachments"]["nodes"] if not sessions.is_record(a)]
         if attachments:
             parts.append("## Source\n" + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments))
         if comments:
