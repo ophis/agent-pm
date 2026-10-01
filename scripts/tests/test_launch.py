@@ -39,6 +39,14 @@ SID = "0f0f0f0f-1111-2222-3333-444444444444"
 DOCS = " Docs: {repo}, clone {clone}, branch {branch}."
 ENG_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "eng.py"))
 RESEARCH_PY = shlex.quote(os.path.join(pipeline.ROOT, "scripts", "research.py"))
+PROBE = 'claude -p "Reply with OK." --model haiku --output-format stream-json --verbose --setting-sources user --strict-mcp-config'
+
+
+def read_repo_rules(root=pipeline.ROOT):
+    quoted = lambda name: shlex.quote(os.path.join(root, "scripts", name))
+    return [f"Bash(python3 {quoted('research.py')} prepare)", f"Bash({PROBE})", f"Bash(python3 {quoted('router.py')} --gate new)"]
+
+
 IDS = f" Team: {TEAM}. States: " + ", ".join(f"{pipeline.STATES[k]}={IDS_BY_KEY[k]}" for k in pipeline.STATES) + "."
 FAKE_CLAUDE = """#!/bin/bash
 echo "claude says hi"
@@ -574,7 +582,7 @@ class Launch(unittest.TestCase):
                     self.assertEqual(self.after(argv, "--disallowedTools")[3:], [
                         f"Edit({slashes(rd)}/worktrees/*/.git)", f"Edit({slashes(rd)}/src/**)",
                         f"Edit({slashes(pipeline.ROOT)}/scripts/**)", *mapped])
-                    self.assertEqual(argv[-2:], ["--allowedTools", f"Bash(python3 {RESEARCH_PY} prepare)"])
+                    self.assertEqual(argv[-4:], ["--allowedTools", *read_repo_rules()])
 
     def test_read_repo_quotes_the_script_path(self):
         self.read_repo()
@@ -584,7 +592,12 @@ class Launch(unittest.TestCase):
         path = shlex.quote(os.path.join(root, "scripts", "research.py"))
         argv = self.claude()
         self.assertTrue(argv[2].endswith(f" research.py: python3 {path}."))
-        self.assertEqual(argv[-1], f"Bash(python3 {path} prepare)")
+        self.assertEqual(argv[-3:], read_repo_rules(root))
+
+    def test_probe_rule_matches_the_deep_research_task(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        with open(os.path.join(root, "tasks", "deep-research.md")) as f:
+            self.assertIn(f"{launch.PROBE} | <router> --gate new", f.read())
 
     def test_read_repo_run_dir_inside_the_mapped_clone(self):
         self.read_repo()
@@ -673,7 +686,7 @@ class RealConfig(unittest.TestCase):
         rd = os.path.join(self.work, "TASK-1")
         return self.expected("researcher", task, effort,
                              extra_deny=[f"Edit({slashes(rd)}/src/**)", f"Edit({slashes(pipeline.ROOT)}/scripts/**)"],
-                             tail=f" research.py: python3 {RESEARCH_PY}.", allowed=[f"Bash(python3 {RESEARCH_PY} prepare)"])
+                             tail=f" research.py: python3 {RESEARCH_PY}.", allowed=read_repo_rules())
 
     def test_every_task(self):
         wt = os.path.join(self.work, "TASK-1", "worktrees", "TASK-1-demo")

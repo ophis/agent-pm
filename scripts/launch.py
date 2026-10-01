@@ -32,6 +32,8 @@ PRINCIPLES = os.path.join(ROOT, "roles", "principles.md")
 # Set inside the tmux command: a running tmux server would otherwise supply its own environment.
 ENV = {"PATH": PATH, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}  # claude -p otherwise kills a workflow after 10 idle minutes
 REGISTER = [sys.executable, os.path.join(ROOT, "scripts", "sessions.py")]
+# Text of deep-research's brake probe (tasks/deep-research.md); a read_repo run is allowed it, and router.py --gate new, exactly.
+PROBE = 'claude -p "Reply with OK." --model haiku --output-format stream-json --verbose --setting-sources user --strict-mcp-config'
 
 
 def prompt(a, run):
@@ -188,9 +190,10 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
             f" Docs: {docs['repo']}, clone {docs['clone']}, branch {docs['branch']}.")
     env, allowed, repo = {}, [], None
     if read_repo:
-        cli = shlex.quote(os.path.join(ROOT, "scripts", "research.py"))
+        cli, router = (shlex.quote(os.path.join(ROOT, "scripts", n)) for n in ("research.py", "router.py"))
         tail += f" research.py: python3 {cli}."
-        env, allowed = {"AGENT_PM_ISSUE": a.issue}, [f"Bash(python3 {cli} prepare)"]
+        env = {"AGENT_PM_ISSUE": a.issue}
+        allowed = [f"Bash(python3 {cli} prepare)", f"Bash({PROBE})", f"Bash(python3 {router} --gate new)"]
     if job.task.get("repo_from_issue"):
         step = repo_step(a, job.task, gql or linear_gql, run, cfg["project_repos"])
         if isinstance(step, eng.Transient):
