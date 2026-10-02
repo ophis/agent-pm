@@ -23,9 +23,15 @@ RUNS_LOG = os.path.join(LOGS, "runs.log")
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
 
-def session(role):
-    """The tmux session of a role's runs."""
-    return f"agent-pm-{role}"
+def session(role, issue):
+    """The tmux session of a role's run on an issue."""
+    return f"agent-pm-{role}-{issue}"
+
+
+def parse_session(name, roles):
+    """(role, issue) of a session() name whose role is in roles; None for any other name."""
+    m = re.fullmatch(r"agent-pm-(.+)-([A-Z][A-Z0-9]*-\d+)", name)
+    return (m[1], m[2]) if m and m[1] in roles else None
 
 
 @functools.cache

@@ -711,6 +711,17 @@ class Paths(unittest.TestCase):
                          "/p/" + pipeline.escape(pipeline.run_dir("TASK-9")) + f"/{sid}.jsonl")
         self.assertIsNone(pipeline.transcript("TASK-9", "../x"))
 
+    def test_session_names(self):
+        roles = {"researcher", "pm", "code-review"}
+        for role, ident in (("researcher", "TASK-1"), ("pm", "AB2-17"), ("code-review", "X-3")):
+            name = pipeline.session(role, ident)
+            self.assertEqual(name, f"agent-pm-{role}-{ident}")
+            self.assertEqual(pipeline.parse_session(name, roles), (role, ident))
+        for name in ("main", "agent-pm-researcher", "agent-pm-unknown-TASK-1", "agent-pm-researcher-task-1",
+                     "agent-pm-researcher-TASK-1-x", "agent-pm-researcher-TASK-1-2", "x-agent-pm-researcher-TASK-1",
+                     "agent-pm--TASK-1", "agent-pm-researcher-TASK-", "agent-pm-researcher-1-2"):
+            self.assertIsNone(pipeline.parse_session(name, roles), name)
+
 
 class AllowedTools(unittest.TestCase):
     def check(self, allowed_tools, repo_from_issue=True):

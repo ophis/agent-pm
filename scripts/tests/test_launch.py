@@ -188,18 +188,18 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.run_launch(*self.args()), 0)
         (cmd,) = self.calls
         run_dir = os.path.join(self.work, "TASK-1")
-        self.assertEqual(cmd[:7], ["tmux", "new-session", "-d", "-s", "agent-pm-researcher", "-c", run_dir])
+        self.assertEqual(cmd[:7], ["tmux", "new-session", "-d", "-s", "agent-pm-researcher-TASK-1", "-c", run_dir])
         self.assertTrue(os.path.isdir(run_dir))
         self.assertEqual(cmd[7:9], ["bash", "-c"])
         self.assertIn("export PATH=/opt/homebrew/bin:", cmd[9])
         self.assertIn("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000", cmd[9])
         self.assertIn(os.path.join(self.logs, "projects", "deep-research.log"), cmd[9])
 
-    def test_tmux_session_per_role(self):
+    def test_tmux_session_per_role_and_issue(self):
         with mock.patch.object(eng, "resolve", return_value=eng.Invalid("x")):
             self.assertEqual(self.run_launch(*self.args(assignee="E@X.com")), 0)
         (cmd,) = self.calls
-        self.assertEqual(cmd[2:5], ["-d", "-s", "agent-pm-engineer"])
+        self.assertEqual(cmd[2:5], ["-d", "-s", "agent-pm-engineer-TASK-1"])
 
     def test_new_prompt_and_flags(self):
         self.run_launch(*self.args())
@@ -332,7 +332,7 @@ class Launch(unittest.TestCase):
         self.assertNotIn("deep-research.log", script)
         self.assertEqual(self.checked, ["k-researcher"])
         self.assertIn("LINEAR_KEYCHAIN_SERVICE=k-researcher", self.exports())
-        self.assertEqual(self.calls[0][2:5], ["-d", "-s", "agent-pm-researcher"])
+        self.assertEqual(self.calls[0][2:5], ["-d", "-s", "agent-pm-researcher-TASK-1"])
 
     def test_task_decides_the_repo_step_and_allowed_tools(self):
         self.engineer_tasks(review_tools=True)

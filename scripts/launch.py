@@ -208,7 +208,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo, project_repo, playground)
     rec = sessions.base(sid=a.sid, cwd=cwd, key=job.key, started_at=sessions.now())
-    sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c",
+    sh(["tmux", "new-session", "-d", "-s", session(role, a.issue), "-c", cwd, "bash", "-c",
         script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs, rec)], check=True)
     return 0
 
