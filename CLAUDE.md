@@ -44,3 +44,17 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3` because macOS
 - `logs/` (gitignored) is runner state: keep it; launchd can't start a job whose log dir is missing.
 - Schedules are `scripts/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload with `launchctl bootout` + `bootstrap`); they hold absolute paths. The router plist passes `--now`, which skips `router.py`'s 01–06 hours check; drop it to run only at night.
 - Linear's issue lists can lag a just-made state change; re-read the issue's state before acting on it.
+
+## Agent skills
+
+### Issue tracker
+
+Linear, the agent-pm board; Todo with a role account as assignee launches a run. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage roles map to Linear states and assignees, not labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. See `docs/agents/domain.md`.
