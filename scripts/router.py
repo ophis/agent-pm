@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
 
-(no mode)           One tick (launchd): hours, tmux sessions agent-pm-<role>-<ID> (a role with max_runs of them is full;
+(no mode)           One tick (launchd): hours, tick lock (router.lock beside the runs log; busy -> skip; none with --dry-run),
+                    tmux sessions agent-pm-<role>-<ID> (a role with max_runs of them is full;
                     all full -> skip), prune, Recover and plan (issues with a session skipped; full roles neither resume
                     nor claim), usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
@@ -14,6 +15,7 @@
 --prune RUNS_LOG    Drop runs.log lines older than 7 days.
 Needs Python 3.11+.
 """
+import fcntl
 import json
 import os
 import re
@@ -21,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -411,13 +414,36 @@ def append(path, line):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
 
 
+@contextmanager
+def tick_lock(runs):
+    """Yields whether this tick got the non-blocking flock on router.lock beside the runs log; closing the file releases it."""
+    d = os.path.dirname(os.path.abspath(runs))
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "router.lock"), "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+        else:
+            yield True
+
+
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
-    """One launchd tick. Returns the exit code."""
-    dry, issue_id = opts["dry"], opts["issue"]
+    """One launchd tick under the tick lock (none on --dry-run). Returns the exit code."""
+    dry = opts["dry"]
     if not opts["now"] and not 1 <= hour <= 6:
         log("skip: outside hours")
         if not dry:
             return 0
+    with (nullcontext(True) if dry else tick_lock(runs)) as free:
+        if not free:
+            log("skip: another tick running")
+            return 0
+        return run_tick(opts, gql, now, cfg, tdir, runs, sh, root)
+
+
+def run_tick(opts, gql, now, cfg, tdir, runs, sh, root):
+    dry, issue_id = opts["dry"], opts["issue"]
     roles = runnable(cfg, root)
     found = tmux_sessions(roles, sh)
     running = frozenset(i for _, i in found)

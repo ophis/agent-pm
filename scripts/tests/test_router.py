@@ -1,3 +1,4 @@
+import fcntl
 import io
 import json
 import os
@@ -1150,6 +1151,67 @@ class Tick(Base):
         self.assertEqual(launch[launch.index("--issue") + 1], "TASK-2")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
         self.assertFalse(any("id" in v["f"] for q, v in fake.queries if "issues(filter" in q))
+
+    def lock_path(self):
+        return os.path.join(self.tmp.name, "router.lock")
+
+    def assertLockFree(self):
+        with open(self.lock_path(), "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_held_lock_skips_the_tick(self):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        with open(self.lock_path(), "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for argv in ((), ("--now",), ("--now", "--issue", "TASK-1")):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tick(fake, *argv), 0)
+                self.assertEqual(self.said(), ["skip: another tick running"], argv)
+                self.assertEqual((fake.queries, self.sh.calls), ([], []), argv)
+                self.assertIn("TASK-8", self.state, argv)
+
+    def test_hours_check_comes_before_the_lock(self):
+        with open(self.lock_path(), "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.tick(FakeLinear([]), hour=12)
+        self.assertEqual(self.said(), ["skip: outside hours"])
+
+    def test_lock_is_free_after_a_tick(self):
+        self.tick(FakeLinear([issue("TASK-1", "Todo", "researcher")]))
+        self.assertEqual(self.launched(), "TASK-1")
+        self.assertLockFree()
+        self.tick(FakeLinear([]), shell=FakeShell(FULL))
+        self.assertEqual(self.said()[-1], "skip: all roles full (engineer, pm, researcher)")
+        self.assertLockFree()
+
+    def test_lock_is_free_after_a_tick_that_raised(self):
+        class Down(FakeLinear):
+            def __call__(self, query, **v):
+                raise RuntimeError("linear down")
+
+        with self.assertRaisesRegex(RuntimeError, "linear down"):
+            self.tick(Down([]))
+        self.assertEqual(self.sh.calls, [LIST])
+        self.assertLockFree()
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        self.tick(fake)
+        self.assertEqual(self.launched(), "TASK-1")
+
+    def test_dry_run_takes_no_lock(self):
+        self.tick(FakeLinear([issue("TASK-1", "Todo", "researcher")]), "--dry-run")
+        self.assertFalse(os.path.exists(self.lock_path()))
+        with open(self.lock_path(), "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.tick(FakeLinear([issue("TASK-1", "Todo", "researcher")]), "--dry-run")
+        self.assertEqual(self.said()[:2], ["plan: new (1 in queue)", "plan: new"])
+        self.assertNotIn("skip: another tick running", self.said())
+        self.assertEqual(self.sh.launches(), [])
+
+    def test_lock_creates_the_runs_log_directory(self):
+        runs = os.path.join(self.tmp.name, "logs", "runs.log")
+        with redirect_stderr(io.StringIO()):
+            router.main(["--now"], gql=FakeLinear([]), now=NOW, tdir=self.tdir, config=self.config, runs=runs, sh=FakeShell(), root=self.root)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "logs", "router.lock")))
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
