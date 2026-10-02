@@ -239,7 +239,7 @@ class Runnable(unittest.TestCase):
         self.assertEqual(sorted(runs), ["engineer", "researcher"])
         r, e = runs["researcher"], runs["engineer"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks"])
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks", "max_runs"])
         self.assertEqual((r.key, e.key), ("k-researcher", "k-engineer"))
         self.assertEqual((r.account, e.account), ("r@x.com", "e@x.com"))
         self.assertEqual((r.task_name, e.task_name), ("deep-research", "engineering"))
@@ -277,7 +277,7 @@ class Runnable(unittest.TestCase):
         self.assertEqual((light.task_name, light.task["model"], light.instructions),
                          ("light-research", "sonnet", os.path.join(self.root, "tasks", "light-research.md")))
         self.assertEqual(light.task, e.tasks["light-research"])
-        for field in ("charter", "memory", "read_only", "key", "account", "tasks"):
+        for field in ("charter", "memory", "read_only", "key", "account", "tasks", "max_runs"):
             self.assertEqual(getattr(light, field), getattr(e, field), field)
         self.assertEqual(e.with_task("engineering"), e)
         self.assertEqual(e.task_name, "engineering")
@@ -285,6 +285,41 @@ class Runnable(unittest.TestCase):
             with self.subTest(bad):
                 with self.assertRaises(KeyError):
                     e.with_task(bad)
+
+    def test_max_runs(self):
+        self.assertEqual({n: r.max_runs for n, r in self.runs().items()}, {"researcher": 1, "engineer": 1})
+        self.write("roles/researcher.toml", RESEARCHER_ID + "max_runs = 2\n")
+        runs = self.runs()
+        self.assertEqual((runs["researcher"].max_runs, runs["engineer"].max_runs), (2, 1))
+        self.assertEqual(pipeline.registry(self.root, DOCS_CLONE)[0]["researcher"].max_runs, 2)
+        self.write("roles/engineer.toml", self.read_role("engineer") + "max_runs = 1\n")
+        self.assertEqual(self.runs()["engineer"].max_runs, 1)
+
+    def test_max_runs_rejected(self):
+        for toml, shown in (("0", "0"), ("-1", "-1"), ('"2"', "'2'"), ("2.0", "2.0"), ("true", "True"), ("[2]", "[2]")):
+            with self.subTest(toml):
+                self.write("roles/researcher.toml", RESEARCHER_ID + f"max_runs = {toml}\n")
+                self.rejects(f"max_runs must be a positive integer: {shown}", prefix="roles/researcher.toml")
+
+    def test_max_runs_above_one_needs_no_memory(self):
+        mem = os.path.join(self.outside, "researcher")
+        os.makedirs(mem)
+        self.write("roles/researcher.toml", RESEARCHER_ID + f'memory = "{mem}"\n')
+        self.assertEqual(self.runs()["researcher"].max_runs, 1)
+        self.write("roles/researcher.toml", RESEARCHER_ID + f'memory = "{mem}"\nmax_runs = 1\n')
+        self.assertEqual(self.runs()["researcher"].memory, mem)
+        self.write("roles/researcher.toml", RESEARCHER_ID + f'memory = "{mem}"\nmax_runs = 2\n')
+        self.rejects("max_runs 2 would share the memory dir", prefix="roles/researcher.toml")
+
+    def test_max_runs_above_one_bars_repo_from_issue(self):
+        self.write("roles/engineer.toml", self.read_role("engineer") + "max_runs = 2\n")
+        self.rejects("max_runs 2 with task 'engineering', which has repo_from_issue", prefix="roles/engineer.toml")
+        self.two_tasks()
+        self.write("tasks/engineering.toml", ENGINEERING.replace("repo_from_issue = true\n", ""))
+        self.write("roles/engineer.toml", self.read_role("engineer") + "max_runs = 2\n")
+        self.rejects("max_runs 2 with task 'light-research', which has repo_from_issue", prefix="roles/engineer.toml")
+        self.write("tasks/light-research.toml", 'model = "sonnet"\neffort = "low"\nprefix = "LR"\n')
+        self.assertEqual(self.runs()["engineer"].max_runs, 2)
 
     def test_projects_table_rejected(self):
         self.rejects("pipeline.toml has unknown keys: projects", text=ROLES + '[projects.p]\nnext = "q"\n')
@@ -533,7 +568,9 @@ class RealConfig(unittest.TestCase):
     """The repo's pipeline.toml values that test_launch's RealConfig does not pin."""
     def test_real_config(self):
         cfg = pipeline.load_config()
-        self.assertEqual(sorted(pipeline.runnable(cfg)), ["engineer", "pm", "researcher"])
+        runs = pipeline.runnable(cfg)
+        self.assertEqual(sorted(runs), ["engineer", "pm", "researcher"])
+        self.assertEqual({n: r.max_runs for n, r in runs.items()}, {"researcher": 2, "pm": 2, "engineer": 1})
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
         self.assertEqual(cfg["docs"], {
             "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
