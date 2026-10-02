@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
 
-(no mode)           One tick (launchd): hours, tick lock (router.lock beside the runs log; busy -> skip; none with --dry-run),
-                    tmux sessions agent-pm-<role>-<ID> (a role with max_runs of them is full;
-                    all full -> skip), prune, Recover and plan (issues with a session skipped; full roles neither resume
-                    nor claim), usage gate, resume or claim, launch.
+(no mode)           One tick (launchd): hours, tick lock (router.lock beside the runs log; held -> skip; none with --dry-run),
+                    tmux sessions agent-pm-<role>-<ID> (a role with max_runs of them is full; all full -> skip),
+                    prune, Recover and plan (issues with a session skipped; full roles neither resume nor claim),
+                    usage gate (five_hour < 0.6: any role not full; < 0.9: only roles with no session), resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
   --issue ID        With --now: claim this Todo issue instead of the top one; skip if it has a session or its role is full.
