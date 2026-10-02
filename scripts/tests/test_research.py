@@ -15,6 +15,11 @@ class FakeRun(te.FakeRun):
         res = super().__call__(argv, timeout)
         return res(argv) if callable(res) else res
 
+def sequence(*results):
+    """A FakeRun result giving each call the next of results."""
+    it = iter(results)
+    return lambda argv: next(it)
+
 def put(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -30,6 +35,9 @@ class Prepare(unittest.TestCase):
         work = os.path.join(self.root, "work")
         patcher = mock.patch.object(pipeline, "WORK", work)
         patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch("time.sleep")
+        self.sleep = patcher.start()
         self.addCleanup(patcher.stop)
         self.base = os.path.join(work, "TASK-26")
         self.src = os.path.join(self.base, "src")
@@ -96,6 +104,28 @@ class Prepare(unittest.TestCase):
         self.assertEqual(self.prepare(), self.expected())
         self.assertEqual(self.argvs(), [self.api, self.get_url, self.get_push_url, self.fetch, self.add])
         self.assertEqual(self.run_.calls[-2:], [(self.fetch, eng.LONG), (self.add, eng.LONG)])
+
+    def test_a_failing_fetch_is_retried_up_to_3_times_then_adds(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.prepare(fetch=sequence(ok(code=1, stderr="lock"), ok(code=1, stderr="lock"), ok())), self.expected())
+        self.assertEqual(self.argvs().count(self.fetch), 3)
+        self.assertEqual(self.argvs()[-1], self.add)
+        self.assertEqual(self.sleep.call_args_list, [mock.call(3)] * 2)
+
+    def test_a_fetch_failing_4_times_exits_1_with_the_last_stderr(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.cli(fetch=sequence(*[ok(code=1, stderr=f"lock {i}") for i in range(1, 5)])), 1)
+        self.assertEqual((self.out, self.err), ("", "research.py: git fetch: lock 4\n"))
+        self.assertEqual(self.argvs().count(self.fetch), 4)
+        self.assertNotIn(self.add, self.argvs())
+        self.assertEqual(self.sleep.call_args_list, [mock.call(3)] * 3)
+
+    def test_a_failing_worktree_add_is_not_retried(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.cli(add=ok(code=128, stderr="fatal: busy")), 1)
+        self.assertEqual((self.out, self.err), ("", "research.py: git worktree add: fatal: busy\n"))
+        self.assertEqual((self.argvs().count(self.fetch), self.argvs().count(self.add)), (1, 1))
+        self.sleep.assert_not_called()
 
     def test_cli_prints_one_json_line(self):
         os.makedirs(self.clone)

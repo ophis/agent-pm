@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works up to `max_runs` issues per role at once (researcher and pm 2, engineer 1) and hands its output back to you for review.
 
 ## Files
 
@@ -10,7 +10,7 @@ agent-pm/
 ├── pipeline.toml          # Linear team and state ids, task label group and label ids, humans, role order, project → repo map, docs repo
 ├── roles/
 │   ├── principles.md      # rules for every role and task
-│   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks
+│   └── <role>.md + .toml  # researcher, pm, engineer: charter; account, key, tasks, max_runs
 ├── tasks/
 │   └── <task>.md + .toml  # deep-research, light-research, product-design, engineering: steps; model, effort, dirs
 ├── templates/             # research-report.md, prd.md
@@ -54,13 +54,13 @@ The Python scripts in `scripts/` that turn the board into runs. launchd runs the
 
 | Script | Runs | Does |
 |---|---|---|
-| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
-| `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, runs the task named by `--task` (one of the role's tasks), checks the `[docs]` clone exists, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files and the docs repo in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. For a `read_repo` task (both research tasks), it names the project's mapped repo in the prompt, lets the run call `research.py prepare` and the usage probe without approval, and bars it from editing the checkout, `scripts/` and the mapped repo's clone. |
+| `router.py` | Every 10 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with fewer than `max_runs` sessions: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Leaves an issue with a session alone. Below 60% 5-hour usage any such role may start; from 60% only a role with no session; none from 90% or with a weekly limit full. Skips the tick when every role has `max_runs` sessions, or while another tick holds `logs/router.lock`. |
+| `launch.py` | Called by the router | Starts one `claude -p` run in tmux session `agent-pm-<role>-<ID>` with cwd `work/<ID>/`. It picks the role from the issue's assignee, runs the task named by `--task` (one of the role's tasks), checks the `[docs]` clone exists, points the run's `linear` skill at the role's Keychain key, and names the principles, charter and task files and the docs repo in the prompt. It limits the run to its own directories. For `engineering`, it resolves and clones the target repo first. For a `read_repo` task (both research tasks), it names the project's mapped repo in the prompt, lets the run call `research.py prepare` and the usage probe without approval, and bars it from editing the checkout, `scripts/` and the mapped repo's clone. |
 | `sessions.py` | Each run's tmux session, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the worktrees (`worktrees/` and `src/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
 | `eng.py` | Launcher and engineer runs | Resolves an Engineering issue's target repo and branch; its `status` and `comments` commands feed the engineer run. |
-| `research.py` | Local and mixed research runs | `prepare` checks out the issue's target repo (cloned into `~/playground/<name>` if missing) at the latest commit of its default branch, detached, into `work/<ID>/src/<name>`; a resumed run reuses that checkout. The clone's files and branches stay as they are. |
+| `research.py` | Local and mixed research runs | `prepare` checks out the issue's target repo (cloned into `~/playground/<name>` if missing) at the latest commit of its default branch, detached, into `work/<ID>/src/<name>`; a resumed run reuses that checkout. A failed fetch (another run may hold the clone's ref lock) is retried up to 3 times, 3 seconds apart. The clone's files and branches stay as they are. |
 | `pipeline.py` | Shared | Linear API client, and loading and validating the config. |
 
 ## Using the board
@@ -113,12 +113,12 @@ The launcher never reads the key: it checks the item exists and sets `LINEAR_KEY
 ```bash
 python3 scripts/router.py --now --dry-run           # what the next tick would do; changes nothing
 python3 scripts/router.py --now                     # run a tick now, outside the schedule
-python3 scripts/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked
+python3 scripts/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked, has a session or its role is full
 python3 scripts/router.py --claim --dry-run         # preview the next claim and the blocked lines; changes nothing
 python3 scripts/router.py --pick --role researcher  # recover, then claim the role's top Todo issue that runs its default task
 python3 scripts/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
-tmux ls                                             # running sessions, agent-pm-<role>
-tmux attach -t agent-pm-<role>                      # watch a role's live run
+tmux ls                                             # running sessions, agent-pm-<role>-<ID>
+tmux attach -t agent-pm-<role>-<ID>                 # watch an issue's live run
 ```
 
 To open a run's session, copy the command from the code block of its issue's `Run <sid>` comment (see Session records).
@@ -139,13 +139,13 @@ Each session the launcher starts or resumes gets one `Run <sid>` comment on its 
 - A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, runs skip them, and the router never reads them: it still resumes from `logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.
 - Before opening a session by hand, move its issue out of In Progress, or the router may resume the same session once it has been idle 30 minutes.
-- A comment stuck at `running` with no `agent-pm-<role>` tmux session was killed before `claude` exited; `tmux ls` is the truth.
+- A comment stuck at `running` with no `agent-pm-<role>-<ID>` tmux session for its issue was killed before `claude` exited; `tmux ls` is the truth.
 - A write is one attempt of at most 10 seconds; a failure only adds a `registry-error` line to `logs/projects/<task>.log` and never affects the run.
 
 ## Configuration
 
 - `pipeline.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering and local or mixed research issues that have no `Repo:` line; `[docs]`, the docs repo: `repo` (`<owner>/<name>`), `clone` (local clone path, `~` allowed, must exist when a run starts) and `branch`, e.g. `ophis/private_docs`, `~/playground/private_docs`, `main`.
-- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only` (an entry `{docs_clone}` is the `[docs]` clone), `memory`.
+- `roles/`: `principles.md` (rules for every run) and one charter per role, each with a `.toml` of settings: `tasks` (first is the default), `account`, `key`, `read_only` (an entry `{docs_clone}` is the `[docs]` clone), `memory`, `max_runs` (most sessions of the role at once, default 1; above 1 not allowed with `memory` or a `repo_from_issue` task).
 - `tasks/`: the steps for each stage, each with a `.toml` (model, effort, extra dirs (`{docs_clone}` is the `[docs]` clone), `read_repo` (runs may check out the issue's target repo read-only through `research.py`), title `prefix`, required on the default task of any role that is some role's `next`).
 - `templates/`: the report and PRD skeletons.
 
