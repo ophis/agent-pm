@@ -23,9 +23,21 @@ RUNS_LOG = os.path.join(LOGS, "runs.log")
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
 
-def session(role):
-    """The tmux session of a role's runs."""
-    return f"agent-pm-{role}"
+ISSUE_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
+
+
+def session(role, issue):
+    """The tmux session of a role's run on one issue."""
+    return f"agent-pm-{role}-{issue}"
+
+
+def parse_session(name, roles):
+    """(role, issue) of a session named by session(), or None: role must be one of roles and the issue id end the name."""
+    for role in roles:
+        prefix = f"agent-pm-{role}-"
+        if name.startswith(prefix) and ISSUE_RE.fullmatch(name[len(prefix):]):
+            return role, name[len(prefix):]
+    return None
 
 
 @functools.cache
@@ -139,7 +151,7 @@ STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review"
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
 DOCS_KEYS = ("repo", "clone", "branch")
 PIPELINE_ROLE_KEYS = {"next", "require_instructions"}
-ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
+ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key", "max_runs"}
 TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "read_repo", "allowed_tools", "prefix"}
 SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -202,12 +214,14 @@ class Role:
     tasks: tuple
     account: str
     key: str
+    max_runs: int
 
 
 @dataclass(frozen=True)
 class Run:
     """A role's task, resolved from roles/ and tasks/; every path is absolute. runnable() gives the default task (the first of tasks), with_task() another.
-    key is the role's Keychain service name, account its Linear email, tasks the role's {name: task table} in its order."""
+    key is the role's Keychain service name, account its Linear email, tasks the role's {name: task table} in its order,
+    max_runs how many of the role's sessions may run at once."""
     task_name: str
     task: dict
     charter: str
@@ -217,6 +231,7 @@ class Run:
     key: str
     account: str
     tasks: dict
+    max_runs: int
 
     def with_task(self, name):
         """This run for task `name` of the same role; KeyError when the role does not have it."""
@@ -324,7 +339,10 @@ def _role(name, r, root, resolve):
         raise SystemExit(f"{where}: account must be the role's Linear email: {account!r}")
     if not isinstance(key, str) or not key:
         raise SystemExit(f"{where}: key must be a Keychain service name: {key!r}")
-    return Role(tuple(read_only), memory, tuple(tasks), account, key)
+    max_runs = r.get("max_runs", 1)
+    if isinstance(max_runs, bool) or not isinstance(max_runs, int) or max_runs < 1:
+        raise SystemExit(f"{where}: max_runs must be a positive integer: {r.get('max_runs')!r}")
+    return Role(tuple(read_only), memory, tuple(tasks), account, key, max_runs)
 
 
 def _task(name, t, resolve):
@@ -364,6 +382,12 @@ def registry(root=ROOT, docs_clone=None):
     for name, r in roles.items():
         if unknown := [t for t in r.tasks if t not in tasks]:
             raise SystemExit(f"roles/{name}.toml: tasks {', '.join(unknown)} have no tasks/<task>.md + .toml pair")
+        if r.max_runs > 1:
+            # Parallel runs of one role share its memory directory, and repo_from_issue parallelism is TASK-46's.
+            if repo := next((t for t in r.tasks if tasks[t].get("repo_from_issue")), None):
+                raise SystemExit(f"roles/{name}.toml: max_runs {r.max_runs} needs every task without repo_from_issue: {repo}")
+            if r.memory:
+                raise SystemExit(f"roles/{name}.toml: max_runs {r.max_runs} and memory cannot both be set")
         if r.key in owner:
             raise SystemExit(f"roles/{name}.toml: key {r.key!r} is also roles/{owner[r.key]}.toml's")
         owner[r.key] = name
@@ -404,7 +428,7 @@ def runnable(cfg, root=ROOT):
                     raise SystemExit(f"roles/{name}.toml: read_only {REPO} needs {which} with repo_from_issue and no allowed_tools")
         task = r.tasks[0]
         out[name] = Run(task, tasks[task], os.path.join(root, "roles", f"{name}.md"), os.path.join(root, "tasks", f"{task}.md"),
-                        r.memory, r.read_only, r.key, r.account, role_tasks)
+                        r.memory, r.read_only, r.key, r.account, role_tasks, r.max_runs)
     return out
 
 

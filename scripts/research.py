@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Research runs: a read-only, detached worktree of the issue's target repo."""
-import json, os, re, subprocess, sys
+import json, os, re, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eng import LONG, PLAYGROUND, Invalid, Transient, _stderr, locate, read_issue, run_subdir, sh_run, target  # noqa: E402
 from pipeline import CONFIG, load_config, run_dir  # noqa: E402
 
 SHA = re.compile(r"[0-9a-f]{40}")
+FETCH_TRIES, FETCH_WAIT = 4, 5   # a run fetching the shared clone at the same time holds a ref lock; it is gone seconds later
 
 def _worktree(wt, clone):
     """(HEAD text, gitdir) of clone's worktree at wt, read from files only, or Invalid."""
@@ -20,7 +21,7 @@ def _worktree(wt, clone):
         return Invalid(f"{wt} is a worktree of {found}, not of {clone}")
     return head, gitdir
 
-def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
+def prepare(issue_id, gql, run, repos, playground=PLAYGROUND, sleep=time.sleep):
     issue = read_issue(issue_id, gql)
     if isinstance(issue, (Invalid, Transient)):
         return issue
@@ -45,7 +46,13 @@ def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
         steps += [("git fetch", ["git", "-C", t.clone, "fetch", "origin"]),
                   ("git worktree add", ["git", "-c", "core.symlinks=false", "-C", t.clone, "worktree", "add", "--detach", wt, f"origin/{t.default}"])]
     for what, argv in steps:
-        res = run(argv, LONG)
+        tries = FETCH_TRIES if what == "git fetch" else 1
+        for attempt in range(tries):
+            if attempt:
+                sleep(FETCH_WAIT)
+            res = run(argv, LONG)
+            if res.returncode == 0:
+                break
         if res.returncode != 0:
             return Transient(f"{what}: {_stderr(res)}")
     if steps:
@@ -57,7 +64,8 @@ def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
     return {"repo": f"{t.owner}/{t.name}", "mapped": t.mapped, "clone": t.clone, "default": t.default,
             "worktree": wt, "commit": found[0], "reused": not steps}
 
-def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, playground=PLAYGROUND):
+def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.stderr, config=CONFIG, playground=PLAYGROUND,
+         sleep=time.sleep):
     import argparse
     ap = argparse.ArgumentParser(prog="research.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -75,7 +83,7 @@ def main(argv, env=os.environ, gql=None, run=sh_run, out=sys.stdout, err=sys.std
     if gql is None:
         from pipeline import linear_gql as gql
     try:
-        r = prepare(issue, gql, run, cfg["project_repos"], playground)
+        r = prepare(issue, gql, run, cfg["project_repos"], playground, sleep)
     except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError) as e:
         err.write(f"research.py: prepare: {e!r}\n")
         return 1

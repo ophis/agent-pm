@@ -4,7 +4,8 @@
 launch.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
 The role is the one whose account is EMAIL, the issue's assignee (on a resume, its assignee now); it runs TASK, one of
 the role's tasks (the router resolves it). PROJECT_ID fills the prompt's Project: and, for a read_repo task or a role
-whose next role's default task has repo_from_issue, Project repo:. Every run works in work/<ID>/. Exits 2 for an
+whose next role's default task has repo_from_issue, Project repo:. Every run works in work/<ID>/, in its own tmux
+session agent-pm-<role>-<ID>, so a role with max_runs > 1 (roles/<role>.toml) can have one per issue. Exits 2 for an
 assignee that is not a role account or a config error (TASK not one of the role's tasks, a role memory overlapping the
 issue's repo, a role key missing from the Keychain, or the docs clone not a directory; logged), 3 when the run cannot
 start yet (transient: no transcript to resume, or the Engineering repo step failed transiently). A started run's tmux
@@ -208,7 +209,7 @@ def main(argv, sh=subprocess.run, config=None, runs=RUNS_LOG, logs=LOGS, gql=Non
     os.makedirs(cwd, exist_ok=True)
     cmd = command(a, job, tail, allowed, repo, project_repo, playground)
     rec = sessions.base(sid=a.sid, cwd=cwd, key=job.key, started_at=sessions.now())
-    sh(["tmux", "new-session", "-d", "-s", session(role), "-c", cwd, "bash", "-c",
+    sh(["tmux", "new-session", "-d", "-s", session(role, a.issue), "-c", cwd, "bash", "-c",
         script(a, cmd, {**ENV, "LINEAR_KEYCHAIN_SERVICE": job.key, **env}, plog, runs, rec)], check=True)
     return 0
 

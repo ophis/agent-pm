@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
 
-(no mode)           One tick (launchd): hours, per-role locks (all busy -> skip), prune, Recover and plan over idle roles,
-                    usage gate, resume or claim, launch.
+(no mode)           One tick (launchd, every 10 minutes): one flock on logs/router.lock (another tick holds it -> skip),
+                    hours, the roles' running sessions (all full -> skip), prune, Recover over every role and plan over
+                    the roles with a free slot, usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
-  --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is busy.
+  --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is full or it still has
+                    a session. Starts whatever the five-hour tier (SOLO_5H) says, the 0.9 ceiling apart.
 --pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given; only issues whose task is their role's default); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim (only issues whose task is their role's default): print "<ID> <url> <project>" of the claimed issue, or nothing.
 --gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
 --prune RUNS_LOG    Drop runs.log lines older than 7 days.
+A role runs up to max_runs sessions at once (roles/<role>.toml, default 1), one per issue: tmux agent-pm-<role>-<ID>.
 Needs Python 3.11+.
 """
+import fcntl
 import json
 import os
 import re
@@ -23,8 +27,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, role_for, role_ids, runnable, session, stage_order, task_group, team, transcript)
+from pipeline import (LOGS, PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
+                      parse_session, parse_time, role_for, role_ids, runnable, stage_order, task_group, team, transcript)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -32,6 +36,8 @@ CAP = 4
 KEEP = timedelta(days=7)
 SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
+SOLO_5H = 0.6   # at or above it, only a role with no session running may start one
+LOCK = os.path.join(LOGS, "router.lock")
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
 USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROLE] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
@@ -140,9 +146,32 @@ def is_live(tdir, issue, sid, now):
     return False
 
 
-def busy_roles(roles, sh):
-    """Sorted names of the roles whose session agent-pm-<role> exists; "=" makes tmux match the name exactly, not as a prefix."""
-    return sorted(r for r in roles if sh(["tmux", "has-session", "-t", "=" + session(r)], capture_output=True).returncode == 0)
+def running(roles, sh):
+    """{role: sorted issue ids of its running sessions} from one `tmux list-sessions`; no tmux server (non-zero exit) = none.
+    Only names agent-pm-<role>-<ID> of a known role count (pipeline.parse_session); any other session is ignored."""
+    res = sh(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True)
+    out = {r: [] for r in roles}
+    for name in ((res.stdout or "").splitlines() if res.returncode == 0 else []):
+        if found := parse_session(name.strip(), roles):
+            out[found[0]].append(found[1])
+    return {r: sorted(ids) for r, ids in out.items()}
+
+
+def sessions_line(live):
+    """`<role>=<ID>,<ID>` of each role with a session, for one log line."""
+    return ", ".join(f"{r}={','.join(ids)}" for r, ids in sorted(live.items()) if ids)
+
+
+def locked(path):
+    """An exclusive non-blocking flock on path (the fd holds it until it is closed), or None when another tick holds it."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
 def assignee_email(gql, team_id, ident):
@@ -181,7 +210,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 
 
 def gate(kind, lines):
-    """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
+    """(ok, summary, five_hour utilization) from the last rate_limit_event of the probe's stream-json; five is None when unreadable."""
     info = None
     for line in lines:
         try:
@@ -191,22 +220,26 @@ def gate(kind, lines):
         if isinstance(m, dict) and m.get("type") == "rate_limit_event":
             info = m.get("rate_limit_info") or {}
     if info is None:
-        return False, "no rate_limit_event"
+        return False, "no rate_limit_event", None
     windows = info.get("unifiedWindows") or {}
     five = (windows.get("five_hour") or {}).get("utilization")
     week = {k: v.get("utilization") for k, v in windows.items() if k.startswith("seven_day") and isinstance(v, dict)}
     summary = " ".join([f"status={info.get('status')}", f"five_hour={five}"] + [f"{k}={v}" for k, v in sorted(week.items())])
     if five is None:
-        return False, summary
+        return False, summary, None
     ok = info.get("status") != "rejected" and five < MAX_5H and all(v is None or v < 1 for v in week.values())
-    return ok, summary
+    return ok, summary, five
 
 
 class Board:
-    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None, root=ROOT):
+    """The team's issues assigned to role accounts. free: the roles with a slot left, the only ones a plan may start
+    (None = every role); busy: identifiers of the issues whose session is still running, which Recover and Pick leave alone."""
+    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None, root=ROOT, free=None, busy=()):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist, self.ready, self.blocked = {}, None, {}
+        self.queue, self.cands, self.busy = None, [], set(busy)
         self.runs = runnable(cfg, root)
+        self.free = set(self.runs) if free is None else set(free)
         if only is not None:
             if not only:
                 raise SystemExit("Board: only is empty")
@@ -292,13 +325,16 @@ class Board:
                  i=issue["id"], u={"stateId": self.states[state]})
 
     def recover(self):
-        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, k, task) or None."""
+        """Walk the role accounts' In Progress issues; returns the resume candidates (issue, sid, k, task) in order.
+        An issue whose session is still running is left alone entirely: not resumed, not requeued, not capped."""
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress")]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
-        cand = None
+        self.cands = []
         for issue, sid in mine:
             ident = issue["identifier"]
+            if ident in self.busy:
+                continue
             latest = latest_sid(self.entries, ident)
             if latest and is_live(self.tdir, ident, latest, self.now):
                 continue
@@ -314,7 +350,7 @@ class Board:
                     self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
                                                  f'({", ".join(run.tasks)}); needs a look.', "in_review")
                 else:
-                    cand = cand or (issue, sid, resume_count(self.entries, sid) + 1, task)
+                    self.cands.append((issue, sid, resume_count(self.entries, sid) + 1, task))
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
@@ -322,21 +358,40 @@ class Board:
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
                 self.comment_and_move(issue, INTERRUPTED, "todo")
-        return cand
+        return self.cands
 
-    def next_run(self):
-        """("resume", issue, sid, k, task), ("new",) or None, after Recover."""
-        cand = self.recover()
-        if cand:
-            issue, sid, k, task = cand
-            log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return ("resume", issue, sid, k, task)
-        todo = self.todo()
-        if todo:
-            log(f"plan: new ({len(todo)} in queue)")
+    def pool(self):
+        """The claimable Todo issues in pick order (priority, later role, oldest): ready, a free role's, with no session
+        of their own; read and logged once."""
+        if self.queue is None:
+            self.queue = []
+            for issue in sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"])):
+                if self.role(issue) not in self.free:
+                    continue
+                if issue["identifier"] in self.busy:
+                    log(f"pick: {issue['identifier']} still has a session; skipping")
+                    continue
+                self.queue.append(issue)
+        return self.queue
+
+    def plan_run(self, eligible=None):
+        """("resume", issue, sid, k, task), ("new",) or None for the roles in eligible (None = every free role), after
+        Recover; logs the plan."""
+        picked = (lambda role: role in self.free) if eligible is None else (lambda role: role in eligible)
+        for issue, sid, k, task in self.cands:
+            if picked(self.role(issue)):
+                log(f"plan: resume {issue['identifier']} session={sid} n={k}")
+                return ("resume", issue, sid, k, task)
+        if queue := [i for i in self.pool() if picked(self.role(i))]:
+            log(f"plan: new ({len(queue)} in queue)")
             return ("new",)
         log("plan: nothing to do")
         return None
+
+    def next_run(self):
+        """("resume", issue, sid, k, task), ("new",) or None, after Recover."""
+        self.recover()
+        return self.plan_run()
 
     def plan(self):
         run = self.next_run()
@@ -345,10 +400,12 @@ class Board:
             return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
         return run and "new"
 
-    def take(self, only=None, default_only=False):
-        """(claimed Todo issue, its task), or None; default_only leaves an issue whose task is not its role's default in Todo."""
-        # Pick: highest priority first, then later role, then oldest.
-        queue = sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+    def take(self, only=None, default_only=False, eligible=None):
+        """(claimed Todo issue, its task), or None; default_only leaves an issue whose task is not its role's default in Todo.
+        eligible narrows the pool to those roles (None = every free role)."""
+        queue = self.pool()
+        if eligible is not None:
+            queue = [i for i in queue if self.role(i) in eligible]
         if only:
             queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
@@ -404,24 +461,30 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         if not dry:
             return 0
     roles = runnable(cfg, root)
-    busy = busy_roles(roles, sh)
-    if len(busy) == len(roles):
-        log(f"skip: all roles busy ({', '.join(busy)})")
+    live = running(roles, sh)
+    full = sorted(r for r, job in roles.items() if len(live[r]) >= job.max_runs)
+    busy = {ident for ids in live.values() for ident in ids}
+    if len(full) == len(roles):
+        log(f"skip: all roles full ({sessions_line(live)})")
         return 0
     if busy:
-        log(f"busy: {', '.join(busy)}")
-        if issue_id:
+        log(f"running: {sessions_line(live)}" + (f"; full: {', '.join(full)}" if full else ""))
+    if issue_id:
+        if issue_id in busy:
+            log(f"skip: {issue_id} still has a session")
+            return 0
+        if full:
             role = role_for(roles, assignee_email(gql, cfg["team"], issue_id))
-            if role in busy:
-                log(f"skip: {issue_id} belongs to busy role {role}")
+            if role in full:
+                log(f"skip: {issue_id} belongs to full role {role}")
                 return 0
     if not dry:
         try:
             prune(runs, now)
         except Exception as e:
             log(f"skip: prune failed: {e}")
-    # Recover sees only idle roles' issues, so it never touches an issue whose session is running.
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy], root=root)
+    # Recover covers every role, but only a role with a free slot and an issue with no session of its own can start one.
+    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root, free=[r for r in roles if r not in full], busy=busy)
     run = board.next_run()
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
         if board.is_blocked(issue_id):
@@ -435,7 +498,16 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     # The usage probe's cwd only, not a run cwd: runs work in work/<ID>/ (launch.py).
     probe = sh(["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose"],
                cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    ok, usage = gate(kind or "new", probe.stdout.splitlines())
+    ok, usage, five = gate(kind or "new", probe.stdout.splitlines())
+    solo = None
+    if ok and five >= SOLO_5H:  # second tier: only a role with no session at all may start one
+        solo = [r for r in roles if not live[r]]
+        log(f"usage: five_hour={five} at or above {SOLO_5H}; only roles with no session ({', '.join(solo) or 'none'}) may start")
+        if issue_id:
+            log(f"usage: --issue {issue_id} starts anyway")
+        else:
+            run = board.plan_run(solo)
+            kind = run[0] if run else None
     if dry:
         log(f"plan: {kind or 'nothing'}")
         log(f"usage: {usage} ({kind or 'new'} {'allowed' if ok else 'blocked'})")
@@ -443,12 +515,15 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     if not ok:
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
+    if not kind:
+        log("skip: nothing to do")
+        return 0
     if kind == "resume":
         _, issue, sid, k, task = run
         append(runs, f"resume {issue['identifier']} session={sid} n={k} task={task}")
         mode = ["--mode", "resume", "--k", str(k)]
     else:
-        taken = board.take(issue_id)
+        taken = board.take(issue_id, eligible=None if issue_id else solo)
         if not taken:
             log("skip: nothing claimed")
             return 0
@@ -464,7 +539,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
 
 
 def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
-         sh=subprocess.run, hour=None, root=ROOT):
+         sh=subprocess.run, hour=None, root=ROOT, lock=LOCK):
     args = [a for a in argv if a != "--dry-run"]
     dry = len(args) < len(argv)
     now = now or datetime.now(timezone.utc)
@@ -478,7 +553,14 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
             print(USAGE, file=sys.stderr)
             return 2
         os.environ["PATH"] = PATH
-        return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour, root)
+        fd = locked(lock)   # a manual tick and the scheduled one would otherwise each claim for the same role
+        if fd is None:
+            log("skip: another tick running")
+            return 0
+        try:
+            return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour, root)
+        finally:
+            os.close(fd)
     if args[0] == "--pick":
         rest, only = args[1:], None
         if rest[:1] == ["--role"] and len(rest) >= 2:
@@ -500,7 +582,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
         print(USAGE, file=sys.stderr)
         return 2
     if mode == "--gate":
-        ok, summary = gate(rest[0], stdin)
+        ok, summary, _ = gate(rest[0], stdin)
         print(summary)
         return 0 if ok else 1
     if mode == "--prune":

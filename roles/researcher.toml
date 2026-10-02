@@ -1,3 +1,4 @@
 tasks = ["deep-research", "light-research"]       # tasks this role can run; the first is its default
 account = "frank.agent.w+researcher@gmail.com"    # the role's Linear account
 key = "linear-api-key-researcher"                 # Keychain service holding that account's API key
+max_runs = 2                                      # sessions this role may run at once (default 1)

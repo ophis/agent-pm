@@ -66,16 +66,18 @@ class Prepare(unittest.TestCase):
                 (self.get_url, t["fetch_url"]), (self.fetch, t["fetch"]), (self.add, t["add"]), (self.remove, t["remove"])]
 
     def prepare(self, desc="Repo: ophis/agent-pm", repos=None, project=None, **over):
-        self.run_ = FakeRun(self.table(**over))
-        return research.prepare("TASK-26", te.gql_for(desc, project=project), self.run_, repos or {}, playground=self.pg)
+        self.run_, self.slept = FakeRun(self.table(**over)), []
+        return research.prepare("TASK-26", te.gql_for(desc, project=project), self.run_, repos or {}, playground=self.pg,
+                                sleep=self.slept.append)
 
     def cli(self, desc="Repo: ophis/agent-pm", env=None, gql=None, tail="", project=None, **over):
-        self.run_ = FakeRun(self.table(**over))
+        self.run_, self.slept = FakeRun(self.table(**over)), []
         config = os.path.join(self.root, "pipeline.toml")
         put(config, HEADER + tail)
         out, err = io.StringIO(), io.StringIO()
         rc = research.main(["prepare"], env={"AGENT_PM_ISSUE": "TASK-26"} if env is None else env,
-                           gql=gql or te.gql_for(desc, project=project), run=self.run_, out=out, err=err, config=config, playground=self.pg)
+                           gql=gql or te.gql_for(desc, project=project), run=self.run_, out=out, err=err, config=config,
+                           playground=self.pg, sleep=self.slept.append)
         self.out, self.err = out.getvalue(), err.getvalue()
         return rc
 
@@ -136,6 +138,39 @@ class Prepare(unittest.TestCase):
         self.assertEqual((self.out, self.err), ("", "research.py: git worktree remove: fatal: busy\n"))
         self.assertEqual(self.argvs()[-1], self.remove)
         self.assertNotIn(self.fetch, self.argvs())
+        self.assertEqual((self.argvs().count(self.remove), self.slept), (1, []))
+
+    def flaky(self, failures, stderr="cannot lock ref 'refs/remotes/origin/main'"):
+        """A result that fails the first `failures` calls, then succeeds."""
+        seen = []
+        def res(argv):
+            seen.append(argv)
+            return ok(code=1, stderr=stderr) if len(seen) <= failures else ok()
+        return res
+
+    def test_a_fetch_losing_a_ref_lock_is_retried(self):
+        os.makedirs(self.clone)
+        for failures in range(research.FETCH_TRIES):
+            with self.subTest(failures=failures):
+                shutil.rmtree(self.base, ignore_errors=True)
+                self.assertEqual(self.prepare(fetch=self.flaky(failures)), self.expected())
+                self.assertEqual(self.argvs().count(self.fetch), failures + 1)
+                self.assertEqual(self.slept, [research.FETCH_WAIT] * failures)
+                self.assertEqual(self.argvs().count(self.add), 1)
+
+    def test_a_fetch_failing_every_try_is_transient(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.cli(fetch=self.flaky(research.FETCH_TRIES)), 1)
+        self.assertEqual((self.out, self.err), ("", "research.py: git fetch: cannot lock ref 'refs/remotes/origin/main'\n"))
+        self.assertEqual(self.argvs().count(self.fetch), research.FETCH_TRIES)
+        self.assertEqual(self.slept, [research.FETCH_WAIT] * (research.FETCH_TRIES - 1))
+        self.assertNotIn(self.add, self.argvs())
+
+    def test_only_the_fetch_is_retried(self):
+        os.makedirs(self.clone)
+        self.assertEqual(self.cli(add=self.flaky(1, stderr="fatal: invalid reference")), 1)
+        self.assertEqual((self.out, self.err), ("", "research.py: git worktree add: fatal: invalid reference\n"))
+        self.assertEqual((self.argvs().count(self.add), self.slept), (1, []))
 
     def test_src_symlink_exits_2(self):
         os.makedirs(self.clone)

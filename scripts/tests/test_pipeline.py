@@ -239,7 +239,8 @@ class Runnable(unittest.TestCase):
         self.assertEqual(sorted(runs), ["engineer", "researcher"])
         r, e = runs["researcher"], runs["engineer"]
         self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks"])
+                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks", "max_runs"])
+        self.assertEqual((r.max_runs, e.max_runs), (1, 1))
         self.assertEqual((r.key, e.key), ("k-researcher", "k-engineer"))
         self.assertEqual((r.account, e.account), ("r@x.com", "e@x.com"))
         self.assertEqual((r.task_name, e.task_name), ("deep-research", "engineering"))
@@ -277,7 +278,7 @@ class Runnable(unittest.TestCase):
         self.assertEqual((light.task_name, light.task["model"], light.instructions),
                          ("light-research", "sonnet", os.path.join(self.root, "tasks", "light-research.md")))
         self.assertEqual(light.task, e.tasks["light-research"])
-        for field in ("charter", "memory", "read_only", "key", "account", "tasks"):
+        for field in ("charter", "memory", "read_only", "key", "account", "tasks", "max_runs"):
             self.assertEqual(getattr(light, field), getattr(e, field), field)
         self.assertEqual(e.with_task("engineering"), e)
         self.assertEqual(e.task_name, "engineering")
@@ -467,6 +468,24 @@ class Runnable(unittest.TestCase):
         self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
         self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
 
+    def test_max_runs(self):
+        self.write("roles/researcher.toml", "max_runs = 3\n" + RESEARCHER_ID)
+        self.assertEqual((self.runs()["researcher"].max_runs, self.runs()["engineer"].max_runs), (3, 1))
+        for bad in ("0", "-1", "1.5", '"2"', "true", "[2]"):
+            with self.subTest(bad):
+                self.write("roles/researcher.toml", f"max_runs = {bad}\n" + RESEARCHER_ID)
+                self.rejects("max_runs must be a positive integer", prefix="roles/researcher.toml")
+
+    def test_max_runs_above_one_needs_no_repo_and_no_memory(self):
+        self.write("roles/engineer.toml", "max_runs = 2\n" + ENGINEER_ID)   # engineering has repo_from_issue
+        self.rejects("max_runs 2 needs every task without repo_from_issue: engineering", prefix="roles/engineer.toml")
+        self.write("roles/engineer.toml", "max_runs = 1\n" + ENGINEER_ID)
+        self.assertEqual(self.runs()["engineer"].max_runs, 1)
+        self.write("roles/researcher.toml", f'max_runs = 2\nmemory = "{self.outside}"\n' + RESEARCHER_ID)
+        self.rejects("max_runs 2 and memory cannot both be set", prefix="roles/researcher.toml")
+        self.write("roles/researcher.toml", f'memory = "{self.outside}"\n' + RESEARCHER_ID)
+        self.assertEqual(self.runs()["researcher"].memory, self.outside)
+
     def memory(self, path, read_only):
         self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
 
@@ -540,6 +559,8 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
         self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
+        self.assertEqual({r: run.max_runs for r, run in pipeline.runnable(cfg).items()},
+                         {"researcher": 2, "pm": 2, "engineer": 1})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
         tasks = pipeline.registry()[1]
         self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
@@ -655,6 +676,30 @@ class TaskGroupCheck(unittest.TestCase):
                     pipeline.task_group(gql, self.cfg(labels))
                 self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
                 self.assertEqual(len(gql.calls), 1)
+
+
+class Sessions(unittest.TestCase):
+    ROLES = ("researcher", "pm", "engineer")
+
+    def test_session_name_per_role_and_issue(self):
+        self.assertEqual(pipeline.session("pm", "TASK-9"), "agent-pm-pm-TASK-9")
+        self.assertEqual(pipeline.session("researcher", "AB1-100"), "agent-pm-researcher-AB1-100")
+
+    def test_parse_session(self):
+        for name, want in (("agent-pm-pm-TASK-9", ("pm", "TASK-9")),
+                           ("agent-pm-researcher-AB1-100", ("researcher", "AB1-100")),
+                           ("agent-pm-engineer-TASK-1", ("engineer", "TASK-1")),
+                           # not this pipeline's, or not a session name it would write
+                           ("agent-pm-researcher", None), ("agent-pm-researcher-", None), ("agent-pm-ghost-TASK-1", None),
+                           ("agent-pm-researcher-task-1", None), ("agent-pm-researcher-TASK", None),
+                           ("agent-pm-researcher-TASK-1-2", None), ("agent-pm-researcher-x-TASK-1", None),
+                           ("my-agent-pm-researcher-TASK-1", None), ("agent-pm", None), ("0", None), ("", None)):
+            with self.subTest(name):
+                self.assertEqual(pipeline.parse_session(name, self.ROLES), want)
+
+    def test_parse_session_only_knows_the_roles_it_is_given(self):
+        self.assertIsNone(pipeline.parse_session("agent-pm-pm-TASK-9", ("researcher",)))
+        self.assertEqual(pipeline.parse_session(pipeline.session("pm", "TASK-9"), {"pm": object()}), ("pm", "TASK-9"))
 
 
 class Paths(unittest.TestCase):
