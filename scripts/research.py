@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Research runs: a read-only, detached worktree of the issue's target repo."""
-import json, os, re, subprocess, sys
+import json, os, re, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eng import LONG, PLAYGROUND, Invalid, Transient, _stderr, locate, read_issue, run_subdir, sh_run, target  # noqa: E402
 from pipeline import CONFIG, load_config, run_dir  # noqa: E402
 
 SHA = re.compile(r"[0-9a-f]{40}")
+FETCH_RETRIES, FETCH_WAIT = 3, 3  # another run may hold a ref lock on the shared clone
 
 def _worktree(wt, clone):
     """(HEAD text, gitdir) of clone's worktree at wt, read from files only, or Invalid."""
@@ -46,6 +47,11 @@ def prepare(issue_id, gql, run, repos, playground=PLAYGROUND):
                   ("git worktree add", ["git", "-c", "core.symlinks=false", "-C", t.clone, "worktree", "add", "--detach", wt, f"origin/{t.default}"])]
     for what, argv in steps:
         res = run(argv, LONG)
+        for _ in range(FETCH_RETRIES if what == "git fetch" else 0):
+            if res.returncode == 0:
+                break
+            time.sleep(FETCH_WAIT)
+            res = run(argv, LONG)
         if res.returncode != 0:
             return Transient(f"{what}: {_stderr(res)}")
     if steps:
