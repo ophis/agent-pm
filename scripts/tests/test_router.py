@@ -262,7 +262,13 @@ def event(status="allowed", five=0.1, **week):
 
 class Gate(unittest.TestCase):
     def test_no_event(self):
-        self.assertEqual(router.gate("new", ['{"type":"system"}', "garbage"]), (False, "no rate_limit_event"))
+        self.assertEqual(router.gate("new", ['{"type":"system"}', "garbage"]), (False, "no rate_limit_event", None))
+
+    def test_returns_five_hour(self):
+        self.assertEqual(router.gate("new", [event(five=0.9), "{}", event(five=0.65, seven_day=0.2)]),
+                         (True, "status=allowed five_hour=0.65 seven_day=0.2", 0.65))
+        no_five = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {}}})
+        self.assertEqual(router.gate("new", [no_five]), (False, "status=allowed five_hour=None", None))
 
     def test_ok_from_the_last_event(self):
         rows = (([event(five=0.89)], True),
@@ -279,11 +285,15 @@ class Gate(unittest.TestCase):
                 self.assertEqual(router.gate("new", lines)[0], ok)
 
     def test_main_reads_stdin(self):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            rc = router.main(["--gate", "resume"], gql=None, stdin=io.StringIO(event(five=0.5, seven_day=0.3) + "\n"))
-        self.assertEqual(rc, 0)
-        self.assertEqual(out.getvalue().strip(), "status=allowed five_hour=0.5 seven_day=0.3")
+        for kind, text, rc, said in (("resume", event(five=0.5, seven_day=0.3), 0, "status=allowed five_hour=0.5 seven_day=0.3"),
+                                     ("new", event(five=0.7, seven_day=0.3), 0, "status=allowed five_hour=0.7 seven_day=0.3"),
+                                     ("new", event(five=0.9), 1, "status=allowed five_hour=0.9"),
+                                     ("new", '{"type":"system"}', 1, "no rate_limit_event")):
+            with self.subTest(said=said):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(router.main(["--gate", kind], gql=None, stdin=io.StringIO(text + "\n")), rc)
+                self.assertEqual(out.getvalue(), said + "\n")
 
 
 class Plan(Base):
@@ -332,6 +342,19 @@ class Plan(Base):
                 for ident, _, m, _, _ in specs:
                     self.resumable(ident, ident.lower(), m)
                 self.assertEqual(self.run_main(fake, "--plan")[1], f"resume TASK-2 task-2 1 https://linear.app/x/TASK-2 {project}")
+
+    def test_recover_returns_every_candidate_in_order(self):
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=3), issue("TASK-2", "In Progress", "pm", priority=1, project=PD),
+                         issue("TASK-3", "In Progress", "researcher", priority=3))
+        self.resumable("TASK-1", "a", 100)
+        self.resumable("TASK-2", "b", 50, "product-design")
+        self.resumable("TASK-3", "c", 200)
+        self.add("resume", "TASK-3", "c", 150)
+        self.assertEqual(self.run_main(fake, "--plan")[1], f"resume TASK-2 b 1 https://linear.app/x/TASK-2 {PD}")
+        board = router.Board(fake, router.parse_log(self.log), self.tdir, NOW, True, pipeline.load_config(self.config))
+        self.assertEqual([(i["identifier"], self.names[s], k, task) for i, s, k, task in board.recover()],
+                         [("TASK-2", "b", 1, "product-design"), ("TASK-3", "c", 2, "deep-research"), ("TASK-1", "a", 1, "deep-research")])
+        self.assertEqual(fake.mutations, [])
 
     def test_no_current_sid_never_outranks(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=1), issue("TASK-2", "In Progress", "researcher", priority=4))
@@ -952,7 +975,7 @@ class Tick(Base):
         said = self.said()
         self.assertEqual(said[:5], ["skip: outside hours", "running: engineer TASK-7, pm TASK-5, pm TASK-6", "full: engineer, pm",
                                     "plan: new (1 in queue)", "plan: new"])
-        self.assertRegex(said[5], r"^usage: status=allowed .*\(new allowed\)$")
+        self.assertRegex(said[5], r"^usage: status=allowed .*\(any role\)$")
         self.assertEqual(len(said), 6)
         self.assertEqual([c[0] for c in self.sh.calls].count("claude"), 1)
         self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
@@ -1010,11 +1033,97 @@ class Tick(Base):
         self.assertEqual(len(fake.reads()), 1)
 
     def test_usage_blocked(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.tick(fake, shell=FakeShell(probe_five=0.95))
-        self.assertIn("skip: new blocked by usage", self.err)
-        self.assertEqual(self.sh.launches(), [])
-        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        for five, resume in ((0.9, False), (0.95, False), (0.9, True)):
+            with self.subTest(five=five, resume=resume):
+                self.lines, self.hist = [], {}
+                issues = [issue("TASK-1", "Todo", "researcher")]
+                if resume:
+                    issues.append(issue("TASK-2", "In Progress", "pm", project=PD))
+                    self.resumable("TASK-2", "b", 60)
+                fake = FakeLinear(issues, self.hist)
+                before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
+                self.tick(fake, shell=FakeShell(probe_five=five))
+                self.assertEqual(self.said()[-1], f"skip: {'resume' if resume else 'new'} blocked by usage: "
+                                                  f"status=allowed five_hour={five} seven_day=0.1")
+                self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], before))
+
+    def test_usage_tier_one_launches_any_role_not_full(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=3, project=PD)])
+        self.tick(fake, shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=0.5))
+        self.assertEqual(self.said(), ["running: researcher TASK-8", "plan: new (2 in queue)", "pick: TASK-1 (2 in queue)",
+                                       "claim: TASK-1 task=deep-research", f"launch TASK-1 ({DR}) exit=0"])
+
+    def test_usage_tier_two_claims_for_a_role_with_no_session(self):
+        for five in (0.6, 0.7, 0.89):
+            with self.subTest(five=five):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=3, project=PD)])
+                self.tick(fake, shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=five))
+                self.assertEqual(self.said(), ["running: researcher TASK-8", "plan: new (2 in queue)",
+                                               f"usage: status=allowed five_hour={five} seven_day=0.1 (only roles with no session: engineer, pm)",
+                                               "pick: TASK-2 (1 in queue)", "claim: TASK-2 task=product-design", f"launch TASK-2 ({PD}) exit=0"])
+                self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-2"]["state"]), ("Todo", "In Progress"))
+
+    def test_usage_tiers_resume(self):
+        """researcher (one session) has the first resume candidate; pm (no session) a later candidate or a Todo issue."""
+        resume, new = ["--mode", "resume", "--k", "1"], ["--mode", "new"]
+        rows = ((0.5, False, "resume", "TASK-1", resume), (0.7, False, "resume", "TASK-2", resume), (0.7, True, "start", "TASK-3", new))
+        for five, todo, line, launched, mode in rows:
+            with self.subTest(five=five, todo=todo):
+                self.lines, self.hist = [], {}
+                issues = [issue("TASK-1", "In Progress", "researcher", priority=1)]
+                self.resumable("TASK-1", "a", 120)
+                if todo:
+                    issues.append(issue("TASK-3", "Todo", "pm", priority=4, project=PD))
+                else:
+                    issues.append(issue("TASK-2", "In Progress", "pm", priority=3, project=PD))
+                    self.resumable("TASK-2", "b", 60)
+                fake = FakeLinear(issues, self.hist)
+                self.tick(fake, shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=five))
+                self.assertIn("plan: resume TASK-1 session=a n=1", self.said())
+                self.assertEqual(self.launched(), launched)
+                (launch,) = self.sh.launches()
+                self.assertEqual(launch[launch.index("--mode"):], mode)
+                self.assertEqual(self.state.splitlines()[-1].split()[2:4], [line, launched])
+                self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_usage_tier_two_skips_when_only_busy_roles_have_work(self):
+        nothing = "skip: nothing for an eligible role (status=allowed five_hour=0.7 seven_day=0.1)"
+        rows = ((["agent-pm-researcher-TASK-8"], "engineer, pm"),
+                (["agent-pm-researcher-TASK-8", "agent-pm-pm-TASK-9", "agent-pm-engineer-TASK-7"], "none"))
+        for names, idle in rows:
+            for resume in (False, True):
+                with self.subTest(idle=idle, resume=resume):
+                    self.lines, self.hist = [], {}
+                    issues = [issue("TASK-1", "Todo", "researcher")]
+                    if resume:
+                        issues.append(issue("TASK-2", "In Progress", "researcher"))
+                        self.resumable("TASK-2", "b", 60)
+                    fake = FakeLinear(issues, self.hist)
+                    before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
+                    self.tick(fake, shell=FakeShell(names, probe_five=0.7))
+                    self.assertEqual(self.said()[-2:], [f"usage: status=allowed five_hour=0.7 seven_day=0.1 (only roles with no session: {idle})",
+                                                        nothing])
+                    self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], before))
+
+    def test_usage_tier_two_issue_flag(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=4, project=PD),
+                           issue("TASK-3", "In Progress", "pm", priority=1, project=PD)], self.hist)
+        self.resumable("TASK-3", "c", 60)
+        self.tick(fake, "--now", "--issue", "TASK-1", shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=0.7))
+        self.assertEqual(self.said()[-1], "skip: nothing for an eligible role (status=allowed five_hour=0.7 seven_day=0.1)")
+        self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
+        self.tick(fake, "--now", "--issue", "TASK-2", shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=0.7))
+        self.assertEqual(self.launched(), "TASK-2")
+        self.assertEqual(self.sh.launches()[0][-2:], ["--mode", "new"])
+        self.assertEqual([fake.issues[i]["state"] for i in ("TASK-1", "TASK-2", "TASK-3")], ["Todo", "In Progress", "In Progress"])
+
+    def test_dry_run_usage_tiers(self):
+        for five, said in ((0.5, "any role"), (0.6, "roles with no session"), (0.9, "blocked")):
+            with self.subTest(five=five):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.tick(fake, "--dry-run", shell=FakeShell(["agent-pm-researcher-TASK-8"], probe_five=five))
+                self.assertEqual(self.said()[-2:], ["plan: new", f"usage: status=allowed five_hour={five} seven_day=0.1 ({said})"])
+                self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
 
     def test_resume(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)

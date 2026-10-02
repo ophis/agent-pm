@@ -33,6 +33,7 @@ CAP = 4
 KEEP = timedelta(days=7)
 SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
+IDLE_ONLY_5H = 0.6
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
 USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROLE] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
@@ -183,7 +184,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 
 
 def gate(kind, lines):
-    """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
+    """(ok, summary, five_hour) from the last rate_limit_event of the probe's stream-json."""
     info = None
     for line in lines:
         try:
@@ -193,15 +194,15 @@ def gate(kind, lines):
         if isinstance(m, dict) and m.get("type") == "rate_limit_event":
             info = m.get("rate_limit_info") or {}
     if info is None:
-        return False, "no rate_limit_event"
+        return False, "no rate_limit_event", None
     windows = info.get("unifiedWindows") or {}
     five = (windows.get("five_hour") or {}).get("utilization")
     week = {k: v.get("utilization") for k, v in windows.items() if k.startswith("seven_day") and isinstance(v, dict)}
     summary = " ".join([f"status={info.get('status')}", f"five_hour={five}"] + [f"{k}={v}" for k, v in sorted(week.items())])
     if five is None:
-        return False, summary
+        return False, summary, None
     ok = info.get("status") != "rejected" and five < MAX_5H and all(v is None or v < 1 for v in week.values())
-    return ok, summary
+    return ok, summary, five
 
 
 class Board:
@@ -302,12 +303,12 @@ class Board:
                  i=issue["id"], u={"stateId": self.states[state]})
 
     def recover(self):
-        """Walk the role accounts' In Progress issues but those with a session; returns the first resume candidate
-        (issue, sid, k, task) of a role not full, or None."""
+        """Walk the role accounts' In Progress issues but those with a session; returns the resume candidates
+        (issue, sid, k, task) of roles not full, in resume order."""
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in self.running]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
-        cand = None
+        cands = []
         for issue, sid in mine:
             ident = issue["identifier"]
             latest = latest_sid(self.entries, ident)
@@ -325,7 +326,7 @@ class Board:
                     self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
                                                  f'({", ".join(run.tasks)}); needs a look.', "in_review")
                 elif role not in self.full:
-                    cand = cand or (issue, sid, resume_count(self.entries, sid) + 1, task)
+                    cands.append((issue, sid, resume_count(self.entries, sid) + 1, task))
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
@@ -333,35 +334,38 @@ class Board:
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
                 self.comment_and_move(issue, INTERRUPTED, "todo")
-        return cand
+        return cands
 
     def next_run(self):
-        """("resume", issue, sid, k, task), ("new",) or None, after Recover."""
-        cand = self.recover()
-        if cand:
-            issue, sid, k, task = cand
+        """(kind, resume candidates) after Recover; kind is "resume" (planning the first candidate), "new" or None."""
+        cands = self.recover()
+        if cands:
+            issue, sid, k, _ = cands[0]
             log(f"plan: resume {issue['identifier']} session={sid} n={k}")
-            return ("resume", issue, sid, k, task)
+            return "resume", cands
         todo = self.todo()
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
-            return ("new",)
+            return "new", cands
         log("plan: nothing to do")
-        return None
+        return None, cands
 
     def plan(self):
-        run = self.next_run()
-        if run and run[0] == "resume":
-            _, issue, sid, k, _ = run
+        kind, cands = self.next_run()
+        if kind == "resume":
+            issue, sid, k, _ = cands[0]
             return f"resume {issue['identifier']} {sid} {k} {issue['url']} {issue['project']['name']}"
-        return run and "new"
+        return kind
 
-    def take(self, only=None, default_only=False):
-        """(claimed Todo issue, its task), or None; default_only leaves an issue whose task is not its role's default in Todo."""
+    def take(self, only=None, default_only=False, roles=None):
+        """(claimed Todo issue, its task), or None; default_only leaves an issue whose task is not its role's default in Todo;
+        roles: only these roles' issues."""
         # Pick: highest priority first, then later role, then oldest.
         queue = sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
             queue = [i for i in queue if i["identifier"] == only]
+        if roles is not None:
+            queue = [i for i in queue if self.role(i) in roles]
         for issue in queue:
             if self.attempts(issue) >= CAP:
                 log(f"pick: {issue['identifier']} reached {CAP} attempts; In Review")
@@ -418,6 +422,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     found = tmux_sessions(roles, sh)
     running = frozenset(i for _, i in found)
     full = sorted(r for r, run in roles.items() if sum(s == r for s, _ in found) >= run.max_runs)
+    idle = sorted(set(roles).difference(r for r, _ in found))
     if found:
         log(f"running: {', '.join(f'{r} {i}' for r, i in found)}")
     if len(full) == len(roles):
@@ -439,12 +444,11 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         except Exception as e:
             log(f"skip: prune failed: {e}")
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root, running=running, full=frozenset(full))
-    run = board.next_run()
+    kind, cands = board.next_run()
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
         if board.is_blocked(issue_id):
             return 0
-        run = ("new",)
-    kind = run[0] if run else None
+        kind, cands = "new", []
     if not kind and not dry:
         log("skip: nothing to do")
         return 0
@@ -452,20 +456,28 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     # The usage probe's cwd only, not a run cwd: runs work in work/<ID>/ (launch.py).
     probe = sh(["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose"],
                cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    ok, usage = gate(kind or "new", probe.stdout.splitlines())
+    ok, usage, five = gate(kind or "new", probe.stdout.splitlines())
+    idle_only = ok and five >= IDLE_ONLY_5H
     if dry:
         log(f"plan: {kind or 'nothing'}")
-        log(f"usage: {usage} ({kind or 'new'} {'allowed' if ok else 'blocked'})")
+        log(f"usage: {usage} ({'roles with no session' if idle_only else 'any role' if ok else 'blocked'})")
         return 0
     if not ok:
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
-    if kind == "resume":
-        _, issue, sid, k, task = run
+    if idle_only:
+        log(f"usage: {usage} (only roles with no session: {', '.join(idle) or 'none'})")
+    eligible = idle if idle_only else set(roles).difference(full)
+    if cand := next((c for c in cands if board.role(c[0]) in eligible), None):
+        issue, sid, k, task = cand
         append(runs, f"resume {issue['identifier']} session={sid} n={k} task={task}")
         mode = ["--mode", "resume", "--k", str(k)]
     else:
-        taken = board.take(issue_id)
+        todo = [i for i in board.todo() if issue_id in (None, i["identifier"])]
+        if (cands or todo) and not any(board.role(i) in eligible for i in todo):
+            log(f"skip: nothing for an eligible role ({usage})")
+            return 0
+        taken = board.take(issue_id, roles=eligible)
         if not taken:
             log("skip: nothing claimed")
             return 0
@@ -517,7 +529,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
         print(USAGE, file=sys.stderr)
         return 2
     if mode == "--gate":
-        ok, summary = gate(rest[0], stdin)
+        ok, summary, _ = gate(rest[0], stdin)
         print(summary)
         return 0 if ok else 1
     if mode == "--prune":
