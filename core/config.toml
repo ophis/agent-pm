@@ -1,0 +1,63 @@
+# Core pack config. A task's value overrides its role's, which overrides the global one.
+#   tier       model tier 1–4 (1 = strongest); the driver config maps it to a model
+#   effort     low | medium | high | max; the driver config maps it to the client's effort
+#   templates  files under templates/ inlined into the prompt
+#   read       dirs the run may read but never edit; `repo` is the target repo's worktree
+#   write      extra writable dirs; the workdir and the output file's dir are always writable
+#   commands   exact shell commands the driver pre-approves
+#   output     destination: type = github (repo, branch, dir) | local | pull-request
+
+# ── Global ──────────────────────────────────────────────
+tier = 2
+effort = "high"
+
+[output]
+type = "local"
+
+# ── Researcher ──────────────────────────────────────────
+[roles.researcher]
+default_task = "deep-research"
+
+[roles.researcher.tasks.deep-research]
+templates = ["research-report"]
+read = ["repo"]
+
+[roles.researcher.tasks.deep-research.output]
+type = "github"
+repo = "ophis/private_docs"
+branch = "main"
+dir = "Research/"
+
+[roles.researcher.tasks.light-research]
+templates = ["research-report"]
+read = ["repo"]
+
+[roles.researcher.tasks.light-research.output]
+type = "github"
+repo = "ophis/private_docs"
+branch = "main"
+dir = "Research/"
+
+# ── PM ──────────────────────────────────────────────────
+[roles.pm]
+default_task = "product-design"
+
+[roles.pm.tasks.product-design]
+templates = ["prd"]
+
+[roles.pm.tasks.product-design.output]
+type = "github"
+repo = "ophis/private_docs"
+branch = "main"
+dir = "Product Design/"
+
+# ── Engineer ────────────────────────────────────────────
+[roles.engineer]
+default_task = "engineering"
+
+[roles.engineer.tasks.engineering]
+effort = "max"
+write = ["repo"]
+
+[roles.engineer.tasks.engineering.output]
+type = "pull-request"

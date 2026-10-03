@@ -1,0 +1,3 @@
+# Two-layer config: abstract task config, per-client driver config
+
+Task and role config hold only client-neutral values: a model tier (`tier1`–`tier4`), an abstract effort level, and constraints (readable and writable dirs, exact allowed commands). Each driver has its own config mapping those to its client: tiers to model names (Claude Code: e.g. `tier1` → `fable`, `tier2` → `opus`, `tier3` → `sonnet`, `tier4` → `haiku`), effort levels to the client's effort, plus anything in the client's own syntax, such as Claude Code `--allowedTools` rules. Retargeting a client or swapping a model then edits one driver config, never a task.

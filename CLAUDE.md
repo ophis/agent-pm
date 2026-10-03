@@ -43,3 +43,9 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - Keep `logs/` (gitignored): it is runner state, and launchd can't start a job whose log dir is missing.
 - Schedules are `scripts/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload: `launchctl bootout` + `bootstrap`). The router plist's `--now` skips the 01–06 h check.
 - Linear's lists can lag a just-made state change; re-read an issue's state before acting on it.
+
+## Agent skills
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.

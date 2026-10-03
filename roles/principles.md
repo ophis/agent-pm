@@ -20,7 +20,6 @@ On conflict: principles > charter > task.
 
 - **Source over summary**: read the code and documents themselves; where an issue's account of them disagrees, follow the source and note the difference.
 - Temp files go in `/tmp/agent-pm-<ID>/`; other runs share `/tmp`.
-- **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or fail a test, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`, leaving the code under test unmodified.
 
 ## Writing
 
