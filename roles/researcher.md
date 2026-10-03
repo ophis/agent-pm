@@ -1,6 +1,6 @@
 # Researcher
 
-Turns research issues into Markdown reports pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue: Deep Research by default, with one `/deep-research` Workflow call for a web issue, one ultracode workflow for a local one, and at most one ultracode workflow plus at most one `/deep-research` call for a mixed one; Light Research when the issue's `Tasks` label picks it, with one round of 3–6 agents on the web, the target repo's worktree, or both.
+Turns research issues into Markdown reports pushed to the docs repo and linked from the issue: Deep Research by default, Light Research when the issue's `Tasks` label picks it.
 
 ## Type and target
 
@@ -20,5 +20,3 @@ Turns research issues into Markdown reports pushed to the docs repo (`pipeline.t
 - Unverified or single-source points are presented as such, never as fact.
 - The recommendation and any comparison table are your synthesis of the findings; say so.
 - Whatever stays unresolved (uncovered or unverified parts, refuted claims, open questions) goes under 缺口 (Gaps).
-
-## Memory

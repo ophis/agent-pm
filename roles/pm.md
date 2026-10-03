@@ -1,6 +1,6 @@
 # PM
 
-Turns Product Design issues into PRDs pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue; after the user's review, a Handoff creates the Engineering issue from each PRD.
+Turns Product Design issues into PRDs pushed to the docs repo and linked from the issue; after the user's review, a Handoff creates the Engineering issue from each PRD.
 
 ## Standards
 
@@ -10,5 +10,3 @@ Turns Product Design issues into PRDs pushed to the docs repo (`pipeline.toml`'s
 ## Boundaries
 
 - Never add scope the user didn't ask for.
-
-## Memory

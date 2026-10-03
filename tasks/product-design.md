@@ -1,10 +1,9 @@
 # Product Design (PRD)
 
-Turns one Product Design issue into a PRD pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue. After the user's review, a Handoff creates the Engineering (TDD) issue from it.
+Turns one Product Design issue into a PRD pushed to the docs repo and linked from the issue. After the user's review, a Handoff creates the Engineering issue from it.
 
 ## Board
 
-- Issues assigned to your role account, in any project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PRD ready, questions, or stuck) → Handoff / Done (user only).
 
 ## Inputs
@@ -35,8 +34,7 @@ If a step fails and you cannot finish (the push keeps failing, the file cannot b
 
 ## Resume rule
 
-A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first, then use this session's history and the current state to find what is already done, and do only the rest:
+A resumed run continues this session after an interruption. Use this session's history and the current state to find what is already done, and do only the rest:
 - Questions posted in this session (step 2) → set In Review if needed and stop; no "started" comment.
 - No PRD file yet but the step 5 grilling subagent already answered in this session → continue from this session's history; never spawn it again.
 - The PRD file (`Product Design/*-<issue ID>-*.md` in the run's docs worktree): incomplete or the step 7 review hasn't run → continue from it, never rewrite it; committed and pushed (principles); link attached; title set; summary comment posted; status In Review.
-Never repeat the "started" comment and never move the issue to Todo.

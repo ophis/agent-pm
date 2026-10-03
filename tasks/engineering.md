@@ -4,13 +4,12 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 ## Board
 
-- Issues assigned to your role account, in any project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: PR ready, questions, build failed, or a bad `Repo:` line or project mapping) → Done (user only). Canceled only as in step 2.
 
 ## Inputs
 
 - The cwd is this run's directory `work/<ID>/` in the agent-pm root; `work/<ID>/…` below is a path in it, passed as an absolute path. The prompt's `Repo check: OK` line gives `<owner>/<name>` (may be followed by `(from project mapping)`), `<clone>`, `<default>` (the default branch), `<branch>` and `<worktree>` (`work/<ID>/worktrees/<branch>`).
-- `<eng> status` and `<eng> comments` print JSON, where `<eng>` is exactly the prompt's `eng.py:` command (`python3 <ROOT>/scripts/eng.py`; the launcher sets `AGENT_PM_ISSUE`). `status`: `repo`, `clone`, `default`, `branch`, `worktree`, `pr_title`, `branch_exists`, `worktree_exists`, `pr` (`number`, `url`, `state`), `plan_docs` (this branch's plan docs: `path`, `phase`). `comments`: `since`, `user`, `others`, entries with `at`, `source`, `kind`, `author`, `body`, `state`, `path`, `line`. Nonzero exit: reason on stderr.
+- `<eng> status` and `<eng> comments` print JSON, where `<eng>` is exactly the prompt's `eng.py:` command (`python3 <ROOT>/scripts/eng.py`; the launcher sets `AGENT_PM_ISSUE`). The steps use `status`'s `pr_title`, `pr` (`number`, `url`, `state`) and `plan_docs` (this branch's plan docs: `path`, `phase`), and `comments`' `user` and `others` entries (`at`, `source`, `kind`, `author`, `body`, `path`, `line`). Nonzero exit: reason on stderr.
 - A Handoff-created issue (principles) comes from the PRD issue: `## Source` holds the PRD link and `## Instructions` the `Repo:` line (optional in a mapped project) and which phase to build.
 
 ## Steps
@@ -44,4 +43,4 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 
 ## Resume rule
 
-A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first; it overrides any earlier resume rule in your context. Use `<eng> status` and this session's history to find what is done and do only the rest (step 4 decides the build). Never repeat `Build started`, never re-create a branch, worktree or PR, and never move the issue to Todo.
+A resumed run continues this session after an interruption. Use `<eng> status` and this session's history to find what is done and do only the rest (step 4 decides the build). Never re-create a branch, worktree or PR.

@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 Unattended agent pipeline driven by a Linear board: launchd-scheduled Python scripts pick Todo issues assigned to a role account (any project; the project is the product, the assignee is the stage: researcher → pm → engineer) and start one `claude -p` run per issue; each run is that role (`roles/<role>.md`) doing one of its tasks (`tasks/<task>.md`): the one the issue's `Tasks` label picks by id through `pipeline.toml`'s `[task_labels]`, else the role's default (first in `tasks`).
 
 ## Commands
@@ -34,7 +32,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3` because macOS
 
 - Every `roles/<role>` and `tasks/<task>` is an `.md` + `.toml` pair, and every role is runnable: its default task is the first in `tasks`. `pipeline.toml`'s `[roles.<role>]` holds `next` and `require_instructions`. Allowed keys are the `*_KEYS` sets in `pipeline.py`; an unpaired file, an unknown key, a `[task_labels]` key without a task pair or a task with both `read_repo` and `repo_from_issue` stops router, launcher and promote.
 - Where a rule goes: holds for every role → `roles/principles.md`; every task of one role → the charter `roles/<role>.md`; a document format → `templates/`; this task only (claiming, failure, hand-off, resume) → `tasks/<task>.md`. One rule, one place. Precedence: principles > charter > task.
-- Every task file defines a resume rule; a resumed session re-reads all three files.
+- Every task file defines a resume rule; the rules every resume shares are in `roles/principles.md`. A resumed session re-reads all three files.
 
 ## Gotchas
 

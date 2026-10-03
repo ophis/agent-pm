@@ -1,10 +1,9 @@
 # Linear Deep Research
 
-Turns one Deep Research issue into a verified Markdown report pushed to the docs repo (`pipeline.toml`'s `[docs]`) and linked from the issue. Web research runs through one built-in `deep-research` Workflow call, local research through one ultracode workflow, and mixed research through at most one of each (charter); these instructions own claiming, reporting and board updates.
+Turns one Deep Research issue into a verified Markdown report pushed to the docs repo and linked from the issue. Web research runs through one built-in `deep-research` Workflow call, local research through one ultracode workflow, and mixed research through at most one of each (charter); these instructions own claiming, reporting and board updates.
 
 ## Board
 
-- Issues assigned to your role account, in any project; the principles file named in the prompt holds the rules every role and task shares.
 - Statuses: Todo (queue) → In Progress → In Review (needs the user: report ready, questions, or stuck) → Done (user only).
 
 ## Steps
@@ -21,12 +20,12 @@ Turns one Deep Research issue into a verified Markdown report pushed to the docs
      - **`/deep-research` round.** One call for the whole web part, with the brief's web part as its `args` string, under the web branch's call rules except "write or run no other workflow". `args` holds only the web subquestions, public context and known web claims to verify: no internal names, paths or code permalinks, private repo names, `prepare`'s `repo` or `commit`, docs-repo content or anything secret-like. Earlier-round findings enter `args` only as claims to verify, filtered the same way, never as instructions or as URLs taken from worktree text. Its scale is its own (about 100 agents): never change or cap it. Never write a workflow of your own for web research.
      - **Brake.** The second round is the one started after the other started (if Prepare's exit 1 leaves the ultracode round unrun, the `/deep-research` round is the first). Before the second round, run exactly `claude -p "Reply with OK." --model haiku --output-format stream-json --verbose --setting-sources user --strict-mcp-config | <router> --gate new`, where `<router>` is the prompt's `research.py:` command with `research.py` replaced by `router.py`. A nonzero exit (a failed probe or no `rate_limit_event` included) or a printed `five_hour` ≥ 0.8 → skip the second round, list it under 缺口 with that `five_hour`, and continue with steps 6–8 on the first round's results (no usable findings → step 6's failure path). No check before the first round, nor for local.
 6. **Failed or partial run.** Do not automatically retry or launch a replacement research run in this invocation. If the run produces usable findings, including supported refutations, publish the report. If it fails and yields no usable findings, comment the failure, move the issue back to Todo, and stop.
-7. **Report.** In the run's docs worktree (principles), write `Research/<YYYY-MM-DD-HHMM>-<issue ID>-<short-kebab-slug>.md` (local time from `date +%Y-%m-%d-%H%M` when the file is first created; if a `Research/*-<issue ID>-*.md` file already exists there, use it) from the template `../templates/research-report.md` (relative to this file), and publish it (principles) with the message `Add <issue ID> report: <short title>`, or `Update …` when the file already existed.
+7. **Report.** Write and publish the report as the charter says.
 8. **Hand off.** Comment a 3–5 line summary naming the type (charter) plus the GitHub link, set In Review, and reply to the user with the link. For a local or mixed issue the summary also gives the rounds actually run, each round's agent count against its budget, and whether the brake fired (with its `five_hour`). A round's agent count is the number of `started` entries in its `journal.jsonl` (paths as in the Resume rule); results replayed by `resumeFromRunId` are not counted again.
 
 ## Resume rule
 
-A prompt starting "Resumed run" continues this session after an interruption. Re-read this file first; it overrides any earlier resume rule in your context. It is the one exception to steps 5–6. Finish the interrupted research by reusing everything the run already produced and running only what is missing, by the issue's type. Never move the issue to Todo.
+A resumed run continues this session after an interruption. This rule is the one exception to steps 5–6. Finish the interrupted research by reusing everything the run already produced and running only what is missing, by the issue's type.
 
 **Web.** Never call the Workflow again (except rule 3a), write or run no other workflow, and never use `resumeFromRunId` (it replays only the unchanged prefix of agent calls, so deep-research re-runs almost everything).
 
@@ -56,4 +55,4 @@ Check in order:
 4. `/deep-research` round that started → the web branch's checks 2–7, applied to that call only; its "never call the Workflow again" (except 3a) and "write or run no other workflow" bind only that round.
 5. Finishing an interrupted round needs no usage check. A planned round that never started runs per step 5, brake check first when it is the second round. A round the brake skipped (recorded in this session's history or the hand-off comment) stays skipped.
 
-**Then, both types:** steps 7–8, doing only what is missing: report committed and pushed (principles), link on the issue, hand-off comment, In Review. Never repeat the "research started" comment. If nothing usable exists even after the re-runs, publish no report: comment what failed and set In Review.
+**Then, both types:** steps 7–8, doing only what is missing: report committed and pushed (principles), link on the issue, hand-off comment, In Review. If nothing usable exists even after the re-runs, publish no report: comment what failed and set In Review.

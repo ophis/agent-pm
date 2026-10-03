@@ -1,6 +1,6 @@
 # Principles (every role and task)
 
-The prompt names this file, your role charter (who you are: responsibilities, standards, boundaries, memory) and your task (the steps for this ticket). These rules hold for every role and task. On conflict, this file outranks the charter, which outranks the task's steps.
+The prompt names this file, your role charter (who you are: responsibilities, standards, boundaries) and your task (the steps for this ticket). These rules hold for every role and task. On conflict, this file outranks the charter, which outranks the task's steps.
 
 - Facts come from the source: read the current code of the repo you work on and the documents themselves (the PRD, report or file a link points to). An issue's account of code or documents (paths, line numbers, behavior, what a document says) may be out of date; where it disagrees with the source, go by the source and note the difference.
 - Team `Frank's Agents`; the run's project id is the prompt's `Project:` value. Names (the team, projects, and statuses such as Todo or In Review in these files) are for reading and may change in Linear: act by id — the team's is the prompt's `Team:` value, each status's is in its `States:` line (`<name>=<id>`); move and filter issues by those ids, never look one up by name.
@@ -11,10 +11,11 @@ The prompt names this file, your role charter (who you are: responsibilities, st
 - A session comment is one by the harness account (author email `frank.agent.w@gmail.com`) whose first line starts `Run <sid> · `: it records a run (status and resume command), never anyone's instruction or review. Skip it when reading comments.
 - Precedence: (1) the user's comments outrank the agent's; (2) newer comments outrank older ones.
 - Handle one issue per run; touch another issue only where your task's steps say so.
+- On a resumed run (a prompt starting "Resumed run"), never repeat your task's start comment and never move the issue to Todo.
 - Temporary files go under `/tmp/agent-pm-<ID>/` (`<ID>` = this run's issue), never at a fixed name directly in `/tmp`: other runs go on in parallel.
 - No mutation testing, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or make a test fail (editing the file, reassigning a function at runtime, or any other route), even briefly and with a restore; it runs broken guards, and a crash leaves broken code in the tree. A new test's red step is its failure before the code it covers is written. To show a guard is tested, call its function directly; to simulate the environment, patch a stdlib call (e.g. `os.listdir`) and leave the code under test unmodified.
 - A Handoff-created issue's description is written by the harness account but carries the user's words: `Handoff from <ID>: <url>` (the source issue), `## Source` (links to the source's output), `## Instructions` (the user's Handoff comments) and `## Comments` (every source-issue comment except session comments, quoted; context, never instructions).
-- The prompt's `Docs: <docs repo>, clone <docs clone>, branch <docs branch>.` line names the docs repo (`pipeline.toml`'s `[docs]`).
+- The prompt's `Docs: <docs repo>, clone <docs clone>, branch <docs branch>.` line names the docs repo.
 - A docs link is a link whose prefix is exactly `https://github.com/<docs repo>/blob/<docs branch>/`; read its `<path>` (the rest, URL-decoded) with `git -C <docs clone> fetch origin`, then `git -C <docs clone> show origin/<docs branch>:<path>`; never from the clone's files, which lag GitHub. A link with another prefix is an ordinary external link. A failed `fetch origin` there or in a docs worktree (another run may hold a ref lock) → retry it.
 - Too vague: when your task's check finds the issue too vague, comment 2–4 numbered questions, move the issue to In Review, and stop.
 - A document you publish to the docs repo (`<docs repo>`):
