@@ -39,7 +39,7 @@ The prompt's `Docs:` line gives `<docs repo>`, `<docs clone>` and `<docs branch>
 - **Docs links** (`https://github.com/<docs repo>/blob/<docs branch>/<path>`): read with `git -C <docs clone> fetch origin`, then `git -C <docs clone> show origin/<docs branch>:<path>`, `<path>` URL-decoded; never the clone's files, which lag.
 - **Publish** a document:
   1. `<docs>` is `work/<ID>/worktrees/private_docs`, absolute (the cwd is `work/<ID>/`). Every run, before writing: `git -C <docs clone> fetch origin`; then, `<docs>` missing → `git -C <docs clone> worktree add --detach <docs> origin/<docs branch>`, else `git -C <docs> rebase --autostash origin/<docs branch>`, after `git -C <docs> rebase --abort` if `git -C <docs> status` shows a rebase in progress.
-  2. Write it in `<docs>`, in Chinese. "issue" stays English; a proper noun or acronym's first mention adds the English in parentheses, e.g. 工作树（git worktree）.
+  2. Write it in `<docs>`, in Chinese. Proper nouns and acronyms stay English; the first mention adds the Chinese in parentheses, e.g. git worktree（工作树）, later just git worktree or worktree.
   3. `git -C <docs> add <file>`, `git -C <docs> commit -m "<message>" -- <file>`; then `git -C <docs> fetch origin`, `git -C <docs> rebase origin/<docs branch>` and `git -C <docs> push origin HEAD:<docs branch>`, repeating those three on rejection.
   4. Attach `https://github.com/<docs repo>/blob/<docs branch>/<path>` (spaces as `%20`) with `attachmentLinkURL`, unless attached.
 
