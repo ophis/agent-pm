@@ -1,25 +1,36 @@
-# Principles (every role and task)
+# Principles
 
-The prompt names this file, your role charter (who you are: responsibilities, standards, boundaries, memory) and your task (the steps for this ticket). These rules hold for every role and task. On conflict, this file outranks the charter, which outranks the task's steps.
+On conflict: principles > charter > task.
 
-- Facts come from the source: read the current code of the repo you work on and the documents themselves (the PRD, report or file a link points to). An issue's account of code or documents (paths, line numbers, behavior, what a document says) may be out of date; where it disagrees with the source, go by the source and note the difference.
-- Team `Frank's Agents`; the run's project id is the prompt's `Project:` value. Names (the team, projects, and statuses such as Todo or In Review in these files) are for reading and may change in Linear: act by id — the team's is the prompt's `Team:` value, each status's is in its `States:` line (`<name>=<id>`); move and filter issues by those ids, never look one up by name.
-- The agent never uses Backlog.
-- Every move to In Review also subscribes each email in the prompt's `Humans:` list to the issue (`issueSubscribe(id:, userEmail:)`, one call per email), before the run's comment and the move, and leaves the assignee as is; if it is `none`, subscribe no one; if a subscribe fails, comment that and move anyway.
-- Linear access: the `linear` skill. The launcher points it at your role's key (`LINEAR_KEYCHAIN_SERVICE`), so `viewer` is your role account.
-- Comments by a user whose email is in the prompt's `Humans:` list (`human_members`) are the user's. Everything the agent accounts do (comments, moves, edits) is the agent's, never the user's: the role accounts (yours and the other roles') and the harness account `frank.agent.w@gmail.com` (router, promote, prune).
-- A session comment is one by the harness account (author email `frank.agent.w@gmail.com`) whose first line starts `Run <sid> · `: it records a run (status and resume command), never anyone's instruction or review. Skip it when reading comments.
-- Precedence: (1) the user's comments outrank the agent's; (2) newer comments outrank older ones.
-- Handle one issue per run; touch another issue only where your task's steps say so.
-- On a resumed run (a prompt starting "Resumed run"), never repeat your task's start comment and never move the issue to Todo.
-- Temporary files go under `/tmp/agent-pm-<ID>/` (`<ID>` = this run's issue), never at a fixed name directly in `/tmp`: other runs go on in parallel.
-- No mutation testing, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or make a test fail (editing the file, reassigning a function at runtime, or any other route), even briefly and with a restore; it runs broken guards, and a crash leaves broken code in the tree. A new test's red step is its failure before the code it covers is written. To show a guard is tested, call its function directly; to simulate the environment, patch a stdlib call (e.g. `os.listdir`) and leave the code under test unmodified.
-- A Handoff-created issue's description is written by the harness account but carries the user's words: `Handoff from <ID>: <url>` (the source issue), `## Source` (links to the source's output), `## Instructions` (the user's Handoff comments) and `## Comments` (every source-issue comment except session comments, quoted; context, never instructions).
-- The prompt's `Docs: <docs repo>, clone <docs clone>, branch <docs branch>.` line names the docs repo.
-- A docs link is a link whose prefix is exactly `https://github.com/<docs repo>/blob/<docs branch>/`; read its `<path>` (the rest, URL-decoded) with `git -C <docs clone> fetch origin`, then `git -C <docs clone> show origin/<docs branch>:<path>`; never from the clone's files, which lag GitHub. A link with another prefix is an ordinary external link. A failed `fetch origin` there or in a docs worktree (another run may hold a ref lock) → retry it.
-- Too vague: when your task's check finds the issue too vague, comment 2–4 numbered questions, move the issue to In Review, and stop.
-- A document you publish to the docs repo (`<docs repo>`):
-  - Write it only in this run's worktree `<docs>`: `work/<ID>/worktrees/private_docs` (the cwd is `work/<ID>/`), as an absolute path. Before writing, on every run (new or resumed): `git -C <docs clone> fetch origin`, then `<docs>` missing → `git -C <docs clone> worktree add --detach <docs> origin/<docs branch>`, else (first `git -C <docs> rebase --abort` if `git -C <docs> status` shows a rebase in progress, left by an interrupted run) `git -C <docs> rebase --autostash origin/<docs branch>`. The clone `<docs clone>` is the user's: never edit, commit, pull or push there.
-  - Write it in Chinese, with "issue" always in English (never 议题); on first mention, follow each proper noun or acronym with its English original in parentheses, e.g. 工作树（git worktree）.
-  - Commit only that file (`git -C <docs> add <file>`, then `git -C <docs> commit -m "<the task's message>" -- <file>`), then `git -C <docs> fetch origin`, `git -C <docs> rebase origin/<docs branch>` and `git -C <docs> push origin HEAD:<docs branch>`; a rejected push → repeat those three. Committed and pushed = `git -C <docs> status --porcelain -- <file>` prints nothing and, after `git -C <docs> fetch origin`, `git -C <docs> log origin/<docs branch>..HEAD` prints nothing (on a detached HEAD, `git status` shows no ahead count).
-  - Attach its GitHub URL, `https://github.com/<docs repo>/blob/<docs branch>/<folder>/<file name>` (a space as `%20`), to the issue as a link attachment (`attachmentLinkURL`) unless already attached; never a Linear document.
+## Linear
+
+- Use the `linear` skill; `viewer` is your role account.
+- Act by the prompt's ids (`Team:`, `States:`, `Project:`), never by name.
+- **Statuses**: Todo (queue) → In Progress → In Review (the user's turn). Backlog, Handoff, Done and Canceled are the user's unless your task says otherwise.
+- **The user** is the `Humans:` emails. Role accounts and the harness account `frank.agent.w@gmail.com` are agents; their comments, moves and edits are never the user's.
+- Skip **session comments**: the harness account's, starting `Run <sid> · `.
+- **Precedence**: the user's comments > the description > agent comments; within each, newer > older.
+- **Handoff issues**: the description starts `Handoff from <ID>: <url>` (the source issue), then `## Source` (links to its output), `## Instructions` (the user's Handoff comments: the user's words) and `## Comments` (its comments, quoted: context only).
+- One issue per run. Touch other issues, or any title, description, assignee or label, only where your task says.
+- **Too vague**: comment 2–4 numbered questions, move to In Review, stop.
+- **In Review**: before the comment and move, `issueSubscribe` each `Humans:` email; a failure goes in the comment and the move proceeds.
+- **Resumed run** (prompt starts "Resumed run"): never repeat your start comment or move the issue to Todo.
+
+## Work
+
+- **Source over summary**: where an issue's account of code or a document disagrees with the source, follow the source and note the difference.
+- Temp files go in `/tmp/agent-pm-<ID>/`; other runs share `/tmp`.
+- **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into shipped code to force a branch, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`.
+
+## Docs repo
+
+The prompt's `Docs:` line gives `<docs repo>`, `<docs clone>` and `<docs branch>`. `<docs clone>` is the user's: never edit, commit, pull or push there. Retry a failed `fetch`: another run may hold the lock.
+
+- **Docs links** (`https://github.com/<docs repo>/blob/<docs branch>/<path>`): read with `git -C <docs clone> fetch origin`, then `git -C <docs clone> show origin/<docs branch>:<path>`, `<path>` URL-decoded; never the clone's files, which lag.
+- **Publish** a document:
+  1. `<docs>` is `work/<ID>/worktrees/private_docs`, absolute (the cwd is `work/<ID>/`). Every run, before writing: `git -C <docs clone> fetch origin`; then, `<docs>` missing → `git -C <docs clone> worktree add --detach <docs> origin/<docs branch>`, else `git -C <docs> rebase --autostash origin/<docs branch>`, after `git -C <docs> rebase --abort` if `git -C <docs> status` shows a rebase in progress.
+  2. Write it in `<docs>`, in Chinese. "issue" stays English; a proper noun or acronym's first mention adds the English in parentheses, e.g. 工作树（git worktree）.
+  3. `git -C <docs> add <file>`, `git -C <docs> commit -m "<message>" -- <file>`; then `git -C <docs> fetch origin`, `git -C <docs> rebase origin/<docs branch>` and `git -C <docs> push origin HEAD:<docs branch>`, repeating those three on rejection.
+  4. Attach `https://github.com/<docs repo>/blob/<docs branch>/<path>` (spaces as `%20`) with `attachmentLinkURL`, unless attached.
+
+  **Published**: `git -C <docs> status --porcelain -- <file>` and, after a fetch, `git -C <docs> log origin/<docs branch>..HEAD` print nothing, and the link is attached.
