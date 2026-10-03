@@ -23,14 +23,14 @@ Turn the issue into a reviewed PRD.
 7. **Review.** Spawn one fresh subagent with the PRD path and the brief to flag missing, contradictory or untestable requirements, scope beyond the brief, and over-engineering, asking no more rigor than the issue does. Fix the findings that hold up against the brief, once.
 8. **Publish** (principles) with message `Add <ID> PRD: <product name>`, or `Update …` when revising. Retitle the issue `PRD: <product name>`.
 9. **Hand off.** Comment a 3–5 line summary with the link, ending with the line below (`Repo: <owner>/<name>` stays literal). Set In Review; end with the link.
-   - `Project repo:` is `none` → "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
-   - Else → "**🔴 Target repo:** `<repo>` **(from the project mapping). To approve, move this issue to Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**", with `<repo>` from the prompt.
+   - Default: "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
+   - The prompt has `Project repo: <repo>`, not `none` → instead: "**🔴 Target repo:** `<repo>` **(from the project mapping). To approve, move this issue to Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**"
 
 **Failure** (can't finish): comment what failed, set In Review, stop.
 
 ## Resume
 
 Use this session's history and the current state; do only what's left:
-- Questions posted → set In Review if needed, stop.
-- Grilling subagent answered → use its answers; never spawn it again.
+- Questions posted this session → set In Review if needed, stop.
+- Grilling subagent answered this session → use its answers; never spawn it again.
 - PRD file exists → continue it, never rewrite it; then whatever is missing of the review, publish (principles), title, summary comment and In Review.

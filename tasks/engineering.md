@@ -15,7 +15,7 @@ Build the PRD with `autopilot:build`, then open a PR.
    - Else → comment `Question:` with the reason, asking the user to fix the description's `Repo:` line and move the issue back to Todo; move to In Review.
 3. **Status.** Run `<eng> status` and `<eng> comments`.
 4. **Which build**, from `plan_docs` and the comments; `user` entries are requirements, `others` review input (step 6):
-   - A plan doc before S9 → continue it (`autopilot:build` resumes from it), first updating its spec and plan to the comments.
+   - A plan doc before S9 → continue it (`autopilot:build` resumes from it), first updating its spec and plan to the `user` entries.
    - Else a finished build and a `user` entry → a new build, new plan doc. `others` alone never start one.
    - Else a finished build → comment `Question:` asking what next, move to In Review, stop.
    - No build yet → build the PRD's first phase, or the one `## Instructions` names.

@@ -13,14 +13,14 @@ On conflict: principles > charter > task.
 - **Handoff issues**: the description starts `Handoff from <ID>: <url>` (the source issue), then `## Source` (links to its output), `## Instructions` (the user's Handoff comments: the user's words) and `## Comments` (its comments, quoted: context only).
 - One issue per run. Touch other issues, or any title, description, assignee or label, only where your task says.
 - **Too vague**: comment 2–4 numbered questions, move to In Review, stop.
-- **In Review**: before the comment and move, `issueSubscribe` each `Humans:` email; a failure goes in the comment and the move proceeds.
+- **In Review**: before the comment and move, `issueSubscribe` each `Humans:` email (`none`: no one); a failure goes in the comment and the move proceeds.
 - **Resumed run** (prompt starts "Resumed run"): never repeat your start comment or move the issue to Todo.
 
 ## Work
 
-- **Source over summary**: where an issue's account of code or a document disagrees with the source, follow the source and note the difference.
+- **Source over summary**: read the code and documents themselves; where an issue's account of them disagrees, follow the source and note the difference.
 - Temp files go in `/tmp/agent-pm-<ID>/`; other runs share `/tmp`.
-- **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into shipped code to force a branch, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`.
+- **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or fail a test, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`, leaving the code under test unmodified.
 
 ## Docs repo
 

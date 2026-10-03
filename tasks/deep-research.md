@@ -22,26 +22,26 @@ Run research workflows, then write a verified report. These steps, not the workf
 
 Overrides steps 5–6: reuse everything produced; run only what's missing.
 
-**Web.** Never call the Workflow again (except 3a), write no workflow, and skip `resumeFromRunId` (it re-runs nearly everything).
+**Web.** Never call the Workflow again (except 3a), write or run no other workflow, and skip `resumeFromRunId` (it re-runs nearly everything).
 
 This session's latest Workflow result prints `Run ID: wf_…` and `Script file: <session>/workflows/scripts/…`. Under `<session>`:
 - `workflows/<runId>.json`, one line, read with `jq`: `status`, and `result` with `findings` (empty if synthesis failed), `confirmed`, `refuted`, `unverified` and `sources`.
 - `subagents/workflows/<runId>/journal.jsonl`, large, read with `jq` projections: each agent's `started` (agentId, phase), `result` and `failed`.
 - `subagents/workflows/<runId>/agent-<id>.jsonl`: line 1 holds its prompt (`head -1 … | jq -r .message.content`: a header, then the prompt indented 2 spaces); `agent-<id>.meta.json` has its `workflowPhase`. Find a claim's votes with `grep -lF -f <file holding the claim> agent-*.jsonl`, keeping `Verify` agents.
 
-1. No Workflow call yet → step 5.
+1. No Workflow call this session → step 5.
 2. **Completed** (`status` `completed`): the result stands; don't re-fetch. Use `findings`, plus claims the re-votes confirm: each `unverified` claim (< 2 valid votes) gets 3 fresh votes with its original vote prompt, only the voter number changed.
 3. **Killed** (no completed json): continue the pipeline where it stopped, by the `Script file:`'s rules and prompts (`FETCH_PROMPT`, `VERIFY_PROMPT`, URL dedup, `MAX_FETCH`, claim ranking by importance then source quality, `MAX_VERIFY_CLAIMS`, 3 votes per claim):
    a. A Search agent without a result → call the Workflow once more with the same `args`.
    b. Fetch: reuse results; run the rest, up to `MAX_FETCH`.
-   c. Verify: select claims as the script does from all Fetch claims. One with ≥ 2 valid votes keeps them (find its vote agents as above, the claim's quote and control characters stripped and whitespace collapsed as in the prompts; read `refuted` from the journal by agentId); every other gets 3 fresh votes.
+   c. Verify: select claims as the script does from all Fetch claims. One with ≥ 2 valid votes keeps them (find its vote agents by claim text and source as above, the claim's quote and control characters stripped and whitespace collapsed as in the prompts; read `refuted` from the journal by agentId); every other gets 3 fresh votes.
 4. A re-run is one Agent call with the prompt (header removed, dedented), ending "Reply with only JSON: {refuted, evidence, confidence}" for a vote, or with the script's fetch fields; ≤ 10 at a time.
 5. Votes: ≥ 2 refutes → refuted; else ≥ 2 valid → confirmed; else unverified.
 6. Reuse what earlier resumes got back.
 7. No `findings` → merge the confirmed claims yourself.
 
 **Local or mixed.** The posted budget binds: no new round, no higher cap; a re-run filling a gap replaces its agent, uncounted. Identify each round by its own Workflow call, never by the latest result.
-1. No Workflow call yet → step 5.
+1. No Workflow call this session → step 5.
 2. Prepare again (charter).
 3. ultracode round completed → use its result. Interrupted or failed → call the Workflow with its `Script file:` as `scriptPath`, the same `args` and its Run ID as `resumeFromRunId`.
 4. A started `/deep-research` round → Web checks 2–7, for that round only.

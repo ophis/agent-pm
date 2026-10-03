@@ -19,7 +19,7 @@ Run one round of parallel agents, then write a short report.
 ## Resume
 
 Overrides steps 4–5:
-- No agent dispatched yet → step 4.
+- No agent dispatched this session → step 4.
 - Report not committed → keep the results you have; prepare again (local, mixed), then re-dispatch each angle without a result (none, or an error) with its original prompt, once, in one parallel batch.
 
 Then finish what's missing of steps 6–7: report published (principles), hand-off comment, In Review. Still nothing usable → comment what failed, set In Review.

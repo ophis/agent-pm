@@ -22,11 +22,11 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - `sessions.py`: one `Run <sid> · …` comment per session. It uses `harness_key`, not the run's `LINEAR_KEYCHAIN_SERVICE`, so `isMe` is the harness account. Promote leaves these comments out of `## Comments`; runs skip them.
 - `eng.py`: the Engineering repo step (`resolve`), the `status`/`comments` CLI, and repo helpers shared with `research.py` and `prune.py`.
 - `research.py prepare`: a detached worktree of the target repo at `work/<ID>/src/<name>`; exit 2 = invalid target, 1 = other failure. It writes to the clone only through `gh repo clone`, `fetch` and `worktree add`/`remove`.
-- `promote.py` (every 5 min): Handoff → a Todo issue for the next role, its id hashed from source, role and handoff time, so reruns are idempotent. Each tick ends with `prune.py`.
+- `promote.py` (every 5 min): Handoff → a Todo issue for the next role, its id hashed from source, role and handoff time, so reruns are idempotent. Each tick ends with `prune.py`: it deletes worktrees of issues finished ≥ 24 h ago and archives pm and engineer ones (hence engineering's `issueUnarchive`).
 - `pipeline.py`: the Linear client (harness account) and config validation.
 - Identity: scripts act as the harness account `frank.agent.w@gmail.com`, runs as their role's `account`. Only Keychain service names travel in env, argv, logs and prompts, never keys.
 - Every move to In Review, by a run or the harness, subscribes each `human_members` email and keeps the assignee.
-- State between ticks is only `logs/runs.log` and Linear history. Resume needs `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans sessions.
+- State between ticks is only `logs/runs.log` (resume and Recover take the task from its `task=`, never the labels) and Linear history; the router never reads session comments. Resume needs `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans sessions.
 
 ## Roles, tasks, rules
 
