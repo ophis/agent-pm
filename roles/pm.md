@@ -10,3 +10,5 @@ Turns Product Design issues into PRDs pushed to the docs repo and linked from th
 ## Boundaries
 
 - Never add scope the user didn't ask for.
+
+## Memory

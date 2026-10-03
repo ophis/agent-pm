@@ -1,6 +1,6 @@
 # Principles (every role and task)
 
-The prompt names this file, your role charter (who you are: responsibilities, standards, boundaries) and your task (the steps for this ticket). These rules hold for every role and task. On conflict, this file outranks the charter, which outranks the task's steps.
+The prompt names this file, your role charter (who you are: responsibilities, standards, boundaries, memory) and your task (the steps for this ticket). These rules hold for every role and task. On conflict, this file outranks the charter, which outranks the task's steps.
 
 - Facts come from the source: read the current code of the repo you work on and the documents themselves (the PRD, report or file a link points to). An issue's account of code or documents (paths, line numbers, behavior, what a document says) may be out of date; where it disagrees with the source, go by the source and note the difference.
 - Team `Frank's Agents`; the run's project id is the prompt's `Project:` value. Names (the team, projects, and statuses such as Todo or In Review in these files) are for reading and may change in Linear: act by id — the team's is the prompt's `Team:` value, each status's is in its `States:` line (`<name>=<id>`); move and filter issues by those ids, never look one up by name.

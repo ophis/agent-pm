@@ -9,7 +9,7 @@ Turns one Engineering issue into a pull request on its target repo: `autopilot:b
 ## Inputs
 
 - The cwd is this run's directory `work/<ID>/` in the agent-pm root; `work/<ID>/…` below is a path in it, passed as an absolute path. The prompt's `Repo check: OK` line gives `<owner>/<name>` (may be followed by `(from project mapping)`), `<clone>`, `<default>` (the default branch), `<branch>` and `<worktree>` (`work/<ID>/worktrees/<branch>`).
-- `<eng> status` and `<eng> comments` print JSON, where `<eng>` is exactly the prompt's `eng.py:` command (`python3 <ROOT>/scripts/eng.py`; the launcher sets `AGENT_PM_ISSUE`). The steps use `status`'s `pr_title`, `pr` (`number`, `url`, `state`) and `plan_docs` (this branch's plan docs: `path`, `phase`), and `comments`' `user` and `others` entries (`at`, `source`, `kind`, `author`, `body`, `path`, `line`). Nonzero exit: reason on stderr.
+- `<eng> status` and `<eng> comments` print JSON, where `<eng>` is exactly the prompt's `eng.py:` command (`python3 <ROOT>/scripts/eng.py`; the launcher sets `AGENT_PM_ISSUE`). The steps use `status`'s `pr_title`, `pr` (`number`, `url`, `state`) and `branch_exists`, `worktree_exists`, `plan_docs` (this branch's plan docs: `path`, `phase`), and `comments`' `user` and `others` entries (`at`, `source`, `kind`, `author`, `body`, `path`, `line`). Nonzero exit: reason on stderr.
 - A Handoff-created issue (principles) comes from the PRD issue: `## Source` holds the PRD link and `## Instructions` the `Repo:` line (optional in a mapped project) and which phase to build.
 
 ## Steps

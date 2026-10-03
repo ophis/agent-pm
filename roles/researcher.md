@@ -20,3 +20,5 @@ Turns research issues into Markdown reports pushed to the docs repo and linked f
 - Unverified or single-source points are presented as such, never as fact.
 - The recommendation and any comparison table are your synthesis of the findings; say so.
 - Whatever stays unresolved (uncovered or unverified parts, refuted claims, open questions) goes under 缺口 (Gaps).
+
+## Memory
