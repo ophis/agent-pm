@@ -22,6 +22,16 @@ On conflict: principles > charter > task.
 - Temp files go in `/tmp/agent-pm-<ID>/`; other runs share `/tmp`.
 - **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or fail a test, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`, leaving the code under test unmodified.
 
+## Writing
+
+Documents, comments and prompts you write: fewest words, full information. Cut until the next cut would lose information.
+- Cut what the reader does by default, already knows, or can look up (point to it).
+- Keep exact commands and literals, guards, and qualifiers of who, when and which (`the user`, `this session`, `existing`).
+- Keep a reason only where it prevents a likely mistake.
+- Name each recurring idea once, in bold, then reuse the name.
+- Say what to do; use a ban only for a hard guardrail.
+- Prefer lists and `X → Y` to prose.
+
 ## Docs repo
 
 The prompt's `Docs:` line gives `<docs repo>`, `<docs clone>` and `<docs branch>`. `<docs clone>` is the user's: never edit, commit, pull or push there. Retry a failed `fetch`: another run may hold the lock.
