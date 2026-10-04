@@ -6,7 +6,7 @@ Run one round of parallel agents, then write a short report.
 
 1. **Read** the input; decide its type (Researcher › Type and target).
 2. **Too vague** (Output): no clear question, scope, deliverable or, for local or mixed, target (Researcher › Type and target) → `needs_input`, stop.
-3. **Tell the user you've started**, in this exact format:
+3. **Tell the user you've started:**
    [agent-pm-progress:start] the type, plus the target repo for local or mixed
 4. **Research.**
    - Local or mixed: prepare (Researcher › Type and target).
