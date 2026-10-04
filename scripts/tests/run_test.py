@@ -27,7 +27,7 @@ ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 PROJECT = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 URL = f"https://linear.app/t/issue/{ID}"
-ENGINEER, RESEARCHER = "engineer@agents.test", "researcher@agents.test"
+ENGINEER, RESEARCHER, PM = "engineer@agents.test", "researcher@agents.test", "pm@agents.test"
 KEY = "linear-api-key-engineer"
 CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
           + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
@@ -41,6 +41,7 @@ USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
 LS_REMOTE = ("git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "ls-remote", "--heads",
              "https://github.com/Ophis/Agent-PM.git", "TASK-7-*")
 LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Research?ref=main")
+DESIGN_LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Product%20Design?ref=main")
 INPUT = f"""Reference: TASK-7
 Title: TASK-7: Session registry
 Repo: Ophis/Agent-PM
@@ -238,6 +239,17 @@ class Outer(Base):
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
                          f"Reference: TASK-7\nRepo: ophis/agent-pm\n\n{inputs.PRECEDENCE['research']}\n\n"
                          "## Question\n\nCompare queues\n\nWhich queue fits?")
+
+    def test_design_gets_the_research_target(self):
+        self.gql.issue = node(title="Queues PRD", description="Build a PRD for X.")
+        self.run.table = [(DESIGN_LISTING, res("[]"))]
+        self.assertEqual(self.main(args(PM, "product-design")), 0)
+        (argv, _), = self.sh_calls
+        self.assertNotIn("--target", argv)
+        self.assertEqual(self.run.calls, [(DESIGN_LISTING, 60)])
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
+                         f"Reference: TASK-7\nRepo: ophis/agent-pm\n\n{inputs.PRECEDENCE['design']}\n\n"
+                         "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")
 
     def test_resume_rebuilds_the_input(self):
         self.transcript()

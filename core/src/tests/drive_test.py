@@ -84,6 +84,12 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
             f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")])
 
+    def test_product_design_argv_has_the_prepare_rule(self):
+        argv = self.plan("pm", "product-design", client="claude").argv
+        self.assertEqual(argv[argv.index("--allowedTools"):], [
+            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)"])
+        self.assertIn(f"`python3 {CORE}/src/repo.py prepare --dir <Workdir>/src <repo>`", argv[2])
+
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
         argv = self.plan("researcher", "deep-research", client="claude", repo=self.repo,
@@ -217,8 +223,16 @@ class Skill(Base):
         self.assertNotIn(CORE, body)
 
     def test_skills_without_scripts_get_only_skill_md(self):
-        self.assertEqual(list(self.export("pm", "product-design").files),
-                         [os.path.join(self.tmp.name, "pm-product-design", "SKILL.md")])
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        self.assertEqual(list(clients.SkillClient({}).export("No scripts.", r, dest="o").files),
+                         [os.path.join(os.path.abspath("o"), "r-t", "SKILL.md")])
+
+    def test_product_design_skill_gets_repo_py(self):
+        skill = os.path.join(self.tmp.name, "pm-product-design")
+        files = self.export("pm", "product-design").files
+        self.assertEqual(sorted(files), [os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py")])
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare --dir <Workdir>/src <repo>`",
+                      files[os.path.join(skill, "SKILL.md")])
 
     def test_document_tasks_return_to_the_orchestrator(self):
         for role, task in (("researcher", "light-research"), ("pm", "product-design")):
