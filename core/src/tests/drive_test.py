@@ -113,6 +113,16 @@ class Claude(Base):
                          [os.path.join(CORE, "team", "methods")])
         self.assertNotIn("--add-dir", self.plan(client="claude", repo=self.repo).argv)
 
+    def test_deep_research_names_core_method_files_for_claude_and_by_default(self):
+        prompts = [self.plan("researcher", "deep-research", client="claude").argv[2]]
+        self.plan("researcher", "deep-research")
+        prompts.append(Recorder.seen[-1]["prompt"])
+        for name in ("deep-research", "ultracode"):
+            path = os.path.join(CORE, "team", "methods", f"{name}.md")
+            self.assertTrue(os.path.isfile(path), path)
+            for prompt in prompts:
+                self.assertIn(f"`{path}`", prompt)
+
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
         self.assertEqual(argv[3:5], ["--resume", SID])
@@ -227,6 +237,18 @@ class Generic(Base):
             drive.export(CORE, claude(), "dummy-tester", dest=self.tmp.name)
 
 
+def methods_copy(skill):
+    """A skill's expected copy of core's team/methods/ (path in the skill → text), dotfiles and dot dirs skipped."""
+    src = os.path.join(CORE, "team", "methods")
+    copy = {}
+    for d, dirs, names in os.walk(src):
+        dirs[:] = [n for n in dirs if not n.startswith(".")]
+        for name in (n for n in names if not n.startswith(".")):
+            with open(os.path.join(d, name)) as f:
+                copy[os.path.join(skill, "methods", os.path.relpath(os.path.join(d, name), src))] = f.read()
+    return copy
+
+
 class Skill(Base):
     def export(self, role, task=None, dest=None):
         return drive.export(CORE, clients.get("skill", CORE), role, task, dest=dest or self.tmp.name)
@@ -261,13 +283,7 @@ class Skill(Base):
         r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
         skill = os.path.join(os.path.abspath("o"), "r-t")
         files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/x.md`.", r, dest="o").files
-        src = os.path.join(CORE, "team", "methods")
-        expected = {}
-        for d, dirs, names in os.walk(src):
-            dirs[:] = [n for n in dirs if not n.startswith(".")]
-            for name in (n for n in names if not n.startswith(".")):
-                with open(os.path.join(d, name)) as f:
-                    expected[os.path.join(skill, "methods", os.path.relpath(os.path.join(d, name), src))] = f.read()
+        expected = methods_copy(skill)
         self.assertIn(os.path.join(skill, "methods", "deep-research.md"), expected)
         self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")}, expected)
         self.assertEqual(list(clients.SkillClient({}).export("No methods.", r, dest="o").files),
@@ -287,6 +303,17 @@ class Skill(Base):
         methods = os.path.join(skill, "methods")
         self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")},
                          {os.path.join(methods, "a.md"): "a", os.path.join(methods, "sub", "b.md"): "b"})
+
+    def test_deep_research_skill_names_and_carries_the_methods(self):
+        skill = os.path.join(self.tmp.name, "researcher-deep-research")
+        files = self.export("researcher", "deep-research").files
+        expected = methods_copy(skill)
+        for name in ("deep-research", "ultracode"):
+            self.assertIn(f"`${{CLAUDE_SKILL_DIR}}/methods/{name}.md`", files[os.path.join(skill, "SKILL.md")])
+            self.assertIn(os.path.join(skill, "methods", f"{name}.md"), expected)
+        self.assertEqual(sorted(files),
+                         sorted([os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py"), *expected]))
+        self.assertEqual({p: files[p] for p in expected}, expected)
 
     def test_product_design_skill_gets_repo_py(self):
         skill = os.path.join(self.tmp.name, "pm-product-design")

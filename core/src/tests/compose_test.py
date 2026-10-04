@@ -442,6 +442,31 @@ class RealCore(unittest.TestCase):
         self.assertNotIn("{{", prompt)
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
 
+    def test_deep_research_falls_back_to_the_methods_without_a_workflow_tool(self):
+        prompt, _ = composed("researcher", "deep-research")
+        methods = os.path.join(CORE, "team", "methods")
+        for phrase in (f"No Workflow tool that runs `/deep-research` → follow `{methods}/deep-research.md` once instead, "
+                       "on the same filtered brief.",
+                       f"No Workflow tool → follow `{methods}/ultracode.md` instead, for the local part, with the budget's "
+                       "cap, its subagents readers.",
+                       "no subagents, or subagents lacking a round's tools (`/deep-research` round: web search and fetch; "
+                       "ultracode round: file reading) → skip that round, list it under Gaps, and go on to the other round "
+                       "or step 6.",
+                       "for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 "
+                       "(deep-research method) or the budget's cap (ultracode method)."):
+            self.assertIn(phrase, prompt)
+        self.assertNotIn("No Workflow tool → `failed`", prompt)
+
+    def test_researcher_names_no_harness_tool(self):
+        with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
+            text = f.read()
+        for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
+            self.assertNotIn(word, text, word)
+        for phrase in ("a **reader** to read-only file tools (read, search, list) inside the worktree",
+                       "readers, whether from a workflow you write or dispatched by the ultracode method",
+                       "the deep-research method's agents are web agents"):
+            self.assertIn(phrase, text)
+
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:
             prompt, run = composed(role, task)
