@@ -311,7 +311,7 @@ class Validate(Base):
 
 
 class Start(Base):
-    def start(self, lines, rc=0, output=None, **params):
+    def start(self, lines, rc=0, output=None, sinks=None, **params):
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
         calls, log = [], io.StringIO()
 
@@ -319,8 +319,9 @@ class Start(Base):
             calls.append((argv, kw))
             return FakeProc(lines, rc)
 
-        r = drive.start(launch, run(output=output or {"type": "local"}), self.params(**params), client=claude(),
-                        popen=popen, log=log)
+        p = self.params(**params)
+        r = drive.start(launch, run(output=output or {"type": "local"}), p, client=claude(), popen=popen,
+                        sinks=sinks if sinks is not None else [drive.terminal(log), *drive.default_sinks(p)[1:]])
         return r, calls, log.getvalue()
 
     def read(self, name):
@@ -362,6 +363,21 @@ class Start(Base):
             f.write("{}")
         self.start(stream(said("bye")))
         self.assertFalse(os.path.exists(os.path.join(self.work, "outcome.json")))
+
+    def test_sinks_replace_the_defaults(self):
+        seen = []
+        r, _, log = self.start(stream(said("hi\n[agent-pm-progress:round] one"), result(DONE)), sinks=[seen.append])
+        self.assertEqual([(e.kind, e.name, e.text) for e in seen[:2]], [("text", "", "hi"), ("progress", "round", "one")])
+        self.assertEqual((seen[2].kind, seen[2].outcome["url"]), ("outcome", os.path.join(self.work, "out.md")))
+        self.assertEqual(log, "")
+        self.assertFalse(os.path.exists(os.path.join(self.work, "progress.jsonl")))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "outcome.json")))
+        self.assertEqual(self.read("out.md"), "# Doc\n")
+
+    def test_an_invalid_outcome_reaches_no_sink(self):
+        seen = []
+        self.start(stream(result({**DONE, "status": "maybe"})), sinks=[seen.append])
+        self.assertEqual(seen, [])
 
     def test_resume_appends_progress(self):
         self.start(stream(said("[agent-pm-progress:round] one"), result(DONE)))

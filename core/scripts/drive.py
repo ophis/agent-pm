@@ -5,7 +5,8 @@ outcome the client reads back.
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--dry-run]
 --out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
-(skill) the dir it writes under. A run leaves <workdir>/outcome.json and <workdir>/progress.jsonl.
+(skill) the dir it writes under. By default (start's sinks) a run shows its text and progress on stderr and leaves
+<workdir>/outcome.json and <workdir>/progress.jsonl.
 Prints the session id on stderr. --dry-run prints {"argv", "cwd", "env", "files"} and changes nothing.
 Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config error,
 3 when the client fails.
@@ -16,12 +17,13 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal, get_args
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-from clients import Access, Client, Launch  # noqa: E402
+from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render  # noqa: E402
 
 Status = Literal["done", "needs_input", "failed"]
@@ -145,34 +147,69 @@ def _file(path: str, workdir: str) -> str:
         raise InvalidOutcome(f"file {str(path)[:200]!r} is not a .md file under the workdir")
     return real
 
+Sink = Callable[[Event], None]   # receives each text and progress event as the run goes, then its checked outcome
 
-def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, popen=subprocess.Popen,
-          log=sys.stderr) -> Result:
-    """Starts the run, shows its text and progress on `log`, and waits; then checks the client's last outcome and saves
-    it to <workdir>/outcome.json (and the deliverable to params.out where the destination says so)."""
+
+def terminal(log=sys.stderr) -> Sink:
+    """Shows the run's text and progress, e.g. in its tmux pane."""
+    def sink(event: Event) -> None:
+        if event.kind == "text":
+            print(event.text, file=log, flush=True)
+        elif event.kind == "progress":
+            print(f"Progress ({event.name}): {event.text}", file=log, flush=True)
+    return sink
+
+
+def progress_file(path: str, *, append: bool = False) -> Sink:
+    """Appends each progress report to a JSON-lines file, emptied first unless `append` (a resume)."""
+    if not append:
+        write({path: ""})
+
+    def sink(event: Event) -> None:
+        if event.kind == "progress":
+            with open(path, "a") as f:
+                f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "name": event.name, "text": event.text},
+                                   ensure_ascii=False) + "\n")
+    return sink
+
+
+def outcome_file(path: str) -> Sink:
+    """Writes the checked outcome as JSON; an earlier one is removed first, so it is never read as this run's."""
+    if os.path.exists(path):
+        os.remove(path)
+
+    def sink(event: Event) -> None:
+        if event.kind == "outcome":
+            write({path: json.dumps(event.outcome, ensure_ascii=False, indent=1) + "\n"})
+    return sink
+
+
+def default_sinks(params: RunParams) -> list[Sink]:
+    """The terminal, <workdir>/progress.jsonl and <workdir>/outcome.json."""
+    workdir = os.path.abspath(params.workdir)
+    return [terminal(), progress_file(os.path.join(workdir, PROGRESS), append=params.resume),
+            outcome_file(os.path.join(workdir, OUTCOME))]
+
+
+def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, sinks: Sequence[Sink] | None = None,
+          popen=subprocess.Popen) -> Result:
+    """Starts the run and waits, handing its events to `sinks` (default_sinks() when None); then checks the client's
+    last outcome, saves the deliverable to params.out where the destination says so, and hands the outcome on too."""
     write(launch.files)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(launch.cwd or workdir, exist_ok=True)
     os.makedirs(workdir, exist_ok=True)
-    outcome_path = os.path.join(workdir, OUTCOME)
-    if os.path.exists(outcome_path):
-        os.remove(outcome_path)
-    progress_mode = "a" if params.resume else "w"
+    sinks = default_sinks(params) if sinks is None else sinks
     raw = None
-    with open(os.path.join(workdir, PROGRESS), progress_mode) as progress:
-        proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
-                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
-        for event in client.events(proc.stdout):
-            if event.kind == "outcome":
-                raw = event.outcome
-            elif event.kind == "progress":
-                print(f"Progress ({event.name}): {event.text}", file=log, flush=True)
-                progress.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "name": event.name,
-                                           "text": event.text}, ensure_ascii=False) + "\n")
-                progress.flush()
-            else:
-                print(event.text, file=log, flush=True)
-        rc = proc.wait()
+    proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
+                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
+    for event in client.events(proc.stdout):
+        if event.kind == "outcome":
+            raw = event.outcome
+            continue
+        for sink in sinks:
+            sink(event)
+    rc = proc.wait()
     if rc != 0:
         return Result(rc, None, f"the client exited {rc}")
     if raw is None:
@@ -184,8 +221,9 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     if run.output["type"] in SAVES_DELIVERABLE and outcome.deliverable:
         write({os.path.abspath(params.out): outcome.deliverable})
         if run.output["type"] == "local":
-            outcome = Outcome(**{**asdict(outcome), "url": os.path.abspath(params.out)})
-    write({outcome_path: json.dumps(asdict(outcome), ensure_ascii=False, indent=1) + "\n"})
+            outcome = replace(outcome, url=os.path.abspath(params.out))
+    for sink in sinks:
+        sink(Event("outcome", outcome=asdict(outcome)))
     return Result(rc, outcome)
 
 
