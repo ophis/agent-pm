@@ -433,6 +433,38 @@ def feed(channel, items):
 
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
+STOP = {"kind": "stop"}
+
+
+class FakeTui:
+    """tui's API for the tui runner. Each status call takes the next step: a list of items appended to the channel
+    (the pane runs on), or a pane state (None: gone; an int: dead with that status). No step left fails the test."""
+    def __init__(self, channel, steps):
+        self.channel, self.steps, self.calls = channel, list(steps), []
+
+    def patch(self, **api):
+        """tui's start, status, kill and send replaced by this fake's, or by `api`'s."""
+        return unittest.mock.patch.multiple(drive.tui, **{"start": self.start, "status": self.status, "kill": self.kill,
+                                                          "send": self.send, **api})
+
+    def start(self, name, argv, **kw):
+        self.calls.append(("start", name, argv, kw))
+
+    def status(self, name):
+        if not self.steps:
+            raise AssertionError("polled after the last step")
+        step = self.steps.pop(0)
+        if not isinstance(step, list):
+            return step
+        for item in step:
+            drive.append_line(self.channel, json.dumps(item) + "\n")
+        return drive.tui.RUNNING
+
+    def kill(self, name):
+        self.calls.append(("kill", name))
+
+    def send(self, name, text):
+        self.calls.append(("send", name, text))
 
 
 class ClaudeEvents(unittest.TestCase):
@@ -680,6 +712,11 @@ class Start(Base):
                              sinks=[lambda e: seen.append(e.kind)])
         self.assertEqual((r.returncode, seen), (0, ["progress", "outcome"]))
 
+    def test_headless_ignores_stops(self):
+        with unittest.mock.patch.object(drive.tui, "send") as send:
+            r, _, _ = self.start([*[{"kind": "stop"}] * (drive.STOP_LIMIT + 1), said("still going"), outcome(DONE)])
+        self.assertEqual((r.returncode, r.outcome.status, send.called), (0, "done", False))
+
     def test_progress_arrives_while_stdout_is_quiet(self):
         got = threading.Event()
 
@@ -899,6 +936,124 @@ class Start(Base):
         self.assertEqual((missing, err), ([], ""))
 
 
+class Command(unittest.TestCase):
+    def test_each_runner_starts_its_command(self):
+        launch = drive.Launch(["h"], interactive=["i"])
+        self.assertEqual([drive.command(launch, r, Recorder({})) for r in ("headless", "tui")], [["h"], ["i"]])
+
+    def test_unknown_runner_or_no_command(self):
+        for launch, runner, msg in ((drive.Launch(["h"], interactive=["i"]), "gui", "unknown runner 'gui'"),
+                                    (drive.Launch(["h"]), "tui", "Recorder has no tui command"),
+                                    (drive.Launch([], interactive=["i"]), "headless", "has no headless command")):
+            with self.assertRaises(compose.ConfigError) as e:
+                drive.command(launch, runner, Recorder({}))
+            self.assertIn(msg, str(e.exception))
+
+
+class TuiRunner(Base):
+    NAME = f"r-t-{SID[:8]}"
+
+    def start(self, *steps, sinks=None, progress=(), show=None, api=None, **params):
+        """drive.start with the tui runner over FakeTui(steps), `api` replacing its functions; stderr in self.err."""
+        p = self.params(**params)
+        self.fake, self.err, seen = FakeTui(p.channel, steps), io.StringIO(), []
+        launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work, interactive=["claude", "hi"])
+        with self.fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(self.err):
+            r = drive.start(launch, run(progress=list(progress), show=show), p, client=claude(), runner="tui",
+                            sinks=[seen.append] if sinks is None else sinks)
+        return r, self.fake.calls, [e.kind for e in seen], self.err.getvalue()
+
+    def main(self, *steps):
+        fake, err = FakeTui(os.path.join(self.work, ".report.jsonl"), steps), io.StringIO()
+        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work, "--runner", "tui"]
+        with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
+            return drive.main(argv, root=CORE), fake.calls, err.getvalue()
+
+    def test_session_name_and_start_arguments(self):
+        _, calls, _, _ = self.start([outcome(DONE)], show="echo {{session}}")
+        (_, name, argv, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((name, argv, kw["cwd"]), (self.NAME, ["claude", "hi"], self.work))
+        self.assertEqual(kw["show"], "echo {{session}}")
+        self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
+
+    def test_done_on_the_first_outcome_without_waiting_for_a_stop_or_a_kill(self):
+        r, calls, kinds, _ = self.start([progress("round", "x")], [outcome(DONE)])
+        self.assertEqual((r.returncode, r.outcome.status, kinds), (0, "done", ["progress", "outcome"]))
+        self.assertEqual([c[0] for c in calls], ["start"])
+        self.assertEqual(self.fake.steps, [])
+
+    def test_a_dead_pane_or_a_gone_session_ends_the_run_without_an_outcome(self):
+        for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the run returned no outcome")),
+                              (None, (0, None, "the run returned no outcome"))):
+            r, calls, _, _ = self.start([progress("round", "x")], state)
+            self.assertEqual((r.returncode, r.outcome, r.error), result)
+            self.assertEqual([c[0] for c in calls], ["start"])
+
+    def test_main_exits_3_on_a_dead_panes_status_1_on_0_and_0_on_an_outcome(self):
+        self.assertEqual([self.main(state)[0] for state in (3, 0)], [3, 1])
+        code, (start, *rest), _ = self.main([outcome(DONE)])
+        self.assertEqual((code, start[2][0], rest), (0, "claude", []))
+
+    def test_a_sink_raising_kills_the_session(self):
+        def sink(event):
+            raise RuntimeError("sink")
+
+        with self.assertRaises(RuntimeError):
+            self.start([progress("round", "x")], sinks=[sink])
+        self.assertEqual(self.fake.calls[-1], ("kill", self.NAME))
+
+    def test_a_failed_kill_is_printed_and_the_drivers_exception_raised(self):
+        def sink(event):
+            raise RuntimeError("sink")
+
+        kill = unittest.mock.Mock(side_effect=drive.tui.TuiError("gone"))
+        with self.assertRaises(RuntimeError):
+            self.start([progress("round", "x")], sinks=[sink], api={"kill": kill})
+        self.assertEqual(kill.call_args, unittest.mock.call(self.NAME))
+        self.assertIn("drive.py: tui: gone\n", self.err.getvalue())
+
+    def test_a_tui_error_on_start_is_the_result(self):
+        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui.TuiError("no tmux"))})
+        self.assertEqual((r, calls), (drive.Result(1, None, "tui: no tmux"), []))
+
+    def test_a_missing_start_mark_is_reported(self):
+        r, _, kinds, err = self.start([progress("round", "x"), outcome(DONE)], progress=("start", "round"))
+        self.assertEqual(kinds, ["progress", "missing", "outcome"])
+        self.assertIn("drive.py: missing progress mark: start\n", err)
+
+    def test_the_first_stop_without_an_outcome_nudges_once(self):
+        r, calls, kinds, _ = self.start([STOP], [STOP], [outcome(DONE), STOP])
+        self.assertEqual([c for c in calls if c[0] == "send"], [("send", self.NAME, drive.NUDGE)])
+        self.assertEqual((r.outcome.status, kinds), ("done", ["outcome"]))
+
+    def test_it_gives_up_after_stop_limit_counted_stops_and_leaves_the_session(self):
+        r, calls, kinds, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT))
+        self.assertEqual(r, drive.Result(0, None, "the run returned no outcome"))
+        self.assertEqual(([c[0] for c in calls], kinds, self.fake.steps), (["start", "send"], [], []))
+        self.assertIn(f"drive.py: no outcome after {drive.STOP_LIMIT} stops; session {self.NAME} left open: "
+                      f"tmux attach -t '={self.NAME}'\n", err)
+        code, calls, _ = self.main(*[[STOP]] * (1 + drive.STOP_LIMIT))
+        self.assertEqual((code, [c[0] for c in calls]), (1, ["start", "send"]))
+
+    def test_progress_resets_the_count(self):
+        again = [[STOP]] * (drive.STOP_LIMIT - 1)
+        r, calls, _, _ = self.start([STOP], *again, [progress("round", "x")], *again, [outcome(DONE)])
+        self.assertEqual((r.outcome.status, [c[0] for c in calls]), ("done", ["start", "send"]))
+
+    def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
+        send = unittest.mock.Mock(side_effect=drive.tui.TuiError("no pane"))
+        r, _, _, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT), api={"send": send})
+        self.assertEqual((r.error, send.call_count), ("the run returned no outcome", 1))
+        self.assertIn("drive.py: tui: no pane\n", err)
+
+    def test_start_refuses_a_client_without_the_command_before_anything_starts(self):
+        popen = unittest.mock.Mock()
+        with unittest.mock.patch.object(drive.tui, "start") as start, self.assertRaises(compose.ConfigError):
+            drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), runner="tui", popen=popen)
+        self.assertEqual((popen.called, start.called, os.path.exists(self.work)), (False, False, False))
+
+
 class Sinks(unittest.TestCase):
     def test_terminal_strips_control_characters_and_skips_the_outcome(self):
         log = io.StringIO()
@@ -963,6 +1118,17 @@ class Main(Base):
         data = json.loads(out)
         self.assertEqual((code, calls), (0, []))
         self.assertEqual((data["argv"][0], data["cwd"]), ("claude", self.work))
+
+    def test_dry_run_prints_the_runners_command(self):
+        launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.")
+        code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui")
+        self.assertEqual((code, json.loads(out)["argv"]), (0, launch.interactive))
+
+    def test_a_client_without_the_runners_command_exits_2(self):
+        for extra in ((), ("--dry-run",)):
+            code, out, err, calls = self.run_main("--client", "fake", "--runner", "tui", *extra)
+            self.assertEqual((code, out, calls), (2, "", []))
+            self.assertIn("drive.py: Recorder has no tui command", err)
 
     def test_done_run_exits_0_and_reports_session(self):
         code, _, err, calls = self.run_main("--sid", SID, lines=[outcome(DONE)])
