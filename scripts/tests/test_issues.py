@@ -131,6 +131,21 @@ class ParseHandoff(unittest.TestCase):
         self.assertEqual((got.instructions, got.comments),
                          ("See ## Comments below.\n## Comments here", "- Ann, t:\n  > x"))
 
+    def test_header_lines_inside_instructions_stay_in_instructions(self):
+        text = ("Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore.")
+        for sources in ("## Source\n- Spec: u\n\n", ""):
+            with self.subTest(sources=sources):
+                got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n{sources}## Instructions\n{text}\n\n"
+                                           "## Comments\n- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n")
+                self.assertEqual(got.sources, "- Spec: u" if sources else "")
+                self.assertEqual(got.instructions, text.strip())
+                self.assertEqual(got.comments, "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments")
+
+    def test_comments_header_is_the_last_exact_line(self):
+        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Source\n- A: u\n\n## Instructions\nGo.\n## Comments\nx\n\n"
+                                   "## Comments\n- Ann, t:\n  > y\n")
+        self.assertEqual((got.sources, got.instructions, got.comments), ("- A: u", "Go.\n## Comments\nx", "- Ann, t:\n  > y"))
+
     def test_crlf(self):
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n")
         self.assertEqual((got.sources, got.instructions), ("- A: u", "Go."))

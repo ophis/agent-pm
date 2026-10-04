@@ -93,20 +93,34 @@ def read_issue(gql, ident) -> Issue:
 
 
 def parse_handoff(description) -> Handoff | None:
-    """The Handoff in a description, or None if its first line is not `Handoff from <ID>: <url>`. A section starts at
-    the first line exactly its header; one missing is empty."""
+    """The Handoff in a description, or None if its first line is not `Handoff from <ID>: <url>`. A section starts at a
+    line exactly its header; one missing is empty. Only Instructions carry unquoted user text, which may hold header
+    lines: Source is the first one (unless it comes after Instructions' first), Instructions the first after it,
+    Comments the last after Instructions."""
     lines = re.split(r"\r?\n", description or "")
     m = HANDOFF.fullmatch(lines[0])
     if not m:
         return None
-    starts = {h: lines.index(h) for h in SECTIONS if h in lines}
+    source, instructions, comments = SECTIONS
+
+    def find(header, after, last=False):
+        found = [i for i, line in enumerate(lines) if line == header and i > after]
+        return (found[-1] if last else found[0]) if found else None
+    src, ins = find(source, 0), find(instructions, 0)
+    if src is not None and ins is not None and src > ins:
+        src = None
+    if src is not None:
+        ins = find(instructions, src)
+    starts = {source: src, instructions: ins,
+              comments: find(comments, max((s for s in (src, ins) if s is not None), default=0), last=True)}
+    starts = {h: i for h, i in starts.items() if i is not None}
 
     def body(header):
         if header not in starts:
             return ""
         end = min((s for s in starts.values() if s > starts[header]), default=len(lines))
         return "\n".join(lines[starts[header] + 1:end]).strip()
-    return Handoff(m.group(1), body(SECTIONS[0]), body(SECTIONS[1]), body(SECTIONS[2]))
+    return Handoff(m.group(1), body(source), body(instructions), body(comments))
 
 
 def is_user(note, humans) -> bool:
