@@ -203,6 +203,27 @@ class Start(unittest.TestCase):
         self.assertEqual(os.listdir(self.temp), [])
         self.assertEqual(self.stderr.getvalue(), "")
 
+    def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
+        fake = Tmux(fail={"new-session"})   # e.g. the chained set-option failed after new-session made the session
+        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+        self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
+
+    def test_an_interrupt_after_new_session_kills_the_session(self):
+        def interrupt(*args, **kw):
+            raise KeyboardInterrupt
+        for where in ("handover", "show"):
+            with self.subTest(where=where):
+                fake = Tmux(hand_over=where == "show")
+                self.sleep = interrupt
+                with unittest.mock.patch.object(tui, "show", side_effect=interrupt), \
+                        self.assertRaises(KeyboardInterrupt):
+                    self.start(fake)
+                self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+                self.assertIs(fake.dir_at_kill, False)
+                self.assertEqual(os.listdir(self.temp), [])
+
     def test_tmux_missing(self):
         def missing(argv, **kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")

@@ -91,7 +91,8 @@ class TuiError(Exception):
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show: str | None = None,
           split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
-    """Run argv in a new detached session, in cwd with env plus the pane's terminal keys; show it once started."""
+    """Run argv in a new detached session, in cwd with env plus the pane's terminal keys; show it once started.
+    Raising, it leaves no session of its own."""
     _name(session)
     if _template(show) is None:
         _layout(split, beside)
@@ -117,20 +118,23 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)
         cols, rows = shutil.get_terminal_size()
-        _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
-                  sys.executable, "-I", "-c", EXEC, path,
-                  ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
-        if not _handed_over(path, sleep):
+        try:   # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
+            _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
+                      sys.executable, "-I", "-c", EXEC, path,
+                      ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
+            if not _handed_over(path, sleep):
+                raise TuiError("the session did not start")
+            globals()["show"](session, show, split=split, beside=beside, proc=proc)   # the parameter shadows show()
+        except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
-            raise TuiError("the session did not start")
+            raise
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
-    globals()["show"](session, show, split=split, beside=beside, proc=proc)   # the parameter shadows show()
 
 
 def status(session: str, *, proc=subprocess.run):
