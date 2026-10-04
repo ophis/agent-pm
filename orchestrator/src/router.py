@@ -259,7 +259,7 @@ class Board:
         return self.roles[issue["assignee"]["id"]]
 
     def available(self, issue, full):
-        """Not yet used this tick (resumed, or examined by take) and of a role not in full."""
+        """Not yet used this tick (a live session, resumed, or examined by take) and of a role not in full."""
         return issue["identifier"] not in self.used and self.role(issue) not in full
 
     def later(self, issue):
@@ -293,8 +293,9 @@ class Board:
             log(f"{prefix} {issue['identifier']}: issue is {left}")
 
     def recover(self, live_ids=()):
-        """Walk the role accounts' In Progress issues, leaving those in live_ids (IDs with a session) untouched; returns the
-        resume candidates [(issue, sid, task)] in resume order."""
+        """Walk the role accounts' In Progress issues, leaving those in live_ids (IDs with a session) untouched and used;
+        returns the resume candidates [(issue, sid, task)] in resume order."""
+        self.used.update(live_ids)
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in live_ids]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
@@ -398,6 +399,10 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         return 0
     if any(live.values()):
         log("live: " + ", ".join(f"{r} {len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids))
+    live_ids = {i for ids in live.values() for i in ids}
+    if issue_id in live_ids:
+        log(f"skip: {issue_id} has a live session")
+        return 0
     if issue_id and full:
         role = role_for(roles, assignee_email(gql, cfg["team"], issue_id))
         if role in full:
@@ -409,7 +414,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         except Exception as e:
             log(f"skip: prune failed: {e}")
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
-    cands = board.recover({i for ids in live.values() for i in ids})
+    cands = board.recover(live_ids)
     if issue_id and board.is_blocked(issue_id):
         return 0
     planned, failed = 0, set()

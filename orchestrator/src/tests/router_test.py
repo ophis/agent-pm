@@ -985,6 +985,15 @@ class Tick(Base):
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
                          {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("Todo", None)})
 
+    def test_todo_issue_with_live_session_not_claimed(self):
+        self.config = self.write_config(CONFIG_ENG2)
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer", priority=1, project=PD),
+                           issue("TASK-2", "Todo", "engineer", priority=2, project=PD)])
+        self.tick(fake, shell=FakeShell(["agent-pm-engineer-TASK-1"]))
+        self.assertEqual(self.said(), ["live: engineer 1/2", "plan: new (1 in queue)", "pick: TASK-2 (1 in queue)",
+                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0", "plan: nothing to do"])
+        self.assertEqual({i: t["state"] for i, t in fake.issues.items()}, {"TASK-1": "Todo", "TASK-2": "In Progress"})
+
     def test_full_role_todo_not_claimed_and_non_live_in_progress_recovered(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "engineer", priority=1, updated=ago(hours=3)),
                            issue("TASK-2", "In Progress", "engineer", updated=ago(hours=3)),
@@ -1047,6 +1056,14 @@ class Tick(Base):
             self.assertEqual(self.launched(), ident, cfg)
             self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
                              {"TASK-1": "Todo", "TASK-2": "Todo", ident: "In Progress"}, cfg)
+
+    def test_issue_flag_with_live_session_skips(self):
+        self.config = self.write_config(CONFIG_ENG2)
+        for argv in (("--now", "--issue", "TASK-1"), ("--now", "--issue", "TASK-1", "--dry-run")):
+            fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+            self.assertEqual(self.tick(fake, *argv, shell=FakeShell(["agent-pm-engineer-TASK-1"])), 0)
+            self.assertEqual(self.said(), ["live: engineer 1/2", "skip: TASK-1 has a live session"], argv)
+            self.assertEqual((fake.queries, fake.mutations, self.sh.calls), ([], [], [LIST]), argv)
 
     def test_issue_flag_not_a_role_issue_while_full(self):
         for ident in ("TASK-9", "TASK-2", "TASK-3"):
