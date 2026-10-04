@@ -177,26 +177,6 @@ Core's configuration is under Core pack.
 - `pipeline.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[core]`, the overlay: core run keys for the orchestrator's runs in `core/config/config.toml`'s layout, applied after `core/config/clients/claude.toml` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
 - `scripts/pipeline.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
-## Cutover to the core runner
-
-Moving a running pipeline from the pre-core runner to core runs. No session crosses over: core never resumes an old session, and the old prompts never resume a core one.
-
-1. `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.router`: no claims or resumes; promote keeps running.
-2. Wait until `tmux ls` shows no `agent-pm-*`.
-3. Every In Progress issue assigned to a role account: comment `Restarting under the core runner; the earlier session is not resumed.` and move it to Todo.
-4. Merge, then `git pull --ff-only` in `~/playground/agent-pm` (the plists' path; plists unchanged). The new-shape `pipeline.toml` ships in the merge.
-5. `python3 -m unittest discover -s scripts/tests -p "*_test.py"`, `python3 scripts/router.py --now --dry-run`, `python3 scripts/promote.py --dry-run`.
-6. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.router.plist`; watch the first run: `tmux attach -t agent-pm-<role>`, `logs/projects/<task>.log`.
-
-In flight:
-- Todo: the next claim runs core. In Review, Handoff, Done: promote and prune unchanged.
-- `logs/runs.log` is kept; old lines still count toward the 4 attempts for 7 days.
-- A pushed `<ID>-*` engineering branch is found by the repo check and continued from its plan doc; an existing `<dir>*-<ID>-*.md` report or PRD is the run's earlier version.
-- A pre-core worktree in `work/<ID>/src` is removed before a run; those in `worktrees/` are left to prune.
-- `~/playground/private_docs` and `~/playground/<name>` are no longer used and left alone.
-
-Rollback: revert the merge and drain the same way.
-
 ## Development
 
 ```bash
