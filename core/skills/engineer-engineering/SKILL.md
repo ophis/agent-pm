@@ -90,7 +90,7 @@ Build the PRD with `autopilot:build`, then open a pull request.
    - A plan doc before S9 → continue it (`autopilot:build` resumes from it), first updating its spec and plan to the user's requirements.
    - Else a plan doc at S9 (a **finished build**) and a user requirement → a new build, new plan doc. Review input alone never starts one.
    - Else a finished build → `needs_input` asking what next; stop.
-   - Else (no plan doc) → build the PRD's first phase, or the one `Phase:` or the user's words name.
+   - Else (no plan doc) → build the PRD's first phase not marked ✅, or the one `Phase:` or the user's words name.
 5. **Report progress:**
    [agent-pm-progress:start] the build (continue `<plan doc>`, new or first) and its phase
 6. **Build.**
