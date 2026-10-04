@@ -374,6 +374,10 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
 
+    def test_every_prompt_has_the_progress_rule_once(self):
+        for role, task in ALL:
+            self.assertEqual(composed(role, task)[0].count("is a point to tell the user your progress"), 1, task)
+
     def test_every_task_compiles_without_placeholders(self):
         for role, task in ALL:
             prompt, run = composed(role, task)

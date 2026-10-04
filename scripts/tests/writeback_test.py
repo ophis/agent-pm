@@ -511,23 +511,20 @@ class Sink(Base):
                 writeback.sink(self.ctx(task, gql=gql))(drive.Event("progress", text="budget 2 rounds", name="start"))
                 self.assertEqual(gql.calls, [comment(body)])
 
-    def test_ignores_text_outcome_and_unlisted_progress(self):
+    def test_ignores_text_and_outcome(self):
         gql = Gql()
         s = writeback.sink(self.ctx(gql=gql))
         s(drive.Event("text", text="hello"))
         s(drive.Event("outcome", outcome={"status": "done"}))
-        s(drive.Event("progress", text="12 passing", name="tests"))
         self.assertEqual(gql.calls, [])
 
-    def test_progress_switch(self):
+    def test_posts_every_other_mark_once_per_text(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
-        on = replace(pipeline.TASKS["engineering"], progress=frozenset({"tests"}))
-        with mock.patch.dict(pipeline.TASKS, {"engineering": on}):
-            s = writeback.sink(ctx)
-            s(drive.Event("progress", text="12 passing", name="tests"))
-            s(drive.Event("progress", text="12 passing", name="tests"))
-            s(drive.Event("progress", text="13 passing", name="tests"))
+        s = writeback.sink(ctx)
+        s(drive.Event("progress", text="12 passing", name="tests"))
+        s(drive.Event("progress", text="12 passing", name="tests"))
+        s(drive.Event("progress", text="13 passing", name="tests"))
         self.assertEqual(gql.calls, [comment("Progress (tests): 12 passing"), comment("Progress (tests): 13 passing")])
         self.assertEqual(self.ledger(ctx), {SID: [f"progress:tests:{sha('12 passing')}", f"progress:tests:{sha('13 passing')}"]})
 
