@@ -452,6 +452,7 @@ class RealCore(unittest.TestCase):
     def test_progress_names_of_the_real_tasks(self):
         self.assertEqual(compose.load_run(CORE, "researcher", "deep-research").progress, ["start", "round"])
         self.assertEqual(compose.load_run(CORE, "pm", "product-design").progress, ["start"])
+        self.assertEqual(compose.load_run(CORE, "engineer", "engineering").progress, ["start", "step"])
 
     def test_github_host_defaults_and_overrides(self):
         run = compose.load_run(CORE, "researcher", "light-research")
