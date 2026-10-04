@@ -5,7 +5,7 @@ Your result is an **outcome**, returned per Output › Return, plus a **delivera
 - `status`: `done` | `needs_input` | `failed`.
 - `title`: one line.
 - `summary`: 3–5 lines.
-- `questions`: `needs_input` only, 1–4.
+- `questions`: `needs_input` only, 1–4, each with a suggested answer.
 - `url`: the delivered link, when Output › Destination gives one.
 - `files`: absolute paths, when your task asks for them.
 - `deliverable`: the document, when Output › Destination says so.
