@@ -28,14 +28,17 @@ POLL = 0.1   # seconds between checks that the wrapper took the handover file
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
+# Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
 EXEC = "\n".join([
-    "import json, os, sys",
+    "import json, os, signal, sys",
     "path = sys.argv[1]",
     "with open(path) as f:",
     "    h = json.load(f)",
     "os.unlink(path)",
     "os.chdir(h['cwd'])",
     f"h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)",
+    "signal.signal(signal.SIGPIPE, signal.SIG_DFL)",
+    "signal.signal(signal.SIGXFSZ, signal.SIG_DFL)",
     "os.execve(h['argv'][0], h['argv'], h['env'])",
 ])
 STATUS = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
@@ -49,11 +52,14 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
           split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run argv in a new detached session, in cwd with env plus the pane's terminal keys; show it once started."""
     _name(session)
+    if not argv:
+        raise TuiError("no command")
     exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
     if exe is None:
         raise TuiError(f"command not found: {argv[0]}")
-    tmp = tempfile.mkdtemp()
+    tmp = None
     try:
+        tmp = tempfile.mkdtemp()
         path = os.path.join(tmp, "handover.json")
         for arg in (sys.executable, path):
             if "#" in arg or arg.endswith(";"):
@@ -74,11 +80,15 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
         if res.returncode:
             raise TuiError(f"tmux: {_err(res)}")
         if not _handed_over(path, sleep):
+            shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
             raise TuiError("the session did not start")
+    except OSError as e:
+        raise TuiError(f"handover: {e}") from e
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
     globals()["show"](session, show, split=split, beside=beside, proc=proc)   # the parameter shadows show()
 
 
@@ -89,7 +99,7 @@ def status(session: str, *, proc=subprocess.run):
     if len(fields) != 3 or fields[0] not in ("0", "1"):   # tmux (3.7) exits 0 with empty fields for a missing session
         return None
     dead, code, sig = fields
-    if dead == "0":
+    if dead == "0" or not (code or sig):   # dead, but not yet reaped
         return RUNNING
     if sig:   # a name where libc has sys_signame (macOS: "kill"), else the number
         return 128 + (int(sig) if sig.isdigit() else getattr(signal, "SIG" + sig.upper(), 0))

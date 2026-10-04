@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -27,11 +28,13 @@ class Tmux:
     def __init__(self, pane=None, fail=(), hand_over=True):
         self.pane, self.fail, self.hand_over = pane, fail, hand_over
         self.calls, self.kwargs = [], []
-        self.path = self.handover = self.mode = self.dir_mode = None
+        self.path = self.handover = self.mode = self.dir_mode = self.dir_at_kill = None
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         self.kwargs.append(kw)
+        if argv[1] == "kill-session" and self.path:
+            self.dir_at_kill = os.path.isdir(os.path.dirname(self.path))
         if argv[1] in self.fail:
             return done(argv, 1, err="boom\n")
         if argv[1] == "display-message":
@@ -119,6 +122,28 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertEqual(os.listdir(self.temp), [])
 
+    def test_empty_argv(self):
+        fake = Tmux()
+        with self.assertRaisesRegex(tui.TuiError, "no command"):
+            self.start(fake, argv=())
+        self.assertEqual(fake.calls, [])
+
+    def test_handover_file_unwritable(self):
+        fake = Tmux()
+        with unittest.mock.patch.object(tempfile, "tempdir", os.path.join(self.root, "missing")), \
+                self.assertRaisesRegex(tui.TuiError, "^handover: "):
+            self.start(fake)
+        real = os.open
+
+        def refuse(path, *args, **kw):
+            if str(path).endswith("handover.json"):
+                raise PermissionError(13, "Permission denied", path)
+            return real(path, *args, **kw)
+        with unittest.mock.patch("os.open", side_effect=refuse), self.assertRaisesRegex(tui.TuiError, "^handover: "):
+            self.start(fake)
+        self.assertNotIn("new-session", fake.commands())
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_relative_command_made_absolute(self):
         here = os.getcwd()
         os.chdir(self.root)
@@ -164,6 +189,7 @@ class Start(unittest.TestCase):
                     self.start(fake)
                 self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
+                self.assertIs(fake.dir_at_kill, False)
                 self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui.HANDOVER_TIMEOUT)
                 self.assertEqual(os.listdir(self.temp), [])
                 self.assertEqual(self.stderr.getvalue(), "")
@@ -228,7 +254,7 @@ class Start(unittest.TestCase):
 class Status(unittest.TestCase):
     def test_states(self):
         for pane, want in (("0  ", tui.RUNNING), ("1 3 ", 3), ("1 0 ", 0), ("1  kill", 137), ("1  9", 137),
-                           ("  ", None), (None, None)):
+                           ("1  ", tui.RUNNING), ("  ", None), (None, None)):
             with self.subTest(pane=pane):
                 fake = Tmux(pane=pane)
                 self.assertEqual(tui.status("s", proc=fake), want)
@@ -253,27 +279,40 @@ class Exec(unittest.TestCase):
         self.assertNotIn("#", tui.EXEC)
         self.assertFalse(tui.EXEC.rstrip().endswith(";"))
 
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.path = os.path.join(self.root, "handover.json")
+
+    def run_exec(self, argv, env, cwd, pane):
+        """The wrapper as tmux runs it, given a handover file naming argv."""
+        with open(self.path, "w") as f:
+            json.dump({"argv": argv, "env": env, "cwd": cwd}, f)
+        return subprocess.run([sys.executable, "-I", "-c", tui.EXEC, self.path], env=pane, capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL, timeout=30)
+
     def test_runs_the_handover(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = os.path.realpath(tmp)
-            cwd = os.path.join(tmp, "cwd")
-            os.makedirs(cwd)
-            path = os.path.join(tmp, "handover.json")
-            code = "import json, os, sys; print(json.dumps([os.getcwd(), dict(os.environ), sys.argv]))"
-            env = {"A": "1", "B": "two words"}
-            with open(path, "w") as f:
-                json.dump({"argv": [sys.executable, "-c", code, "x", "y z"], "env": env, "cwd": cwd}, f)
-            pane = {"TERM": "tmux-256color", "PANE_ONLY": "1", "PATH": os.environ.get("PATH", "")}
-            res = subprocess.run([sys.executable, "-I", "-c", tui.EXEC, path], env=pane, capture_output=True,
-                                 text=True, stdin=subprocess.DEVNULL, timeout=30)
-            self.assertEqual(res.returncode, 0, res.stderr)
-            got_cwd, got_env, got_argv = json.loads(res.stdout)
-            self.assertEqual(got_cwd, cwd)
-            self.assertEqual({k: got_env.get(k) for k in (*env, "TERM")}, {**env, "TERM": "tmux-256color"})
-            self.assertNotIn("PANE_ONLY", got_env)
-            self.assertNotIn("PATH", got_env)
-            self.assertEqual(got_argv, ["-c", "x", "y z"])
-            self.assertFalse(os.path.exists(path))
+        cwd = os.path.join(self.root, "cwd")
+        os.makedirs(cwd)
+        code = "import json, os, sys; print(json.dumps([os.getcwd(), dict(os.environ), sys.argv]))"
+        env = {"A": "1", "B": "two words"}
+        pane = {"TERM": "tmux-256color", "PANE_ONLY": "1", "PATH": os.environ.get("PATH", "")}
+        res = self.run_exec([sys.executable, "-c", code, "x", "y z"], env, cwd, pane)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        got_cwd, got_env, got_argv = json.loads(res.stdout)
+        self.assertEqual(got_cwd, cwd)
+        self.assertEqual({k: got_env.get(k) for k in (*env, "TERM")}, {**env, "TERM": "tmux-256color"})
+        self.assertNotIn("PANE_ONLY", got_env)
+        self.assertNotIn("PATH", got_env)
+        self.assertEqual(got_argv, ["-c", "x", "y z"])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_default_signal_dispositions(self):
+        for sig in (signal.SIGPIPE, signal.SIGXFSZ):
+            with self.subTest(sig=sig.name):
+                res = self.run_exec(["/bin/sh", "-c", f"kill -{sig.name[3:]} $$"], {}, self.root, {})
+                self.assertEqual(res.returncode, -sig, res.stderr)
 
 
 if __name__ == "__main__":
