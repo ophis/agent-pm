@@ -57,11 +57,27 @@ The Python scripts in `scripts/` that turn the board into core runs. launchd run
 |---|---|---|
 | `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
 | `run.py` | Called by the router | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. |
-| `writeback.py` | Inner of `run.py` | As the role account: posts a start comment, then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
+| `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) and any pre-core worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
 | `pipeline.py` | Shared | Linear API client, loading and validating the config (`pipeline.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
+
+### A run's command
+
+What the inner runs for a product-design run on TASK-142 (cwd `work/TASK-142/`, env `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000`):
+
+```bash
+claude -p '<prompt>' \
+  --session-id <sid> \
+  --model opus --effort high \
+  --permission-mode auto --setting-sources user --strict-mcp-config \
+  --output-format stream-json --verbose \
+  --json-schema '<core/output/outcome.schema.json>' \
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py prepare --dir /Users/francis/playground/agent-pm/work/TASK-142/src *)'
+```
+
+`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands`, and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
 
 ## Using the board
 
