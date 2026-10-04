@@ -16,7 +16,7 @@ agent-pm/
 │   ├── config.toml        # its config: Linear team and state ids, task labels, humans, role accounts and order, project → repo map, [core] overlay
 │   ├── *.plist            # launchd schedules for router and promote
 │   └── src/
-│       ├── router.py      # picks and starts the next run
+│       ├── router.py      # picks and starts the next runs
 │       ├── run.py         # starts one core run, then writes its result back
 │       ├── issues.py      # reads a Linear issue
 │       ├── target.py      # target repo of an issue; engineering pre-check
@@ -94,7 +94,7 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 
 | Script | Runs | Does |
 |---|---|---|
-| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts runs, each for a role below its `max_runs` live sessions, until every role is full, no issue is ready or usage stops it: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role is full, while 5-hour usage is at 90% or more, or when a weekly limit is full (usage is checked before each launch). |
+| `router.py` | Every 30 minutes, all day | Decides what runs next. Unless every role is full, recovers dead In Progress runs (resumes them or returns them to Todo), then starts runs, each for a role below its `max_runs` live sessions, until every role is full, no issue is ready or usage stops it (5-hour usage at 90% or more or a weekly limit full, checked before each launch): resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). |
 | `run.py` | Called by the router | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. |
 | `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |

@@ -874,6 +874,10 @@ class Blockers(Base):
             self.assertEqual(fake.mutations, [], argv)
 
 
+def is_launch(cmd):
+    return len(cmd) > 1 and cmd[1].endswith("run.py")
+
+
 class FakeShell:
     """sessions: the tmux session names list-sessions prints; none = no tmux server (exit 1). fives: five_hour of the first
     probes, then probe_five. A run.py launch exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from --assignee)
@@ -891,7 +895,7 @@ class FakeShell:
             ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
                 "five_hour": {"utilization": five}, "seven_day": {"utilization": 0.1}}}}
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(ev) + "\n")
-        if cmd in self.launches():
+        if is_launch(cmd):
             ident = cmd[cmd.index("--issue") + 1]
             rc = self.exits.get(ident, 0)
             if not rc and ident not in self.bounce:
@@ -901,7 +905,7 @@ class FakeShell:
         return subprocess.CompletedProcess(cmd, 0)
 
     def launches(self):
-        return [c for c in self.calls if len(c) > 1 and c[1].endswith("run.py")]
+        return [c for c in self.calls if is_launch(c)]
 
 
 class Tick(Base):
@@ -1082,9 +1086,24 @@ class Tick(Base):
         self.assertEqual(self.said(), ["plan: new (2 in queue)", "pick: TASK-1 (2 in queue)", "claim: TASK-1 task=deep-research",
                                        "launch TASK-1 (Deep Research) exit=0", "plan: new (1 in queue)",
                                        "skip: new blocked by usage: status=allowed five_hour=0.95 seven_day=0.1"])
-        self.assertEqual([c[3] if c in self.sh.launches() else c[0] for c in self.sh.calls],
+        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls],
                          ["tmux", "claude", "TASK-1", "tmux", "claude"])
         self.assertEqual(fake.issues["TASK-2"]["state"], "Todo")
+
+    def test_nothing_claimed_after_a_launch_stops_the_tick(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=2, project=PD)])
+        for sid in "abcd":
+            self.add("start", "TASK-2", sid, 300)
+        self.tick(fake)
+        self.assertEqual(self.said(), ["plan: new (2 in queue)", "pick: TASK-1 (2 in queue)", "claim: TASK-1 task=deep-research",
+                                       "launch TASK-1 (Deep Research) exit=0", "plan: new (1 in queue)",
+                                       "pick: TASK-2 reached 4 attempts; In Review", "pick: nothing claimable",
+                                       "skip: nothing claimed"])
+        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls],
+                         ["tmux", "claude", "TASK-1", "tmux", "claude"])
+        self.assertEqual([line.split()[2:4] for line in self.state.splitlines()][4:], [["start", "TASK-1"]])
+        self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
+                         {"TASK-1": ("In Progress", None), "TASK-2": ("In Review", [router.CAP_COMMENT])})
 
     def test_bounce_frees_the_slot(self):
         fake = FakeLinear([issue(f"TASK-{n}", "Todo", "researcher", priority=n) for n in (1, 2, 3)])

@@ -427,28 +427,31 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
                 return 0
         if kind == "resume":
             _, issue, sid, task = run
+            ident = issue["identifier"]
+            line = f"resume {ident} session={sid} task={task}"
         else:
             taken = board.take(issue_id, full)
             if not taken:
                 log("skip: nothing claimed")
                 break
             issue, task = taken
-            sid = str(uuid.uuid4())
+            ident, sid = issue["identifier"], str(uuid.uuid4())
+            line = f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
         planned += 1
-        ident, project, role = issue["identifier"], issue["project"], board.role(issue)
-        if dry:
-            live[role].append(ident)
-        else:
-            append(runs, f"resume {ident} session={sid} task={task}" if kind == "resume"
-                   else f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}")
+        project, role = issue["project"], board.role(issue)
+        if not dry:
+            append(runs, line)
             rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
                      "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind]).returncode
             log(f"launch {ident} ({project['name']}) exit={rc}")
             if rc:  # run.py outer failed (config, Keychain, Linear, tmux); likely so for the role's next issue too
                 failed.add(role)
-            live = live_sessions(roles, sh)
         if issue_id:
             break
+        if dry:
+            live[role].append(ident)
+        else:
+            live = live_sessions(roles, sh)
         full = full_roles(roles, live) | failed
     if dry:
         ok, usage = probe(sh)
