@@ -545,11 +545,18 @@ def rule(text, name):
 
 
 class Methods(unittest.TestCase):
-    def test_voting_and_pipeline_are_the_same_in_both(self):
+    def test_voting_is_the_same_in_both_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
-        for name in ("Voting", "Pipeline"):
-            self.assertEqual(len(rule(deep, name)), 1, name)
-            self.assertEqual(rule(deep, name), rule(ultra, name), name)
+        for m, text in zip(METHOD_NAMES, (deep, ultra)):
+            for name in ("Voting", "Pipeline"):
+                self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
+            self.assertTrue(rule(text, "Pipeline")[0].startswith(
+                "- **Pipeline**: ≤ 10 subagents running at once. Each result of a stage goes to the next stage as soon "
+                "as it arrives, never in batches;"), m)
+        self.assertEqual(rule(deep, "Voting"), rule(ultra, "Voting"))
+        self.assertTrue(rule(ultra, "Pipeline")[0].endswith("only verification waits for all claims, to rank them."))
+        for phrase in ("fetch selection waits for all search results", "verification waits for all claims"):
+            self.assertIn(phrase, rule(deep, "Pipeline")[0])
 
     def test_both_state_voting_pipeline_and_restrictions(self):
         for m in METHOD_NAMES:
@@ -559,7 +566,7 @@ class Methods(unittest.TestCase):
             for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
                            "else (agent errors, missing votes) → unverified", "votes that came back",
                            "unsure → votes refuted", "≤ 10 subagents running at once",
-                           "only verification waits for all claims", "the calling task's restrictions for",
+                           "verification waits for all claims", "the calling task's restrictions for",
                            "into every subagent prompt, voters included"):
                 self.assertIn(phrase, text, m)
 
@@ -571,12 +578,15 @@ class Methods(unittest.TestCase):
 
     def test_deep_research_limits_and_public_material(self):
         text = method("deep-research")
-        for phrase in ("5 complementary web search angles", "fewer than 15 sources", "top 25", "≤ 100",
+        for phrase in ("5 complementary web search angles", "after every search agent has returned",
+                       "rank the whole set by relevance (high → low)", "dispatch fetches for the first ≤ 15",
+                       "top 25", "≤ 100",
                        "start each web agent with fresh context (no inherited conversation), so it sees only its "
                        "prompt",
                        "only from the brief and web results", "Dispatch fetches only for URLs a search agent returned",
                        "**Page text**:"):
             self.assertIn(phrase, text)
+        self.assertNotIn("as each search agent's results arrive", text)
 
     def test_ultracode_gaps_and_room_for_votes(self):
         text = method("ultracode")
