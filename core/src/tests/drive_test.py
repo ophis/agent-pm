@@ -263,14 +263,30 @@ class Skill(Base):
         files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/x.md`.", r, dest="o").files
         src = os.path.join(CORE, "team", "methods")
         expected = {}
-        for d, _, names in os.walk(src):
-            for name in names:
+        for d, dirs, names in os.walk(src):
+            dirs[:] = [n for n in dirs if not n.startswith(".")]
+            for name in (n for n in names if not n.startswith(".")):
                 with open(os.path.join(d, name)) as f:
                     expected[os.path.join(skill, "methods", os.path.relpath(os.path.join(d, name), src))] = f.read()
         self.assertIn(os.path.join(skill, "methods", "deep-research.md"), expected)
         self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")}, expected)
         self.assertEqual(list(clients.SkillClient({}).export("No methods.", r, dest="o").files),
                          [os.path.join(skill, "SKILL.md")])
+
+    def test_the_methods_copy_keeps_subdirs_and_skips_dotfiles(self):
+        src = os.path.join(self.tmp.name, "methods")
+        for rel, data in (("a.md", b"a"), ("sub/b.md", b"b"), (".DS_Store", b"\x00\xff"), (".hidden/c.md", b"c"),
+                          ("sub/.x", b"x")):
+            os.makedirs(os.path.dirname(os.path.join(src, rel)), exist_ok=True)
+            with open(os.path.join(src, rel), "wb") as f:
+                f.write(data)
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        skill = os.path.join(os.path.abspath("o"), "r-t")
+        with unittest.mock.patch.object(sys.modules["clients.skill"], "CORE_METHODS", src):
+            files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/a.md`.", r, dest="o").files
+        methods = os.path.join(skill, "methods")
+        self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")},
+                         {os.path.join(methods, "a.md"): "a", os.path.join(methods, "sub", "b.md"): "b"})
 
     def test_product_design_skill_gets_repo_py(self):
         skill = os.path.join(self.tmp.name, "pm-product-design")

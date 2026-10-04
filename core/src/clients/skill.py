@@ -3,7 +3,6 @@ runs under scripts/ and, when it names methods/, of core's team/methods/ under m
 import json
 import os
 import re
-from pathlib import Path
 
 from compose import TEXT, RunConfig
 
@@ -45,6 +44,10 @@ class SkillClient(Client):
             with open(os.path.join(CORE_SCRIPTS, script)) as f:
                 files[os.path.join(skill, "scripts", script)] = f.read()
         if METHODS in text:
-            for path in sorted(p for p in Path(CORE_METHODS).rglob("*") if p.is_file()):
-                files[os.path.join(skill, "methods", path.relative_to(CORE_METHODS))] = path.read_text()
+            for d, dirs, names in os.walk(CORE_METHODS):
+                dirs[:] = sorted(n for n in dirs if not n.startswith("."))   # dotfiles (.DS_Store) are not methods
+                for name in sorted(n for n in names if not n.startswith(".")):
+                    path = os.path.join(d, name)
+                    with open(path) as f:
+                        files[os.path.join(skill, "methods", os.path.relpath(path, CORE_METHODS))] = f.read()
         return Launch([], files=files)

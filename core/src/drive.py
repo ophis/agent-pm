@@ -79,8 +79,8 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
     then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
     permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
-    entries = [fill(e, {"methods": methods}, "read") for e in run.read]
-    entries += [fill(e, {"methods": methods}, "write") for e in run.write]
+    named = {"methods": methods}
+    entries = [fill(e, named, "read") for e in run.read] + [fill(e, named, "write") for e in run.write]
     dirs = []
     for p in (bind(e, repo) for e in entries):
         if p and p not in dirs:
