@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Router: decides what runs next among the team's issues assigned to role accounts, then calls launch.py.
+"""Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
 (no mode)           One tick (launchd): hours, per-role locks (all busy -> skip), prune, Recover and plan over idle roles,
                     usage gate, resume or claim, launch.
@@ -9,7 +9,7 @@
 --pick [--role ROLE] [RUNS_LOG]  Recover, then Pick + Claim (only ROLE's issues if given; only issues whose task is their role's default); print "<ID> <url>" (manual use).
 --plan [RUNS_LOG]   Recover, then print "resume <ID> <SID> <k> <url> <project>", "new", or nothing.
 --claim [RUNS_LOG]  Pick + Claim (only issues whose task is their role's default): print "<ID> <url> <project>" of the claimed issue, or nothing.
---gate resume|new   Read the usage probe's stream-json on stdin, print the usage, exit 0 if the run may start.
+--brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
 --prune RUNS_LOG    Drop runs.log lines older than 7 days.
 Needs Python 3.11+.
 """
@@ -32,11 +32,14 @@ CAP = 4
 KEEP = timedelta(days=7)
 SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
+BRAKE_5H = 0.8
+PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
+         "--setting-sources", "user", "--strict-mcp-config"]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
 USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] | --pick [--role ROLE] [RUNS_LOG] | [--plan | --claim] [--dry-run] [RUNS_LOG]"
-         " | --gate resume|new | --prune RUNS_LOG")
-LAUNCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launch.py")
+         " | --brake | --prune RUNS_LOG")
+RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
@@ -180,7 +183,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     return task, None
 
 
-def gate(kind, lines):
+def gate(kind, lines, max_5h=MAX_5H):
     """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
     info = None
     for line in lines:
@@ -198,8 +201,14 @@ def gate(kind, lines):
     summary = " ".join([f"status={info.get('status')}", f"five_hour={five}"] + [f"{k}={v}" for k, v in sorted(week.items())])
     if five is None:
         return False, summary
-    ok = info.get("status") != "rejected" and five < MAX_5H and all(v is None or v < 1 for v in week.values())
+    ok = info.get("status") != "rejected" and five < max_5h and all(v is None or v < 1 for v in week.values())
     return ok, summary
+
+
+def brake(sh):
+    """(ok, summary) of a fresh usage probe against BRAKE_5H: may a deep-research run start another round."""
+    probe = sh(PROBE, cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    return gate("new", probe.stdout.splitlines(), BRAKE_5H)
 
 
 class Board:
@@ -211,7 +220,7 @@ class Board:
             if not only:
                 raise SystemExit("Board: only is empty")
             if unknown := [r for r in only if r not in self.runs]:
-                raise SystemExit(f"no role {unknown[0]!r} in roles/")
+                raise SystemExit(f"no role {unknown[0]!r} in pipeline.toml")
         self.stage = stage_order(cfg)
         self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
         t = team(gql, cfg)
@@ -308,7 +317,7 @@ class Board:
             elif sid and has_transcript(self.tdir, ident, sid):
                 role = self.role(issue)
                 run = self.runs[role]
-                task = logged_task(self.entries, sid) or run.task_name
+                task = logged_task(self.entries, sid) or run.default
                 if task not in run.tasks:
                     log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
                     self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
@@ -432,7 +441,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         log("skip: nothing to do")
         return 0
     os.makedirs(WORK, exist_ok=True)
-    # The usage probe's cwd only, not a run cwd: runs work in work/<ID>/ (launch.py).
+    # The usage probe's cwd only, not a run cwd: runs work in work/<ID>/ (run.py).
     probe = sh(["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose"],
                cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     ok, usage = gate(kind or "new", probe.stdout.splitlines())
@@ -457,14 +466,22 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         append(runs, f"start {issue['identifier']} session={sid} transcript={transcript(issue['identifier'], sid, tdir)} task={task}")
         mode = ["--mode", "new"]
     ident, project = issue["identifier"], issue["project"]
-    rc = sh([sys.executable, LAUNCH, "--issue", ident, "--url", issue["url"], "--project", project["id"],
+    rc = sh([sys.executable, RUN, "--issue", ident, "--url", issue["url"], "--project", project["id"],
              "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task] + mode).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
 
 
-def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=None, runs=RUNS_LOG,
+def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_LOG,
          sh=subprocess.run, hour=None, root=ROOT):
+    if "--brake" in argv:
+        if argv != ["--brake"]:
+            print(USAGE, file=sys.stderr)
+            return 2
+        os.environ["PATH"] = PATH
+        ok, summary = brake(sh)
+        print(summary)
+        return 0 if ok else 1
     args = [a for a in argv if a != "--dry-run"]
     dry = len(args) < len(argv)
     now = now or datetime.now(timezone.utc)
@@ -492,17 +509,12 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, stdin=sys.stdin, config=
         if out:
             print(" ".join(out.split()[:2]))
         return 0
-    mode = args[0] if args[:1] in (["--plan"], ["--claim"], ["--gate"], ["--prune"]) else None
+    mode = args[0] if args[:1] in (["--plan"], ["--claim"], ["--prune"]) else None
     rest = args[1:] if mode else args
     if (not mode or len(rest) > 1 or any(a.startswith("-") for a in rest)
-            or mode == "--gate" and rest not in (["resume"], ["new"])
             or mode == "--prune" and (dry or not rest)):
         print(USAGE, file=sys.stderr)
         return 2
-    if mode == "--gate":
-        ok, summary = gate(rest[0], stdin)
-        print(summary)
-        return 0 if ok else 1
     if mode == "--prune":
         prune(rest[0], now)
         return 0

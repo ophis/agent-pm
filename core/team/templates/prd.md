@@ -1,34 +1,34 @@
-# PRD: [Reference] [产品名]
+# PRD: [Reference] [Product name]
 
-## 问题与目标
-要解决什么问题、为谁解决；目标可衡量。
+## Problem and goals
+What problem, for whom; measurable goals.
 
-## 非目标
-明确不做的事。
+## Non-goals
+What it explicitly won't do.
 
-## 用户与场景
-目标用户及使用场景。
+## Users and scenarios
+Target users and where they use it.
 
-## 用户流程
-从开始到完成的主要流程，每一步用户看到什么、做什么。
+## User flow
+The main flow from start to finish: what the user sees and does at each step.
 
-## 做法与取舍
-可选，无比较时省略。2–3 种可行做法及取舍，选定哪种、为什么。
+## Approach and trade-offs
+Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs, which one is chosen and why.
 
-## 需求
-### 功能需求
-编号列出，每条可验证。
-### 非功能需求
-性能、可靠性、安全、成本等。
+## Requirements
+### Functional requirements
+Numbered, each verifiable.
+### Non-functional requirements
+Performance, reliability, security, cost, etc.
 
-## 成功指标
-如何判断做成了。
+## Success metrics
+How to tell it worked.
 
-## 范围与分期交付
-每一期交付什么。
+## Scope and phased delivery
+What each phase delivers.
 
-## 假设、开放问题与风险
-假设先写要不要调研、要不要自我追问，各一句。需用户决定的写进开放问题，每题附可直接采纳的建议答案。
+## Assumptions, open questions and risks
+Assumptions first state whether research and a self-grill were needed, one sentence each. What the user must decide goes under Open questions, each with a suggested answer ready to adopt.
 
-## 已完成
-可选，产品尚无已实现内容时省略。按原章节分组（如 `### 需求`），注明实现位置（文件或提交）。
+## Done
+Optional; omit when the product has nothing built yet. Grouped by original section (e.g. `### Requirements`), naming where each is implemented (file or commit).

@@ -1,16 +1,16 @@
 # Report: [Reference] [Title]
 
-## 结论与建议
-一段话。
+## Conclusion and recommendation
+One paragraph.
 
-## 对比表
-仅当交付物要求对比。
+## Comparison table
+Only when the deliverable asks for a comparison.
 
-## 发现
-按问题的各部分分节。
+## Findings
+One subsection per part of the question.
 
-## 对已知说法的更正
-逐条列出。
+## Corrections to known claims
+One item each.
 
-## 缺口
-逐条列出。
+## Gaps
+One item each.

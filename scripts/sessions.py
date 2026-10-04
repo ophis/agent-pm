@@ -1,14 +1,9 @@
-#!/usr/bin/env python3
 """Session registry: one comment per Claude session on its issue, written by the harness account.
 
-sessions.py start ISSUE RECORD_JSON      record the session as running (before claude starts)
-sessions.py end ISSUE RECORD_JSON RC     record its end: done for RC 0, else interrupted
-RECORD_JSON is base()'s record, built by launch.py. Each write finds the harness account's comments starting
-`Run <sid> · ` and updates the earliest, else creates one: one attempt, bounded by LIMIT seconds; a failure prints one
-registry-error line. Always exits 0.
+post() finds the harness account's comments starting `Run <sid> · ` and updates the earliest, else creates one:
+one attempt, bounded by LIMIT seconds.
 """
 import functools
-import json
 import os
 import re
 import shlex
@@ -26,7 +21,6 @@ Q_FIND = ("query($i: String!, $p: String!) { issue(id: $i) { comments(filter: { 
           "body: { startsWith: $p } }) { nodes { id createdAt } } } }")
 M_CREATE = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
 M_UPDATE = "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
-USAGE = "usage: sessions.py start ISSUE RECORD_JSON | end ISSUE RECORD_JSON RC"
 
 
 def is_record(attachment):
@@ -98,25 +92,12 @@ def write(gql, issue, sid, text, limit=LIMIT):
     return None if out["ok"] else "success: false"
 
 
-def main(argv, gql=None):
-    gql = gql or functools.partial(pipeline.linear_gql, timeout=LIMIT)
-    issue, sid = argv[1] if len(argv) > 1 else "?", "?"
-    try:
-        cmd = argv[0] if argv else ""
-        if (cmd, len(argv)) not in (("start", 3), ("end", 4)):
-            raise ValueError(USAGE)
-        rec = json.loads(argv[2])
-        if not isinstance(rec, dict):
-            raise ValueError("RECORD_JSON is not an object")
-        sid = rec.get("sid", "?")
-        reason = write(gql, issue, sid, body(rec) if cmd == "start" else body(rec, int(argv[3]), now()))
-    except Exception as e:
-        reason = one_line(e)
+def post(issue, rec, rc=None, *, gql=None, ended_at=None):
+    """Record the session rec on issue: running for rc None, else its end (ended_at defaults to now). gql defaults to
+    the harness account's, bounded by LIMIT. None once written, else the one registry-error line (no newline)."""
+    sid = rec["sid"]
+    text = body(rec) if rc is None else body(rec, rc, ended_at or now())
+    reason = write(gql or functools.partial(pipeline.linear_gql, timeout=LIMIT), issue, sid, text)
     if reason:
-        print(" ".join(f"{datetime.now():%Y-%m-%d %H:%M:%S} registry-error {issue} session={sid}: {reason}".split()),
-              flush=True)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+        return " ".join(f"{datetime.now():%Y-%m-%d %H:%M:%S} registry-error {issue} session={sid}: {reason}".split())
+    return None

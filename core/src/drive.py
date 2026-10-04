@@ -20,7 +20,7 @@ import re
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
@@ -68,23 +68,24 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str) -> Access:
-    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled. Edit limits are left to the client's
-    permission mode (auto)."""
+    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled, the gate (used verbatim) pre-approved too.
+    Edit limits are left to the client's permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
     dirs = []
     for p in (bind(e, repo) for e in run.read + run.write):
         if p and p not in dirs:
             dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
-    return Access(dirs, [fill(c, values, "commands") for c in run.commands])
+    return Access(dirs, [fill(c, values, "commands") for c in run.commands] + ([run.gate] if run.gate else []))
 
 
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
-         repo: str | None = None) -> tuple[Launch, RunConfig]:
-    """The Launch for one run, with its config; raises ConfigError."""
+         repo: str | None = None, layers: Sequence[Mapping] = ()) -> tuple[Launch, RunConfig]:
+    """The Launch for one run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after the
+    client's config."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
-    run = load_run(root, role, task, layers=[client.config])
+    run = load_run(root, role, task, layers=[client.config, *layers])
     prompt = render(root, run, params, vehicle=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root))
     launch = client.launch(prompt, run, params=params, access=acc, schema=outcome_schema(root))

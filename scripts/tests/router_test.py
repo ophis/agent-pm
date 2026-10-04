@@ -2,7 +2,6 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, team_node  # noqa: E402
+from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
 import pipeline  # noqa: E402
 import router  # noqa: E402
 
@@ -23,10 +22,11 @@ STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], 
 NAMES = {i: n for n, i in STATES.items()}
 DR, PD = "Deep Research", "Product Design"
 IDS = {DR: "p-dr", PD: "p-pd"}
-ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
-CONFIG = HEADER + '[roles.researcher]\nnext = "pm"\n[roles.pm]\nnext = "engineer"\n[roles.engineer]\n'
+ROLE = ACCOUNTS
+CONFIG = HEADER + role_table("researcher", 'next = "pm"') + role_table("pm", 'next = "engineer"') + role_table("engineer")
 LIGHT, DEEP, STRAY, ORPHAN_LABEL = (f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24))   # label ids; STRAY maps to no task
-TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\norphan = "{ORPHAN_LABEL}"\n'
+# ORPHAN_LABEL picks pm's task, none of researcher's.
+TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
 RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
 
 
@@ -278,12 +278,34 @@ class Gate(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertEqual(router.gate("new", lines)[0], ok)
 
-    def test_main_reads_stdin(self):
+    def test_max_5h(self):
+        self.assertEqual([router.gate("new", [event(five=0.85)], *m)[0] for m in ((), (0.8,))], [True, False])
+
+
+class Brake(unittest.TestCase):
+    def brake(self, *lines):
+        sh = mock.Mock(return_value=subprocess.CompletedProcess(router.PROBE, 0, stdout="".join(f"{x}\n" for x in lines)))
         out = io.StringIO()
-        with redirect_stdout(out):
-            rc = router.main(["--gate", "resume"], gql=None, stdin=io.StringIO(event(five=0.5, seven_day=0.3) + "\n"))
-        self.assertEqual(rc, 0)
-        self.assertEqual(out.getvalue().strip(), "status=allowed five_hour=0.5 seven_day=0.3")
+        with redirect_stdout(out), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+            rc = router.main(["--brake"], gql=None, sh=sh)
+            self.path = os.environ["PATH"]
+        self.sh = sh
+        return rc, out.getvalue()
+
+    def test_probe(self):
+        self.assertEqual(router.PROBE, ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json",
+                                        "--verbose", "--setting-sources", "user", "--strict-mcp-config"])
+        self.assertEqual(self.brake(event(five=0.79, seven_day=0.3)), (0, "status=allowed five_hour=0.79 seven_day=0.3\n"))
+        self.sh.assert_called_once_with(router.PROBE, cwd=pipeline.WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(self.path, router.PATH)
+
+    def test_blocks_at_brake_5h(self):
+        self.assertEqual(router.BRAKE_5H, 0.8)
+        rows = ((event(five=0.79), 0), (event(five=0.8), 1), (event(status="rejected", five=0.1), 1), ('{"type":"system"}', 1))
+        for line, rc in rows:
+            with self.subTest(line):
+                self.assertEqual(self.brake(line)[0], rc)
+        self.assertEqual(self.brake("garbage"), (1, "no rate_limit_event\n"))
 
 
 class Plan(Base):
@@ -565,13 +587,16 @@ class Prune(Base):
 
 class Usage(unittest.TestCase):
     def test_unknown_flags_rejected(self):
-        for argv in (["--help"], ["--plan", "--bogus"], ["--prune"], ["--prune", "x", "--dry-run"], ["--gate", "maybe"],
-                     ["--plan", "a", "b"], ["-h"], ["--pick", "--project", "p-dr"], ["--issue", "TASK-1"]):
+        for argv in (["--help"], ["--plan", "--bogus"], ["--prune"], ["--prune", "x", "--dry-run"], ["--gate", "new"], ["--gate", "resume"],
+                     ["--plan", "a", "b"], ["-h"], ["--pick", "--project", "p-dr"], ["--issue", "TASK-1"],
+                     ["--brake", "new"], ["--brake", "--dry-run"], ["--dry-run", "--brake"], ["--brake", "--brake"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err):
-                    self.assertEqual(router.main(argv, gql=None), 2)
+                    self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("probe ran"))), 2)
                 self.assertIn("usage:", err.getvalue())
+        self.assertIn(" | --brake | ", router.USAGE)
+        self.assertNotIn("--gate", router.USAGE + router.__doc__)
 
 
 class Claim(Base):
@@ -617,7 +642,7 @@ class Claim(Base):
     def test_pick_unknown_role_exits(self):
         with self.assertRaises(SystemExit) as cm:
             self.run_main(FakeLinear([]), "--pick", "--role", "ghost")
-        self.assertEqual(cm.exception.code, "no role 'ghost' in roles/")
+        self.assertEqual(cm.exception.code, "no role 'ghost' in pipeline.toml")
 
     def test_board_needs_a_role(self):
         fake = FakeLinear([])
@@ -755,7 +780,7 @@ class FakeShell:
         return subprocess.CompletedProcess(cmd, 0)
 
     def launches(self):
-        return [c for c in self.calls if len(c) > 1 and c[1].endswith("launch.py")]
+        return [c for c in self.calls if len(c) > 1 and c[1].endswith("run.py")]
 
 
 class Tick(Base):
@@ -781,7 +806,8 @@ class Tick(Base):
         self.tick(fake, "--now", hour=12)
         (launch,) = self.sh.launches()
         sid = launch[launch.index("--sid") + 1]
-        self.assertEqual(launch[0], sys.executable)
+        self.assertEqual(launch[:2], [sys.executable, router.RUN])
+        self.assertEqual(router.RUN, os.path.join(pipeline.ROOT, "scripts", "run.py"))
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", IDS[DR],
                                       "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
         self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}"
@@ -848,7 +874,7 @@ class Tick(Base):
         self.tick(fake, shell=FakeShell({"engineer"}))
         self.assertEqual(self.said(), ["busy: engineer", "plan: nothing to do", "skip: nothing to do"])
         self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3)
-        self.assertEqual([v["e"] for q, v in fake.queries if "users(filter" in q], [ROLE["pm"], ROLE["researcher"]])
+        self.assertEqual([v["e"] for q, v in fake.queries if "users(filter" in q], [ROLE["researcher"], ROLE["pm"]])
         self.assertEqual(fake.mutations, [])
 
     def test_issue_flag_of_busy_role_skips(self):
@@ -985,24 +1011,18 @@ class Tick(Base):
 
 
 class TaskLabels(Base):
-    """A copy of the repo's roles/ and tasks/ (which ship light-research) plus orphan, no role's task; deliberately depends on the shipped researcher config."""
+    """The repo's core config, whose researcher ships light-research; deliberately depends on it."""
     ORPHAN = ('Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
               "Fix the label or the assignee, then move the issue back to Todo.")
 
     def setUp(self):
         super().setUp()
         self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG + TASK_LABELS)
-        self.root = os.path.join(self.tmp.name, "root")
-        for d in ("roles", "tasks"):
-            shutil.copytree(os.path.join(pipeline.ROOT, d), os.path.join(self.root, d))
-        for ext, text in ((".md", "x\n"), (".toml", 'model = "sonnet"\neffort = "low"\n')):
-            with open(os.path.join(self.root, "tasks", "orphan" + ext), "w") as f:
-                f.write(text)
 
     def test_task_for(self):
         outside = [label("Urgent", STRAY, None), label("Light Research", LIGHT, "00000000-0000-4000-8000-000000000003")]
         role_tasks = ["deep-research", "light-research"]
-        label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "orphan"}
+        label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "product-design"}
         fix = "Fix the label or the assignee, then move the issue back to Todo."
         absent = "is not in pipeline.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (([], ("deep-research", None)),

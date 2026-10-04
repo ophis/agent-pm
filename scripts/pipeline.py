@@ -1,26 +1,35 @@
-"""Shared by router.py, launch.py and promote.py: Linear access, paths and pipeline.toml.
+"""Shared by the harness scripts: Linear access, paths, pipeline.toml, core config with its [core] overlay, and TASKS.
 Imports none of them. Needs Python 3.11+ (tomllib).
 """
 import functools
 import json
 import os
 import re
-import string
+import shlex
 import subprocess
 import sys
+import tempfile
 import tomllib
 import urllib.request
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(ROOT, "pipeline.toml")
+CORE = os.path.join(ROOT, "core")
 WORK = os.path.join(ROOT, "work")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 LOGS = os.path.join(ROOT, "logs")
 RUNS_LOG = os.path.join(LOGS, "runs.log")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
+SHORT, LONG = 60, 600
+
+# No scripts module may be named clients, compose, drive or repo: these come from core/src.
+sys.path.insert(0, os.path.join(CORE, "src"))
+import clients  # noqa: E402
+import compose  # noqa: E402
 
 
 def session(role):
@@ -34,8 +43,9 @@ def harness_service():
     return load_config()["harness_key"]
 
 
-def linear_gql(query, *, timeout=30, **variables):
-    key = subprocess.run(["security", "find-generic-password", "-s", harness_service(), "-w"],
+def linear_gql(query, *, timeout=30, service=None, **variables):
+    """Linear as the account whose key is Keychain item `service`, default the harness account's."""
+    key = subprocess.run(["security", "find-generic-password", "-s", service or harness_service(), "-w"],
                          capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
     req = urllib.request.Request("https://api.linear.app/graphql",
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
@@ -45,6 +55,27 @@ def linear_gql(query, *, timeout=30, **variables):
     if body.get("errors"):
         raise SystemExit(f"linear api error: {body['errors']}")
     return body["data"]
+
+
+def sh_run(argv, timeout):
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                          env={**os.environ, "PATH": PATH})
+
+
+def err_text(res):
+    return (res.stderr or "").strip()[:200]
+
+
+def atomic_write(path, text):
+    """Write path through a fresh temp file and os.replace: a planted symlink at path is replaced, never followed."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
 
 
 def log(msg):
@@ -93,62 +124,63 @@ def transcript(issue, sid, projects=PROJECTS):
     return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
 
 
-PLACEHOLDERS = {"worktree", "branch", "owner", "name", "default", "clone"}
-# Build tools and runners execute repo-defined code whatever their arguments.
-INTERPRETER_RE = re.compile(r"\b(?:(?:python[\d.]*|bash|sh|zsh|node|ruby|perl)\s+\S*[/.]"
-                            r"|(?:make|npm|npx|pnpm|yarn|bun|cargo|go|pytest|uv)\b)")
-
-
-def _root_forms(root):
-    home = os.path.expanduser("~")
-    if not root.startswith(home + os.sep):
-        return [root]
-    rest = root[len(home):]
-    return [root, "~" + rest, "$HOME" + rest, "${HOME}" + rest]
-
-
-def _fields(where, rule):
-    try:
-        return [field for _, field, _, _ in string.Formatter().parse(rule) if field is not None]
-    except ValueError as e:
-        raise SystemExit(f"{where}: allowed_tools rule is not a valid template ({e}): {rule!r}") from None
-
-
-def check_allowed_tools(where, p, root=ROOT):
-    """Trust model: no wildcards, no unknown placeholders, no ROOT, no interpreter-on-script, only with repo_from_issue."""
-    tools = p.get("allowed_tools")
-    if tools is None:
-        return
-    if not p.get("repo_from_issue"):
-        raise SystemExit(f"{where}: allowed_tools without repo_from_issue")
-    for rule in tools:
-        if "*" in rule:
-            raise SystemExit(f"{where}: allowed_tools rule has a wildcard: {rule!r}")
-        if any(r in rule for r in _root_forms(root)):
-            raise SystemExit(f"{where}: allowed_tools rule contains root: {rule!r}")
-        if INTERPRETER_RE.search(rule):
-            raise SystemExit(f"{where}: allowed_tools rule runs an interpreter on a script: {rule!r}")
-        for field in _fields(where, rule):
-            if field not in PLACEHOLDERS:
-                raise SystemExit(f"{where}: allowed_tools rule has unknown placeholder {{{field}}}: {rule!r}")
-
-
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "docs", "roles", "project_repos"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "core"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
-DOCS_KEYS = ("repo", "clone", "branch")
-PIPELINE_ROLE_KEYS = {"next", "require_instructions"}
-ROLE_KEYS = {"read_only", "memory", "tasks", "account", "key"}
-TASK_KEYS = {"model", "effort", "add_dirs", "repo_from_issue", "read_repo", "allowed_tools", "prefix"}
-SETTINGS = "role and task settings live in roles/<role>.toml and tasks/<task>.toml"
-NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-REPO = "{repo}"
-DOCS_CLONE = "{docs_clone}"  # a static config value, resolved here; {repo} is per issue, resolved by the launcher
-# A clone with one of these would break the launcher's Edit(//<clone>/**) deny rule or the prompt's Docs: line.
-CLONE_BAD_RE = re.compile(r"[\x00-\x1f\x7f*?\[\](){},]")
-# Config the runs (--setting-sources user) and launchd trust; a writable memory dir must stay out of them.
-PROTECTED = ("~/.claude", "~/Library/LaunchAgents")
+ROLE_KEYS = {"account", "key", "next", "require_instructions"}
+
+
+@dataclass(frozen=True)
+class Task:
+    """Per-task data. Readers: kind → inputs/run; prefix → promote, writeback retitle; the rest → writeback."""
+    kind: Literal["research", "design", "build"]
+    prefix: str = ""                    # issue title prefix: promote child titles, retitle
+    start: str = ""                     # start comment lead
+    progress: frozenset = frozenset()   # progress mark names posted as comments
+    done: str = ""                      # done comment lead
+    question: str = ""                  # needs_input comment lead
+    failed: str = ""                    # failed comment lead
+    failed_new: str = "in_review"       # state after failed on a new run (resume: in_review)
+    retitle: bool = False               # done → title "<prefix>: <outcome title>"
+    approve: bool = False               # done → approve line
+    files: bool = False                 # done/failed → outcome files as Spec/Plan comments
+    hint: str = ""                      # appended to the needs_input footer
+
+
+REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
+TASKS = {
+    "deep-research":  Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
+    "light-research": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
+    "product-design": Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
+    "engineering":    Task("build", prefix="ENG", start="Build started:", done="Build ready:",
+                           question="Question:", failed="Build failed:", files=True),
+}
+
+
+@dataclass(frozen=True)
+class Role:
+    """A pipeline.toml role checked by runnable(); key is a Keychain service name, never the secret."""
+    account: str        # Linear email
+    key: str            # Keychain service of its API key
+    tasks: tuple        # core config tasks, default_task first, then core order
+
+    @property
+    def default(self):
+        return self.tasks[0]
+
+
+@dataclass(frozen=True)
+class Docs:
+    """Where core's document tasks publish: one github.com repo and branch, a dir per task."""
+    repo: str           # owner/name
+    branch: str
+    dirs: dict          # task → output dir
+
+
+# Core's checkout dirs under a run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
+# `<Workdir>/publish`.
+CLONES = ("src", "publish")
 
 
 def _uuid(v):
@@ -172,68 +204,23 @@ def _check_ids(cfg):
         raise SystemExit(f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
 
 
-def _check_docs(cfg):
-    docs = cfg.get("docs")
-    if not isinstance(docs, dict):
-        docs = {}
-    if missing := [k for k in DOCS_KEYS if k not in docs]:
-        raise SystemExit(f"pipeline.toml: [docs] is missing: {', '.join(missing)}")
-    if extra := sorted(set(docs) - set(DOCS_KEYS)):
-        raise SystemExit(f"pipeline.toml: [docs] has unknown keys: {', '.join(extra)}")
-    if not repo_slug(docs["repo"]):
-        raise SystemExit(f"pipeline.toml: docs.repo must be <owner>/<name>: {docs['repo']!r}")
-    clone = docs["clone"]
-    path = os.path.normpath(os.path.expanduser(clone)) if isinstance(clone, str) else ""
-    if (not os.path.isabs(path) or CLONE_BAD_RE.search(path)
-            or any(overlaps(path, b) for b in [ROOT] + [os.path.expanduser(p) for p in PROTECTED])):
-        raise SystemExit(f"pipeline.toml: docs.clone must be an absolute path (~ allowed) outside the repo root and "
-                         f"{', '.join(PROTECTED)}, without control characters or any of *?[](){{}},: {clone!r}")
-    branch = docs["branch"]
-    if not isinstance(branch, str) or not REF.fullmatch(branch):
-        raise SystemExit(f"pipeline.toml: docs.branch must be a git ref name: {branch!r}")
-    docs["clone"] = path
-
-
-@dataclass(frozen=True)
-class Role:
-    """roles/<role>.toml, validated; key is a Keychain service name, never the secret."""
-    read_only: tuple
-    memory: str | None
-    tasks: tuple
-    account: str
-    key: str
-
-
-@dataclass(frozen=True)
-class Run:
-    """A role's task, resolved from roles/ and tasks/; every path is absolute. runnable() gives the default task (the first of tasks), with_task() another.
-    key is the role's Keychain service name, account its Linear email, tasks the role's {name: task table} in its order."""
-    task_name: str
-    task: dict
-    charter: str
-    instructions: str
-    memory: str | None
-    read_only: tuple
-    key: str
-    account: str
-    tasks: dict
-
-    def with_task(self, name):
-        """This run for task `name` of the same role; KeyError when the role does not have it."""
-        return replace(self, task_name=name, task=self.tasks[name],
-                       instructions=os.path.join(os.path.dirname(self.instructions), f"{name}.md"))
-
-
 def load_config(path=CONFIG):
-    """Checks every consumer needs; the role checks are in runnable(), which every consumer calls."""
+    """Checks every consumer needs; the checks against core config are in runnable(), which every consumer calls."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     _check_ids(cfg)
-    _check_docs(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
         raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
+    if extra := sorted(set(cfg) - TOP_KEYS):
+        raise SystemExit(f"pipeline.toml: unknown keys: {', '.join(extra)}")
     roles = cfg.setdefault("roles", {})
+    for name, p in roles.items():
+        if extra := sorted(set(p) - ROLE_KEYS):
+            raise SystemExit(f"pipeline.toml: [roles.{name}] has unknown keys: {', '.join(extra)}")
+        for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
+            if not isinstance(p.get(k), str) or not p[k]:
+                raise SystemExit(f"pipeline.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}")
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
@@ -260,158 +247,94 @@ def load_config(path=CONFIG):
     return cfg
 
 
-def _under(path, base):
-    return os.path.commonpath([path, base]) == base
+def _fill_root(value, root):
+    if isinstance(value, str):
+        return value.replace("{{root}}", shlex.quote(root))
+    if isinstance(value, dict):
+        return {k: _fill_root(v, root) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fill_root(v, root) for v in value]
+    return value
 
 
-def overlaps(a, b):
-    """True when one path is at or under the other, compared by realpath."""
-    a, b = os.path.realpath(a), os.path.realpath(b)
-    return _under(a, b) or _under(b, a)
+def _check_overlay_keys(table, allowed, where):
+    if extra := sorted(set(table) - allowed):
+        raise SystemExit(f"pipeline.toml [core]: unknown key {extra[0]!r} in {where}")
 
 
-def _pairs(root, kind):
-    """{name: parsed <kind>/<name>.toml} for every .md + .toml pair in root/<kind>; other files are ignored."""
-    d = os.path.join(root, kind)
-    found = {}
-    for f in sorted(os.listdir(d)):
-        stem, ext = os.path.splitext(f)
-        if ext in (".md", ".toml") and os.path.isfile(os.path.join(d, f)):
-            found.setdefault(stem, set()).add(ext)
-    if kind == "roles" and ".toml" in found.pop("principles", set()):
-        raise SystemExit("roles/principles.toml: principles.md is not a role and has no .toml")
-    out = {}
-    for name, exts in found.items():
-        where = f"{kind}/{name}{min(exts)}"
-        if not NAME_RE.fullmatch(name):
-            raise SystemExit(f"{where}: names are lowercase-kebab")
-        if len(exts) == 1:
-            (ext,) = exts
-            raise SystemExit(f"{kind}/{name}{ext}: has no {kind}/{name}{'.toml' if ext == '.md' else '.md'}")
-        try:
-            with open(os.path.join(d, f"{name}.toml"), "rb") as f:
-                out[name] = tomllib.load(f)
-        except tomllib.TOMLDecodeError as e:
-            raise SystemExit(f"{kind}/{name}.toml: {e}") from None
-    return out
+def overlay(root=ROOT):
+    """<root>/pipeline.toml's [core] table ({} without one) with {{root}} filled; keys are checked here, since core checks
+    only its own config's."""
+    layer = _fill_root(load_config(os.path.join(root, "pipeline.toml")).get("core", {}), root)
+    _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
+    for r, role in layer.get("roles", {}).items():
+        _check_overlay_keys(role, compose.RUN_KEYS | {"tasks"}, f"roles.{r}")
+        for t, task in role.get("tasks", {}).items():
+            _check_overlay_keys(task, compose.RUN_KEYS, f"roles.{r}.tasks.{t}")
+    return layer
 
 
-def _role(name, r, root, resolve):
-    """Role of roles/<name>.toml, normalized; a broken file stops the caller."""
-    where = f"roles/{name}.toml"
-    if extra := sorted(set(r) - ROLE_KEYS):
-        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
-    if not isinstance(r.get("read_only", []), list):
-        raise SystemExit(f"{where}: read_only must be a list")
-    read_only = []
-    for entry in r.get("read_only", []):
-        path = os.path.expanduser(resolve(entry))
-        if entry != REPO and (not os.path.isabs(path) or ".." in path.split(os.sep) or "{" in path or "}" in path):
-            raise SystemExit(f"{where}: read_only entries are absolute paths, {REPO} or {DOCS_CLONE}: {entry!r}")
-        read_only.append(entry if entry == REPO else os.path.normpath(path))
-    memory = r.get("memory")
-    if memory is not None:
-        memory = os.path.normpath(os.path.expanduser(memory))
-        if not os.path.isabs(memory) or not os.path.isdir(memory):
-            raise SystemExit(f"{where}: memory must be an existing absolute directory: {r['memory']!r}")
-        near = [root] + [p for p in read_only if p != REPO] + [os.path.expanduser(p) for p in PROTECTED]
-        if any(overlaps(memory, b) for b in near):
-            raise SystemExit(f"{where}: memory must not overlap the repo root, a read_only path or {', '.join(PROTECTED)}: {r['memory']!r}")
-    tasks, account, key = r.get("tasks"), r.get("account"), r.get("key")
-    if not isinstance(tasks, list) or not tasks or not all(isinstance(t, str) and t for t in tasks):
-        raise SystemExit(f"{where}: tasks must be a non-empty list of task names: {tasks!r}")
-    if not isinstance(account, str) or not account:
-        raise SystemExit(f"{where}: account must be the role's Linear email: {account!r}")
-    if not isinstance(key, str) or not key:
-        raise SystemExit(f"{where}: key must be a Keychain service name: {key!r}")
-    return Role(tuple(read_only), memory, tuple(tasks), account, key)
+def layers(root=ROOT):
+    """The orchestrator's config layers, applied after core's client config; the one source for run_config and run.py."""
+    return [overlay(root)]
 
 
-def _task(name, t, resolve):
-    """Task table of tasks/<name>.toml with add_dirs resolved; a broken file stops the caller."""
-    where = f"tasks/{name}.toml"
-    if extra := sorted(set(t) - TASK_KEYS):
-        raise SystemExit(f"{where} has unknown keys: {', '.join(extra)}")
-    if missing := [k for k in ("model", "effort") if not t.get(k)]:
-        raise SystemExit(f"{where} has no {', '.join(missing)}")
-    if t.get("read_repo") and t.get("repo_from_issue"):
-        raise SystemExit(f"{where}: read_repo and repo_from_issue are exclusive")
-    check_allowed_tools(where, t)
-    if "add_dirs" not in t:
-        return t
-    dirs = t["add_dirs"]
-    if not isinstance(dirs, list) or not all(isinstance(d, str) for d in dirs):
-        raise SystemExit(f"{where}: add_dirs must be a list of paths: {dirs!r}")
-    if bad := [d for d in dirs if d != DOCS_CLONE and ("{" in d or "}" in d)]:
-        raise SystemExit(f"{where}: add_dirs entries have no braces except {DOCS_CLONE}: {bad[0]!r}")
-    return {**t, "add_dirs": [resolve(d) for d in dirs]}
-
-
-def registry(root=ROOT, docs_clone=None):
-    """(roles, tasks) from root/roles and root/tasks, every pair validated: {name: Role}, {name: task table}.
-    {docs_clone} entries become docs_clone, else the repo's pipeline.toml clone, which is read only when one occurs."""
-    def resolve(entry):
-        nonlocal docs_clone
-        if entry != DOCS_CLONE:
-            return entry
-        if docs_clone is None:
-            docs_clone = load_config()["docs"]["clone"]
-        return docs_clone
-
-    roles = {name: _role(name, r, root, resolve) for name, r in _pairs(root, "roles").items()}
-    tasks = {name: _task(name, t, resolve) for name, t in _pairs(root, "tasks").items()}
-    owner = {}
-    for name, r in roles.items():
-        if unknown := [t for t in r.tasks if t not in tasks]:
-            raise SystemExit(f"roles/{name}.toml: tasks {', '.join(unknown)} have no tasks/<task>.md + .toml pair")
-        if r.key in owner:
-            raise SystemExit(f"roles/{name}.toml: key {r.key!r} is also roles/{owner[r.key]}.toml's")
-        owner[r.key] = name
-    return roles, tasks
+def run_config(role, task, root=ROOT):
+    """compose.RunConfig of role/task: core config, then the claude client config, then layers(root)."""
+    core = os.path.join(root, "core")
+    return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
 
 def runnable(cfg, root=ROOT):
-    """{role: Run} of every role, each its default task's (Run.with_task gives another of the role's tasks); a broken pipeline.toml, role or task stops the caller (fail loud)."""
-    if extra := sorted(set(cfg) - TOP_KEYS):
-        raise SystemExit(f"pipeline.toml has unknown keys: {', '.join(extra)}; {SETTINGS}")
-    roles, tasks = registry(root, cfg["docs"]["clone"])
-    for name, r in roles.items():
-        if r.key == cfg["harness_key"]:
-            raise SystemExit(f"roles/{name}.toml: key {r.key!r} is pipeline.toml's harness_key")
+    """{role: Role} of pipeline.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
+    broken one stops the caller (fail loud). Core roles absent from pipeline.toml are not orchestrated."""
+    with open(os.path.join(root, "core", compose.CONFIG), "rb") as f:
+        core_roles = tomllib.load(f).get("roles", {})
+    out = {}
     for name, p in cfg["roles"].items():
-        if name not in roles:
-            raise SystemExit(f"pipeline.toml: [roles.{name}] has no roles/<role>.md + .toml pair")
-        if extra := sorted(set(p) - PIPELINE_ROLE_KEYS):
-            raise SystemExit(f"pipeline.toml: [roles.{name}] has unknown keys: {', '.join(extra)}; {SETTINGS}")
+        if name not in core_roles:
+            raise SystemExit(f"pipeline.toml: role {name!r} is not in core/config/config.toml")
+        default, tasks = core_roles[name].get("default_task"), list(core_roles[name].get("tasks", {}))
+        tasks = tuple(dict.fromkeys([default, *tasks] if default else tasks))
+        for t in tasks:
+            if t not in TASKS:
+                raise SystemExit(f"pipeline.toml: {name}'s task {t!r} has no entry in pipeline.TASKS")
+            try:
+                run_config(name, t, root)
+            except compose.ConfigError as e:
+                raise SystemExit(f"core: {e}") from None
+        out[name] = Role(p["account"], p["key"], tasks)
+    owner = {}
+    for name, r in out.items():
+        if r.key == cfg["harness_key"]:
+            raise SystemExit(f"pipeline.toml: [roles.{name}] key {r.key!r} is harness_key")
+        if r.key in owner:
+            raise SystemExit(f"pipeline.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s")
+        owner[r.key] = name
+    for name, p in cfg["roles"].items():
         nxt = p.get("next")
         if not nxt:
             continue
-        if nxt not in roles:
+        if nxt not in out:
             raise SystemExit(f"pipeline.toml: next of {name!r} names undefined role {nxt!r}")
-        nxt_task = roles[nxt].tasks[0]
-        if not tasks[nxt_task].get("prefix"):
-            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {nxt_task!r} has no prefix")
+        if not TASKS[out[nxt].default].prefix:
+            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {out[nxt].default!r} has no prefix")
+    tasks = {t for r in out.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
-            raise SystemExit(f"pipeline.toml: task_labels.{task} has no tasks/{task}.md + .toml pair")
-    out = {}
-    for name, r in roles.items():
-        role_tasks = {t: tasks[t] for t in r.tasks}
-        if REPO in r.read_only:
-            for i, (t, table) in enumerate(role_tasks.items()):
-                if not table.get("repo_from_issue") or "allowed_tools" in table:
-                    which = f"default task {t!r}" if i == 0 else f"task {t!r}"
-                    raise SystemExit(f"roles/{name}.toml: read_only {REPO} needs {which} with repo_from_issue and no allowed_tools")
-        task = r.tasks[0]
-        out[name] = Run(task, tasks[task], os.path.join(root, "roles", f"{name}.md"), os.path.join(root, "tasks", f"{task}.md"),
-                        r.memory, r.read_only, r.key, r.account, role_tasks)
+            raise SystemExit(f"pipeline.toml: task_labels.{task} is not a task of a role in pipeline.toml")
+    docs(out, root)
     return out
 
 
-def hands_off_to_repo(cfg, runs, role):
-    """True when role's next role (pipeline.toml) runs a repo_from_issue task: the role's runs need the project's repo."""
-    nxt = cfg["roles"].get(role, {}).get("next")
-    return bool(nxt and runs[nxt].task.get("repo_from_issue"))
+def docs(roles, root=ROOT):
+    """Docs of the github outputs among roles' tasks ({role: Role}); they must share one github.com repo and branch."""
+    outs = {t: o for r, role in roles.items() for t in role.tasks if (o := run_config(r, t, root).output)["type"] == "github"}
+    targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
+    repo, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
+    if not repo or not branch or host != "github.com":
+        raise SystemExit("core: document tasks must publish to one github.com repo and branch")
+    return Docs(repo, branch, {t: o["dir"] for t, o in outs.items()})
 
 
 Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }"
@@ -433,17 +356,17 @@ def humans(gql, cfg):
 
 
 def role_for(runs, email):
-    """The role in runs ({role: Run}) whose account is email (case-insensitive), or None."""
+    """The role in runs ({role: Role}) whose account is email (case-insensitive), or None."""
     return next((r for r, run in runs.items() if email and run.account.lower() == email.lower()), None)
 
 
 def role_ids(gql, runs):
-    """{Linear user id: role} of the runs' accounts; an account not found in Linear stops the caller."""
+    """{Linear user id: role} of the roles' accounts ({role: Role}); an account not found in Linear stops the caller."""
     out = {}
     for name, run in runs.items():
         uid = user_id(gql, run.account)
         if not uid:
-            raise SystemExit(f"roles/{name}.toml: account {run.account!r} not found in Linear")
+            raise SystemExit(f"pipeline.toml [roles.{name}]: account {run.account!r} not found in Linear")
         out[uid] = name
     return out
 

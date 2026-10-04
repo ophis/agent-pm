@@ -32,6 +32,6 @@ Commit the regenerated `core/skills/` with the change that caused it.
    - New session vs resume from `params.sid` and `params.resume`; `cwd` = `params.workdir`.
 3. **Outcome and progress** (`docs/adr/0006`): override `handover()`, the Output › Return text telling the run how to return them, and implement `events(lines)` yielding `Event("text")`, `Event("progress")` and `Event("outcome", outcome=…)` from the run's stdout. Feed `launch()`'s `schema` (the outcome's JSON Schema) to the client's native structured output when it has one; else `handover` asks for a final fenced JSON block and `events()` extracts it. The driver validates and saves the outcome; a client without `events()` returns none.
 4. **Register** it in `REGISTRY` (`src/clients/__init__.py`); add `config/clients/<name>.toml` when `needs_config`.
-5. **Test** in `tests/test_drive.py`: its argv for a role/task, resume, an unmapped tier, its events from a sample of its output.
+5. **Test** in `src/tests/drive_test.py`: its argv for a role/task, resume, an unmapped tier, its events from a sample of its output.
 
 Done when `drive.py --client <name> --dry-run` prints the expected command for every role/task in `config/config.toml` and the suite passes.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Target repos for runs, checked out into DIR/<name>; a checkout of the same repo there is reused.
 
-repo.py prepare --dir DIR REPO             read-only, shallow, detached at the default branch; prints
+repo.py prepare --dir DIR REPO             read-only, blobless (full history), detached at the default branch; prints
                                            {"repo", "host", "commit", "worktree", "permalink_base"}
 repo.py checkout --dir DIR --branch B REPO  writable, on branch B (from origin/B, else the default branch); needs push
                                            permission; prints {"repo", "host", "default", "branch", "worktree"}
@@ -138,7 +138,7 @@ def prepare(repo: Repo, base: str, *, run: Runner = sh) -> dict:
     wt, exists = place(repo, base, run=run)
     if not exists:
         info(repo, run=run)
-        clone(repo, wt, "--depth", "1", run=run)
+        clone(repo, wt, "--filter=blob:none", run=run)
         git(run, wt, "checkout", "--detach")
     commit = git(run, wt, "rev-parse", "HEAD").strip()
     if not SHA.fullmatch(commit):
