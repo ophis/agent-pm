@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Driver: composes a run, has its client (src/clients/) build the command, starts it, tails the channel the run
-reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the outcome.
+"""Driver: composes a run, has its client (src/clients/) build the command, starts it through a runner, tails the
+channel the run reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the
+outcome.
 
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
-         [--sid UUID] [--resume] [--dry-run]
+         [--sid UUID] [--resume] [--runner headless|tui] [--dry-run]
 --out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
 (skill) the dir it writes under. By default (start's sinks) a run shows its text and progress on stderr and leaves
 <workdir>/outcome.json and <workdir>/progress.jsonl.
-Prints the session id on stderr. --dry-run prints {"argv", "cwd", "env", "files"} and changes nothing.
-Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config error,
-3 when the client fails.
+--runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
+command in a detached tmux session <role>-<task>-<sid[:8]> (tui.py), shown as the `show` run key says, done once the
+outcome arrives and left open for the user.
+Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env", "files"} and changes
+nothing. Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config
+error, 3 when the client or its tmux session fails.
 """
 import argparse
 import errno
@@ -27,11 +31,12 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, Protocol, get_args
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
+import tui  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render,  # noqa: E402
                      report_command)
@@ -41,12 +46,19 @@ STATUSES = get_args(Status)
 SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
 OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
 NAME = re.compile(r"[\w-]+")
-POLL = 0.5   # seconds between reads of the channel while stdout is quiet
+POLL = 0.5   # seconds between reads of the channel while the host is quiet
+STOP_LIMIT = 3   # the tui runner's turn ends without an outcome, after its nudge, before it gives up
+NUDGE = ("Finish your task, then report its outcome with the report command your instructions name. "
+         "If you are waiting for background work, wait for it first.")
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
 
 
 class InvalidOutcome(Exception):
     pass
+
+
+class RunnerError(Exception):
+    """A runner's host failed: the run ends with no outcome, rc 1."""
 
 
 @dataclass(frozen=True)
@@ -279,8 +291,8 @@ def default_sinks(params: RunParams) -> list[Sink]:
 
 
 def report_event(line: str) -> Event | None:
-    """A channel line as its Event; None unless it is an outcome object or a progress report named by a word with
-    text, its lines joined into one."""
+    """A channel line as its Event; None unless it is an outcome object, a turn end or a progress report named by a
+    word with text, its lines joined into one."""
     try:
         data = json.loads(line)
     except ValueError:
@@ -289,6 +301,8 @@ def report_event(line: str) -> Event | None:
         return None
     if data.get("kind") == "outcome" and isinstance(data.get("outcome"), dict):
         return Event("outcome", outcome=data["outcome"])
+    if data.get("kind") == "stop":
+        return Event("stop")
     name, text = data.get("name"), data.get("text")
     if data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str):
         if text := " ".join(text.split()):
@@ -328,13 +342,149 @@ class Tail:
                 yield event
 
 
-def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, sinks: Sequence[Sink] | None = None,
-          popen=subprocess.Popen) -> Result:
-    """Starts the run and waits, handing `sinks` (default_sinks() when None) its stdout's text and the progress it
-    reports to the channel as they come; then checks the last outcome it reported, saves the deliverable to params.out
-    where the destination says so, and hands the outcome on too. Only reports made after this call began count.
-    A done or failed new run whose task marks `start` but never reported it gets a stderr line and a `missing`
-    event first."""
+class Runner(Protocol):
+    """How a run's command is hosted, and when the run counts as done; the driver loop is the same for every runner."""
+    starts: str   # the Launch field holding the command it starts
+
+    # begin and poll raise RunnerError when the host fails.
+    def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None: ...
+    def poll(self, timeout: float) -> tuple[list[Event], bool]: ...   # the host's own events; whether it ended
+    def seen(self, event: Event) -> None: ...   # each channel event, before the sinks get it
+    def done(self, outcome_arrived: bool) -> bool: ...   # finished while the host still runs
+    def returncode(self) -> int: ...
+    def stop(self) -> None: ...   # on a driver exception or a RunnerError, begin's too
+
+
+class Headless:
+    """The client's command on a pipe, its stdout turned into events by the client; ended at EOF."""
+    starts = "argv"
+
+    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
+        self.client, self.popen, self.proc = client, popen, None
+
+    def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
+        self.proc = self.popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
+        self.stdout = queue.Queue()
+        threading.Thread(target=self.pump, daemon=True).start()
+
+    def pump(self) -> None:
+        try:
+            for event in self.client.events(self.proc.stdout):
+                self.stdout.put(event)
+        except BaseException as e:
+            self.stdout.put(e)
+        else:
+            self.stdout.put(None)
+
+    def poll(self, timeout: float) -> tuple[list[Event], bool]:
+        try:
+            item = self.stdout.get(timeout=timeout)
+        except queue.Empty:
+            return [], False
+        if isinstance(item, BaseException):
+            raise item
+        return ([], True) if item is None else ([item], False)
+
+    def seen(self, event: Event) -> None:
+        pass
+
+    def done(self, outcome_arrived: bool) -> bool:
+        return False
+
+    def returncode(self) -> int:
+        return self.proc.wait()
+
+    def stop(self) -> None:
+        if self.proc is not None:   # None: popen failed
+            self.proc.kill()
+            self.proc.wait()
+
+
+class Tui:
+    """The client's interactive command in a detached tmux session (tui.py), never killed after the outcome. Done once
+    the outcome arrives, or once it gives up: a turn end without one (`stop`) gets one NUDGE, and STOP_LIMIT more,
+    counted since the last progress report, leave the session to a human."""
+    starts = "interactive"
+
+    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
+        self.run, self.name = run, f"{run.role}-{run.task}-{params.sid[:8]}"
+        self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
+        self.started = False
+
+    def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
+        try:
+            tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show)
+        except tui.TuiError as e:
+            raise RunnerError(str(e)) from e
+        self.started = True
+
+    def poll(self, timeout: float) -> tuple[list[Event], bool]:
+        time.sleep(timeout)
+        try:
+            state = tui.status(self.name)
+        except tui.TuiError as e:
+            raise RunnerError(str(e)) from e
+        if state == tui.RUNNING:
+            return [], False
+        self.rc = state or 0   # None: the session is gone
+        return [], True
+
+    def seen(self, event: Event) -> None:
+        if event.kind == "outcome":
+            self.outcome = True
+        elif event.kind == "progress":
+            self.stops = 0
+        elif event.kind == "stop" and not (self.outcome or self.gave_up):
+            if not self.nudged:
+                self.nudged = True
+                try:
+                    tui.send(self.name, NUDGE)
+                except tui.TuiError as e:
+                    print(f"drive.py: tui: {e}", file=sys.stderr)
+                return
+            self.stops += 1
+            if self.stops >= STOP_LIMIT:
+                self.gave_up = True
+                print(f"drive.py: no outcome after {self.stops} stops; session {self.name} left open: "
+                      f"tmux attach -t '={self.name}'", file=sys.stderr)
+
+    def done(self, outcome_arrived: bool) -> bool:
+        return outcome_arrived or self.gave_up
+
+    def returncode(self) -> int:
+        return 0 if self.outcome else self.rc
+
+    def stop(self) -> None:
+        if not self.started:   # tui.start leaves no session when it raises; a live one of that name isn't this run's
+            return
+        try:
+            tui.kill(self.name)
+        except tui.TuiError as e:   # the driver's own exception is the one to raise
+            print(f"drive.py: tui: {e}", file=sys.stderr)
+
+
+RUNNERS: dict[str, type[Runner]] = {"headless": Headless, "tui": Tui}
+
+
+def command(launch: Launch, runner: str, client: Client) -> list[str]:
+    """The command `runner` starts; raises ConfigError for an unknown runner or a client without that command."""
+    if runner not in RUNNERS:
+        raise ConfigError(f"unknown runner {runner!r} (known: {', '.join(RUNNERS)})")
+    if argv := getattr(launch, RUNNERS[runner].starts):
+        return argv
+    raise ConfigError(f"{type(client).__name__} has no {runner} command")
+
+
+def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
+          sinks: Sequence[Sink] | None = None, popen=subprocess.Popen) -> Result:
+    """Starts the run through `runner` (RUNNERS) and waits, handing `sinks` (default_sinks() when None) its host's
+    text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
+    deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
+    this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
+    and a `missing` event first. Raises ConfigError, before anything starts, when the client lacks the runner's
+    command; a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
+    argv = command(launch, runner, client)
+    host = RUNNERS[runner](run=run, params=params, client=client, popen=popen)
     write(launch.files)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(launch.cwd or workdir, exist_ok=True)
@@ -351,44 +501,31 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         if event.kind == "outcome":
             raw = event.outcome
             return
+        if event.kind == "stop":   # only an interactive run's turn end; no sink takes it
+            return
         if event.kind == "progress":
             seen.add(event.name)
         for sink in sinks:
             sink(event)
 
-    proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
-                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
-    stdout = queue.Queue()
-
-    def pump() -> None:
-        try:
-            for event in client.events(proc.stdout):
-                stdout.put(event)
-        except BaseException as e:
-            stdout.put(e)
-        else:
-            stdout.put(None)
-
-    threading.Thread(target=pump, daemon=True).start()
     try:
+        host.begin(argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env})
         while True:
-            try:
-                item = stdout.get(timeout=POLL)
-            except queue.Empty:
-                item = False
-            if isinstance(item, BaseException):
-                raise item
+            events, ended = host.poll(POLL)
             for event in tail():   # first: a report made before a stdout line comes before it
+                host.seen(event)
                 hand(event)
-            if item is None:
+            for event in events:
+                hand(event)
+            if ended or host.done(raw is not None):
                 break
-            if item:
-                hand(item)
+    except RunnerError as e:
+        host.stop()
+        return Result(1, None, f"{runner}: {e}")
     except BaseException:
-        proc.kill()
-        proc.wait()
+        host.stop()
         raise
-    rc = proc.wait()
+    rc = host.returncode()
     for event in tail():
         hand(event)
     if rc != 0:
@@ -424,6 +561,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--client", default="claude")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--runner", choices=RUNNERS, default="headless")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.input == "-":
@@ -436,15 +574,19 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
                 raise ConfigError(f"client {a.client!r} needs --input and --workdir")
             params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume)
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
+            cmd = command(launch, a.runner, client)
         else:
+            if a.runner != "headless":
+                raise ConfigError(f"{type(client).__name__} writes files; it takes no --runner {a.runner}")
             launch = export(root, client, a.role, a.task, dest=a.out)
+            cmd = launch.argv
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2
     if params:
         print(f"drive.py: session {params.sid}", file=sys.stderr)
     if a.dry_run:
-        print(json.dumps({"argv": launch.argv, "cwd": launch.cwd, "env": launch.env, "files": launch.files},
+        print(json.dumps({"argv": cmd, "cwd": launch.cwd, "env": launch.env, "files": launch.files},
                          ensure_ascii=False, indent=1))
         return 0
     if not params:
@@ -452,7 +594,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
         for path in launch.files:
             print(f"drive.py: wrote {path}", file=sys.stderr)
         return 0
-    result = start(launch, run, params, client=client, popen=popen)
+    result = start(launch, run, params, client=client, runner=a.runner, popen=popen)
     if result.outcome is None:
         print(f"drive.py: {result.error}", file=sys.stderr)
         return 3 if result.returncode != 0 else 1

@@ -23,7 +23,7 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language"})
+RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
@@ -60,6 +60,7 @@ class RunConfig:
     templates: list[str] = field(default_factory=list)
     gate: str = ""
     language: str = ""
+    show: str | None = None
     role_title: str = ""
     task_title: str = ""
     task_summary: str = ""
@@ -76,6 +77,8 @@ class RunConfig:
             raise ConfigError("gate must be one line of shell command without backticks")
         if not isinstance(self.language, str) or "\n" in self.language:
             raise ConfigError("language must be one line of text")
+        if self.show is not None and (not isinstance(self.show, str) or "\n" in self.show):
+            raise ConfigError("show must be one line of shell command")
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -4,9 +4,12 @@ import json
 import os
 from collections.abc import Iterable, Iterator
 
-from compose import ConfigError, RunConfig, RunParams
+from compose import ConfigError, RunConfig, RunParams, report_command
 
 from .base import PROGRESS, Access, Client, Event, Launch
+
+
+CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class ClaudeClient(Client):
@@ -30,14 +33,19 @@ class ClaudeClient(Client):
             raise ConfigError(f"no model for tier {run.tier} in config/clients/claude.toml")
         if effort is None:
             raise ConfigError(f"no effort for {run.effort!r} in config/clients/claude.toml")
-        argv = ["claude", "-p", prompt, "--resume" if params.resume else "--session-id", params.sid,
-                "--model", model, "--effort", effort, *c.get("flags", []), "--output-format", "stream-json", "--verbose"]
+        head = ["--resume" if params.resume else "--session-id", params.sid, "--model", model, "--effort", effort,
+                *c.get("flags", [])]
+        tail = []
         for d in access.dirs:
-            argv += ["--add-dir", d]
+            tail += ["--add-dir", d]
         allow = [f"Bash({cmd})" for cmd in access.commands] + (self.value(run, "allow") or [])
         if allow:
-            argv += ["--allowedTools", *allow]
-        return Launch(argv, dict(c.get("env", {})), cwd=os.path.abspath(params.workdir))
+            tail += ["--allowedTools", *allow]
+        argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", *tail]
+        hook = {"hooks": {"Stop": [{"hooks": [{"type": "command",
+                                               "command": report_command(CORE_SCRIPTS, params) + " stop"}]}]}}
+        interactive = ["claude", prompt, *head, *tail, "--settings", json.dumps(hook)]
+        return Launch(argv, dict(c.get("env", {})), cwd=os.path.abspath(params.workdir), interactive=interactive)
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:
         for line in lines:

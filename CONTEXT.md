@@ -19,7 +19,7 @@ Rules every role follows; on conflict, principles > charter > task.
 A role's text: the rules shared by all of that role's tasks.
 
 **Run**:
-One task done once as one role: a fresh `claude -p` session, or inline in the caller's session through a skill.
+One task done once as one role: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -36,8 +36,11 @@ The part of the delegate that assembles principles, role, task and input into a 
 The part of the delegate that starts a run through a client and checks its output; the same for every client.
 
 **Client**:
-A way to execute a composed run (Claude Code `claude -p`, a skill); it turns the run into its own launch (a command, or files) and enforces what hard constraints it can.
+A way to execute a composed run (Claude Code, a skill); it turns the run into its own launch (a command per runner, or files) and enforces what hard constraints it can.
 _Avoid_: runtime, backend
+
+**Runner**:
+How the driver hosts a client's command and when the run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives, the session left open).
 
 **Destination**:
 Where a run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.

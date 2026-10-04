@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""The command a run reports with: appends one progress report or its outcome as a JSON line to the channel the
-driver tails (drive.start), which checks them.
+"""The command a run reports with: appends one progress report, its outcome or a turn end as a JSON line to the
+channel the driver tails (drive.start), which checks them.
 
 report.py --to CHANNEL progress NAME TEXT...
 report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...
           [--deliverable FILE]   (FILE's text becomes the outcome's deliverable)
+report.py --to CHANNEL stop   (a turn ended; the interactive client's Stop hook runs it)
 """
 import argparse
 import json
@@ -30,6 +31,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
     o.add_argument("--url")
     o.add_argument("--file", action="append", dest="files")
     o.add_argument("--deliverable")
+    sub.add_parser("stop")
     return ap.parse_args(argv)
 
 
@@ -38,6 +40,8 @@ def main(argv: list[str]) -> int:
     try:
         if a.kind == "progress":
             line = {"kind": "progress", "name": a.name, "text": " ".join(a.text)}
+        elif a.kind == "stop":
+            line = {"kind": "stop"}
         else:
             data = {k: v for k in ("status", "title", "summary", "questions", "url", "files")
                     if (v := getattr(a, k)) is not None}
