@@ -12,6 +12,14 @@ Target users and where they use it.
 ## User flow
 The main flow from start to finish: what the user sees and does at each step.
 
+## Assumptions, open questions and risks
+### Assumptions
+Inferences the PRD rests on; one resting on research cites the finding and its confidence.
+### Open questions
+What the user must decide, each with a suggested answer; until the user answers, the suggested answer holds.
+### Risks
+Unknowns, and the low-confidence or single-source findings the PRD relies on.
+
 ## Approach and trade-offs
 Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs, which one is chosen and why.
 
@@ -27,14 +35,6 @@ How and when each goal is measured.
 
 ## Scope and phased delivery
 One `### P<n>: <name>` per phase, in delivery order, each shippable alone: the requirement ids it delivers and its exit check. One phase → `P1` only.
-
-## Assumptions, open questions and risks
-### Assumptions
-Inferences the PRD rests on; one resting on research cites the finding and its confidence.
-### Open questions
-What the user must decide, each with a suggested answer; until the user answers, the suggested answer holds.
-### Risks
-Unknowns, and the low-confidence or single-source findings the PRD relies on.
 
 ## Done
 Optional; omit when the product has nothing built yet. Under `###` copies of the original headings, by id, naming where each is implemented (file or commit).
