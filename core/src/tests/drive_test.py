@@ -324,7 +324,10 @@ class Handover(unittest.TestCase):
         for c in (claude(), clients.SkillClient({})):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
         self.assertIn("structured output", claude().handover())
-        self.assertIn("e.g. `[agent-pm-progress:start] local: one ultracode round, cap 80`.", claude().handover())
+        for c in (claude(), clients.SkillClient({})):
+            self.assertIn("before calling the next tool, send a text message containing only that line",
+                          c.handover(), type(c).__name__)
+        self.assertNotIn("ultracode", claude().handover())
         self.assertNotIn("progress:budget", claude().handover())
 
     def test_the_base_client_returns_no_outcome(self):
@@ -416,7 +419,7 @@ class Validate(Base):
 
 
 class Start(Base):
-    def start(self, lines, rc=0, output=None, sinks=None, **params):
+    def start(self, lines, rc=0, output=None, sinks=None, progress=(), **params):
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
         calls, log = [], io.StringIO()
 
@@ -426,7 +429,7 @@ class Start(Base):
             return self.proc
 
         p = self.params(**params)
-        r = drive.start(launch, run(output=output or {"type": "local"}), p, client=claude(), popen=popen,
+        r = drive.start(launch, run(output=output or {"type": "local"}, progress=list(progress)), p, client=claude(), popen=popen,
                         sinks=sinks if sinks is not None else [drive.terminal(log), *drive.default_sinks(p)[1:]])
         return r, calls, log.getvalue()
 
@@ -545,6 +548,37 @@ class Start(Base):
         self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["three"])
 
 
+    FAILED = {**DONE, "status": "failed", "deliverable": ""}
+    NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
+
+    def missing(self, *events, progress=("start", "round"), **params):
+        seen, err = [], io.StringIO()
+        with redirect_stderr(err):
+            r, _, _ = self.start(stream(*events), sinks=[seen.append], progress=progress, **params)
+        return r, [e.name for e in seen if e.kind == "missing"], err.getvalue(), [e.kind for e in seen]
+
+    def test_done_or_failed_without_start_reports_it_missing(self):
+        for outcome in (DONE, self.FAILED):
+            r, missing, err, kinds = self.missing(said("[agent-pm-progress:round] one"), result(outcome))
+            self.assertEqual((r.outcome.status, missing), (outcome["status"], ["start"]))
+            self.assertEqual(err, "drive.py: missing progress mark: start\n")
+            self.assertEqual(kinds, ["progress", "missing", "outcome"])
+
+    def test_no_report_when_start_was_seen_needs_input_resumed_or_not_expected(self):
+        for events, progress, params in (
+                ((said("[agent-pm-progress:start] go"), result(DONE)), ("start", "round"), {}),
+                ((result(self.NEEDS),), ("start",), {}),
+                ((result(DONE),), ("start",), {"resume": True}),
+                ((result(DONE),), ("round",), {}),
+                ((result(DONE),), (), {})):
+            _, missing, err, _ = self.missing(*events, progress=progress, **params)
+            self.assertEqual((missing, err), ([], ""), (progress, params))
+
+    def test_no_outcome_reports_nothing(self):
+        _, missing, err, _ = self.missing(said("bye"))
+        self.assertEqual((missing, err), ([], ""))
+
+
 class Sinks(unittest.TestCase):
     def test_terminal_strips_control_characters_and_skips_the_outcome(self):
         log = io.StringIO()
@@ -552,6 +586,7 @@ class Sinks(unittest.TestCase):
         sink(clients.Event("text", "a\x1b]52;c;ZXZpbA==\x07b\tc"))
         sink(clients.Event("progress", "x\x1b[2J", name="round"))
         sink(clients.Event("outcome", outcome=DONE))
+        sink(clients.Event("missing", name="start"))
         self.assertEqual(log.getvalue(), "a]52;c;ZXZpbA==b\tc\nProgress (round): x[2J\n")
 
 

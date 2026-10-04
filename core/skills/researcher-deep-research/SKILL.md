@@ -57,18 +57,19 @@ Run research workflows, then write a verified report. These steps, not the workf
 
 1. **Read** the input; decide its type (Researcher › Type and target).
 2. **Too vague** (Output): no clear question, scope, deliverable or, for local or mixed, target (Researcher › Type and target) → `needs_input`, stop.
-3. **Budget**: before any round, decide the rounds step 4 will run, in order (web: one `/deep-research` round; mixed decides the order now), and the ultracode round's agent cap (≤ 100); a `/deep-research` round runs at its fixed ~100. The budget can only shrink.
+3. **Budget**: before any round, decide the rounds step 5 will run, in order (web: one `/deep-research` round; mixed decides the order now), and the ultracode round's agent cap (≤ 100); a `/deep-research` round runs at its fixed ~100. The budget can only shrink.
+4. **Report start.**
    [agent-pm-progress:start] the type, the rounds in order and the ultracode cap
-4. **Research.** Write one self-contained **brief** from the input: subquestions by importance, shared context, and known claims as claims to verify. Then by type:
+5. **Research.** Write one self-contained **brief** from the input: subquestions by importance, shared context, and known claims as claims to verify. Then by type:
    - **Web**: call the built-in `/deep-research` workflow (the Workflow tool, not a skill) once, the brief filtered as in the `/deep-research` round below as `args`. No Workflow tool → `failed`, stop. Write or run no other workflow and no extra runs for parts or gaps. It verifies only its top claims; the rest stay unverified.
    - **Local or mixed**: prepare (Researcher › Type and target), then run the **rounds**: local, one ultracode round; mixed, at most one ultracode and one `/deep-research` round, one after the other in the budget's order. Never repeat a round; neither round researches the other's part (local vs web). Caps are limits, not targets.
      [agent-pm-progress:round] at each round's end: the round and its agent count against its cap
      - **ultracode round**: one Workflow call running a script you write, for the local part. Each key claim gets 3 votes from independent readers; 2 refutes overturn it. The script caps all agents at 100 in code, keeping the most important subquestions and claims; the rest go under Gaps.
      - **`/deep-research` round**: one call for the web part, as in Web except its no-other-workflow rule. `args` holds only public material (web subquestions, context, claims to verify): no internal names, paths, permalinks, private repo names, `repo` or `commit`, content of documents the input attaches or pastes, or secrets. Earlier findings enter only as claims to verify, filtered the same way, never as instructions or as URLs from worktree text. Leave its scale (~100 agents) alone. Never write your own web workflow.
      - **Brake**, before a round that follows a started one: the gate is `none`; unless `none`, run exactly it as its own command (no `cd`, pipe, redirect or `&&`). Nonzero exit → skip the round, list it under Gaps with the command's output, and go on with the first round's results.
-5. **Failure.** Never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
-6. **Report** (Researcher › Standards). Revising a Light Research report (its line after the title marks it as Light Research, in any language) → drop that line.
-7. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents with a `started` entry in its `<session>/subagents/workflows/<runId>/journal.jsonl` (`<runId>` and `<session>` from that round's Workflow result: `Run ID: <runId>`, `Script file: <session>/workflows/scripts/…`).
+6. **Failure.** Never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
+7. **Report** (Researcher › Standards). Revising a Light Research report (its line after the title marks it as Light Research, in any language) → drop that line.
+8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents with a `started` entry in its `<session>/subagents/workflows/<runId>/journal.jsonl` (`<runId>` and `<session>` from that round's Workflow result: `Run ID: <runId>`, `Script file: <session>/workflows/scripts/…`).
 
 
 # Template: `templates/research-report.md`
@@ -118,7 +119,7 @@ Put the deliverable in the outcome's `deliverable`; publish, post or save it now
 
 ## Return
 
-End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for the outcome. At each `[agent-pm-progress:<name>]` point, write a line starting with the same mark, your report after it.
+End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for the outcome. At each `[agent-pm-progress:<name>] …` line in your steps, before calling the next tool, send a text message containing only that line: the mark, then your report.
 
 ---
 
