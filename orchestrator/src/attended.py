@@ -1,0 +1,94 @@
+"""Attended runs: where the TUI pane goes, and the harness-only record of a run's TUI sessions.
+
+The record, logs/tui/<ID>, holds one TUI session name per line. Runs never write logs/; the inner driver does.
+"""
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config  # noqa: E402
+import drive  # noqa: E402
+import linear  # noqa: E402
+import tui  # noqa: E402
+from linear import one_line  # noqa: E402
+
+RECORD_DIR = "tui"
+
+
+class Bad(Exception):
+    """No usable place for the TUI pane; the message is for the user."""
+
+
+def layout(split, beside, *, proc=subprocess.run, environ=os.environ, isatty=os.isatty):
+    """(drive.Layout, attach): attach is True when the outer must attach this terminal to the driver session."""
+    if split is not None and split not in tui.SPLITS:
+        raise Bad(f"split must be one of {', '.join(tui.SPLITS)}")
+    split = split or "right"
+    if beside is not None:
+        if not tui.NAME.fullmatch(beside):
+            raise Bad("bad tmux session name")
+        if tui.status(beside, proc=proc) is None:
+            raise Bad(f"no tmux session {beside}")
+        return drive.Layout(split, beside), False
+    if environ.get("TMUX"):
+        try:
+            beside = tui.own_session(proc=proc)
+        except tui.TuiError as e:
+            raise Bad(one_line(e)) from e
+        if beside is None:
+            raise Bad("no tmux session for this pane")
+        return drive.Layout(split, beside), False
+    if isatty(0):
+        return drive.Layout(split, None), True
+    raise Bad("no pane to show the TUI beside: run from tmux or a terminal, or pass --beside SESSION")
+
+
+def _path(ident, logs):
+    return Path(logs, RECORD_DIR, ident)
+
+
+def record(ident, name, *, logs=config.LOGS):
+    path = _path(ident, logs)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    drive.append_line(path, name + "\n")
+
+
+def close(ident, *, logs=config.LOGS, proc=subprocess.run):
+    """Kill the live TUI sessions recorded for ident and drop them from the record; a kill that fails stays recorded.
+    Returns the log lines; never raises."""
+    path = _path(ident, logs)
+    out, kept = [], []
+    try:
+        if not path.exists():
+            return out
+        for name in path.read_text().splitlines():
+            if not drive.TUI_SESSION.fullmatch(name):
+                out.append(f"tui-skip {ident}: not a TUI session name")
+                continue
+            try:
+                if tui.status(name, proc=proc) is None:
+                    continue
+                tui.kill(name, proc=proc)
+                out.append(f"tui-closed {ident} {name}")
+            except tui.TuiError as e:
+                kept.append(name)
+                out.append(f"tui-error {ident} {name}: {one_line(e)}")
+        if kept:
+            drive.save(path, "".join(n + "\n" for n in kept))
+        else:
+            path.unlink()
+    except OSError as e:
+        out.append(f"tui-error {ident}: {one_line(e)}")
+    return out
+
+
+def recorded(logs=config.LOGS):
+    """Issue ids with a record, sorted."""
+    try:
+        names = os.listdir(Path(logs, RECORD_DIR))
+    except OSError:
+        return []
+    return sorted(n for n in names if re.fullmatch(linear.ISSUE_ID, n))
