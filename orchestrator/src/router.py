@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
-(no mode)           One tick (launchd): hours, live sessions vs max_runs (all roles full -> skip), prune, Recover, then until
-                    every role is full, nothing is ready or usage blocks: plan, usage gate, resume or claim, launch.
+(no mode)           One tick (launchd): hours, live sessions vs max_runs (all roles full -> skip), prune, Recover, plan over
+                    roles not full, usage gate, resume or claim, launch; at most one run per tick.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
@@ -214,7 +214,7 @@ def probe(sh, max_5h=MAX_5H):
 class Board:
     def __init__(self, gql, entries, tdir, now, dry, cfg, root=ROOT):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
-        self.hist, self.ready, self.blocked, self.used = {}, None, {}, set()
+        self.hist, self.ready, self.blocked, self.live = {}, None, {}, set()
         self.runs = runnable(cfg, root)
         self.stage = stage_order(cfg)
         self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
@@ -259,8 +259,8 @@ class Board:
         return self.roles[issue["assignee"]["id"]]
 
     def available(self, issue, full):
-        """Not yet used this tick (a live session, resumed, or examined by take) and of a role not in full."""
-        return issue["identifier"] not in self.used and self.role(issue) not in full
+        """Without a live session and of a role not in full."""
+        return issue["identifier"] not in self.live and self.role(issue) not in full
 
     def later(self, issue):
         return -self.stage.get(self.role(issue), 0)
@@ -293,10 +293,10 @@ class Board:
             log(f"{prefix} {issue['identifier']}: issue is {left}")
 
     def recover(self, live_ids=()):
-        """Walk the role accounts' In Progress issues, leaving those in live_ids (IDs with a session) untouched and used;
-        returns the resume candidates [(issue, sid, task)] in resume order."""
-        self.used.update(live_ids)
-        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in live_ids]
+        """Walk the role accounts' In Progress issues, leaving those in live_ids (IDs with a session; take skips them too)
+        untouched; returns the resume candidates [(issue, sid, task)] in resume order."""
+        self.live = set(live_ids)
+        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in self.live]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
         cands = []
@@ -333,27 +333,25 @@ class Board:
         return sorted((i for i in self.todo() if self.available(i, full)), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
 
     def next_run(self, cands, full=()):
-        """("resume", issue, sid, task) for the first available of Recover's cands, now used; else ("new",) while the queue
-        holds an issue; else None. Logs the plan."""
+        """("resume", issue, sid, task) for the first available of Recover's cands; else ("new",) while the queue holds an
+        issue; else None. Logs the plan."""
         cand = next((c for c in cands if self.available(c[0], full)), None)
         if cand:
             issue, sid, task = cand
-            self.used.add(issue["identifier"])
             log(f"plan: resume {issue['identifier']} session={sid}")
             return ("resume", issue, sid, task)
         if queue := self.queue(full):
             log(f"plan: new ({len(queue)} in queue)")
             return ("new",)
-        log("plan: all roles full" if all(r in full for r in self.runs) else "plan: nothing to do")
+        log("plan: nothing to do")
         return None
 
     def take(self, only=None, full=()):
-        """(claimed Todo issue, its task) from the queue, or None; each issue it examines is used. Dry: (pick, None), unclaimed."""
+        """(claimed Todo issue, its task) from the queue, or None. Dry: (pick, None), unclaimed."""
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
-            self.used.add(issue["identifier"])
             if self.attempts(issue) >= CAP:
                 log(f"pick: {issue['identifier']} reached {CAP} attempts; In Review")
                 self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick:")
@@ -417,50 +415,37 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     cands = board.recover(live_ids)
     if issue_id and board.is_blocked(issue_id):
         return 0
-    planned, failed = 0, set()
-    while True:
-        run = ("new",) if issue_id else board.next_run(cands, full)  # --issue: that issue only, no resume
-        if not run:
-            if not planned and not dry:
-                log("skip: nothing to do")
-            break
-        kind = run[0]
-        if not dry:
-            ok, usage = probe(sh)
-            if not ok:
-                log(f"skip: {kind} blocked by usage: {usage}")
-                return 0
-        if kind == "resume":
-            _, issue, sid, task = run
-            ident = issue["identifier"]
-            line = f"resume {ident} session={sid} task={task}"
-        else:
-            taken = board.take(issue_id, full)
-            if not taken:
-                log("skip: nothing claimed")
-                break
-            issue, task = taken
-            ident, sid = issue["identifier"], str(uuid.uuid4())
-            line = f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
-        planned += 1
-        project, role = issue["project"], board.role(issue)
-        if not dry:
-            append(runs, line)
-            rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
-                     "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind]).returncode
-            log(f"launch {ident} ({project['name']}) exit={rc}")
-            if rc:  # run.py outer failed (config, Keychain, Linear, tmux); likely so for the role's next issue too
-                failed.add(role)
-        if issue_id:
-            break
-        if dry:
-            live[role].append(ident)
-        else:
-            live = live_sessions(roles, sh)
-        full = full_roles(roles, live) | failed
+    run = ("new",) if issue_id else board.next_run(cands, full)  # --issue: that issue only, no resume
+    kind = run[0] if run else None
+    if not kind and not dry:
+        log("skip: nothing to do")
+        return 0
     if dry:
+        planned = kind == "resume" or kind == "new" and board.take(issue_id, full) is not None
         ok, usage = probe(sh)
-        log(f"usage: {usage} ({planned} planned, {'allowed' if ok else 'blocked'})")
+        log(f"usage: {usage} ({int(planned)} planned, {'allowed' if ok else 'blocked'})")
+        return 0
+    ok, usage = probe(sh)
+    if not ok:
+        log(f"skip: {kind} blocked by usage: {usage}")
+        return 0
+    if kind == "resume":
+        _, issue, sid, task = run
+        ident = issue["identifier"]
+        line = f"resume {ident} session={sid} task={task}"
+    else:
+        taken = board.take(issue_id, full)
+        if not taken:
+            log("skip: nothing claimed")
+            return 0
+        issue, task = taken
+        ident, sid = issue["identifier"], str(uuid.uuid4())
+        line = f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
+    append(runs, line)
+    project = issue["project"]
+    rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
+             "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind]).returncode
+    log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
 
 

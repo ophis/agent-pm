@@ -765,13 +765,6 @@ class Claim(Base):
                                        "pick: TASK-2 (2 in queue)", "claim: TASK-2 task=deep-research"])
         self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
 
-    def test_take_never_examines_an_issue_twice(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=2, project=PD)])
-        picks = self.board(fake, lambda b: [b.take() for _ in range(3)], dry=True)
-        self.assertEqual([p and (p[0]["identifier"], p[1]) for p in picks], [("TASK-1", None), ("TASK-2", None), None])
-        self.assertEqual(self.said(), ["pick: TASK-1 (2 in queue)", "pick: TASK-2 (1 in queue)", "pick: queue empty"])
-        self.assertEqual(fake.mutations, [])
-
     def test_skipped_cap_move_posts_no_comment(self):
         self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
         fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Progress")
@@ -980,7 +973,7 @@ class Tick(Base):
         self.resumable("TASK-1", "a", 60)
         self.tick(fake, shell=FakeShell(["agent-pm-engineer-TASK-1"]))
         self.assertEqual(self.said(), ["live: engineer 1/2", "plan: new (2 in queue)", "pick: TASK-2 (2 in queue)",
-                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0", "plan: nothing to do"])
+                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0"])
         self.assertEqual(self.launched_runs(), [("TASK-2", "new")])
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
                          {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("Todo", None)})
@@ -991,7 +984,7 @@ class Tick(Base):
                            issue("TASK-2", "Todo", "engineer", priority=2, project=PD)])
         self.tick(fake, shell=FakeShell(["agent-pm-engineer-TASK-1"]))
         self.assertEqual(self.said(), ["live: engineer 1/2", "plan: new (1 in queue)", "pick: TASK-2 (1 in queue)",
-                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0", "plan: nothing to do"])
+                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0"])
         self.assertEqual({i: t["state"] for i, t in fake.issues.items()}, {"TASK-1": "Todo", "TASK-2": "In Progress"})
 
     def test_full_role_todo_not_claimed_and_non_live_in_progress_recovered(self):
@@ -1007,7 +1000,7 @@ class Tick(Base):
         self.assertEqual(self.said(), ["live: engineer 1/1", "recover: TASK-3 reached 4 attempts; In Review",
                                        f"recover: TASK-2 (last updated {ago(hours=3)})", "plan: new (1 in queue)",
                                        "pick: TASK-5 (1 in queue)", "claim: TASK-5 task=product-design",
-                                       "launch TASK-5 (Product Design) exit=0", "plan: nothing to do"])
+                                       "launch TASK-5 (Product Design) exit=0"])
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
                          {"TASK-1": ("In Progress", None), "TASK-2": ("Todo", [router.INTERRUPTED]),
                           "TASK-3": ("In Review", [router.CAP_COMMENT]), "TASK-4": ("Todo", None), "TASK-5": ("In Progress", None),
@@ -1024,9 +1017,9 @@ class Tick(Base):
         self.resumable("TASK-2", "b", 60)
         self.tick(fake, shell=FakeShell(["agent-pm-pm-TASK-9"]))
         self.assertEqual(self.said()[:2], ["live: pm 1/1", "plan: resume TASK-2 session=b"])
-        self.assertEqual(self.launched_runs(), [("TASK-2", "resume"), ("TASK-3", "new")])
+        self.assertEqual(self.launched_runs(), [("TASK-2", "resume")])
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
-                         {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("In Progress", None)})
+                         {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("Todo", None)})
         self.assertNotIn("resume TASK-1", self.state)
 
     def test_nothing_to_do_with_full_role(self):
@@ -1072,77 +1065,30 @@ class Tick(Base):
             self.assertIn(f"pick: {ident} is not a Todo issue assigned to a role account", self.err)
             self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
 
-    def test_launches_up_to_each_roles_capacity_resumes_first(self):
+    def test_one_run_per_tick_resume_first(self):
         self.config = self.write_config(CONFIG_ENG2)
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", priority=3),
-                           issue("TASK-7", "In Progress", "researcher", priority=4),
                            issue("TASK-8", "In Progress", "engineer", priority=4, project=PD),
                            issue("TASK-2", "Todo", "researcher", priority=1), issue("TASK-3", "Todo", "pm", priority=2, project=PD),
-                           issue("TASK-4", "Todo", "engineer", priority=2, project=PD),
-                           issue("TASK-5", "Todo", "engineer", priority=3, project=PD)], self.hist)
+                           issue("TASK-4", "Todo", "engineer", priority=2, project=PD)], self.hist)
         self.resumable("TASK-1", "a", 60)
-        self.resumable("TASK-7", "g", 50)
         self.resumable("TASK-8", "h", 70)
         self.tick(fake)
-        self.assertEqual(self.said(), ["plan: resume TASK-1 session=a", "launch TASK-1 (Deep Research) exit=0",
-                                       "plan: resume TASK-8 session=h", "launch TASK-8 (Product Design) exit=0",
-                                       "plan: new (3 in queue)", "pick: TASK-4 (3 in queue)", "claim: TASK-4 task=engineering",
-                                       "launch TASK-4 (Product Design) exit=0",
-                                       "plan: new (1 in queue)", "pick: TASK-3 (1 in queue)", "claim: TASK-3 task=product-design",
-                                       "launch TASK-3 (Product Design) exit=0", "plan: all roles full"])
-        self.assertEqual(self.launched_runs(), [("TASK-1", "resume"), ("TASK-8", "resume"), ("TASK-4", "new"), ("TASK-3", "new")])
-        self.assertEqual([line.split()[2:4] for line in self.state.splitlines()][3:],
-                         [["resume", "TASK-1"], ["resume", "TASK-8"], ["start", "TASK-4"], ["start", "TASK-3"]])
-        self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items() if i in ("TASK-2", "TASK-5", "TASK-7")},
-                         {"TASK-2": ("Todo", None), "TASK-5": ("Todo", None), "TASK-7": ("In Progress", None)})
-        self.assertEqual((self.probes(), self.sh.calls.count(LIST)), (4, 5))
+        self.assertEqual(self.said(), ["plan: resume TASK-1 session=a", "launch TASK-1 (Deep Research) exit=0"])
+        self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
+        self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
+                         {"TASK-1": "In Progress", "TASK-8": "In Progress", "TASK-2": "Todo", "TASK-3": "Todo", "TASK-4": "Todo"})
+        self.assertEqual((self.probes(), self.sh.calls.count(LIST)), (1, 1))
 
-    def test_usage_rechecked_before_each_launch(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=2, project=PD)])
-        self.tick(fake, shell=FakeShell(fives=[0.2, 0.95]))
-        self.assertEqual(self.said(), ["plan: new (2 in queue)", "pick: TASK-1 (2 in queue)", "claim: TASK-1 task=deep-research",
-                                       "launch TASK-1 (Deep Research) exit=0", "plan: new (1 in queue)",
-                                       "skip: new blocked by usage: status=allowed five_hour=0.95 seven_day=0.1"])
-        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls],
-                         ["tmux", "claude", "TASK-1", "tmux", "claude"])
-        self.assertEqual(fake.issues["TASK-2"]["state"], "Todo")
-
-    def test_nothing_claimed_after_a_launch_stops_the_tick(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=2, project=PD)])
-        for sid in "abcd":
-            self.add("start", "TASK-2", sid, 300)
-        self.tick(fake)
-        self.assertEqual(self.said(), ["plan: new (2 in queue)", "pick: TASK-1 (2 in queue)", "claim: TASK-1 task=deep-research",
-                                       "launch TASK-1 (Deep Research) exit=0", "plan: new (1 in queue)",
-                                       "pick: TASK-2 reached 4 attempts; In Review", "pick: nothing claimable",
-                                       "skip: nothing claimed"])
-        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls],
-                         ["tmux", "claude", "TASK-1", "tmux", "claude"])
-        self.assertEqual([line.split()[2:4] for line in self.state.splitlines()][4:], [["start", "TASK-1"]])
-        self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
-                         {"TASK-1": ("In Progress", None), "TASK-2": ("In Review", [router.CAP_COMMENT])})
-
-    def test_bounce_frees_the_slot(self):
-        fake = FakeLinear([issue(f"TASK-{n}", "Todo", "researcher", priority=n) for n in (1, 2, 3)])
-        self.tick(fake, shell=FakeShell(bounce={"TASK-1"}))
-        self.assertEqual(self.said(), ["plan: new (3 in queue)", "pick: TASK-1 (3 in queue)", "claim: TASK-1 task=deep-research",
-                                       "launch TASK-1 (Deep Research) exit=0", "plan: new (2 in queue)", "pick: TASK-2 (2 in queue)",
-                                       "claim: TASK-2 task=deep-research", "launch TASK-2 (Deep Research) exit=0", "plan: nothing to do"])
-        self.assertEqual(self.launched_runs(), [("TASK-1", "new"), ("TASK-2", "new")])
-        self.assertEqual(fake.issues["TASK-3"]["state"], "Todo")
-
-    def test_failed_launch_fills_its_role_for_the_tick(self):
+    def test_one_claim_per_tick(self):
         self.config = self.write_config(CONFIG_ENG2)
-        fake = FakeLinear([issue("TASK-1", "Todo", "engineer", priority=1, project=PD),
-                           issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
-                           issue("TASK-3", "Todo", "pm", priority=3, project=PD)])
-        self.tick(fake, shell=FakeShell(exits={"TASK-1": 1}))
-        self.assertEqual(self.said(), ["plan: new (3 in queue)", "pick: TASK-1 (3 in queue)", "claim: TASK-1 task=engineering",
-                                       "launch TASK-1 (Product Design) exit=1", "plan: new (1 in queue)", "pick: TASK-3 (1 in queue)",
-                                       "claim: TASK-3 task=product-design", "launch TASK-3 (Product Design) exit=0",
-                                       "plan: nothing to do"])
-        self.assertEqual(self.launched_runs(), [("TASK-1", "new"), ("TASK-3", "new")])
-        self.assertEqual(fake.issues["TASK-2"]["state"], "Todo")
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "pm", priority=2, project=PD),
+                           issue("TASK-3", "Todo", "engineer", priority=2, project=PD)])
+        self.tick(fake)
+        self.assertEqual(self.said(), ["plan: new (3 in queue)", "pick: TASK-1 (3 in queue)", "claim: TASK-1 task=deep-research",
+                                       "launch TASK-1 (Deep Research) exit=0"])
+        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls], ["tmux", "claude", "TASK-1"])
+        self.assertEqual({i: t["state"] for i, t in fake.issues.items()}, {"TASK-1": "In Progress", "TASK-2": "Todo", "TASK-3": "Todo"})
 
     def test_issue_flag_launches_only_that_issue(self):
         for dry in (False, True):
@@ -1166,23 +1112,18 @@ class Tick(Base):
             self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
                              {"TASK-1": "In Progress", "TASK-2": "Todo", "TASK-3": "Todo", "TASK-4": "In Progress"})
 
-    def test_dry_run_plans_several_runs(self):
+    def test_dry_run_plans_one_run(self):
         self.config = self.write_config(CONFIG_ENG2)
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher", priority=1),
-                           issue("TASK-3", "Todo", "pm", priority=2, project=PD), issue("TASK-4", "Todo", "pm", priority=3, project=PD),
+        fake = FakeLinear([issue("TASK-3", "Todo", "pm", priority=1, project=PD), issue("TASK-4", "Todo", "pm", priority=3, project=PD),
                            issue("TASK-5", "Todo", "engineer", priority=2, project=PD),
-                           issue("TASK-6", "Todo", "engineer", priority=3, project=PD),
-                           issue("TASK-7", "Todo", "engineer", priority=4, project=PD)], self.hist)
-        self.resumable("TASK-1", "a", 60)
+                           issue("TASK-6", "Todo", "engineer", priority=3, project=PD)], self.hist)
         for sid in "wxyz":
             self.add("start", "TASK-3", sid, 300)
         before = self.unmap("\n".join(self.lines) + "\n")
         self.tick(fake, "--dry-run")
         said = self.said()
-        self.assertEqual(said[:-1], ["plan: resume TASK-1 session=a", "plan: new (5 in queue)", "pick: TASK-5 (5 in queue)",
-                                     "plan: new (4 in queue)", "pick: TASK-3 reached 4 attempts; In Review", "pick: TASK-6 (4 in queue)",
-                                     "plan: new (1 in queue)", "pick: TASK-4 (1 in queue)", "plan: all roles full"])
-        self.assertRegex(said[-1], r"^usage: status=allowed .* \(4 planned, allowed\)$")
+        self.assertEqual(said[:-1], ["plan: new (4 in queue)", "pick: TASK-3 reached 4 attempts; In Review", "pick: TASK-5 (4 in queue)"])
+        self.assertRegex(said[-1], r"^usage: status=allowed .* \(1 planned, allowed\)$")
         self.assertEqual(self.sh.calls, [LIST, router.PROBE])
         self.assertEqual((fake.mutations, self.state), ([], before))
         self.assertNotIn(RECHECK, [q for q, _ in fake.queries])
@@ -1190,7 +1131,7 @@ class Tick(Base):
     def test_dry_run_usage_blocked(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, "--dry-run", shell=FakeShell(probe_five=0.95))
-        self.assertEqual(self.said()[:-1], ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)", "plan: nothing to do"])
+        self.assertEqual(self.said()[:-1], ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)"])
         self.assertRegex(self.said()[-1], r"^usage: status=allowed five_hour=0.95 .* \(1 planned, blocked\)$")
 
     def test_dry_run(self):
@@ -1198,10 +1139,10 @@ class Tick(Base):
         fake = FakeLinear([issue("TASK-1", "Todo", "engineer"), issue("TASK-2", "Todo", "researcher")])
         self.tick(fake, "--dry-run", hour=12, shell=FakeShell(["agent-pm-pm-TASK-5", "agent-pm-engineer-TASK-6"]))
         said = self.said()
-        self.assertEqual(said[:5], ["skip: outside hours", "live: engineer 1/1, pm 1/1", "plan: new (1 in queue)",
-                                    "pick: TASK-2 (1 in queue)", "plan: all roles full"])
-        self.assertRegex(said[5], r"^usage: status=allowed .*\(1 planned, allowed\)$")
-        self.assertEqual(len(said), 6)
+        self.assertEqual(said[:4], ["skip: outside hours", "live: engineer 1/1, pm 1/1", "plan: new (1 in queue)",
+                                    "pick: TASK-2 (1 in queue)"])
+        self.assertRegex(said[4], r"^usage: status=allowed .*\(1 planned, allowed\)$")
+        self.assertEqual(len(said), 5)
         self.assertEqual(self.probes(), 1)
         self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
         self.assertIn("TASK-8", self.state)
@@ -1242,7 +1183,7 @@ class Tick(Base):
                 self.assertEqual(len(fake.reads()), 1, (argv, resume))
 
     def test_ready_tick_reads_todo_once(self):
-        for argv, runs in (((), [("TASK-2", "new"), ("TASK-3", "new")]), (("--now", "--issue", "TASK-2"), [("TASK-2", "new")])):
+        for argv, runs in (((), [("TASK-2", "new")]), (("--now", "--issue", "TASK-2"), [("TASK-2", "new")])):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, inverse=[blocker("TASK-7")]),
                                issue("TASK-2", "Todo", "researcher", priority=2), issue("TASK-3", "Todo", "pm", priority=3, project=PD)])
             self.assertEqual(self.tick(fake, *argv), 0, argv)
@@ -1356,7 +1297,7 @@ class TaskLabels(Base):
         self.assertEqual([line.split()[2:4] for line in self.state.splitlines()], [["start", "TASK-2"]])
         self.assertTrue(self.state.endswith(" task=deep-research\n"))
 
-    def test_capped_and_bad_label_todo_examined_once_per_tick(self):
+    def test_capped_and_bad_label_todo_skipped_for_the_next(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
                            issue("TASK-2", "Todo", "researcher", priority=2, labels=[label("Orphan", ORPHAN_LABEL)]),
                            issue("TASK-3", "Todo", "pm", priority=3, project=PD),
@@ -1367,13 +1308,12 @@ class TaskLabels(Base):
         self.assertEqual(self.said(), ["plan: new (4 in queue)", "pick: TASK-1 reached 4 attempts; In Review",
                                        "pick: TASK-2 (4 in queue)", "claim: TASK-2 bad task label; In Review",
                                        "pick: TASK-3 (4 in queue)", "claim: TASK-3 task=product-design",
-                                       "launch TASK-3 (Product Design) exit=0",
-                                       "plan: new (1 in queue)", "pick: TASK-4 (1 in queue)", "claim: TASK-4 task=engineering",
-                                       "launch TASK-4 (Product Design) exit=0", "plan: nothing to do"])
+                                       "launch TASK-3 (Product Design) exit=0"])
         self.assertEqual({i: fake.issues[i].get("comments") for i in ("TASK-1", "TASK-2")},
                          {"TASK-1": [router.CAP_COMMENT], "TASK-2": [self.ORPHAN]})
         self.assertEqual([i for op, i in writes(fake) if op == "read"], ["TASK-1", "TASK-2"])
-        self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-2", "TASK-3", "TASK-4"])
+        self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-2", "TASK-3"])
+        self.assertEqual(fake.issues["TASK-4"]["state"], "Todo")
 
     def test_blocked_invalid_label_waits_for_its_blocker(self):
         for argv, skip, plan in (((), ["plan: nothing to do", "skip: nothing to do"], ["plan: new (1 in queue)"]),
