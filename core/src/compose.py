@@ -14,9 +14,10 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXT = "crew"   # principles.md, roles/, tasks/, templates/ and output/ live here
+TEXT = "team"     # principles.md, roles/, tasks/ and templates/: who does what
+OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how a run hands back
 CONFIG = os.path.join("config", "config.toml")
-SCHEMA = os.path.join(TEXT, "output", "outcome.schema.json")
+SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
@@ -33,7 +34,7 @@ class ConfigError(Exception):
 
 class Vehicle(Protocol):
     """What render() needs from whatever carries the prompt (a client)."""
-    def scripts_path(self, root: str) -> str: ...   # how the prompt names core's scripts/ dir
+    def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
     def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return)
 
 
@@ -117,10 +118,10 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
         body = _read(text, rel)
         f = _fence(body)
         parts.append(f"# Template: `{rel}`\n\n{f}markdown\n{body}{f}\n")
-    dest = f"output/destinations/{run.output['type']}.md"
-    if not os.path.isfile(os.path.join(text, dest)):
-        raise ConfigError(f"no destination {run.output['type']!r} ({dest})")
-    parts.append(fill(_read(text, "output/output.md"), {}, "output/output.md") + "\n" + fill(_read(text, dest), run.output, dest))
+    output, dest = os.path.join(root, OUTPUT), f"destinations/{run.output['type']}.md"
+    if not os.path.isfile(os.path.join(output, dest)):
+        raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
+    parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(_read(output, dest), run.output, dest))
     if handover := vehicle.handover():
         parts.append(f"## Return\n\n{handover.strip()}\n")
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)

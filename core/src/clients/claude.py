@@ -44,9 +44,12 @@ class ClaudeClient(Client):
             except ValueError:
                 yield Event("text", line.rstrip("\n"))
                 continue
+            if not isinstance(e, dict):
+                continue
             if e.get("type") == "assistant":
-                for block in e.get("message", {}).get("content", []):
-                    if block.get("type") != "text":
+                content = e.get("message", {}).get("content") if isinstance(e.get("message"), dict) else None
+                for block in content if isinstance(content, list) else ():
+                    if not isinstance(block, dict) or block.get("type") != "text":
                         continue
                     for line in block.get("text", "").splitlines():
                         if m := PROGRESS_LINE.match(line):

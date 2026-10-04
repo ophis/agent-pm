@@ -1,4 +1,4 @@
-# Claude Code client data, read by ClaudeClient (scripts/clients/claude.py); how argv is built lives there.
+# Claude Code client data, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
 # Same layout as config.toml: a value under [roles.<role>.tasks.<task>] beats [roles.<role>], which beats the top.
 flags = ["--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config"]
 

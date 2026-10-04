@@ -7,7 +7,7 @@ import tomllib
 import unittest
 from dataclasses import replace
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import compose  # noqa: E402
 
 class Plain:
@@ -16,24 +16,24 @@ class Plain:
         self._handover = handover
 
     def scripts_path(self, root):
-        return os.path.join(os.path.abspath(root), "scripts")
+        return os.path.join(os.path.abspath(root), "src")
 
     def handover(self):
         return self._handover
 
 
-CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 
 FILES = {
-    "crew/principles.md": "# Principles\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
-    "crew/roles/writer.md": "# Writer\n\nWrite well.\n",
-    "crew/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
-    "crew/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
-    "crew/templates/note.md": "# Note: [Title]\n",
-    "crew/output/output.md": "# Output\n\nWrite `Output:`.\n",
-    "crew/output/destinations/local.md": "## Destination\n\nKeep it local.\n",
-    "crew/output/destinations/github.md": "## Destination\n\nPush to `{{repo}}` on `{{branch}}`.\n",
+    "team/principles.md": "# Principles\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
+    "team/roles/writer.md": "# Writer\n\nWrite well.\n",
+    "team/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
+    "team/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
+    "team/templates/note.md": "# Note: [Title]\n",
+    "output/output.md": "# Output\n\nWrite `Output:`.\n",
+    "output/destinations/local.md": "## Destination\n\nKeep it local.\n",
+    "output/destinations/github.md": "## Destination\n\nPush to `{{repo}}` on `{{branch}}`.\n",
 }
 
 CONFIG = """
@@ -129,7 +129,7 @@ class Validate(Fake):
 
     def test_config_errors_come_before_missing_rule_files(self):
         self.config(CONFIG.replace("tier = 1", "tier = 9"))
-        os.remove(os.path.join(self.root, "crew", "tasks", "long-note.md"))
+        os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
         self.fails("tier must be an integer 1–4", task="long-note")
 
     def test_invalid_layer_value(self):
@@ -178,7 +178,7 @@ class Validate(Fake):
         self.fails("missing file templates/memo.md")
 
     def test_missing_task_file(self):
-        os.remove(os.path.join(self.root, "crew", "tasks", "long-note.md"))
+        os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
         self.fails("missing file tasks/long-note.md", task="long-note")
 
     def test_default_task_must_exist(self):
@@ -207,7 +207,7 @@ class Prompt(Fake):
         self.assertIn("```markdown\n# Note: [Title]\n```", prompt)
 
     def test_fence_outgrows_backticks_in_template(self):
-        self.write({"crew/templates/note.md": "```js\nx\n```\n"})
+        self.write({"team/templates/note.md": "```js\nx\n```\n"})
         prompt, _ = self.compose(task="short-note")
         self.assertIn("````markdown\n```js\nx\n```\n````", prompt)
 
@@ -249,7 +249,7 @@ class Prompt(Fake):
         self.assertTrue(prompt.startswith("# Principles"))
 
     def test_leftover_placeholder_in_a_rule_file(self):
-        self.write({"crew/tasks/short-note.md": "# Short Note\n\nUse {{tool}}.\n"})
+        self.write({"team/tasks/short-note.md": "# Short Note\n\nUse {{tool}}.\n"})
         self.fails("unfilled placeholder {{tool}}", task="short-note")
 
 
@@ -320,7 +320,7 @@ class RealCore(unittest.TestCase):
         for role, task in ALL:
             prompt, run = composed(role, task)
             for cmd in run.commands:
-                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "scripts"), "workdir": "<Workdir>"}, task).removesuffix(" *")
+                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
 
     def test_no_orchestration_references(self):

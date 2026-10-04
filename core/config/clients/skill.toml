@@ -1,4 +1,4 @@
-# Skill client data, read by SkillClient (scripts/clients/skill.py).
+# Skill client data, read by SkillClient (src/clients/skill.py).
 
 # Same layout as config.toml; an entry here replaces the same one there.
 #   description  the SKILL.md description, which tells a model when to use the skill;

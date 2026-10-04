@@ -12,7 +12,7 @@ from compose import RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
 # A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`; a run reports it with a line
 # starting the same way, its report after the mark.
 PROGRESS = "agent-pm-progress"
-PROGRESS_LINE = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]\s*(.*)$")
+PROGRESS_LINE = re.compile(rf"^\s*(?:[-*]\s+)?[`*]*\[{PROGRESS}:([\w-]+)\][`*]*\s*(.*?)[`*]*\s*$")   # `quoted` or **bold** too
 
 
 @dataclass(frozen=True)
@@ -51,8 +51,8 @@ class Client:
         self.config = config
 
     def scripts_path(self, root: str) -> str:
-        """How prompts name core's scripts/ dir: its absolute path unless the client says otherwise."""
-        return os.path.join(os.path.abspath(root), "scripts")
+        """How prompts name core's src/ dir: its absolute path unless the client says otherwise."""
+        return os.path.join(os.path.abspath(root), "src")
 
     def handover(self) -> str:
         """Prompt text (Output › Return): how the run returns its outcome and reports progress."""

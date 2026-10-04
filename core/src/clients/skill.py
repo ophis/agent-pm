@@ -24,7 +24,7 @@ class SkillClient(Client):
 
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
-                f"`deliverable` after the frontmatter instead of in it; write no file for them. At each "
+                f"`deliverable` after the frontmatter instead of in it; write no file for the outcome. At each "
                 f"`[{PROGRESS}:<name>]` point, write a line starting with the same mark, your report after it.")
 
     def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:

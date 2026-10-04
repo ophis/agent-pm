@@ -117,7 +117,7 @@ Put the deliverable in the outcome's `deliverable`; publish, post or save it now
 
 ## Return
 
-End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for them. At each `[agent-pm-progress:<name>]` point, write a line starting with the same mark, your report after it.
+End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for the outcome. At each `[agent-pm-progress:<name>]` point, write a line starting with the same mark, your report after it.
 
 ---
 
