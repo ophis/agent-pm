@@ -19,17 +19,17 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 
 ## Architecture
 
-- `router.py` (every 30 min): per-role tmux locks → Recover dead In Progress runs → usage gate → resume or claim → `run.py`, at most one run per tick. It claims only ready Todo issues (every direct blocker Done, Canceled or Duplicate) and changes only their state, never the assignee. `task_for` resolves the task from the `Tasks` label's id; a bad label → comment, In Review, no run. `--brake` is deep-research's second-round gate: a fresh usage probe, exit 0 while 5-hour usage < 80%.
+- `router.py` (every 30 min): per-role tmux locks → Recover dead In Progress runs → usage gate → resume or claim → `run.py`, at most one run per tick. It claims only ready Todo issues (every direct blocker Done, Canceled or Duplicate) and changes only their state, never the assignee. `task_for` resolves the task from the `Tasks` label's id; a bad label → comment, In Review, no run. `--brake` is deep-research's second-round gate: a fresh usage probe that exits 0 only while 5-hour usage < 80%, no weekly limit is full and the status isn't `rejected` (no `rate_limit_event` → 1).
 - `run.py`, outer (in the tick): validate → read the issue → engineering: `target.check` (Invalid on a new run → `writeback.bounce`, no run) → remove legacy worktrees in `work/<ID>/src` → `inputs.gather` + `render` → `work/<ID>/input.md` → tmux `agent-pm-<role>`, cwd `work/<ID>/`. Any failure starts nothing.
-- `run.py`, inner (in tmux): `drive.plan` + `drive.start` with the sinks (terminal, `progress.jsonl`, `outcome.json`, the project log, `writeback.sink`) → `end` lines in `logs/runs.log` and the project log → `writeback.finish`. No valid outcome → the issue stays In Progress and Recover resumes it. Config: `pipeline.run_config`.
+- `run.py`, inner (in tmux): `drive.plan` + `drive.start` with the sinks (terminal, `progress.jsonl`, `outcome.json`, the project log, `writeback.sink`) → `end` lines in `logs/runs.log` and the project log → `writeback.finish`. No valid outcome → the issue stays In Progress and Recover resumes it. It passes `pipeline.layers(root)` (the overlay) to `drive.plan`; `pipeline.run_config` mirrors that for validation (`runnable`, `docs`).
 - `issues.py` reads an issue; `target.py` resolves its repo (`Repo:` line, else `[project_repos]`), runs the engineering pre-check and names the branch; `inputs.py` builds the input text per task kind, reading linked docs through `gh api`.
-- `writeback.py`: start and progress marks and the outcome → Linear comments, title, attachment and state, as the role account. Per-task differences are `pipeline.TASKS` data. `work/<ID>/writeback.json` ledgers each step per session, so a resume repeats none; a failed step leaves the issue In Progress.
+- `writeback.py`: the `start` mark and the outcome → Linear comments, title, attachment and state, as the role account. Other progress marks post only when named in `TASKS[task].progress` (none today). Per-task differences are `pipeline.TASKS` data. `work/<ID>/writeback.json` ledgers each step per session, so a resume repeats none; a failed step leaves the issue In Progress.
 - `sessions.py`: one `Run <sid> · …` comment per session, posted in-process by `run.py` with `harness_key`, not the role's key, so `isMe` is the harness account. Promote leaves these comments out of `## Comments`; `issues.read_issue` drops them.
 - `promote.py` (every 5 min): Handoff → a Todo issue for the next role, its id hashed from source, role and handoff time, so reruns are idempotent. Each tick ends with `prune.py`: it deletes the clones (`work/<ID>/src/*`, `work/<ID>/publish`) and legacy worktrees of issues finished ≥ 24 h ago and archives pm and engineer ones (hence engineering's `issueUnarchive`).
 - `pipeline.py`: the Linear client, config validation, core config with the overlay, `TASKS`. It puts `core/src` on `sys.path`, so no `scripts/` module may be named `clients`, `compose`, `drive` or `repo`.
 - Identity: scripts act as the harness account `frank.agent.w@gmail.com`; write-back and bounce act as the role's `account` (`key`). Only Keychain service names travel in env, argv, logs and prompts, never keys. A run gets no Linear key, but that is no enforced boundary: it runs as the same macOS user and could read Keychain items.
 - Every move to In Review, by write-back, bounce or the harness, subscribes each `human_members` email and keeps the assignee.
-- State between ticks is only `logs/runs.log` (resume and Recover take the task from its `task=`, never the labels) and Linear history; the router never reads session comments. Resume needs `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans sessions.
+- The router's state between ticks is only `logs/runs.log` (resume and Recover take the task from its `task=`, never the labels) and Linear history; it never reads session comments. A resumed run also reads `work/<ID>/writeback.json` and needs `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans sessions.
 
 ## Roles, tasks, rules
 
@@ -42,8 +42,8 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 
 - Runs get `--setting-sources user --strict-mcp-config` (`core/config/clients/claude.toml`), so this file and project settings never load in them. A run reaches only `work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
 - `test_inputs.py` and `test_writeback.py` pin the input text and the Linear calls; `test_run.py` pins the tmux argv.
-- Each core task has exactly one `[agent-pm-progress:start]` line (`compose_test.py` checks): `Build started`, which `issues.build_cutoff` keys on, is its comment.
-- Never name Linear in `core/`; `compose_test.py` fails on it.
+- Each pipeline task (deep-research, light-research, product-design, engineering) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks). Without it write-back posts no start comment, and engineering's `issues.build_cutoff` loses its `Build started` cutoff.
+- Never name Linear in core prompts; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - tmux targets use `=agent-pm-<role>` for an exact match.
 - Keep `logs/` (gitignored): it is runner state, and launchd can't start a job whose log dir is missing.
