@@ -78,7 +78,7 @@ TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group"
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
-ROLE_KEYS = {"account", "key", "next", "require_instructions"}
+ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 
 
 @dataclass(frozen=True)
@@ -113,6 +113,7 @@ class Role:
     account: str        # Linear email
     key: str            # Keychain service of its API key
     tasks: tuple        # core config tasks, default_task first, then core order
+    max_runs: int = 1   # runs of the role at once
 
     @property
     def default(self):
@@ -170,6 +171,9 @@ def load_config(path=CONFIG):
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
                 raise SystemExit(f"orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}")
+        n = p.get("max_runs", 1)
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}")
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
@@ -252,7 +256,7 @@ def runnable(cfg, root=ROOT):
                 run_config(name, t, root)
             except compose.ConfigError as e:
                 raise SystemExit(f"core: {e}") from None
-        out[name] = Role(p["account"], p["key"], tasks)
+        out[name] = Role(p["account"], p["key"], tasks, p.get("max_runs", 1))
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
