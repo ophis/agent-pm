@@ -140,8 +140,8 @@ def _step(ctx, step, call):
 
 
 def sink(ctx) -> drive.Sink:
-    """Phases 1 and 2: the `start` mark as the task's start comment, once per sid; a mark named in the task's `progress`
-    as `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the run."""
+    """Phases 1 and 2: the `start` mark as the task's start comment, once per sid; any other mark as
+    `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the run."""
     def handle(event):
         try:
             if event.kind != "progress":
@@ -149,7 +149,7 @@ def sink(ctx) -> drive.Sink:
             task = TASKS[ctx.task]
             if event.name == "start":
                 _step(ctx, "start", lambda: _comment(ctx.gql, ctx.issue_id, say(task.start, event.text)))
-            elif event.name in task.progress:
+            else:
                 digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
                 _step(ctx, f"progress:{event.name}:{digest}",
                       lambda: _comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))

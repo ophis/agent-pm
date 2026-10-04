@@ -137,7 +137,6 @@ class Task:
     kind: Literal["research", "design", "build"]
     prefix: str = ""                    # issue title prefix: promote child titles, retitle
     start: str = ""                     # start comment lead
-    progress: frozenset = frozenset()   # progress mark names posted as comments
     done: str = ""                      # done comment lead
     question: str = ""                  # needs_input comment lead
     failed: str = ""                    # failed comment lead
