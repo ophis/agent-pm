@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Runner: one core run, per orchestrator/config.toml, of an issue the router claimed or resumes or the attended entry claims.
+"""Runner: one core run, per orchestrator/config.toml, of an issue claimed by the router or the attended entry (or a run
+the router resumes).
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--beside SESSION]
-  Outer, in the router tick or the attended entry: checks the run can start, bounces an engineering issue whose repo
-  check fails, writes work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts
-  nothing. Exits 0 started or bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config
-  error, 3 transient; a config error or transient failure is also logged to the task's project log.
-  --runner tui (default headless; --split and --beside need it): attended.layout places the TUI pane first (exit 2 when
-  it can't), the driver and TUI sessions' attach commands go to stderr, and from a plain terminal the driver session
-  starts attached to it.
+  Outer: checks the run can start, bounces an engineering issue whose repo check fails, writes work/<ID>/input.md,
+  then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
+  input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
+  failure is also logged to the task's project log. --runner tui (--split and --beside need it): attended.layout places
+  the TUI pane first (exit 2 when it can't), the sessions' attach commands go to stderr, and from a plain terminal the
+  driver session starts attached.
 run.py --issue ID --tui [--split right|below] [--beside SESSION]
-  Attended entry, run by hand: claims the issue as router.py --now --issue does, without its hours, max_runs or usage
-  gate, appends its start line to runs.log, then runs the outer with --runner tui. Exits 2 bad arguments or no place for
-  the TUI pane, 1 config error, a live run of the issue or nothing claimed, else the outer's code.
+  Attended entry, by hand: claims the issue (router.Board.take, without the tick's hours, max_runs or usage gate), logs
+  its start line, then runs the outer with --runner tui. Exits 2 bad arguments or no place for the TUI pane, 1 config
+  error, a live run of the issue or nothing claimed, else the outer's code.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] <the same arguments>
-  Inner, in that tmux session: closes the issue's recorded TUI sessions (attended.close) and records the tui runner's,
-  the session comments, core's run with the orchestrator's sinks, the end lines in the project log and runs.log, then
-  write-back as the role account.
+  Inner, in that tmux session: attended.close and, for tui, attended.record, the session comments, core's run with the
+  orchestrator's sinks, the end lines in the project log and runs.log, then write-back as the role account.
 Needs Python 3.11+.
 """
 import argparse
@@ -206,7 +205,8 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
     if role := next((r for r, ids in live.items() if a.issue in ids), None):
         print(f"run.py: {a.issue} has a live run: tmux attach -t '={session(role, a.issue)}'", file=sys.stderr)
         return 1
-    taken = router.Board(gql, router.parse_log(runs), projects, datetime.now(timezone.utc), False, cfg, root).take(a.issue)
+    board = router.Board(gql, router.parse_log(runs), projects, datetime.now(timezone.utc), dry=False, cfg=cfg, root=root)
+    taken = board.take(a.issue)
     if taken is None:
         return 1
     issue, task = taken
@@ -287,7 +287,7 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
          runs=RUNS_LOG, projects=PROJECTS, keychain=has_key, root=ROOT):
     """--tui → the attended entry, --inner → inner, else outer."""
     if "--tui" in argv:
-        ap = argparse.ArgumentParser(prog="run.py")
+        ap = argparse.ArgumentParser(prog="run.py", allow_abbrev=False)
         ap.add_argument("--issue", required=True)
         ap.add_argument("--tui", action="store_true")
         ap.add_argument("--split")
@@ -316,7 +316,7 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
     if not UUID_RE.fullmatch(a.uuid or "") or a.target is not None and not repo_slug(a.target):
         print(f"run.py: bad issue uuid or target: {a.uuid} {a.target}", file=sys.stderr)
         return 2
-    layout = drive.Layout(a.split or "right", a.beside) if a.runner == "tui" else None
+    layout = drive.Layout(a.split or drive.Layout.split, a.beside) if a.runner == "tui" else None
     try:
         drive.check_layout(a.runner, layout)  # syntax only: the outer placed the pane
     except compose.ConfigError as e:

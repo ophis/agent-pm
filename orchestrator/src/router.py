@@ -452,7 +452,9 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         line = start_line(ident, sid, task, tdir)
     append(runs, line)
     project = issue["project"]
-    tui = ["--runner=tui", *(f"--{k}={opts[k]}" for k in ("split", "beside") if opts[k] is not None)] if opts["tui"] else []
+    tui = []
+    if opts["tui"]:
+        tui = ["--runner=tui"] + [f"--{k}={opts[k]}" for k in ("split", "beside") if opts[k] is not None]
     rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
              "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind, *tui]).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
@@ -467,8 +469,11 @@ def options(argv):
     i = 0
     while i < len(argv):
         a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
+        name, eq, inline = a.partition("=")
         if a in flags:
             opts[flags[a]] = True
+        elif eq and name in ("--split", "--beside") and opts[valued[name]] is None:
+            opts[valued[name]] = inline
         elif a in valued and opts[valued[a]] is None and value is not None and value not in flags | valued:
             opts[valued[a]] = value
             i += 1

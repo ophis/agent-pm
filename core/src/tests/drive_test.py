@@ -1033,7 +1033,7 @@ class TuiRunner(Base):
 
     def test_tui_session_name(self):
         self.assertEqual(drive.tui_session("r", "t", SID), self.NAME)
-        self.assertRegex(self.NAME, drive.TUI_SESSION)
+        self.assertIsNotNone(drive.TUI_SESSION.fullmatch(self.NAME))
         self.assertIsNone(drive.TUI_SESSION.fullmatch("r-t-xyz"))
 
     def test_layout_reaches_tui_start_and_defaults_to_right_beside_nothing(self):

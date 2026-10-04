@@ -678,7 +678,9 @@ class Usage(unittest.TestCase):
                      ["--tui", "--issue", "TASK-1"], ["--now", "--issue", "TASK-1", "--tui"], ["--tui", "--brake"],
                      ["--brake", "--tui"], ["--split", "right"], ["--now", "--beside", "dev"], ["--dry-run", "--split", "below"],
                      ["--tui", "--split"], ["--tui", "--beside", "--now"], ["--now", "--issue", "--dry-run"],
-                     ["--tui", "--split", "right", "--split", "below"], ["--tui", "dev"], ["--tui", "--split=right"]):
+                     ["--tui", "--split", "right", "--split", "below"], ["--tui", "dev"], ["--split=right"],
+                     ["--now", "--beside=dev"], ["--tui", "--split=right", "--split=below"],
+                     ["--tui", "--beside=dev", "--beside", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
@@ -1288,7 +1290,10 @@ class TuiTick(Base):
                 (("--tui", "--beside", "dev", "--now", "--split", "below"), "below", "dev",
                  ["--runner=tui", "--split=below", "--beside=dev"]),
                 (("--beside", "-x", "--tui"), None, "-x", ["--runner=tui", "--beside=-x"]),
-                (("--split", "right", "--tui"), "right", None, ["--runner=tui", "--split=right"]))
+                (("--split", "right", "--tui"), "right", None, ["--runner=tui", "--split=right"]),
+                (("--now", "--tui", "--split=below", "--beside=dev"), "below", "dev",
+                 ["--runner=tui", "--split=below", "--beside=dev"]),
+                (("--beside=dev", "--tui", "--split", "right"), "right", "dev", ["--runner=tui", "--split=right", "--beside=dev"]))
         for argv, split, beside, tail in rows:
             with self.subTest(argv=argv):
                 self.lines = []

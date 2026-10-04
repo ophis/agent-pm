@@ -511,7 +511,8 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
     and a `missing` event first. Raises ConfigError, before anything starts, when the client lacks the runner's
-    command or the layout is one the runner can't take (check_layout); a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
+    command or the layout is one the runner can't take (check_layout); a RunnerError stops the runner and is the
+    Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
     host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout)
@@ -592,14 +593,14 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
-    ap.add_argument("--split", choices=tui.SPLITS, help="the tui runner's iTerm2 split (default: right)")
+    ap.add_argument("--split", choices=tui.SPLITS, help=f"the tui runner's iTerm2 split (default: {Layout.split})")
     ap.add_argument("--beside", metavar="SESSION", help="split the iTerm2 pane showing this tmux session")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.input == "-":
         a.input = sys.stdin.read()
     params = run = None
-    layout = Layout(a.split or "right", a.beside) if a.split or a.beside is not None else None
+    layout = Layout(a.split or Layout.split, a.beside) if a.split or a.beside is not None else None
     try:
         client = clients.get(a.client, root)
         if client.runs:
