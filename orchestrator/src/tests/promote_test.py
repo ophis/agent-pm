@@ -521,6 +521,22 @@ class TestDryRun(Base):
         self.assertIn("dry-run: handoff-bounce DR-2", self.out)
 
 
+class TestPath(Base):
+    def test_main_sets_path_first(self):
+        seen = []
+
+        class Spy(FakePruner):
+            def __init__(self, *a, **kw):
+                seen.append(os.environ["PATH"])
+                super().__init__(*a, **kw)
+
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin"}):
+            self.run_main("--dry-run", pruner=Spy)
+            self.assertEqual(os.environ["PATH"], config.PATH)
+        self.assertEqual(seen, [config.PATH])
+        self.assertIn("/opt/homebrew/bin", config.PATH)
+
+
 class TestPruneHook(Base):
     def test_prune_runs_each_tick(self):
         self.run_main("--dry-run")

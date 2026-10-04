@@ -9,7 +9,7 @@ human instructions, relate it, and move the source to Done.
 Needs Python 3.11+ (tomllib).
 
 At the end of every tick, orchestrator/src/prune.py's Pruner removes the clones of
-finished issues (TASK-49) and archives finished pm and engineer issues; a prune
+finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
 failure is logged and never breaks the Handoff work.
 """
 import hashlib
@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CONFIG, TASKS, load_config, runnable  # noqa: E402
+from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
 import linear  # noqa: E402
 from linear import linear_gql, one_line, parse_time, role_ids, stamp, team  # noqa: E402
 import sessions  # noqa: E402
@@ -202,6 +202,7 @@ def run_prune(gql, now, dry, team, roles, pruner=None):
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
+    os.environ["PATH"] = PATH
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
