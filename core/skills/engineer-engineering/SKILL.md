@@ -66,43 +66,44 @@ Build the PRD with `autopilot:build`, then open a pull request.
    - "Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.";
    - "Put the spec and plan where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`.";
    - "Skip S8; keep the commits. After each task and review round, run exactly `git -C <worktree> push -u origin <branch>`."
-6. **Finish**, once the build converges: `status: done`; add frontmatter `files:`, the absolute paths of the build's spec (its plan doc's `spec_file=`) and plan doc; the body is the pull request description: what changed, the PRD (its path or title), how to verify, leftover non-blocking items; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
-7. **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>`, unless the push was what was denied; `status: failed`; `files:` whichever spec and plan exist; `summary` the failing tests, blockers or denied action; `url:` `https://<host>/<owner>/<name>/tree/<branch>`.
+6. **Finish**, once the build converges: `status: done`; `files`, the absolute paths of the build's spec (its plan doc's `spec_file=`) and plan doc; the body is the pull request description: what changed, the PRD (its path or title), how to verify, leftover non-blocking items; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
+7. **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>`, unless the push was what was denied; `status: failed`; `files` whichever spec and plan exist; `summary` the failing tests, blockers or denied action; `url` `https://<host>/<owner>/<name>/tree/<branch>`.
 
 
 # Output
 
-Produce one Markdown document for `Output:` (end of this prompt), starting with frontmatter:
+Your result is an **outcome**, returned per Output › Return, plus a **deliverable** (the document itself) delivered per Output › Destination. The outcome's fields:
 
-```yaml
----
-status: done          # done | needs_input | failed
-title: <one line>
-summary: |            # 3–5 lines
-  ...
-questions:            # needs_input only: 1–4, numbered
-  - ...
-url: <link>           # the delivered link, if Output › Destination gives one; else empty
----
-```
+- `status`: `done` | `needs_input` | `failed`.
+- `title`: one line.
+- `summary`: 3–5 lines.
+- `questions`: `needs_input` only, 1–4.
+- `url`: the delivered link, when Output › Destination gives one.
+- `files`: absolute paths, when your task asks for them.
+- `deliverable`: the document, when Output › Destination says so.
 
-- **done** → the deliverable follows the frontmatter; deliver it per Output › Destination, nowhere else.
+Statuses:
+
+- **done** → deliver the deliverable per Output › Destination, nowhere else.
 - **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires. The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
-- `Output:` already holds a document, or the input gives an earlier version → revise it, keeping what still holds.
-- Your task may add frontmatter fields.
+
+The input gives an earlier version → revise it, keeping what still holds. At each point your task marks **progress**, report one line per Output › Return.
 
 ## Destination
 
-Open or update the pull request for `<branch>` on `<owner>/<name>`; the body after the frontmatter is its description.
+Open or update the pull request for `<branch>` on `<owner>/<name>`; the deliverable is its description.
 
 1. Write the description to `<Workdir>/tmp/pr.md`.
 2. `git -C <worktree> push -u origin <branch>`. Denied → `status: failed`, `summary` `push not permitted`; stop.
-3. By your task's status `pr`: null → `gh pr create --repo <host>/<owner>/<name> --head <branch> --base <default> --title <title> --body-file <Workdir>/tmp/pr.md`, `<title>` the frontmatter `title`, shell-quoted; `OPEN` → `gh pr edit <pr.number> --repo <host>/<owner>/<name> --body-file <Workdir>/tmp/pr.md`; closed or merged → `needs_input` asking whether to open a new PR; stop.
-4. Set `url:` to the PR's URL. PR creation denied → set it to `https://<host>/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `summary` that the user must open the PR.
+3. By your task's status `pr`: null → `gh pr create --repo <host>/<owner>/<name> --head <branch> --base <default> --title <title> --body-file <Workdir>/tmp/pr.md`, `<title>` the outcome's `title`, shell-quoted; `OPEN` → `gh pr edit <pr.number> --repo <host>/<owner>/<name> --body-file <Workdir>/tmp/pr.md`; closed or merged → `needs_input` asking whether to open a new PR; stop.
+4. Set the outcome's `url` to the PR's URL. PR creation denied → set it to `https://<host>/<owner>/<name>/compare/<default>...<branch>?expand=1` and say in `summary` that the user must open the PR.
+
+## Return
+
+End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for them. Report progress as its own line starting `Progress: `.
 
 ---
 
 Input: $ARGUMENTS
-Output: the path after `Output:` in the input, else `./engineer-engineering-$(date +%Y%m%d-%H%M).md` in the current directory
 Workdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation

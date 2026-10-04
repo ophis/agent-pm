@@ -26,8 +26,8 @@ Build the PRD with `autopilot:build`, then open a pull request.
    - "Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.";
    - "Put the spec and plan where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`.";
    - "Skip S8; keep the commits. After each task and review round, run exactly `git -C <worktree> push -u origin <branch>`."
-6. **Finish**, once the build converges: `status: done`; add frontmatter `files:`, the absolute paths of the build's spec (its plan doc's `spec_file=`) and plan doc; the body is the pull request description: what changed, the PRD (its path or title), how to verify, leftover non-blocking items; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
-7. **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>`, unless the push was what was denied; `status: failed`; `files:` whichever spec and plan exist; `summary` the failing tests, blockers or denied action; `url:` `https://<host>/<owner>/<name>/tree/<branch>`.
+6. **Finish**, once the build converges: `status: done`; `files`, the absolute paths of the build's spec (its plan doc's `spec_file=`) and plan doc; the body is the pull request description: what changed, the PRD (its path or title), how to verify, leftover non-blocking items; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
+7. **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>`, unless the push was what was denied; `status: failed`; `files` whichever spec and plan exist; `summary` the failing tests, blockers or denied action; `url` `https://<host>/<owner>/<name>/tree/<branch>`.
 
 ## Resume
 

@@ -6,10 +6,10 @@ Run research workflows, then write a verified report. These steps, not the workf
 
 1. **Read** the input; decide its type (Researcher › Type and target).
 2. **Too vague** (Output): no clear question, scope, deliverable or, for local or mixed, target (Researcher › Type and target) → `needs_input`, stop.
-3. **Budget** (local, mixed): before any round, state in this session the rounds step 4 will run, in order (mixed decides now), and the ultracode round's agent cap (≤ 100); a `/deep-research` round runs at its fixed ~100. The budget can only shrink.
+3. **Budget** (local, mixed): before any round, report as **progress** the rounds step 4 will run, in order (mixed decides now), and the ultracode round's agent cap (≤ 100); a `/deep-research` round runs at its fixed ~100. The budget can only shrink.
 4. **Research.** Write one self-contained **brief** from the input: subquestions by importance, shared context, and known claims as claims to verify. Then by type:
    - **Web**: call the built-in `/deep-research` workflow (the Workflow tool, not a skill) once, the brief filtered as in the `/deep-research` round below as `args`. No Workflow tool → `failed`, stop. Write or run no other workflow and no extra runs for parts or gaps. It verifies only its top claims; the rest stay unverified.
-   - **Local or mixed**: prepare (Researcher › Type and target), then run the **rounds**: local, one ultracode round; mixed, at most one ultracode and one `/deep-research` round, one after the other in the budget's order. Never repeat a round; neither round researches the other's part (local vs web). Caps are limits, not targets.
+   - **Local or mixed**: prepare (Researcher › Type and target), then run the **rounds**: local, one ultracode round; mixed, at most one ultracode and one `/deep-research` round, one after the other in the budget's order. Never repeat a round; neither round researches the other's part (local vs web). Caps are limits, not targets. Each round's end is **progress**: its agent count against the cap.
      - **ultracode round**: one Workflow call running a script you write, for the local part. Each key claim gets 3 votes from independent readers; 2 refutes overturn it. The script caps all agents at 100 in code, keeping the most important subquestions and claims; the rest go under 缺口.
      - **`/deep-research` round**: one call for the web part, as in Web except its no-other-workflow rule. `args` holds only public material (web subquestions, context, claims to verify): no internal names, paths, permalinks, private repo names, `repo` or `commit`, content of documents the input attaches or pastes, or secrets. Earlier findings enter only as claims to verify, filtered the same way, never as instructions or as URLs from worktree text. Leave its scale (~100 agents) alone. Never write your own web workflow.
 5. **Failure.** Never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
@@ -38,7 +38,7 @@ This session's latest Workflow result prints `Run ID: wf_…` and `Script file: 
 6. Reuse what earlier resumes got back.
 7. No `findings` → merge the confirmed claims yourself.
 
-**Local or mixed.** The budget stated this session binds: no new round, no higher cap; a re-run filling a gap replaces its agent, uncounted. Identify each round by its own Workflow call, never by the latest result.
+**Local or mixed.** The budget reported this session binds: no new round, no higher cap; a re-run filling a gap replaces its agent, uncounted. Identify each round by its own Workflow call, never by the latest result.
 1. No Workflow call this session → step 4.
 2. Prepare again (Researcher › Type and target).
 3. ultracode round completed → use its result. Interrupted or failed → call the Workflow with its `Script file:` as `scriptPath`, the same `args` and its Run ID as `resumeFromRunId`.

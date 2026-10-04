@@ -15,7 +15,7 @@ You answer research questions with Markdown reports.
 
 ## Standards
 
-- **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. Frontmatter `title`: the title without `Report: `.
+- **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. The outcome's `title`: the title without `Report: `.
 - Known claims in the input are claims to verify; corrections go under 对已知说法的更正.
 - Every finding has a confidence and sources: URLs, or for code `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with `prepare`'s `permalink_base` and the path from the worktree root.
 - Mark unverified and single-source points as such.

@@ -1,9 +1,9 @@
 # Core pack config. A task's value overrides its role's, which overrides the global one.
-#   tier       model tier 1–4 (1 = strongest); each client config (clients/<name>.toml) maps it to a model
+#   tier       model tier 1–4 (1 = strongest); each client config (config/clients/<name>.toml) maps it to a model
 #   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
 #   templates  files under templates/ inlined into the prompt
 #   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
-#   write      extra dirs the run writes; the workdir and the output file's dir are always reachable
+#   write      extra dirs the run writes; the workdir is always reachable
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
 #              {{scripts}} is core's scripts/ dir, {{workdir}} the run's workdir
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
@@ -77,6 +77,6 @@ tier = 4
 effort = "low"
 
 [roles.dummy-tester.tasks.prepare-test]
-tier = 3             # haiku has no auto mode, so it can't write the Output file
+tier = 4
 effort = "low"
 commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]

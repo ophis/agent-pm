@@ -65,12 +65,12 @@ class Parse(unittest.TestCase):
     def test_forms(self):
         for spec, want in (("o/n", ("github.com", "o", "n")), ("ghe.example.com/o/n", ("ghe.example.com", "o", "n")),
                            ("https://github.com/o/n.git", ("github.com", "o", "n")), ("https://GHE.io/o/n/", ("ghe.io", "o", "n"))):
-            self.assertEqual(repo.parse(spec), want, spec)
+            self.assertEqual(repo.Repo.parse(spec), repo.Repo(*want), spec)
 
     def test_unreadable(self):
         for spec in ("n", "o/..", "https://o/n", "o/n; rm -rf /", "-o/n"):
             with self.assertRaises(repo.Invalid, msg=spec):
-                repo.parse(spec)
+                repo.Repo.parse(spec)
 
     def test_origin(self):
         self.assertEqual(repo.origin("git@GitHub.com:O/N.git"), "github.com/o/n")
@@ -155,6 +155,11 @@ class Checkout(Base):
         self.assertEqual(code, 0)
         self.assertFalse(any("checkout" in c for c in run.calls))
 
+    def test_unsafe_branch_is_reported_before_an_unreadable_repo(self):
+        code, _, err = self.main(["checkout", "--dir", self.dir, "--branch=a..b", "not a repo"], Fake([]))
+        self.assertEqual(code, 2)
+        self.assertIn("unsafe branch name", err)
+
     def test_no_push_permission_is_invalid(self):
         (code, _, err), run = self.checkout(info(push=False))
         self.assertEqual(code, 2)
@@ -223,6 +228,15 @@ class Status(Base):
                     (["gh", "pr", "list"], ok("[]"))])
         code, out, _ = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run)
         self.assertEqual((code, json.loads(out)), (0, {"pr": None, "plan_docs": [], "since": None, "user": [], "others": []}))
+
+    def test_bad_config_is_reported_before_an_unreadable_repo(self):
+        config = os.path.join(self.dir, "config.toml")
+        with open(config, "w") as f:
+            f.write("users = [\n")
+        out, err = io.StringIO(), io.StringIO()
+        code = repo.main(["status", "--dir", self.dir, "--branch", "b", "not a repo"], run=Fake([]), out=out, err=err,
+                         config=config)
+        self.assertEqual(code, 1)
 
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))

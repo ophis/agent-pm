@@ -43,7 +43,7 @@ _Avoid_: runtime, backend
 Where a run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.
 
 **Deliverable**:
-The Markdown a run delivers to its destination (report, PRD, PR description); the output file's body after the frontmatter.
+The Markdown a run delivers to its destination (report, PRD, PR description): returned in its outcome or published by the run, per the destination.
 _Avoid_: document, result, report
 
 **Vehicle**:

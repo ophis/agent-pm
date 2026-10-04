@@ -1,47 +1,67 @@
 """The client interface: a Client turns a composed run into a Launch."""
 import os
 import tomllib
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from typing import Literal
 
-from compose import RUN_KEYS, ConfigError
+from compose import RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
 
 
-@dataclass
+@dataclass(frozen=True)
+class Access:
+    """A run's client-neutral constraints, as absolute paths and commands to pre-approve."""
+    dirs: list[str]       # extra dirs the run may reach
+    commands: list[str]   # shell commands to pre-approve
+
+
+@dataclass(frozen=True)
 class Launch:
-    argv: list                                # empty: nothing to start
-    env: dict = field(default_factory=dict)   # added to the caller's environment
-    cwd: str = ""                             # set by the driver
-    files: dict = field(default_factory=dict)  # path → text, written by the driver
+    argv: list[str]                                        # empty: nothing to start
+    env: dict[str, str] = field(default_factory=dict)      # added to the caller's environment
+    cwd: str = ""
+    files: dict[str, str] = field(default_factory=dict)    # path → text, written by the driver
+
+
+@dataclass(frozen=True)
+class Event:
+    """One thing a run's output says: text to show, a progress line, or its outcome (the last one counts)."""
+    kind: Literal["text", "progress", "outcome"]
+    text: str = ""
+    outcome: dict | None = None
 
 
 class Client:
-    keys = frozenset()   # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
+    keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
-    runs = True   # starts a run: needs --input and --workdir, and gets the Input/Output/Workdir tail
+    runs = True            # True: launch() starts a run; False: export() writes files instead
+    scripts: str | None = None   # how prompts name core's scripts/ dir; None → its absolute path
+    handover = ""          # prompt text: how the run returns its outcome and reports progress (Output › Return)
 
-    def __init__(self, config):
+    def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):
             raise ConfigError(f"unknown key {extra[0]!r} in {type(self).__name__}'s config")
         self.config = config
 
-    def value(self, run, key):
-        """`key` for this run, the same layout as config.toml: roles.<role>.tasks.<task> > roles.<role> > global."""
-        role = self.config.get("roles", {}).get(run["role"], {})
-        for layer in (role.get("tasks", {}).get(run["task"], {}), role, self.config):
-            if key in layer:
-                return layer[key]
-        return None
+    def value(self, run: RunConfig, key: str):
+        """One of this client's own keys for the run, in config.toml's layout."""
+        return lookup(self.config, run.role, run.task, key)
 
-    def scripts(self, root, run, out):
-        """How the prompt names core's scripts/ dir."""
-        return os.path.join(os.path.abspath(root), "scripts")
+    def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access, schema: dict) -> Launch:
+        """The command for a run; `schema` is the outcome's JSON Schema."""
+        raise NotImplementedError
 
-    def launch(self, prompt, run, *, sid, resume, access, out):
+    def events(self, lines: Iterable[str]) -> Iterator[Event]:
+        """The run's stdout as Events; a client that can't return an outcome yields only text."""
+        for line in lines:
+            yield Event("text", line.rstrip("\n"))
+
+    def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
         raise NotImplementedError
 
 
-def load_config(name, root):
-    path = os.path.join(root, "clients", f"{name}.toml")
+def load_config(name: str, root: str) -> dict:
+    path = os.path.join(root, "config", "clients", f"{name}.toml")
     if not os.path.isfile(path):
         raise ConfigError(f"no client config {path}")
     with open(path, "rb") as f:

@@ -1,5 +1,3 @@
-import io
-import json
 import os
 import re
 import sys
@@ -7,24 +5,23 @@ import tempfile
 import textwrap
 import tomllib
 import unittest
-import unittest.mock
-from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import compose  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATHS = dict(input="Research X.", out="/w/out.md", workdir="/w")
+PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 
 FILES = {
-    "principles.md": "# Principles\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
-    "delegate-core/roles/writer.md": "# Writer\n\nWrite well.\n",
-    "delegate-core/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
-    "delegate-core/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
-    "delegate-core/templates/note.md": "# Note: [Title]\n",
-    "delegate-core/output/output.md": "# Output\n\nWrite `Output:`.\n",
-    "delegate-core/output/destinations/local.md": "## Destination\n\nKeep it local.\n",
-    "delegate-core/output/destinations/github.md": "## Destination\n\nPush to `{{repo}}` on `{{branch}}`.\n",
+    "crew/principles.md": "# Principles\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
+    "crew/roles/writer.md": "# Writer\n\nWrite well.\n",
+    "crew/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
+    "crew/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
+    "crew/templates/note.md": "# Note: [Title]\n",
+    "crew/output/output.md": "# Output\n\nWrite `Output:`.\n",
+    "crew/output/destinations/local.md": "## Destination\n\nKeep it local.\n",
+    "crew/output/destinations/github.md": "## Destination\n\nPush to `{{repo}}` on `{{branch}}`.\n",
 }
 
 CONFIG = """
@@ -70,38 +67,74 @@ class Fake(unittest.TestCase):
                 f.write(text)
 
     def config(self, text):
-        self.write({"config.toml": textwrap.dedent(text)})
+        self.write({"config/config.toml": textwrap.dedent(text)})
 
-    def compose(self, role="writer", task=None, **kw):
-        return compose.compose(self.root, role, task, **{**PATHS, **kw})
+    def compose(self, role="writer", task=None, *, layers=(), **params):
+        run = compose.load_run(self.root, role, task, layers=layers)
+        return compose.render(self.root, run, replace(PARAMS, **params)), run
 
-    def fails(self, msg, role="writer", task=None):
+    def fails(self, msg, role="writer", task=None, layers=()):
         with self.assertRaises(compose.ConfigError) as cm:
-            self.compose(role, task)
+            self.compose(role, task, layers=layers)
         self.assertIn(msg, str(cm.exception))
 
 
 class Resolve(Fake):
     def test_task_overrides_role_overrides_global(self):
         _, run = self.compose(task="long-note")
-        self.assertEqual((run["tier"], run["effort"]), (1, "medium"))
+        self.assertEqual((run.tier, run.effort), (1, "medium"))
 
     def test_output_is_replaced_whole(self):
         _, run = self.compose(task="long-note")
-        self.assertEqual(run["output"], {"type": "github", "repo": "o/docs", "branch": "main"})
+        self.assertEqual(run.output, {"type": "github", "repo": "o/docs", "branch": "main"})
         _, run = self.compose(task="short-note")
-        self.assertEqual(run["output"], {"type": "local"})
+        self.assertEqual(run.output, {"type": "local"})
 
     def test_list_defaults_are_empty(self):
         _, run = self.compose(task="long-note")
-        self.assertEqual((run["read"], run["write"], run["commands"], run["templates"]), ([], [], [], []))
+        self.assertEqual((run.read, run.write, run.commands, run.templates), ([], [], [], []))
 
     def test_no_task_uses_the_role_default(self):
         _, run = self.compose()
-        self.assertEqual((run["role"], run["task"]), ("writer", "short-note"))
+        self.assertEqual((run.role, run.task), ("writer", "short-note"))
+
+    def test_later_layers_replace_run_keys_at_any_level(self):
+        layer = {"effort": "low", "roles": {"writer": {"tasks": {"long-note": {"tier": 3, "output": {"type": "local"}}}}}}
+        _, run = self.compose(task="long-note", layers=[layer])
+        self.assertEqual((run.tier, run.effort, run.output), (3, "low", {"type": "local"}))
+        _, run = self.compose(task="long-note", layers=[layer, {"tier": 4}])
+        self.assertEqual(run.tier, 4)
+
+    def test_layers_ignore_their_own_keys(self):
+        _, run = self.compose(task="long-note", layers=[{"flags": ["-x"], "description": "d"}])
+        self.assertEqual(run.tier, 1)
 
 
 class Validate(Fake):
+    def test_config_toml_must_be_valid_on_its_own(self):
+        self.config(CONFIG.replace("tier = 1", "tier = 9"))
+        self.fails("tier must be an integer 1–4", task="long-note", layers=[{"tier": 2}])
+
+    def test_config_errors_come_before_missing_rule_files(self):
+        self.config(CONFIG.replace("tier = 1", "tier = 9"))
+        os.remove(os.path.join(self.root, "crew", "tasks", "long-note.md"))
+        self.fails("tier must be an integer 1–4", task="long-note")
+
+    def test_invalid_layer_value(self):
+        self.fails("tier must be an integer 1–4", task="long-note", layers=[{"tier": 9}])
+
+    def test_replace_is_checked(self):
+        _, run = self.compose(task="long-note")
+        with self.assertRaises(compose.ConfigError):
+            replace(run, effort="ultra")
+
+    def test_resume_needs_a_sid(self):
+        with self.assertRaises(compose.ConfigError):
+            compose.RunParams(input="x", out="o", workdir="w", resume=True)
+
+    def test_new_params_get_a_sid(self):
+        self.assertRegex(compose.RunParams(input="x", out="o", workdir="w").sid, r"^[0-9a-f-]{36}$")
+
     def test_unknown_role(self):
         self.fails("unknown role 'nobody'", role="nobody")
 
@@ -133,7 +166,7 @@ class Validate(Fake):
         self.fails("missing file templates/memo.md")
 
     def test_missing_task_file(self):
-        os.remove(os.path.join(self.root, "delegate-core", "tasks", "long-note.md"))
+        os.remove(os.path.join(self.root, "crew", "tasks", "long-note.md"))
         self.fails("missing file tasks/long-note.md", task="long-note")
 
     def test_default_task_must_exist(self):
@@ -162,7 +195,7 @@ class Prompt(Fake):
         self.assertIn("```markdown\n# Note: [Title]\n```", prompt)
 
     def test_fence_outgrows_backticks_in_template(self):
-        self.write({"delegate-core/templates/note.md": "```js\nx\n```\n"})
+        self.write({"crew/templates/note.md": "```js\nx\n```\n"})
         prompt, _ = self.compose(task="short-note")
         self.assertIn("````markdown\n```js\nx\n```\n````", prompt)
 
@@ -171,27 +204,31 @@ class Prompt(Fake):
         self.write({"in.md": "question"})
         prompt, _ = self.compose(task="short-note", input=path, out="o.md", workdir="wd")
         tail = prompt.rsplit("\n---\n", 1)[1]
-        self.assertEqual(tail.strip().splitlines(), [f"Input: {path}", f"Output: {os.path.abspath('o.md')}",
-                                                     f"Workdir: {os.path.abspath('wd')}"])
+        self.assertEqual(tail.strip().splitlines(), [f"Input: {path}", f"Workdir: {os.path.abspath('wd')}"])
 
     def test_tail_with_free_text_input(self):
         prompt, _ = self.compose(task="short-note", input="Compare cmux and tmux.\nKeep it short.")
         tail = prompt.rsplit("\n---\n", 1)[1]
-        self.assertEqual(tail.strip().splitlines(), ["Output: /w/out.md", "Workdir: /w", "Input:", "",
-                                                     "Compare cmux and tmux.", "Keep it short."])
+        self.assertEqual(tail.strip().splitlines(), ["Workdir: /w", "Input:", "", "Compare cmux and tmux.", "Keep it short."])
 
-    def test_resolve_then_render_with_another_output(self):
-        run = compose.resolve_run(self.root, "writer", "long-note")
-        run["output"] = {"type": "local"}
-        prompt = compose.render(self.root, run)
+    def test_handover_closes_the_output_section(self):
+        run = compose.load_run(self.root, "writer", "short-note")
+        prompt = compose.render(self.root, run, PARAMS, handover="Say it back.")
+        body = prompt.rsplit("\n---\n", 1)[0]
+        self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
+
+    def test_load_then_render_with_another_output(self):
+        run = compose.load_run(self.root, "writer", "long-note")
+        prompt = compose.render(self.root, replace(run, output={"type": "local"}))
         self.assertIn("Keep it local.", prompt)
         self.assertNotIn("Push to", prompt)
 
-    def test_no_paths_no_tail(self):
-        prompt, run = compose.compose(self.root, "writer", "short-note")
-        self.assertNotIn("Output: ", prompt)
+    def test_no_params_no_tail(self):
+        run = compose.load_run(self.root, "writer", "short-note")
+        prompt = compose.render(self.root, run)
+        self.assertNotIn("Workdir: ", prompt)
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
-        self.assertEqual((run["role_title"], run["task_title"], run["task_summary"]), ("Writer", "Short Note", "Write a note."))
+        self.assertEqual((run.role_title, run.task_title, run.task_summary), ("Writer", "Short Note", "Write a note."))
 
     def test_resume_starts_with_resumed_run(self):
         prompt, _ = self.compose(task="short-note", resume=True)
@@ -200,7 +237,7 @@ class Prompt(Fake):
         self.assertTrue(prompt.startswith("# Principles"))
 
     def test_leftover_placeholder_in_a_rule_file(self):
-        self.write({"delegate-core/tasks/short-note.md": "# Short Note\n\nUse {{tool}}.\n"})
+        self.write({"crew/tasks/short-note.md": "# Short Note\n\nUse {{tool}}.\n"})
         self.fails("unfilled placeholder {{tool}}", task="short-note")
 
 
@@ -222,101 +259,77 @@ class Anchor(unittest.TestCase):
         self.assertEqual(compose.anchor("Template: `x.md`"), "template-xmd")
 
 
-class Main(Fake):
-    def run_main(self, *argv, stdin="q"):
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err), unittest.mock.patch("sys.stdin", io.StringIO(stdin)):
-            rc = compose.main(["--role", "writer", "--input", "-", "--out", "o", "--workdir", "w", *argv], root=self.root)
-        return rc, out.getvalue(), err.getvalue()
-
-    def test_prints_prompt(self):
-        rc, out, _ = self.run_main()
-        self.assertEqual(rc, 0)
-        self.assertTrue(out.startswith("# Principles"))
-
-    def test_json_has_prompt_and_run(self):
-        rc, out, _ = self.run_main("--task", "long-note", "--json")
-        data = json.loads(out)
-        self.assertEqual((rc, data["run"]["tier"]), (0, 1))
-        self.assertIn("# Long Note", data["prompt"])
-
-    def test_input_from_stdin(self):
-        rc, out, _ = self.run_main(stdin="from stdin\n")
-        self.assertTrue(out.rstrip().endswith("Input:\n\nfrom stdin"))
-
-    def test_config_error_exits_2(self):
-        rc, out, err = self.run_main("--task", "essay")
-        self.assertEqual((rc, out), (2, ""))
-        self.assertIn("compose.py: task 'essay'", err)
-
-
-with open(os.path.join(CORE, "config.toml"), "rb") as _f:
+with open(os.path.join(CORE, "config", "config.toml"), "rb") as _f:
     ALL = [(r, t) for r, role in tomllib.load(_f)["roles"].items() for t in role.get("tasks", {})]
+
+
+def composed(role, task=None):
+    run = compose.load_run(CORE, role, task)
+    return compose.render(CORE, run, PARAMS), run
 
 
 class RealCore(unittest.TestCase):
     def test_every_task_compiles_without_placeholders(self):
         for role, task in ALL:
-            prompt, run = compose.compose(CORE, role, task, **PATHS)
+            prompt, run = composed(role, task)
             self.assertNotIn("{{", prompt, task)
-            self.assertEqual(run["task"], task)
+            self.assertEqual(run.task, task)
 
     def test_default_tasks(self):
         for role, task in (("pm", "product-design"), ("engineer", "engineering")):
-            self.assertEqual(compose.compose(CORE, role, **PATHS)[1]["task"], task)
+            self.assertEqual(composed(role)[1].task, task)
 
     def test_product_design(self):
-        prompt, run = compose.compose(CORE, "pm", "product-design", **PATHS)
+        prompt, run = composed("pm", "product-design")
         self.assertIn("[PM rules](#pm) > [Product Design rules](#product-design)", prompt)
         self.assertIn("# Template: `templates/prd.md`", prompt)
-        self.assertEqual(run["output"]["dir"], "Product Design/")
-        self.assertEqual((run["read"], run["write"]), ([], []))
+        self.assertEqual(run.output["dir"], "Product Design/")
+        self.assertEqual((run.read, run.write), ([], []))
 
     def test_engineering(self):
-        prompt, run = compose.compose(CORE, "engineer", "engineering", **PATHS)
+        prompt, run = composed("engineer", "engineering")
         self.assertIn("[Engineer rules](#engineer) > [Engineering rules](#engineering)", prompt)
         self.assertIn("gh pr create", prompt)
-        self.assertEqual((run["effort"], run["write"], run["output"]), ("xhigh", [], {"type": "pull-request"}))
+        self.assertEqual((run.effort, run.write, run.output), ("xhigh", [], {"type": "pull-request"}))
 
     def test_researcher_defaults_to_deep_research(self):
-        _, run = compose.compose(CORE, "researcher", **PATHS)
-        self.assertEqual(run["task"], "deep-research")
+        _, run = composed("researcher")
+        self.assertEqual(run.task, "deep-research")
 
     def test_researcher_deep_research_compiles(self):
-        prompt, run = compose.compose(CORE, "researcher", "deep-research", **PATHS)
+        prompt, run = composed("researcher", "deep-research")
         self.assertIn("[Researcher rules](#researcher) > [Deep Research rules](#deep-research)", prompt)
         self.assertIn("# Template: `templates/research-report.md`", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", []))
+        self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
 
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:
-            prompt, run = compose.compose(CORE, role, task, **PATHS)
-            for cmd in run["commands"]:
+            prompt, run = composed(role, task)
+            for cmd in run.commands:
                 cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "scripts"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
 
     def test_no_orchestration_references(self):
         for role, task in ALL:
-            prompt, _ = compose.compose(CORE, role, task, **PATHS)
+            prompt, _ = composed(role, task)
             for word in ("router.py", "research.py", "usage.py", "eng.py", "Linear", "In Review", "Todo", "Handoff", "issue"):
                 self.assertNotIn(word, prompt, f"{task}: {word}")
 
     def test_github_host_defaults_and_overrides(self):
-        run = compose.resolve_run(CORE, "researcher", "light-research")
+        run = compose.load_run(CORE, "researcher", "light-research")
         self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run))
-        run["output"] = {**run["output"], "host": "ghe.example.com"}
-        prompt = compose.render(CORE, run)
+        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}))
         self.assertIn("gh repo clone ghe.example.com/ophis/private_docs", prompt)
         self.assertIn("https://ghe.example.com/ophis/private_docs/blob/main/", prompt)
 
     def test_researcher_light_research_compiles(self):
-        prompt, run = compose.compose(CORE, "researcher", "light-research", **PATHS)
+        prompt, run = composed("researcher", "light-research")
         self.assertIn("[Researcher rules](#researcher) > [Light Research rules](#light-research)", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", []))
+        self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
 
 
 if __name__ == "__main__":

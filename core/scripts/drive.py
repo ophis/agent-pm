@@ -1,99 +1,196 @@
 #!/usr/bin/env python3
-"""Driver: composes a run, has its client (scripts/clients/) build the command, starts it and checks the output.
+"""Driver: composes a run, has its client (scripts/clients/) build the command, starts it, then checks and saves the
+outcome the client reads back.
 
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--dry-run]
---out is the run's Output file, or for a client that only writes files (skill) the dir it writes under.
+--out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
+(skill) the dir it writes under. A run leaves <workdir>/outcome.json and <workdir>/progress.jsonl.
 Prints the session id on stderr. --dry-run prints {"argv", "cwd", "env", "files"} and changes nothing.
-Exits 0 when the run leaves a valid Output frontmatter (or the files are written), 1 when it doesn't,
-2 on a config error, 3 when the client fails.
+Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config error,
+3 when the client fails.
 """
 import argparse
 import json
 import os
 import subprocess
 import sys
-import uuid
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass, field
+from typing import Literal, get_args
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-from compose import ROOT, RUN_KEYS, ConfigError, check, compose, fill, render, resolve_run  # noqa: E402
+from clients import Access, Client, Launch  # noqa: E402
+from compose import ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render  # noqa: E402
 
-STATUSES = ("done", "needs_input", "failed")
-
-
-@dataclass
-class Access:
-    """A run's client-neutral constraints, as absolute paths and commands to pre-approve."""
-    dirs: list        # extra dirs the run may reach
-    commands: list    # shell commands to pre-approve
+Status = Literal["done", "needs_input", "failed"]
+STATUSES = get_args(Status)
+SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
+OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
 
 
-def bind(entry, repo):
+class InvalidOutcome(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Outcome:
+    status: Status
+    title: str
+    summary: str
+    questions: list[str] = field(default_factory=list)
+    url: str = ""
+    files: list[str] = field(default_factory=list)
+    deliverable: str = ""
+
+
+@dataclass(frozen=True)
+class Result:
+    returncode: int
+    outcome: Outcome | None   # None: the run returned no valid outcome
+    error: str = ""
+
+
+def bind(entry: str, repo: str | None) -> str | None:
     """A read/write entry as an absolute dir: `repo` is the --repo dir (None without one); else a path."""
     if entry == "repo":
         return os.path.abspath(repo) if repo else None
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run, *, repo, out, workdir, scripts):
-    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled. Edit limits are left to the client's permission mode (auto)."""
-    workdir, out_dir = os.path.abspath(workdir), os.path.dirname(os.path.abspath(out))
-    dirs = [] if out_dir == workdir or out_dir.startswith(workdir + os.sep) else [out_dir]
-    for p in (bind(e, repo) for e in run["read"] + run["write"]):
+def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str) -> Access:
+    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled. Edit limits are left to the client's
+    permission mode (auto)."""
+    workdir = os.path.abspath(params.workdir)
+    dirs = []
+    for p in (bind(e, repo) for e in run.read + run.write):
         if p and p not in dirs:
             dirs.append(p)
-    return Access(dirs, [fill(c, {"scripts": scripts, "workdir": workdir}, "commands") for c in run["commands"]])
+    values = {"scripts": scripts, "workdir": workdir}
+    return Access(dirs, [fill(c, values, "commands") for c in run.commands])
 
 
-def override(client, run):
-    """The run with the client's own entries for it replacing the neutral ones (any RUN_KEYS); raises ConfigError."""
-    for key in RUN_KEYS:
-        if (value := client.value(run, key)) is not None:
-            run[key] = value
-    return check(run)
+def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
+         repo: str | None = None) -> tuple[Launch, RunConfig]:
+    """The Launch for one run, with its config; raises ConfigError."""
+    if not client.runs:
+        raise ConfigError(f"{type(client).__name__} writes files; use export()")
+    run = load_run(root, role, task, layers=[client.config])
+    scripts = client.scripts or os.path.join(os.path.abspath(root), "scripts")
+    prompt = render(root, run, params, scripts=scripts, handover=client.handover)
+    launch = client.launch(prompt, run, params=params, access=access(run, params, repo=repo, scripts=scripts),
+                           schema=outcome_schema(root))
+    return launch, run
 
 
-def plan(root, role, task=None, *, client, input, out, workdir, repo=None, sid=None, resume=False):
-    """The Launch for one run; raises ConfigError."""
-    c = clients.get(client, root)
-    if not c.runs:
-        run = override(c, resolve_run(root, role, task))
-        return c.launch(render(root, run, scripts=c.scripts(root, run, out)), run, sid=None, resume=False,
-                        access=Access([], []), out=out)
-    if input is None or workdir is None:
-        raise ConfigError(f"client {client!r} needs --input and --workdir")
-    if resume and not sid:
-        raise ConfigError("--resume needs --sid")
-    sid = sid or str(uuid.uuid4())
-    run = override(c, resolve_run(root, role, task))
-    scripts = c.scripts(root, run, out)
-    prompt = render(root, run, input=input, out=out, workdir=workdir, resume=resume, scripts=scripts)
-    acc = access(run, repo=repo, out=out, workdir=workdir, scripts=scripts)
-    launch = c.launch(prompt, run, sid=sid, resume=resume, access=acc, out=out)
-    launch.cwd = os.path.abspath(workdir)
-    return launch
+def export(root: str, client: Client, role: str, task: str | None = None, *, dest: str) -> Launch:
+    """The files an export client (skill) writes for role/task under `dest`; raises ConfigError."""
+    if client.runs:
+        raise ConfigError(f"{type(client).__name__} starts runs; use plan()")
+    run = load_run(root, role, task, layers=[client.config])
+    return client.export(render(root, run, scripts=client.scripts, handover=client.handover), run, dest=dest)
 
 
-def outcome(path):
-    """The Output frontmatter's status, or None when the file, the frontmatter or a valid status is missing."""
+def write(files: dict[str, str]) -> None:
+    for path, text in files.items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+
+def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
+    """The outcome a run returned, once its fields hold; raises InvalidOutcome. Its text stays untrusted."""
+    if not isinstance(data, dict):
+        raise InvalidOutcome("not an object")
+    status, title, summary = data.get("status"), data.get("title"), data.get("summary")
+    if status not in STATUSES:
+        raise InvalidOutcome(f"status {status!r} is not one of {', '.join(STATUSES)}")
+    if not isinstance(title, str) or not title.strip() or "\n" in title.strip() or len(title) > 200:
+        raise InvalidOutcome("title must be one line of at most 200 characters")
+    if not isinstance(summary, str) or len(summary) > 4000:
+        raise InvalidOutcome("summary must be text of at most 4000 characters")
+    questions = data.get("questions") or []
+    if not (isinstance(questions, list) and all(isinstance(q, str) for q in questions)):
+        raise InvalidOutcome("questions must be a list of text")
+    if status == "needs_input" and not 1 <= len(questions) <= 4:
+        raise InvalidOutcome("needs_input must carry 1–4 questions")
+    url = _url(data.get("url") or "", run)
+    files = [_file(p, params.workdir) for p in data.get("files") or []]
+    deliverable = data.get("deliverable") or ""
+    if not isinstance(deliverable, str):
+        raise InvalidOutcome("deliverable must be text")
+    return Outcome(status, title.strip(), summary, questions if status == "needs_input" else [], url, files, deliverable)
+
+
+def _url(url: str, run: RunConfig) -> str:
+    """The url, once it matches what the run's destination can produce."""
+    out = run.output
+    if not isinstance(url, str):
+        raise InvalidOutcome("url must be text")
+    if not url or out["type"] in SAVES_DELIVERABLE:
+        return ""
+    if out["type"] == "github":
+        prefix = f"https://{out.get('host', 'github.com')}/{out['repo']}/blob/{out['branch']}/"
+        if not url.startswith(prefix):
+            raise InvalidOutcome(f"url must start with {prefix}")
+    elif not url.startswith("https://") or any(c.isspace() for c in url):
+        raise InvalidOutcome("url must be an https link")
+    return url
+
+
+def _file(path: str, workdir: str) -> str:
+    """An absolute .md path under the workdir, symlinks resolved."""
+    real, base = os.path.realpath(str(path)), os.path.realpath(workdir)
+    if not real.endswith(".md") or not real.startswith(base + os.sep):
+        raise InvalidOutcome(f"file {str(path)[:200]!r} is not a .md file under the workdir")
+    return real
+
+
+def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, popen=subprocess.Popen,
+          log=sys.stderr) -> Result:
+    """Starts the run, shows its text and progress on `log`, and waits; then checks the client's last outcome and saves
+    it to <workdir>/outcome.json (and the deliverable to params.out where the destination says so)."""
+    write(launch.files)
+    workdir = os.path.abspath(params.workdir)
+    os.makedirs(launch.cwd or workdir, exist_ok=True)
+    os.makedirs(workdir, exist_ok=True)
+    outcome_path = os.path.join(workdir, OUTCOME)
+    if os.path.exists(outcome_path):
+        os.remove(outcome_path)
+    progress_mode = "a" if params.resume else "w"
+    raw = None
+    with open(os.path.join(workdir, PROGRESS), progress_mode) as progress:
+        proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
+                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
+        for event in client.events(proc.stdout):
+            if event.kind == "outcome":
+                raw = event.outcome
+            elif event.kind == "progress":
+                print(f"Progress: {event.text}", file=log, flush=True)
+                progress.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "text": event.text},
+                                          ensure_ascii=False) + "\n")
+                progress.flush()
+            else:
+                print(event.text, file=log, flush=True)
+        rc = proc.wait()
+    if rc != 0:
+        return Result(rc, None, f"the client exited {rc}")
+    if raw is None:
+        return Result(rc, None, "the run returned no outcome")
     try:
-        with open(path) as f:
-            text = f.read()
-    except OSError:
-        return None
-    if not text.startswith("---\n") or (end := text.find("\n---", 3)) < 0:
-        return None
-    for line in text[4:end].splitlines():
-        key, _, value = line.partition(":")
-        if key.strip() == "status":
-            status = value.split("#")[0].strip()
-            return status if status in STATUSES else None
-    return None
+        outcome = validate(raw, run, params)
+    except InvalidOutcome as e:
+        return Result(rc, None, f"invalid outcome: {e}")
+    if run.output["type"] in SAVES_DELIVERABLE and outcome.deliverable:
+        write({os.path.abspath(params.out): outcome.deliverable})
+        if run.output["type"] == "local":
+            outcome = Outcome(**{**asdict(outcome), "url": os.path.abspath(params.out)})
+    write({outcome_path: json.dumps(asdict(outcome), ensure_ascii=False, indent=1) + "\n"})
+    return Result(rc, outcome)
 
 
-def main(argv, root=ROOT, run=subprocess.run):
+def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap = argparse.ArgumentParser(prog="drive.py")
     ap.add_argument("--role", required=True)
     ap.add_argument("--task")
@@ -108,37 +205,35 @@ def main(argv, root=ROOT, run=subprocess.run):
     a = ap.parse_args(argv)
     if a.input == "-":
         a.input = sys.stdin.read()
-    sid = a.sid or (None if a.resume else str(uuid.uuid4()))
+    params = run = None
     try:
-        launch = plan(root, a.role, a.task, client=a.client, input=a.input, out=a.out, workdir=a.workdir,
-                      repo=a.repo, sid=sid, resume=a.resume)
+        client = clients.get(a.client, root)
+        if client.runs:
+            if a.input is None or a.workdir is None:
+                raise ConfigError(f"client {a.client!r} needs --input and --workdir")
+            params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume)
+            launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
+        else:
+            launch = export(root, client, a.role, a.task, dest=a.out)
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2
-    if launch.argv:
-        print(f"drive.py: session {sid}", file=sys.stderr)
+    if params:
+        print(f"drive.py: session {params.sid}", file=sys.stderr)
     if a.dry_run:
         print(json.dumps({"argv": launch.argv, "cwd": launch.cwd, "env": launch.env, "files": launch.files},
                          ensure_ascii=False, indent=1))
         return 0
-    for path, text in launch.files.items():
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(text)
-        print(f"drive.py: wrote {path}", file=sys.stderr)
-    if not launch.argv:
+    if not params:
+        write(launch.files)
+        for path in launch.files:
+            print(f"drive.py: wrote {path}", file=sys.stderr)
         return 0
-    os.makedirs(launch.cwd, exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
-    env = {**os.environ, **launch.env}
-    if run(launch.argv, cwd=launch.cwd, env=env, stdin=subprocess.DEVNULL).returncode != 0:
-        print("drive.py: the client exited nonzero", file=sys.stderr)
-        return 3
-    status = outcome(a.out)
-    if status is None:
-        print(f"drive.py: {a.out} has no valid Output frontmatter", file=sys.stderr)
-        return 1
-    print(f"drive.py: status {status}", file=sys.stderr)
+    result = start(launch, run, params, client=client, popen=popen)
+    if result.outcome is None:
+        print(f"drive.py: {result.error}", file=sys.stderr)
+        return 3 if result.returncode != 0 else 1
+    print(f"drive.py: status {result.outcome.status}", file=sys.stderr)
     return 0
 
 

@@ -46,32 +46,33 @@ Prepare the input's repo and nothing else.
 
 # Output
 
-Produce one Markdown document for `Output:` (end of this prompt), starting with frontmatter:
+Your result is an **outcome**, returned per Output › Return, plus a **deliverable** (the document itself) delivered per Output › Destination. The outcome's fields:
 
-```yaml
----
-status: done          # done | needs_input | failed
-title: <one line>
-summary: |            # 3–5 lines
-  ...
-questions:            # needs_input only: 1–4, numbered
-  - ...
-url: <link>           # the delivered link, if Output › Destination gives one; else empty
----
-```
+- `status`: `done` | `needs_input` | `failed`.
+- `title`: one line.
+- `summary`: 3–5 lines.
+- `questions`: `needs_input` only, 1–4.
+- `url`: the delivered link, when Output › Destination gives one.
+- `files`: absolute paths, when your task asks for them.
+- `deliverable`: the document, when Output › Destination says so.
 
-- **done** → the deliverable follows the frontmatter; deliver it per Output › Destination, nowhere else.
+Statuses:
+
+- **done** → deliver the deliverable per Output › Destination, nowhere else.
 - **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires. The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
-- `Output:` already holds a document, or the input gives an earlier version → revise it, keeping what still holds.
-- Your task may add frontmatter fields.
+
+The input gives an earlier version → revise it, keeping what still holds. At each point your task marks **progress**, report one line per Output › Return.
 
 ## Destination
 
-Deliver only to `Output:`; publish, post or save it nowhere else. `url:` stays empty.
+Put the deliverable in the outcome's `deliverable`; publish, post or save it nowhere. Leave `url` empty.
+
+## Return
+
+End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for them. Report progress as its own line starting `Progress: `.
 
 ---
 
 Input: $ARGUMENTS
-Output: your final reply in this conversation: the frontmatter, then the deliverable; no file
 Workdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation

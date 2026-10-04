@@ -1,26 +1,28 @@
-#!/usr/bin/env python3
-"""Composer: compiles principles + role + task + templates + output into one run prompt, plus its resolved run config.
+"""Composer: resolves a role + task's run config and compiles principles + role + task + templates + output into its
+prompt. A module for the driver (drive.py); needs Python 3.11+.
 
-compose.py --role ROLE [--task TASK] --input FILE|TEXT|- --out FILE --workdir DIR [--resume] [--json]
-Prints the prompt, or with --json {"prompt": ..., "run": {...}}. Exits 2 on a config error. Needs Python 3.11+.
 Principles get {{role}}, {{task}} and their anchors; role and task text get {{scripts}} (this dir, or the client's path
 to it); a destination gets its output values.
 """
-import argparse
 import json
 import os
 import re
-import sys
 import tomllib
+import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Literal, get_args
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXT = "delegate-core"   # roles/, tasks/, templates/ and output/ live here
+TEXT = "crew"   # principles.md, roles/, tasks/, templates/ and output/ live here
+CONFIG = os.path.join("config", "config.toml")
+SCHEMA = os.path.join(TEXT, "output", "outcome.schema.json")
 
-RUN_KEYS = {"tier", "effort", "read", "write", "commands", "templates", "output"}
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS = get_args(Effort)
+RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
-LISTS = ("read", "write", "commands", "templates")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 
@@ -29,32 +31,110 @@ class ConfigError(Exception):
     pass
 
 
-def read(root, rel):
-    path = os.path.join(root, rel)
-    if not os.path.isfile(path):
-        raise ConfigError(f"missing file {rel}")
-    with open(path) as f:
-        return f.read().strip() + "\n"
+@dataclass(frozen=True, kw_only=True)
+class RunConfig:
+    """A role + task's resolved config; checked on creation and on dataclasses.replace."""
+    role: str
+    task: str
+    tier: int
+    effort: Effort
+    output: dict
+    read: list[str] = field(default_factory=list)
+    write: list[str] = field(default_factory=list)
+    commands: list[str] = field(default_factory=list)
+    templates: list[str] = field(default_factory=list)
+    role_title: str = ""
+    task_title: str = ""
+    task_summary: str = ""
+
+    def __post_init__(self):
+        if type(self.tier) is not int or not 1 <= self.tier <= 4:
+            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
+        if self.effort not in EFFORTS:
+            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
+        if "type" not in self.output:
+            raise ConfigError("output.type is not set")
 
 
-def title(text, rel):
-    first = text.splitlines()[0] if text.strip() else ""
-    if not first.startswith("# "):
-        raise ConfigError(f"{rel} must start with a '# ' heading")
-    return first[2:].strip()
+@dataclass(frozen=True, kw_only=True)
+class RunParams:
+    """What the caller passes for one run: its input, where its deliverable is saved, its workdir and Claude session."""
+    input: str
+    out: str
+    workdir: str
+    sid: str | None = None   # None → a new session id
+    resume: bool = False
+
+    def __post_init__(self):
+        if self.resume and not self.sid:
+            raise ConfigError("--resume needs --sid")
+        if not self.sid:
+            object.__setattr__(self, "sid", str(uuid.uuid4()))
 
 
-def summary(text):
-    """The first paragraph line after a file's heading."""
-    return next((line.strip() for line in text.splitlines()[1:] if line.strip() and not line.startswith("#")), "")
+def lookup(layer: Mapping, role: str, task: str, key: str):
+    """`key` in one config layer: roles.<role>.tasks.<task> > roles.<role> > the top; None if unset."""
+    r = layer.get("roles", {}).get(role, {})
+    for table in (r.get("tasks", {}).get(task, {}), r, layer):
+        if key in table:
+            return table[key]
+    return None
 
 
-def anchor(heading):
-    """GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens."""
-    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = ()) -> RunConfig:
+    """The run config for role/task from config.toml, each later layer (same layout) replacing the run keys it sets.
+    config.toml must be valid on its own; each layer is checked again once applied."""
+    with open(os.path.join(root, CONFIG), "rb") as f:
+        cfg = tomllib.load(f)
+    task = _check(cfg, role, task)
+    values = _run_keys(cfg, role, task)
+    run = RunConfig(role=role, task=task, tier=values.pop("tier", None), effort=values.pop("effort", None),
+                    output=values.pop("output", {}), **values)
+    for layer in layers:
+        run = replace(run, **_run_keys(layer, role, task))
+    role_md, task_md = (_read(os.path.join(root, TEXT), rel) for rel in _rule_files(role, task))
+    return replace(run, role_title=_title(role_md, f"roles/{role}.md"), task_title=_title(task_md, f"tasks/{task}.md"),
+                   task_summary=_summary(task_md))
 
 
-def fill(text, values, where):
+def render(root: str, run: RunConfig, params: RunParams | None = None, *, scripts: str | None = None,
+           handover: str = "") -> str:
+    """The run's prompt: its Output section ends with the client's `handover` (how the outcome and progress come
+    back) as Output › Return, then the Workdir/Input tail when params are given."""
+    text = os.path.join(root, TEXT)
+    names = {"role": run.role_title, "task": run.task_title}
+    names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title)}
+    paths = {"scripts": scripts or os.path.join(os.path.abspath(root), "scripts")}
+    parts = [fill(_read(text, "principles.md"), names, "principles.md")]
+    parts += [fill(_read(text, rel), paths, rel) for rel in _rule_files(run.role, run.task)]
+    for name in run.templates:
+        rel = f"templates/{name}.md"
+        body = _read(text, rel)
+        f = _fence(body)
+        parts.append(f"# Template: `{rel}`\n\n{f}markdown\n{body}{f}\n")
+    dest = f"output/destinations/{run.output['type']}.md"
+    if not os.path.isfile(os.path.join(text, dest)):
+        raise ConfigError(f"no destination {run.output['type']!r} ({dest})")
+    parts.append(fill(_read(text, "output/output.md"), {}, "output/output.md") + "\n" + fill(_read(text, dest), run.output, dest))
+    if handover:
+        parts.append(f"## Return\n\n{handover.strip()}\n")
+    prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
+    if params:
+        tail = f"Workdir: {os.path.abspath(params.workdir)}"
+        if os.path.isfile(params.input):
+            tail = f"Input: {os.path.abspath(params.input)}\n{tail}"
+        else:
+            tail = f"{tail}\nInput:\n\n{params.input.strip()}"
+        prompt += f"\n---\n\n{tail}\n"
+    return prompt
+
+
+def outcome_schema(root: str) -> dict:
+    with open(os.path.join(root, SCHEMA)) as f:
+        return json.load(f)
+
+
+def fill(text: str, values: Mapping, where: str) -> str:
     def value(m):
         if m.group(1) in values:
             return str(values[m.group(1)])
@@ -65,24 +145,19 @@ def fill(text, values, where):
     return out
 
 
-def fence(text):
-    ticks = max([len(r) for r in re.findall(r"`+", text)] + [2]) + 1
-    return "`" * ticks
+def anchor(heading: str) -> str:
+    """GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
-def check_keys(table, allowed, where):
-    if extra := sorted(set(table) - allowed):
-        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
-
-
-def resolve(cfg, role, task=None):
-    """The run config for role/task: each RUN_KEYS value from the task, else the role, else the global table."""
-    check_keys(cfg, GLOBAL_KEYS, "the global table")
+def _check(cfg: Mapping, role: str, task: str | None) -> str:
+    """The task to run (the role's default when None), once config.toml's keys, role and task are valid."""
+    _check_keys(cfg, GLOBAL_KEYS, "the global table")
     roles = cfg.get("roles", {})
     if role not in roles:
         raise ConfigError(f"unknown role {role!r}")
     r = roles[role]
-    check_keys(r, ROLE_KEYS, f"roles.{role}")
+    _check_keys(r, ROLE_KEYS, f"roles.{role}")
     tasks = r.get("tasks", {})
     default = r.get("default_task")
     if default is not None and default not in tasks:
@@ -90,94 +165,43 @@ def resolve(cfg, role, task=None):
     task = task or default
     if task not in tasks:
         raise ConfigError(f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
-    t = tasks[task]
-    check_keys(t, RUN_KEYS, f"roles.{role}.tasks.{task}")
-    run = {"role": role, "task": task}
-    for k in RUN_KEYS:
-        for layer in (t, r, cfg):
-            if k in layer:
-                run[k] = layer[k]
-                break
-    for k in LISTS:
-        run.setdefault(k, [])
-    return check(run)
+    _check_keys(tasks[task], RUN_KEYS, f"roles.{role}.tasks.{task}")
+    return task
 
 
-def check(run):
-    """The run config, once its tier, effort and output are valid; raises ConfigError."""
-    tier, effort = run.get("tier"), run.get("effort")
-    if type(tier) is not int or not 1 <= tier <= 4:
-        raise ConfigError(f"tier must be an integer 1–4, got {tier!r}")
-    if effort not in EFFORTS:
-        raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {effort!r}")
-    if "type" not in run.get("output", {}):
-        raise ConfigError("output.type is not set")
-    return run
+def _run_keys(layer: Mapping, role: str, task: str) -> dict:
+    return {k: v for k in RUN_KEYS if (v := lookup(layer, role, task, k)) is not None}
 
 
-def resolve_run(root, role, task=None):
-    """The run config for role/task, with the role's and task's titles and the task's summary; raises ConfigError."""
-    with open(os.path.join(root, "config.toml"), "rb") as f:
-        run = resolve(tomllib.load(f), role, task)
-    text = os.path.join(root, TEXT)
-    role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
-    role_md, task_md = read(text, role_rel), read(text, task_rel)
-    return run | {"role_title": title(role_md, role_rel), "task_title": title(task_md, task_rel),
-                  "task_summary": summary(task_md)}
+def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
+    if extra := sorted(set(table) - allowed):
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
-def render(root, run, *, input=None, out=None, workdir=None, resume=False, scripts=None):
-    """The prompt for a resolved run, ending with the Input/Output/Workdir tail when all three are given."""
-    paths = {"scripts": scripts or os.path.join(os.path.abspath(root), "scripts")}
-    text = os.path.join(root, TEXT)
-    role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
-    names = {"role": run["role_title"], "task": run["task_title"]}
-    names |= {"role_anchor": anchor(names["role"]), "task_anchor": anchor(names["task"])}
-    parts = [fill(read(root, "principles.md"), names, "principles.md"),
-             fill(read(text, role_rel), paths, role_rel), fill(read(text, task_rel), paths, task_rel)]
-    for name in run["templates"]:
-        rel = f"templates/{name}.md"
-        body = read(text, rel)
-        f = fence(body)
-        parts.append(f"# Template: `{rel}`\n\n{f}markdown\n{body}{f}\n")
-    output = run["output"]
-    dest_rel = f"output/destinations/{output['type']}.md"
-    if not os.path.isfile(os.path.join(text, dest_rel)):
-        raise ConfigError(f"no destination {output['type']!r} ({dest_rel})")
-    parts.append(fill(read(text, "output/output.md"), {}, "output/output.md") + "\n" + fill(read(text, dest_rel), output, dest_rel))
-    prompt = (RESUME if resume else "") + "\n".join(parts)
-    if None not in (input, out, workdir):
-        tail = f"Output: {os.path.abspath(out)}\nWorkdir: {os.path.abspath(workdir)}"
-        tail = f"Input: {os.path.abspath(input)}\n{tail}" if os.path.isfile(input) else f"{tail}\nInput:\n\n{input.strip()}"
-        prompt += f"\n---\n\n{tail}\n"
-    return prompt
+def _rule_files(role: str, task: str) -> tuple[str, str]:
+    return f"roles/{role}.md", f"tasks/{task}.md"
 
 
-def compose(root, role, task=None, *, input=None, out=None, workdir=None, resume=False):
-    """(prompt, run config) for one run; raises ConfigError."""
-    run = resolve_run(root, role, task)
-    return render(root, run, input=input, out=out, workdir=workdir, resume=resume), run
+def _read(root: str, rel: str) -> str:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        raise ConfigError(f"missing file {rel}")
+    with open(path) as f:
+        return f.read().strip() + "\n"
 
 
-def main(argv, root=ROOT):
-    ap = argparse.ArgumentParser(prog="compose.py")
-    ap.add_argument("--role", required=True)
-    ap.add_argument("--task")
-    for flag in ("--input", "--out", "--workdir"):
-        ap.add_argument(flag, required=True)
-    ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--json", action="store_true")
-    a = ap.parse_args(argv)
-    if a.input == "-":
-        a.input = sys.stdin.read()
-    try:
-        prompt, run = compose(root, a.role, a.task, input=a.input, out=a.out, workdir=a.workdir, resume=a.resume)
-    except ConfigError as e:
-        print(f"compose.py: {e}", file=sys.stderr)
-        return 2
-    print(json.dumps({"prompt": prompt, "run": run}, ensure_ascii=False, indent=1) if a.json else prompt, end="" if not a.json else "\n")
-    return 0
+def _title(text: str, rel: str) -> str:
+    first = text.splitlines()[0] if text.strip() else ""
+    if not first.startswith("# "):
+        raise ConfigError(f"{rel} must start with a '# ' heading")
+    return first[2:].strip()
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+def _summary(text: str) -> str:
+    """The first paragraph line after a file's heading."""
+    return next((line.strip() for line in text.splitlines()[1:] if line.strip() and not line.startswith("#")), "")
+
+
+def _fence(text: str) -> str:
+    ticks = max([len(r) for r in re.findall(r"`+", text)] + [2]) + 1
+    return "`" * ticks

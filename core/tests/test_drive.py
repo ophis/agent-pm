@@ -17,7 +17,11 @@ import drive  # noqa: E402
 CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SID = "11111111-2222-3333-4444-555555555555"
 NO_ACCESS = drive.Access(dirs=[], commands=[])
-RUN = {"role": "r", "task": "t", "tier": 2, "effort": "high"}
+PARAMS = compose.RunParams(input="x", out="o", workdir="w", sid=SID)
+
+
+def run(**kw):
+    return compose.RunConfig(**{"role": "r", "task": "t", "tier": 2, "effort": "high", "output": {"type": "local"}, **kw})
 
 
 class Recorder(clients.Client):
@@ -25,9 +29,9 @@ class Recorder(clients.Client):
     needs_config = False
     seen = []
 
-    def launch(self, prompt, run, *, sid, resume, access, out):
-        Recorder.seen.append(dict(prompt=prompt, run=run, sid=sid, resume=resume, access=access, out=out))
-        return clients.Launch(["fake", sid], {"FAKE": "1"})
+    def launch(self, prompt, run, *, params, access, schema):
+        Recorder.seen.append(dict(prompt=prompt, run=run, params=params, access=access, schema=schema))
+        return clients.Launch(["fake", params.sid], {"FAKE": "1"}, cwd=os.path.abspath(params.workdir))
 
 
 def claude(**overrides):
@@ -46,9 +50,12 @@ class Base(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def plan(self, role="researcher", task="light-research", client="fake", **kw):
-        args = dict(input="Research X.", out=os.path.join(self.work, "out.md"), workdir=self.work, sid=SID)
-        return drive.plan(CORE, role, task, client=client, **{**args, **kw})
+    def params(self, **kw):
+        return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
+                                    "workdir": self.work, "sid": SID, **kw})
+
+    def plan(self, role="researcher", task="light-research", client="fake", repo=None, **params):
+        return drive.plan(CORE, clients.get(client, CORE), role, task, params=self.params(**params), repo=repo)[0]
 
 
 class Claude(Base):
@@ -63,7 +70,9 @@ class Claude(Base):
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
+            "--output-format", "stream-json", "--verbose", "--json-schema", json.dumps(compose.outcome_schema(CORE)),
             "--allowedTools", f"Bash(python3 {CORE}/scripts/repo.py prepare --dir {self.work}/src *)"])
+        self.assertIn("## Return\n\nReturn the outcome as your structured output", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
@@ -81,11 +90,11 @@ class Claude(Base):
     def test_commands_and_task_rules_become_allowed_tools(self):
         c = claude(roles={"r": {"tasks": {"t": {"allow": ["WebFetch"]}}}})
         access = drive.Access(dirs=[], commands=["make test"])
-        argv = c.launch("p", RUN, sid=SID, resume=False, access=access, out="o").argv
+        argv = c.launch("p", run(), params=PARAMS, access=access, schema={}).argv
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools", "Bash(make test)", "WebFetch"])
 
     def test_no_rule_groups_when_empty(self):
-        argv = claude().launch("p", RUN, sid=SID, resume=False, access=NO_ACCESS, out="o").argv
+        argv = claude().launch("p", run(), params=PARAMS, access=NO_ACCESS, schema={}).argv
         for flag in ("--add-dir", "--disallowedTools", "--allowedTools"):
             self.assertNotIn(flag, argv)
 
@@ -95,15 +104,15 @@ class Claude(Base):
 
     def test_unmapped_tier(self):
         with self.assertRaises(compose.ConfigError) as cm:
-            claude(tiers={}).launch("p", RUN, sid=SID, resume=False, access=NO_ACCESS, out="o")
+            claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS, schema={})
         self.assertIn("no model for tier 2", str(cm.exception))
 
     def test_role_value_applies_to_its_tasks_and_task_value_wins(self):
         c = claude(allow=["Read"], roles={"r": {"allow": ["WebFetch"], "tasks": {"u": {"allow": ["Grep"]}}}})
-        self.assertEqual(c.value({"role": "r", "task": "t"}, "allow"), ["WebFetch"])
-        self.assertEqual(c.value({"role": "r", "task": "u"}, "allow"), ["Grep"])
-        self.assertEqual(c.value({"role": "x", "task": "t"}, "allow"), ["Read"])
-        self.assertIsNone(c.value({"role": "x", "task": "t"}, "nothing"))
+        self.assertEqual(c.value(run(), "allow"), ["WebFetch"])
+        self.assertEqual(c.value(run(task="u"), "allow"), ["Grep"])
+        self.assertEqual(c.value(run(role="x"), "allow"), ["Read"])
+        self.assertIsNone(c.value(run(role="x"), "nothing"))
 
     def test_claude_tier_override_changes_the_model(self):
         with unittest.mock.patch.object(clients, "load_config",
@@ -122,19 +131,18 @@ class Generic(Base):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
         self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[f"python3 {CORE}/scripts/repo.py prepare --dir {self.work}/src *"]))
-        self.assertEqual((seen["sid"], seen["resume"], seen["run"]["task"]), (SID, False, "light-research"))
+        self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Principles"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
 
     def test_repo_entry_binds_to_the_repo_arg(self):
-        run = {"read": [], "write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}
-        acc = drive.access(run, repo=self.repo, out=os.path.join(self.work, "o.md"), workdir=self.work, scripts="/s")
+        acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
+                           repo=self.repo, scripts="/s")
         self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[f"/s/x --dir {self.work}/src *"]))
 
-    def test_output_dir_outside_workdir_is_added(self):
-        out = os.path.join(self.tmp.name, "elsewhere", "out.md")
-        self.plan(out=out)
-        self.assertEqual(Recorder.seen[0]["access"].dirs, [os.path.dirname(out)])
+    def test_the_run_never_needs_the_out_dir(self):
+        self.plan(out=os.path.join(self.tmp.name, "elsewhere", "out.md"))
+        self.assertEqual(Recorder.seen[0]["access"].dirs, [])
 
     def test_repo_ignored_without_repo_arg(self):
         self.plan("engineer", "engineering")
@@ -146,18 +154,30 @@ class Generic(Base):
 
     def test_new_session_gets_a_sid(self):
         self.plan(sid=None)
-        self.assertRegex(Recorder.seen[0]["sid"], r"^[0-9a-f-]{36}$")
+        self.assertRegex(Recorder.seen[0]["params"].sid, r"^[0-9a-f-]{36}$")
 
     def test_unknown_client(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
         self.assertIn("unknown client 'nope'", str(cm.exception))
 
+    def test_plan_and_export_each_need_their_kind_of_client(self):
+        with self.assertRaises(compose.ConfigError):
+            self.plan(client="skill")
+        with self.assertRaises(compose.ConfigError):
+            drive.export(CORE, claude(), "dummy-tester", dest=self.tmp.name)
+
 
 class Skill(Base):
+    def export(self, role, task=None, dest=None):
+        return drive.export(CORE, clients.get("skill", CORE), role, task, dest=dest or self.tmp.name)
+
+    def skill_text(self, role, task):
+        return self.export(role, task).files[os.path.join(self.tmp.name, f"{role}-{task}", "SKILL.md")]
+
     def test_writes_one_skill_file_and_no_command(self):
         skills = os.path.join(self.tmp.name, "skills")
-        launch = drive.plan(CORE, "researcher", "light-research", client="skill", input=None, out=skills, workdir=None)
+        launch = self.export("researcher", "light-research", dest=skills)
         self.assertEqual(launch.argv, [])
         skill = os.path.join(skills, "researcher-light-research")
         self.assertEqual(sorted(launch.files), [os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py")])
@@ -173,49 +193,32 @@ class Skill(Base):
         self.assertNotIn(self.tmp.name, body)
         self.assertNotIn(CORE, body)
 
-    def skill_text(self, role, task):
-        launch = drive.plan(CORE, role, task, client="skill", input=None, out=self.tmp.name, workdir=None)
-        return launch.files[os.path.join(self.tmp.name, f"{role}-{task}", "SKILL.md")]
-
     def test_skills_without_scripts_get_only_skill_md(self):
-        launch = drive.plan(CORE, "pm", "product-design", client="skill", input=None, out=self.tmp.name, workdir=None)
-        self.assertEqual(list(launch.files), [os.path.join(self.tmp.name, "pm-product-design", "SKILL.md")])
+        self.assertEqual(list(self.export("pm", "product-design").files),
+                         [os.path.join(self.tmp.name, "pm-product-design", "SKILL.md")])
 
     def test_document_tasks_return_to_the_orchestrator(self):
         for role, task in (("researcher", "light-research"), ("pm", "product-design")):
             text = self.skill_text(role, task)
-            self.assertIn("Deliver only to `Output:`; publish, post or save it nowhere else.", text)
+            self.assertIn("publish, post or save it nowhere. Leave `url` empty.", text)
             self.assertNotIn("ophis/private_docs", text)
-            self.assertIn("Output: your final reply in this conversation", text)
+            self.assertIn("## Return\n\nEnd with your final reply in this conversation", text)
+            self.assertNotIn("Output: ", text)
             self.assertNotIn("## Resume", text)
 
     def test_pull_request_stays(self):
         text = self.skill_text("engineer", "engineering")
         self.assertIn("gh pr create", text)
-        self.assertNotIn("Deliver only to `Output:`", text)
-
-    def test_client_entries_replace_neutral_values(self):
-        run = {"role": "r", "task": "t", "tier": 2, "effort": "high", "read": [], "write": [], "commands": [],
-               "templates": [], "output": {"type": "github", "repo": "o/d"}}
-        self.assertEqual(drive.override(clients.SkillClient({}), dict(run)), run)
-        c = clients.SkillClient({"effort": "low", "roles": {"r": {"tasks": {"t": {"tier": 3, "output": {"type": "orchestrator"}}}}}})
-        got = drive.override(c, dict(run))
-        self.assertEqual((got["tier"], got["effort"], got["output"]), (3, "low", {"type": "orchestrator"}))
-
-    def test_invalid_override_is_a_config_error(self):
-        run = {"role": "r", "task": "t", "tier": 2, "effort": "high", "output": {"type": "local"}}
-        with self.assertRaises(compose.ConfigError):
-            drive.override(clients.SkillClient({"tier": 9}), run)
+        self.assertNotIn("publish, post or save it nowhere", text)
 
     def test_description_falls_back_to_the_task_heading(self):
-        run = {"role": "r", "task": "t", "role_title": "R", "task_title": "T", "task_summary": "Do it.",
-               "output": {"type": "orchestrator"}}
-        (_, text), = clients.SkillClient({}).launch("p", run, sid=None, resume=False, access=NO_ACCESS, out="o").files.items()
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        (_, text), = clients.SkillClient({}).export("p", r, dest="o").files.items()
         self.assertIn('description: "T as R: Do it."', text)
 
     def test_every_task_has_a_skill_description(self):
         skill = clients.load_config("skill", CORE)["roles"]
-        with open(os.path.join(CORE, "config.toml"), "rb") as f:
+        with open(os.path.join(CORE, "config", "config.toml"), "rb") as f:
             pairs = [(r, t) for r, role in tomllib.load(f)["roles"].items() for t in role.get("tasks", {})]
         for r, t in pairs:
             self.assertTrue(skill.get(r, {}).get("tasks", {}).get(t, {}).get("description"), (r, t))
@@ -231,81 +234,189 @@ class Skill(Base):
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
             code = drive.main(["--role", "dummy-tester", "--client", "skill", "--out", skills], root=CORE,
-                              run=lambda *a, **k: calls.append(a))
+                              popen=lambda *a, **k: calls.append(a))
         path = os.path.join(skills, "dummy-tester-echo", "SKILL.md")
         self.assertEqual((code, calls), (0, []))
         with open(path) as f:
             self.assertTrue(f.read().startswith("---\nname: dummy-tester-echo\n"))
         self.assertIn(f"wrote {path}", err.getvalue())
 
-    def test_claude_still_needs_input_and_workdir(self):
-        with self.assertRaises(compose.ConfigError) as cm:
-            drive.plan(CORE, "dummy-tester", client="claude", input=None, out="o.md", workdir=None)
-        self.assertIn("needs --input", str(cm.exception))
+
+class FakeProc:
+    def __init__(self, lines, rc=0):
+        self.stdout, self.rc = lines, rc
+
+    def wait(self):
+        return self.rc
 
 
-class Outcome(unittest.TestCase):
-    def check(self, text):
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-            f.write(text)
-        try:
-            return drive.outcome(f.name)
-        finally:
-            os.remove(f.name)
+def stream(*events):
+    return [json.dumps(e) + "\n" for e in events]
 
-    def test_valid_statuses(self):
-        for s in ("done", "needs_input", "failed"):
-            self.assertEqual(self.check(f"---\nstatus: {s}\ntitle: t\n---\nbody\n"), s)
 
-    def test_invalid(self):
-        self.assertIsNone(self.check("no frontmatter\n"))
-        self.assertIsNone(self.check("---\nstatus: maybe\n---\n"))
-        self.assertIsNone(self.check("---\ntitle: t\n---\n"))
-        self.assertIsNone(drive.outcome("/nonexistent/out.md"))
+def result(outcome, turns=3):
+    return {"type": "result", "subtype": "success", "num_turns": turns, "structured_output": outcome}
+
+
+def said(text):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+
+DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
+
+
+class ClaudeEvents(unittest.TestCase):
+    def test_text_progress_and_the_last_outcome(self):
+        lines = stream(said("Starting.\nProgress: budget 2 rounds"), result(None, 0), result(DONE),
+                       {"type": "system", "subtype": "task_updated"})
+        events = list(claude().events(["not json\n", *lines]))
+        self.assertEqual([(e.kind, e.text) for e in events if e.kind != "outcome"],
+                         [("text", "not json"), ("text", "Starting."), ("progress", "budget 2 rounds")])
+        self.assertEqual([e.outcome for e in events if e.kind == "outcome"], [DONE])
+
+
+class Validate(Base):
+    def check(self, data, output=None):
+        return drive.validate(data, run(output=output or {"type": "local"}), self.params())
+
+    def fails(self, data, msg, output=None):
+        with self.assertRaises(drive.InvalidOutcome) as cm:
+            self.check(data, output)
+        self.assertIn(msg, str(cm.exception))
+
+    def test_valid(self):
+        self.assertEqual(self.check(DONE), drive.Outcome("done", "T", "S", deliverable="# Doc\n"))
+
+    def test_status_title_and_questions(self):
+        self.fails({**DONE, "status": "maybe"}, "status 'maybe'")
+        self.fails({**DONE, "title": "a\nb"}, "one line")
+        self.fails({**DONE, "status": "needs_input"}, "1–4 questions")
+        self.assertEqual(self.check({**DONE, "questions": ["q"]}).questions, [])
+
+    def test_url_must_fit_the_destination(self):
+        gh = {"type": "github", "repo": "o/docs", "branch": "main"}
+        self.assertEqual(self.check({**DONE, "url": "https://github.com/o/docs/blob/main/R/x.md"}, gh).url,
+                         "https://github.com/o/docs/blob/main/R/x.md")
+        self.fails({**DONE, "url": "https://evil.example/x"}, "url must start with", gh)
+        self.fails({**DONE, "url": "file:///etc/passwd"}, "https link", {"type": "pull-request"})
+        self.assertEqual(self.check({**DONE, "url": "https://x"}).url, "")
+
+    def test_files_stay_under_the_workdir(self):
+        os.makedirs(self.work)
+        inside = os.path.join(self.work, "plan.md")
+        self.assertEqual(self.check({**DONE, "files": [inside]}).files, [os.path.realpath(inside)])
+        self.fails({**DONE, "files": [os.path.expanduser("~/.ssh/id_rsa")]}, "not a .md file under the workdir")
+        self.fails({**DONE, "files": [os.path.join(self.work, "..", "x.md")]}, "not a .md file under the workdir")
+
+
+class Start(Base):
+    def start(self, lines, rc=0, output=None, **params):
+        launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
+        calls, log = [], io.StringIO()
+
+        def popen(argv, **kw):
+            calls.append((argv, kw))
+            return FakeProc(lines, rc)
+
+        r = drive.start(launch, run(output=output or {"type": "local"}), self.params(**params), client=claude(),
+                        popen=popen, log=log)
+        return r, calls, log.getvalue()
+
+    def read(self, name):
+        with open(os.path.join(self.work, name)) as f:
+            return f.read()
+
+    def test_done_run_saves_outcome_deliverable_and_progress(self):
+        r, ((argv, kw),), log = self.start(stream(said("Progress: half way"), result(DONE)))
+        out = os.path.join(self.work, "out.md")
+        self.assertEqual((r.returncode, r.outcome.status, r.outcome.url), (0, "done", out))
+        self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake"], self.work, "1"))
+        self.assertEqual(self.read("out.md"), "# Doc\n")
+        self.assertEqual(json.loads(self.read("outcome.json"))["url"], out)
+        self.assertEqual(json.loads(self.read("progress.jsonl"))["text"], "half way")
+        self.assertIn("Progress: half way", log)
+
+    def test_github_destination_keeps_the_runs_url_and_saves_no_deliverable(self):
+        gh = {"type": "github", "repo": "o/docs", "branch": "main"}
+        url = "https://github.com/o/docs/blob/main/x.md"
+        r, _, _ = self.start(stream(result({**DONE, "url": url})), output=gh)
+        self.assertEqual(r.outcome.url, url)
+        self.assertFalse(os.path.exists(os.path.join(self.work, "out.md")))
+
+    def test_no_outcome(self):
+        r, _, _ = self.start(stream(said("bye")))
+        self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the run returned no outcome"))
+
+    def test_failed_client_ignores_the_outcome(self):
+        r, _, _ = self.start(stream(result(DONE)), rc=143)
+        self.assertEqual((r.returncode, r.outcome), (143, None))
+
+    def test_invalid_outcome(self):
+        r, _, _ = self.start(stream(result({**DONE, "status": "maybe"})))
+        self.assertIn("invalid outcome: status 'maybe'", r.error)
+
+    def test_a_stale_outcome_is_removed_first(self):
+        os.makedirs(self.work)
+        with open(os.path.join(self.work, "outcome.json"), "w") as f:
+            f.write("{}")
+        self.start(stream(said("bye")))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "outcome.json")))
+
+    def test_resume_appends_progress(self):
+        self.start(stream(said("Progress: one"), result(DONE)))
+        self.start(stream(said("Progress: two"), result(DONE)), resume=True)
+        self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["one", "two"])
 
 
 class Main(Base):
-    def run_main(self, *extra, rc=0, write=None):
+    def run_main(self, *extra, lines=(), rc=0):
         calls = []
 
-        def fake(argv, **kw):
+        def popen(argv, **kw):
             calls.append((argv, kw))
-            if write is not None:
-                with open(os.path.join(self.work, "out.md"), "w") as f:
-                    f.write(write)
-            return subprocess.CompletedProcess(argv, rc)
+            return FakeProc(list(lines), rc)
 
         out, err = io.StringIO(), io.StringIO()
-        argv = ["--role", "researcher", "--task", "light-research", "--input", "Research X.",
-                "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--client", "fake", *extra]
+        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work, *extra]
         with redirect_stdout(out), redirect_stderr(err):
-            code = drive.main(argv, root=CORE, run=fake)
+            code = drive.main(argv, root=CORE, popen=popen)
         return code, out.getvalue(), err.getvalue(), calls
 
     def test_dry_run_prints_plan_and_runs_nothing(self):
         code, out, _, calls = self.run_main("--dry-run")
         data = json.loads(out)
         self.assertEqual((code, calls), (0, []))
-        self.assertEqual((data["argv"][0], data["cwd"], data["env"]), ("fake", self.work, {"FAKE": "1"}))
+        self.assertEqual((data["argv"][0], data["cwd"]), ("claude", self.work))
 
     def test_done_run_exits_0_and_reports_session(self):
-        code, _, err, calls = self.run_main("--sid", SID, write="---\nstatus: done\n---\n")
+        code, _, err, calls = self.run_main("--sid", SID, lines=stream(result(DONE)))
         self.assertEqual(code, 0)
         self.assertIn(f"session {SID}", err)
+        self.assertIn("status done", err)
         (argv, kw), = calls
-        self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake", SID], self.work, "1"))
+        self.assertEqual((argv[0], kw["cwd"]), ("claude", self.work))
         self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
 
-    def test_missing_output_exits_1(self):
-        self.assertEqual(self.run_main()[0], 1)
+    def test_no_outcome_exits_1(self):
+        code, _, err, _ = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("no outcome", err)
 
     def test_client_failure_exits_3(self):
-        self.assertEqual(self.run_main(rc=1, write="---\nstatus: done\n---\n")[0], 3)
+        self.assertEqual(self.run_main(lines=stream(result(DONE)), rc=1)[0], 3)
 
     def test_config_error_exits_2(self):
         code, _, err, calls = self.run_main("--task", "essay")
         self.assertEqual((code, calls), (2, []))
         self.assertIn("drive.py:", err)
+
+    def test_a_run_client_needs_input_and_workdir(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = drive.main(["--role", "dummy-tester", "--out", "o.md"], root=CORE)
+        self.assertEqual(code, 2)
+        self.assertIn("needs --input and --workdir", err.getvalue())
 
 
 if __name__ == "__main__":
