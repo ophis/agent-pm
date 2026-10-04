@@ -135,7 +135,18 @@ class Claude(Base):
             rest = [a for i, a in enumerate(argv) if i not in (1, 2)]
             for flag in ("--output-format", "stream-json", "--verbose"):
                 rest.remove(flag)
-            self.assertEqual(launch.interactive, ["claude", argv[2], *rest[1:]])
+            i = launch.interactive.index("--settings")
+            self.assertEqual(launch.interactive[:i] + launch.interactive[i + 2:], ["claude", argv[2], *rest[1:]])
+
+    def test_interactive_adds_the_stop_hook_after_the_config_flags(self):
+        launch = self.plan(client="claude")
+        i = launch.interactive.index("--settings")
+        cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop"
+        self.assertEqual(json.loads(launch.interactive[i + 1]),
+                         {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
+
+    def test_headless_has_no_settings(self):
+        self.assertNotIn("--settings", self.plan(client="claude").argv)
 
     def test_interactive_resume(self):
         launch = self.plan(client="claude", resume=True)
@@ -491,6 +502,13 @@ class Report(Base):
         with open(self.channel) as f:
             return [json.loads(line) for line in f]
 
+    def test_stop_appends_one_line(self):
+        self.assertEqual(self.report("stop"), (0, "report.py: stop reported\n"))
+        self.assertEqual(self.lines(), [{"kind": "stop"}])
+
+    def test_report_event_maps_stop(self):
+        self.assertEqual(drive.report_event('{"kind": "stop"}'), clients.Event("stop"))
+
     def test_progress_appends_one_line(self):
         self.assertEqual(self.report("progress", "round-1", "2", "rounds,", "cap 80"), (0, "report.py: progress reported\n"))
         self.assertEqual(self.report("progress", "start", "-x go")[0], 0)
@@ -655,6 +673,12 @@ class Start(Base):
         self.assertEqual(json.loads(self.read("outcome.json"))["url"], out)
         self.assertEqual(json.loads(self.read("progress.jsonl")) | {"ts": ""}, {"ts": "", "name": "round", "text": "half way"})
         self.assertEqual(log, "Progress (round): half way\nhi\n")
+
+    def test_stop_events_reach_no_sink(self):
+        seen = []
+        r, _, _ = self.start([{"kind": "stop"}, progress("round", "x"), {"kind": "stop"}, outcome(DONE)],
+                             sinks=[lambda e: seen.append(e.kind)])
+        self.assertEqual((r.returncode, seen), (0, ["progress", "outcome"]))
 
     def test_progress_arrives_while_stdout_is_quiet(self):
         got = threading.Event()

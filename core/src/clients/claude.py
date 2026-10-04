@@ -4,9 +4,12 @@ import json
 import os
 from collections.abc import Iterable, Iterator
 
-from compose import ConfigError, RunConfig, RunParams
+from compose import ConfigError, RunConfig, RunParams, report_command
 
 from .base import PROGRESS, Access, Client, Event, Launch
+
+
+CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class ClaudeClient(Client):
@@ -39,7 +42,9 @@ class ClaudeClient(Client):
         if allow:
             tail += ["--allowedTools", *allow]
         argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", *tail]
-        interactive = ["claude", prompt, *head, *tail]
+        hook = {"hooks": {"Stop": [{"hooks": [{"type": "command",
+                                               "command": report_command(CORE_SCRIPTS, params) + " stop"}]}]}}
+        interactive = ["claude", prompt, *head, *tail, "--settings", json.dumps(hook)]
         return Launch(argv, dict(c.get("env", {})), cwd=os.path.abspath(params.workdir), interactive=interactive)
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:

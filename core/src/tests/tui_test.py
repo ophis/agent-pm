@@ -550,6 +550,11 @@ class Iterm(unittest.TestCase):
                      "unique id of s", "tty of s"):
             self.assertIn(part, script)
 
+    def test_panes_end_with_their_tmux_session(self):
+        self.assertEqual(tui.APPLESCRIPT.count("with default profile command paneCommand"), 2)
+        for word in ("write text", "close"):
+            self.assertNotIn(word, tui.APPLESCRIPT)
+
 
 class Cli(unittest.TestCase):
     def main(self, *argv):

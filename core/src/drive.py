@@ -279,8 +279,8 @@ def default_sinks(params: RunParams) -> list[Sink]:
 
 
 def report_event(line: str) -> Event | None:
-    """A channel line as its Event; None unless it is an outcome object or a progress report named by a word with
-    text, its lines joined into one."""
+    """A channel line as its Event; None unless it is an outcome object, a turn end or a progress report named by a
+    word with text, its lines joined into one."""
     try:
         data = json.loads(line)
     except ValueError:
@@ -289,6 +289,8 @@ def report_event(line: str) -> Event | None:
         return None
     if data.get("kind") == "outcome" and isinstance(data.get("outcome"), dict):
         return Event("outcome", outcome=data["outcome"])
+    if data.get("kind") == "stop":
+        return Event("stop")
     name, text = data.get("name"), data.get("text")
     if data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str):
         if text := " ".join(text.split()):
@@ -350,6 +352,8 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         nonlocal raw
         if event.kind == "outcome":
             raw = event.outcome
+            return
+        if event.kind == "stop":   # only an interactive run's turn end; no sink takes it
             return
         if event.kind == "progress":
             seen.add(event.name)
