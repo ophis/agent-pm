@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runner: one core run for an issue the router already claimed (or resumes it), per orchestrator/config.toml.
 
-run.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
+run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
   Outer, in the router tick: checks the run can start, bounces an engineering issue whose repo check fails, writes
   work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>; any failure starts nothing. Exits 0 started or
   bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config
@@ -36,7 +36,7 @@ import compose  # noqa: E402
 import drive  # noqa: E402
 
 RUN = os.path.abspath(__file__)
-SHARED = ("issue", "url", "project", "assignee", "sid", "task", "mode", "k")
+SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
 
 
 def has_key(service):
@@ -153,7 +153,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
                 return fail(plog, a.issue, "transient", f"bounce: {one_line(e)}", 3)
             _append(plog, f"{_stamp()} bounce {a.issue}: {repo.reason}")
             return 0
-    elif kind in ("research", "design"):
+    else:
         repo = target.research_repo(issue, repos)
     rd = run_dir(a.issue)
     for path in _legacy(rd):
@@ -250,10 +250,9 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
          runs=RUNS_LOG, projects=PROJECTS, keychain=has_key, root=ROOT):
     """--inner → inner, else outer."""
     ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--issue", "--url", "--project", "--assignee", "--sid", "--task"):
+    for f in ("--issue", "--project", "--assignee", "--sid", "--task"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
-    ap.add_argument("--k", default="1")  # accepted, unused: core's resume prefix has no count
     ap.add_argument("--inner", action="store_true")
     ap.add_argument("--uuid")
     ap.add_argument("--target")

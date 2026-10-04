@@ -154,8 +154,6 @@ Each `[roles.<role>]` in `orchestrator/config.toml` acts in Linear, through writ
 python3 orchestrator/src/router.py --now --dry-run           # what the next tick would do; changes nothing
 python3 orchestrator/src/router.py --now                     # run a tick now, outside the schedule
 python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked
-python3 orchestrator/src/router.py --claim --dry-run         # preview the next claim and the blocked lines; changes nothing
-python3 orchestrator/src/router.py --pick --role researcher  # recover, then claim the role's top Todo issue that runs its default task
 python3 orchestrator/src/router.py --brake                   # usage probe; exit 0 if a second research round may start (5-hour usage < 80%, no weekly limit full)
 python3 orchestrator/src/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux ls                                             # running sessions, agent-pm-<role>

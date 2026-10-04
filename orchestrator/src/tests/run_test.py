@@ -150,14 +150,12 @@ def outcome(data):
     return {"kind": "outcome", "outcome": data}
 
 
-def args(assignee=ENGINEER, task="engineering", mode="new", k=None):
-    return (["--issue", ID, "--url", URL, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task,
-             "--mode", mode] + (["--k", k] if k else []))
+def args(assignee=ENGINEER, task="engineering", mode="new"):
+    return ["--issue", ID, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task, "--mode", mode]
 
 
-def forwarded(assignee=ENGINEER, task="engineering", mode="new", k="1"):
-    return [f"--issue={ID}", f"--url={URL}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={SID}",
-            f"--task={task}", f"--mode={mode}", f"--k={k}"]
+def forwarded(assignee=ENGINEER, task="engineering", mode="new"):
+    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={SID}", f"--task={task}", f"--mode={mode}"]
 
 
 class Base(unittest.TestCase):
@@ -239,7 +237,7 @@ class Outer(Base):
         self.run.table = [(LISTING, res("[]"))]
         self.assertEqual(self.main(args(RESEARCHER, "deep-research")), 0)
         (argv, _), = self.sh_calls
-        self.assertEqual(argv[-10:], ["--uuid", UUID, *forwarded(RESEARCHER, "deep-research")])
+        self.assertEqual(argv[-8:], ["--uuid", UUID, *forwarded(RESEARCHER, "deep-research")])
         self.assertNotIn("--target", argv)
         self.assertEqual(self.run.calls, [(LISTING, 60)])
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
@@ -260,14 +258,21 @@ class Outer(Base):
     def test_resume_rebuilds_the_input(self):
         self.transcript()
         self.write(os.path.join(self.rd, "input.md"), "stale")
-        self.assertEqual(self.main(args(mode="resume", k="2")), 0)
-        self.assertEqual(self.sh_calls[0][0][-8:], forwarded(mode="resume", k="2"))
+        self.assertEqual(self.main(args(mode="resume")), 0)
+        self.assertEqual(self.sh_calls[0][0][-6:], forwarded(mode="resume"))
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
     def test_argparse_error(self):
         with self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
             run.main(args()[:-2])
         self.assertEqual(cm.exception.code, 2)
+
+    def test_k_and_url_are_rejected(self):
+        for extra in (["--k", "1"], ["--url", URL]):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
+                run.main(args() + extra)
+            self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(self.sh_calls, [])
 
     def test_bad_issue_or_session_id(self):
         for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"]):
@@ -295,7 +300,7 @@ class Outer(Base):
         self.assertFalse(os.path.exists(self.plog_path()))
 
     def test_resume_without_transcript(self):
-        self.assertEqual(self.main(args(mode="resume", k="2")), 3)
+        self.assertEqual(self.main(args(mode="resume")), 3)
         path = pipeline.transcript(ID, SID, self.projects)
         self.assertEqual(self.plog(), [f"<ts> transient TASK-7: no transcript to resume at {path}"])
         self.assertEqual(TS.sub("<ts> ", self.err), f"<ts> transient TASK-7: no transcript to resume at {path}\n")
@@ -346,7 +351,7 @@ class Outer(Base):
         for mode, r, reason in cases:
             with self.subTest(reason=reason):
                 self.run.table = [(("gh", "api"), r)]
-                self.assertEqual(self.main(args(mode=mode, k="2" if mode == "resume" else None)), 3)
+                self.assertEqual(self.main(args(mode=mode)), 3)
                 self.assertEqual(self.plog()[-1], f"<ts> transient TASK-7: {reason}")
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})] * 3)
         self.assertEqual(self.sh_calls, [])
