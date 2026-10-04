@@ -7,6 +7,8 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 ```
 agent-pm/
 ├── CLAUDE.md              # architecture notes for Claude working on this repo
+├── .claude/skills/
+│   └── tui-workers/       # the tui-workers skill: SKILL.md, scripts/workers.py (its helper) and workers_test.py
 ├── core/                  # the core pack (see core/CLAUDE.md)
 │   ├── team/              # guide.md, principles.md, roles/<role>.md, tasks/<task>.md, methods/, templates/
 │   ├── config/            # config.toml (per role and task: tier, effort, read/write, commands, output, language), clients/claude.toml
@@ -96,6 +98,17 @@ python3 core/src/tui.py send a 'Summarize README.md'              # types the te
 python3 core/src/tui.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui.py show a --show ''                          # only prints a's attach command
 python3 core/src/tui.py --help                                    # options, and how --show and $TUI_SHOW pick the show
+```
+
+### tui-workers skill
+
+`.claude/skills/tui-workers/` builds on `tui.py`: with `/tui-workers`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 panes and directs them. Each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps and gotchas: [SKILL.md](.claude/skills/tui-workers/SKILL.md). Its helper:
+
+```bash
+python3 .claude/skills/tui-workers/scripts/workers.py start a --events /tmp/w.events --prompt 'Summarize README.md'   # prints "a <session id>"; a pane right of this one
+python3 .claude/skills/tui-workers/scripts/workers.py start b --events /tmp/w.events -- --model sonnet                # a pane below a's; claude flags after --
+python3 .claude/skills/tui-workers/scripts/workers.py reply a                                                         # a's last answer, from its transcript
+python3 .claude/skills/tui-workers/scripts/workers.py restart a                                                       # a resumes its conversation in its pane
 ```
 
 ### Core configuration
@@ -223,6 +236,7 @@ Core's configuration is under Core pack.
 ```bash
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"   # no network, Keychain or Claude needed
 python3 -m unittest discover -s core/src/tests -p "*_test.py"  # core
+python3 -m unittest discover -s .claude/skills/tui-workers/scripts -p "*_test.py"   # tui-workers skill
 core/regen_skills.sh                                           # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
 ```
 
