@@ -52,3 +52,9 @@ A form a prompt is delivered in (skill, plugin agent, `claude -p` prompt); roles
 **Orchestration layer**:
 The code that turns a Linear issue into free text, calls the delegate and maps the run's outcome back to Linear; the orchestrator of the pipeline's runs.
 _Avoid_: runner
+
+**Write-back**:
+The orchestration layer's mapping of a run's start and progress marks and its outcome to Linear (start, progress, finish).
+
+**Overlay**:
+The core run keys the orchestrator adds to its own runs, in `pipeline.toml`'s `[core]` table, applied after the client's config.
