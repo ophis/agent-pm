@@ -59,6 +59,8 @@ class Config(ConfigFile, unittest.TestCase):
             (x + 'account = "x@agents.test"\n', "[roles.x] key must be a Keychain service name: None"),
             (x + 'account = "x@agents.test"\nkey = ""\n', "[roles.x] key must be a Keychain service name: ''"),
             (x + 'account = "x@agents.test"\nkey = ["k"]\n', "[roles.x] key must be a Keychain service name: ['k']"),
+            *[(BASE + role("x", f"max_runs = {value}"), f"[roles.x] max_runs must be a whole number >= 1: {shown}")
+              for shown, value in {"0": "0", "-1": "-1", "'2'": '"2"', "True": "true", "1.5": "1.5"}.items()],
             (BASE.replace('harness_key = "linear-api-key"\n', ""), "harness_key must be a Keychain service name: None"),
             (BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"), "harness_key must be a Keychain service name: 1"),
             ('team = "Frank\'s Agents"\n' + states + body, "team must be a Linear team id (UUID): \"Frank's Agents\""),
@@ -88,6 +90,7 @@ class Config(ConfigFile, unittest.TestCase):
         self.assertEqual((cfg["harness_key"], cfg["task_label_group"]), ("linear-api-key", TASK_GROUP))
         self.assertEqual(cfg["roles"]["pm"], {"account": "pm@agents.test", "key": "linear-api-key-pm", "next": "engineer"})
         self.assertEqual(self.load(HEADER)["roles"], {})
+        self.assertEqual(self.load(BASE + role("x", "max_runs = 3"))["roles"]["x"]["max_runs"], 3)
         self.assertEqual(self.load(BASE + '[core.roles.pm]\ntier = 1\n')["core"], {"roles": {"pm": {"tier": 1}}})
 
     def test_task_labels_loads(self):
@@ -119,6 +122,11 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
         self.assertEqual((RESEARCHER.default, PM.default), ("deep-research", "product-design"))
         self.assertEqual(list(self.runs(HEADER + role("engineer") + role("researcher"))), ["engineer", "researcher"])
+
+    def test_max_runs(self):
+        self.assertEqual({r: x.max_runs for r, x in self.runs().items()}, {"researcher": 1, "pm": 1, "engineer": 1})
+        runs = self.runs(HEADER + role("researcher", "max_runs = 3") + role("engineer"))
+        self.assertEqual((runs["researcher"].max_runs, runs["engineer"].max_runs), (3, 1))
 
     def test_core_roles_outside_the_config_ignored(self):
         self.assertEqual(self.runs(HEADER + role("researcher")), {"researcher": RESEARCHER})
@@ -316,6 +324,7 @@ class RealConfig(unittest.TestCase):
             "pm": config.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",)),
             "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("engineering",))})
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
+        self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 1, "pm": 1, "engineer": 1})
         self.assertEqual(config.docs(runs), config.Docs("ophis/private_docs", "main", {
             "deep-research": "Research/", "light-research": "Research/", "product-design": "Product Design/"}))
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")

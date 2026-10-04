@@ -23,16 +23,19 @@ light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
 account = "frank.agent.w+researcher@gmail.com"
 key = "linear-api-key-researcher"
 next = "pm"                        # promote hands the role's Handoff issues to this role
+max_runs = 1                       # runs of this role at once
 
 [roles.pm]
 account = "frank.agent.w+pm@gmail.com"
 key = "linear-api-key-pm"
 next = "engineer"
 require_instructions = false       # a PRD carries enough context; Handoff comments are optional
+max_runs = 1
 
 [roles.engineer]                   # no next: the last stage
 account = "frank.agent.w+engineer@gmail.com"
 key = "linear-api-key-engineer"
+max_runs = 1
 
 # Target repo of an Engineering, research or product-design issue with no Repo: line, by its Linear project id; a Repo: line wins.
 [project_repos]

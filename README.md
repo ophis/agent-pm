@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works one issue per role at a time and hands its output back to you for review.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account (researcher, pm, engineer), is its stage. The agent works up to `max_runs` issues per role at a time (default 1) and hands its output back to you for review.
 
 ## Files
 
@@ -94,8 +94,8 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 
 | Script | Runs | Does |
 |---|---|---|
-| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role with none going: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role has a run going, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
-| `run.py` | Called by the router | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. |
+| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role below its `max_runs` live sessions: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role is full, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
+| `run.py` | Called by the router | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. |
 | `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
@@ -155,11 +155,11 @@ Each `[roles.<role>]` in `orchestrator/config.toml` acts in Linear, through writ
 ```bash
 python3 orchestrator/src/router.py --now --dry-run           # what the next tick would do; changes nothing
 python3 orchestrator/src/router.py --now                     # run a tick now, outside the schedule
-python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked
+python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked or its role is full
 python3 orchestrator/src/router.py --brake                   # usage probe; exit 0 if a second research round may start (5-hour usage < 80%, no weekly limit full)
 python3 orchestrator/src/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
-tmux ls                                             # running sessions, agent-pm-<role>
-tmux attach -t agent-pm-<role>                      # watch a role's live run
+tmux ls                                             # running sessions, agent-pm-<role>-<ID>
+tmux attach -t '=agent-pm-<role>-<ID>'              # watch one run; = matches the exact name
 ```
 
 To open a run's session, copy the command from the code block of its issue's `Run <sid>` comment (see Session records).
@@ -180,14 +180,14 @@ Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issu
 - A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, runs skip them, and the router never reads them: it still resumes from `logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.
 - Before opening a session by hand, move its issue out of In Progress, or the router may resume the same session once it has been idle 30 minutes.
-- A comment stuck at `running` with no `agent-pm-<role>` tmux session was killed before `claude` exited; `tmux ls` is the truth.
+- A comment stuck at `running` with no `agent-pm-<role>-<ID>` tmux session was killed before `claude` exited; `tmux ls` is the truth.
 - A write is one attempt of at most 10 seconds; a failure only adds a `registry-error` line to `logs/projects/<task>.log` and never affects the run.
 
 ## Orchestrator configuration
 
 Core's configuration is under Core pack.
 
-- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[core]`, the overlay: core run keys for the orchestrator's runs in `core/config/config.toml`'s layout, applied after `core/config/clients/claude.toml` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
+- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role, `require_instructions` and `max_runs` (default 1); `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[core]`, the overlay: core run keys for the orchestrator's runs in `core/config/config.toml`'s layout, applied after `core/config/clients/claude.toml` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
 - `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development

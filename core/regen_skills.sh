@@ -3,7 +3,7 @@
 # (pipeline test roles, not for people).
 # Usage: ./regen_skills.sh [OUT_DIR]   (default: <core>/skills)
 set -euo pipefail
-core="$(dirname "$(realpath "$0")")"
+core="$(cd "$(dirname "$0")" && pwd)"
 SKIP="dummy-tester"
 out="${1:-$core/skills}"
 python3 -c '
