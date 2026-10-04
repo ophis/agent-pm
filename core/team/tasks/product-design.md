@@ -16,8 +16,8 @@ Turn the input into a reviewed PRD.
    - Spawn one fresh subagent with the brief, the user's later words, research findings and the chosen approach. In one round, it lists each key decision (one that changes requirements or scope) with its suggested answer; decisions only, never facts it can look up.
    - Settle each in the PRD, inferences under Assumptions; what only the user can decide goes under Open questions.
 6. **Write** the PRD:
-   - The input gives a PRD → revise it for the user's later words, keeping earlier decisions they didn't change.
-   - Else follow `templates/prd.md`; title `PRD: [Reference] [Product name]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `PRD: [Product name]`. Choose a short product name; the outcome's `title` is that name alone, unchanged on revision.
+   - The input gives a PRD → revise it for the user's later words, keeping earlier decisions they didn't change; drop everything a rejected option needed, recheck against the current code, and bring it to the current template.
+   - Else follow `templates/prd.md`; title `PRD: [Reference] [Product name]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `PRD: [Product name]`. Choose a short product name; the outcome's `title` is that name alone.
 7. **Review.** Spawn one fresh subagent with the PRD's full text, the brief and the user's later words, to flag missing, contradictory or untestable requirements, scope beyond what the user asked for, and over-engineering, asking no more rigor than the brief does. Fix the findings that hold up, once.
 8. **Finish.** `status: done`; `summary` 3–5 lines.
 

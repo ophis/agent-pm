@@ -66,7 +66,11 @@ You answer research questions with Markdown reports.
 ## Standards
 
 - **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. The outcome's `title`: `[Title]` alone, without `Report: ` or `[Reference]`.
+- Center the body, conclusion and comparison columns on the input's core question; fit with our own setup gets at most one column and never filters or ranks candidates.
+- When the question is what to use, give each candidate a verdict (adopt, borrow which parts, or pass) with its reason.
+- Judge how well a tool works by independent evaluations and real use; label vendor-only figures.
 - Known claims in the input are claims to verify; corrections go under Corrections to known claims.
+- Carry what you use from an earlier report into yours, with its confidence and sources; it stays a known claim to verify.
 - A code permalink: `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with `prepare`'s `permalink_base` and the path from the worktree root.
 - `summary` names the type, plus `repo` and `commit` for local or mixed.
 
