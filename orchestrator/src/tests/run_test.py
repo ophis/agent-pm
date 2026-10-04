@@ -426,10 +426,14 @@ class Outer(Base):
 
 
 class Attended(Base):
-    """The outer with the tui runner; attended.layout sees a fake tmux, environment and stdin."""
+    """The outer with the tui runner; attended.layout sees a fake tmux and stdin, and no $TMUX."""
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("TMUX", None)  # Base's patch.dict restores it
+
     def tui(self, *extra, tty=False, live=()):
         self.tmux = Tmux(live)
-        place = functools.partial(LAYOUT, proc=self.tmux, environ={}, isatty=lambda fd: tty)
+        place = functools.partial(LAYOUT, proc=self.tmux, isatty=lambda fd: tty)
         with mock.patch.object(attended, "layout", place):
             return self.main(args() + ["--runner", "tui", *extra])
 
@@ -488,7 +492,8 @@ class AttendedEntry(Base):
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
         self.tmux, self.tty = Tmux(live=["dev"]), False
-        place = lambda split, beside: LAYOUT(split, beside, proc=self.tmux, environ={}, isatty=lambda fd: self.tty)  # noqa: E731
+        os.environ.pop("TMUX", None)  # Base's patch.dict restores it
+        place = lambda split, beside: LAYOUT(split, beside, proc=self.tmux, isatty=lambda fd: self.tty)  # noqa: E731
         p = mock.patch.object(attended, "layout", place)
         p.start()
         self.addCleanup(p.stop)
@@ -727,6 +732,17 @@ class Inner(Base):
                                            "<ts> tui-closed TASK-7 engineer-engineering-aaaaaaaa"])
         self.assertEqual([c[0] for c in self.tmux.calls], ["display-message", "kill-session", "display-message"])
         self.assertEqual((at_call[0], os.path.exists(self.record)), (None, False))
+
+    def test_close_results_become_tui_lines(self):
+        closed = [attended.Closed("skip", None, "not a TUI session name"), attended.Closed("closed", "e-t-aaaaaaaa"),
+                  attended.Closed("error", "e-t-bbbbbbbb", "TuiError: boom"), attended.Closed("error", None, "OSError: nope")]
+        with mock.patch.object(attended, "close", return_value=closed), \
+                mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
+            self.assertEqual(self.inner(), 0)
+        self.assertEqual(self.plog()[1:5], ["<ts> tui-skip TASK-7: not a TUI session name",
+                                            "<ts> tui-closed TASK-7 e-t-aaaaaaaa",
+                                            "<ts> tui-error TASK-7 e-t-bbbbbbbb: TuiError: boom",
+                                            "<ts> tui-error TASK-7: OSError: nope"])
 
     def test_tui_records_its_session_before_the_session_comment(self):
         at_call = self.recorded_at_first_call()

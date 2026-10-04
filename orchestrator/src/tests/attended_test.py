@@ -3,7 +3,6 @@ from pathlib import Path
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import attended  # noqa: E402
-import config  # noqa: E402,F401
 import drive  # noqa: E402
 import tui  # noqa: E402
 
@@ -41,8 +40,8 @@ class Tmux:
 class LayoutTest(unittest.TestCase):
     def call(self, split=None, beside=None, *, tmux=None, environ=None, tty=False):
         tmux = tmux or Tmux()
-        with mock.patch.dict(os.environ, environ or {}, clear=False):
-            return attended.layout(split, beside, proc=tmux, environ=environ or {}, isatty=lambda fd: tty)
+        with mock.patch.dict(os.environ, environ or {}, clear=True):
+            return attended.layout(split, beside, proc=tmux, isatty=lambda fd: tty)
 
     def test_bad_split(self):
         with self.assertRaisesRegex(attended.Bad, "split must be one of right, below"):
@@ -112,16 +111,17 @@ class RecordTest(unittest.TestCase):
     def test_close_live_killed(self):
         self.write(A)
         tmux = Tmux(live=[A])
-        self.assertEqual(self.close(tmux), [f"tui-closed {ID} {A}"])
+        self.assertEqual(self.close(tmux), [attended.Closed("closed", A)])
         self.assertNotIn(A, tmux.live)
         self.assertFalse(self.path.exists())
 
     def test_close_kill_error_kept(self):
         self.write(A, B)
         tmux = Tmux(live=[A, B], fail=[A])
-        out = self.close(tmux)
-        self.assertEqual(out[1], f"tui-closed {ID} {B}")
-        self.assertTrue(out[0].startswith(f"tui-error {ID} {A}: ") and "\n" not in out[0])
+        (status, name, msg), closed = self.close(tmux)
+        self.assertEqual(closed, attended.Closed("closed", B))
+        self.assertEqual((status, name), ("error", A))
+        self.assertTrue(msg and "\n" not in msg)
         self.assertEqual(self.path.read_text(), f"{A}\n")
 
     def test_close_malformed_never_logged_nor_sent_to_tmux(self):
@@ -129,17 +129,26 @@ class RecordTest(unittest.TestCase):
         self.write(bad, "agent-pm-engineer-TASK-1", "task154", "")
         tmux = Tmux()
         out = self.close(tmux)
-        self.assertEqual(out, [f"tui-skip {ID}: not a TUI session name"] * 4)
-        self.assertNotIn("evil", " ".join(out))
+        self.assertEqual(out, [attended.Closed("skip", None, "not a TUI session name")] * 4)
+        self.assertNotIn("evil", repr(out))
         self.assertEqual(tmux.calls, [])
         self.assertFalse(self.path.exists())
 
     def test_close_unreadable(self):
         self.path.parent.mkdir(parents=True)
         self.path.mkdir()
-        out = self.close(Tmux())
-        self.assertEqual(len(out), 1)
-        self.assertTrue(out[0].startswith(f"tui-error {ID}: ") and "\n" not in out[0])
+        (status, name, msg), = self.close(Tmux())
+        self.assertEqual((status, name), ("error", None))
+        self.assertTrue(msg and "\n" not in msg)
+
+    def test_names(self):
+        self.assertEqual(attended.names(ID, logs=self.logs), [])
+        self.write(A, "evil name", "agent-pm-engineer-TASK-1", B, "")
+        self.assertEqual(attended.names(ID, logs=self.logs), [A, B])
+        self.path.unlink()
+        self.path.mkdir()
+        with self.assertRaises(OSError):
+            attended.names(ID, logs=self.logs)
 
     def test_recorded(self):
         self.assertEqual(attended.recorded(self.logs), [])

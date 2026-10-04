@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delete the clones of finished issues (TASK-49), close their left-open TUI sessions, and archive finished pm and engineer issues.
+"""Delete the clones of finished issues (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
 
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
@@ -9,9 +9,8 @@ An entry must be a real directory inside its own folder (not a symlink) with a .
 (a core clone); anything else is skipped. A clone is deleted with any uncommitted or unpushed
 work (shutil.rmtree). Remote branches and work/<ID>/ itself are never touched.
 
-TUI sessions: an attended run (TASK-154) leaves its TUI session open and records its name in
-logs/tui/<ID>. For each finished issue with a record, attended.close ends those sessions after the clones,
-whether or not the issue has a clone. An issue with a record is queried even without a clone.
+TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its clones go, since a
+left-open claude may work in one.
 
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
@@ -28,7 +27,6 @@ from datetime import timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CLONES, LOGS, WORK  # noqa: E402
 import attended  # noqa: E402
-import drive  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -104,25 +102,21 @@ class Pruner:
     def close_sessions(self, ident):
         if self.dry:
             try:
-                with open(os.path.join(self.logs, attended.RECORD_DIR, ident)) as f:
-                    names = f.read().splitlines()
-            except OSError:
+                names = attended.names(ident, logs=self.logs)
+            except OSError as e:
+                self.error(ident, one_line(e))
                 return
             for name in names:
-                if drive.TUI_SESSION.fullmatch(name):
-                    self.say(f"prune-plan {ident}/{name}: close the tui session")
+                self.say(f"prune-plan {ident}/{name}: close the tui session")
             return
-        for line in attended.close(ident, logs=self.logs, proc=self.proc):
-            head, _, rest = line.partition(f" {ident}")
-            if head == "tui-closed":
-                self.say(f"prune-closed {ident}/{rest.strip()}: tui session")
-            elif head == "tui-skip":
-                self.say(f"prune-skip {ident}{rest}")
-            elif rest.startswith(":"):
-                self.error(ident, rest[2:])
+        for c in attended.close(ident, logs=self.logs, proc=self.proc):
+            key = ident if c.name is None else f"{ident}/{c.name}"
+            if c.status == "closed":
+                self.say(f"prune-closed {key}: tui session")
+            elif c.status == "skip":
+                self.say(f"prune-skip {key}: {c.msg}")
             else:
-                name, _, msg = rest.strip().partition(": ")
-                self.error(f"{ident}/{name}", msg)
+                self.error(key, c.msg)
 
     def archive(self, finished):
         try:
@@ -179,8 +173,8 @@ class Pruner:
             if since is None:
                 self.say(f"prune-skip {ident}: finish time unknown")
             elif self.now - since >= QUARANTINE:
+                self.close_sessions(ident)
                 for parts in self.entries(ident):
                     self.prune(ident, parts)
-                self.close_sessions(ident)
         self.archive(finished)
         return 3 if self.errors else 0

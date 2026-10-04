@@ -328,14 +328,14 @@ class PruneTest(unittest.TestCase):
         self.assertNotIn(a, tmux.live)
         self.assertFalse(os.path.exists(path))
 
-    def test_clone_and_record_issue_queried_once_clones_first(self):
+    def test_clone_and_record_issue_queried_once_sessions_first(self):
         a = "engineer-engineering-0b6f2c1e"
         clone = self.mkc("TASK-7", "src", "repo")
         self.record("TASK-7", a)
         gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
         code, out = self.prune(gql, tmux=Tmux(live=[a]))
         self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), ["prune-removed TASK-7/src/repo: clone", f"prune-closed TASK-7/{a}: tui session"])
+        self.assertEqual(msgs(out), [f"prune-closed TASK-7/{a}: tui session", "prune-removed TASK-7/src/repo: clone"])
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
         self.assertFalse(os.path.lexists(clone))
 
@@ -358,6 +358,13 @@ class PruneTest(unittest.TestCase):
                                      f"dry-run: prune-plan TASK-7/{b}: close the tui session"])
         self.assertEqual(tmux.calls, [])
         self.assertEqual(Path(path).read_text().count("\n"), 3)
+
+    def test_dry_run_counts_an_unreadable_record(self):
+        os.makedirs(os.path.join(self.logs, attended.RECORD_DIR, "TASK-8"))
+        code, out = self.prune(gql_for({"TASK-8": ("Done", [(30, "Done")])}), dry=True)
+        (line,) = msgs(out)
+        self.assertEqual(code, 3)
+        self.assertTrue(line.startswith("dry-run: prune-error TASK-8: IsADirectoryError"), line)
 
     def test_kill_failure_counted_and_kept_recorded(self):
         a, b = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"

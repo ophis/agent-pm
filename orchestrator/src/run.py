@@ -240,8 +240,9 @@ def inner(a, *, layout, gql, popen, runs, root):
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
     _append(plog, f"launch {a.issue} mode={a.mode} session={a.sid}")
     logs = os.path.join(root, "logs")
-    for line in attended.close(a.issue, logs=logs):
-        _append(plog, line)
+    for c in attended.close(a.issue, logs=logs):
+        where = a.issue if c.name is None else f"{a.issue} {c.name}"
+        _append(plog, f"tui-{c.status} {where}: {c.msg}" if c.msg else f"tui-{c.status} {where}")
     if layout:
         try:
             attended.record(a.issue, drive.tui_session(name, a.task, a.sid), logs=logs)
