@@ -15,7 +15,7 @@ Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title descri
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
-HANDOFF = re.compile(r"Handoff from ([A-Z][A-Z0-9]*-\d+): \S+")
+HANDOFF = re.compile(rf"Handoff from ({linear.ISSUE_ID}): \S+")
 SECTIONS = ("## Source", "## Instructions", "## Comments")
 
 

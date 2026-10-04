@@ -77,6 +77,13 @@ class Parse(unittest.TestCase):
         self.assertEqual(repo.origin("https://ghe.io/o/n"), "ghe.io/o/n")
 
 
+class ErrText(unittest.TestCase):
+    def test_trimmed_and_capped(self):
+        for stderr, want in ((None, ""), ("", ""), ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"), ("x" * 300, "x" * 200)):
+            with self.subTest(stderr=stderr):
+                self.assertEqual(repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want)
+
+
 class Prepare(Base):
     def test_fresh_blobless_detached_checkout(self):
         run = Fake([info(), (["git", "-C", self.wt, "rev-parse"], ok(SHA + "\n"))])

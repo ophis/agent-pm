@@ -14,7 +14,6 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, role  # noqa: E402
 import config  # noqa: E402
-import linear  # noqa: E402
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import router  # noqa: E402
@@ -276,12 +275,12 @@ class Outer(Base):
         self.assertEqual(self.sh_calls, [])
 
     def test_bad_issue_or_session_id(self):
-        for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"]):
+        for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"], ["--sid", "z" * 36]):
             with self.subTest(bad=bad):
                 argv = args()
                 argv[argv.index(bad[0]) + 1] = bad[1]
                 self.assertEqual(self.main(argv), 2)
-                issue, sid = ("task-7", SID) if bad[0] == "--issue" else (ID, "not-a-sid")
+                issue, sid = ("task-7", SID) if bad[0] == "--issue" else (ID, bad[1])
                 self.assertEqual(self.err, f"run.py: bad issue or session id: {issue} {sid}\n")
         self.assertEqual(self.sh_calls, [])
 
@@ -368,7 +367,7 @@ class Outer(Base):
         self.assertEqual(self.sh_calls, [])
 
     def test_input_write_failure_leaves_no_temp(self):
-        with mock.patch.object(linear.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
             self.assertEqual(self.main(args()), 1)
         self.assertEqual((os.listdir(self.rd), self.sh_calls), ([], []))
         self.assertEqual(self.err, "run.py: input.md: OSError: disk full\n")
@@ -541,17 +540,6 @@ class Inner(Base):
 
 
 class Helpers(unittest.TestCase):
-    def test_log_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "p.log")
-            sink = run.log_file(path)
-            sink(drive.Event("text", "hi\x1b[2Jthere\tok"))
-            sink(drive.Event("progress", "phase 1", name="start"))
-            sink(drive.Event("outcome", outcome={"status": "done"}))
-            with open(path) as f:
-                self.assertEqual(f.read(), "hi[2Jthere\tok\nProgress (start): phase 1\n")
-            run.log_file(os.path.join(d, "missing", "p.log"))(drive.Event("text", "x"))
-
     def test_has_key_never_reads_the_secret(self):
         for code, want in ((0, True), (44, False)):
             with mock.patch.object(run.subprocess, "run", return_value=subprocess.CompletedProcess([], code)) as m:

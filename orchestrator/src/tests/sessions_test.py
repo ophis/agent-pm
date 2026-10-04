@@ -9,7 +9,6 @@ OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 ISSUE = "TASK-12"
 T1, T2 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00"
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
-STAMP = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 
 def record(started_at=T1, cwd="/w/TASK-12"):
     return sessions.base(sid=SID, cwd=cwd, started_at=started_at)
@@ -148,9 +147,8 @@ class Record(unittest.TestCase):
 
 class Failure(unittest.TestCase):
     def error(self, out, rest):
-        """out is one registry-error line, no newline, ending in rest."""
-        self.assertRegex(out, r"\A" + STAMP.pattern)
-        self.assertEqual(out[20:], f"registry-error {rest}")
+        """out is one unstamped registry-error line, no newline, ending in rest."""
+        self.assertEqual(out, f"registry-error {rest}")
 
     def failing(self, exc):
         def gql(query, **v):
@@ -167,7 +165,7 @@ class Failure(unittest.TestCase):
             calls.append(query)
             return {"issue": None}
         out = end(no_issue, record(), 0)
-        self.assertRegex(out, r"\A" + STAMP.pattern + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
+        self.assertRegex(out, r"\A" + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
         self.assertEqual(len(calls), 1)
 
     def test_write_raising_logs_one_line(self):

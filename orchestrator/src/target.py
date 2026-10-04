@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CLONES, NAME, OWNER, REF, WORK, repo_slug, sh_run  # noqa: E402
-from linear import SHORT, err_text  # noqa: E402
+from repo import SHORT, err_text  # noqa: E402
 
 MAPPED = "project mapping "
 

@@ -5,7 +5,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import board_ids  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
-import linear  # noqa: E402
 import writeback  # noqa: E402
 import drive  # noqa: E402
 
@@ -305,6 +304,13 @@ class FinishLedger(Base):
         self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
         with open(elsewhere) as f:
             self.assertEqual(json.load(f), {SID: ["comment", "move:in_review"]})
+
+    def test_ledger_write_failure_leaves_no_temp(self):
+        ctx = self.ctx()
+        with mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
+            err = writeback._step(ctx, "comment", lambda: None)
+        self.assertIsInstance(err, OSError)
+        self.assertEqual(os.listdir(ctx.workdir), [])
 
 
 class FinishSteps(Base):

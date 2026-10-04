@@ -18,7 +18,6 @@ import re
 import signal
 import subprocess
 import sys
-from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inputs  # noqa: E402
@@ -29,8 +28,7 @@ import target  # noqa: E402
 import writeback  # noqa: E402
 from config import (PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, load_config, project_log,  # noqa: E402
                     repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
-from linear import atomic_write, linear_gql  # noqa: E402
-from sessions import one_line  # noqa: E402
+from linear import ISSUE_ID, append, linear_gql, one_line  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
@@ -47,42 +45,16 @@ def has_key(service):
 
 def fail(plog, issue, kind, reason, rc):
     """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {kind} {issue}: {reason}"
-    with open(plog, "a") as f:
-        f.write(line + "\n")
-    print(line, file=sys.stderr)
+    print(append(plog, f"{kind} {issue}: {reason}"), file=sys.stderr)
     return rc
-
-
-def _stamp():
-    return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
 
 
 def _append(path, line):
     """Best effort: the inner's lines must not stop it (its pane may be gone)."""
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8", errors="replace") as f:
-            f.write(line + "\n")
+        append(path, line)
     except OSError:
         pass
-
-
-def log_file(path) -> drive.Sink:
-    """The terminal sink's lines, appended to path (the project log); swallows OSError."""
-    def sink(event):
-        if event.kind == "text":
-            line = event.text
-        elif event.kind == "progress":
-            line = f"Progress ({event.name}): {event.text}"
-        else:
-            return
-        try:
-            with open(path, "a", encoding="utf-8", errors="replace") as f:
-                f.write(drive.printable(line) + "\n")
-        except OSError:
-            pass
-    return sink
 
 
 def _humans(cfg):
@@ -139,7 +111,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
                 writeback.bounce(_context(a, cfg, role, gql, plog, issue.id, None), issue, repo.reason)
             except (Exception, SystemExit) as e:
                 return fail(plog, a.issue, "transient", f"bounce: {one_line(e)}", 3)
-            _append(plog, f"{_stamp()} bounce {a.issue}: {repo.reason}")
+            _append(plog, f"bounce {a.issue}: {repo.reason}")
             return 0
     else:
         repo = target.research_repo(issue, repos)
@@ -151,8 +123,8 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         return fail(plog, a.issue, "transient", f"docs: {e}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
-        atomic_write(os.path.join(rd, "input.md"),
-                     inputs.render(issue, a.task, sources, humans=_humans(cfg), target=repo, docs=docs))
+        drive.save(os.path.join(rd, "input.md"),
+                   inputs.render(issue, a.task, sources, humans=_humans(cfg), target=repo, docs=docs))
     except Exception as e:
         print(f"run.py: input.md: {one_line(e)}", file=sys.stderr)
         return 1
@@ -188,12 +160,12 @@ def inner(a, *, gql, popen, runs, root):
         plog = project_log(a.task, logs)
     except (Exception, SystemExit) as e:
         print(f"run.py: {e.code if isinstance(e, SystemExit) else one_line(e)}", file=sys.stderr)
-        line = f"{_stamp()} end {a.issue} session={a.sid} exit=1"
+        line = f"end {a.issue} session={a.sid} exit=1"
         for path in (runs, plog) if plog else (runs,):
             _append(path, line)
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
-    _append(plog, f"{_stamp()} launch {a.issue} mode={a.mode} session={a.sid}")
+    _append(plog, f"launch {a.issue} mode={a.mode} session={a.sid}")
     rec = sessions.base(sid=a.sid, cwd=rd, started_at=sessions.now())
     if reg := sessions.post(a.issue, rec, gql=harness):
         _append(plog, reg)
@@ -205,9 +177,9 @@ def inner(a, *, gql, popen, runs, root):
         params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume")
         launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root))
-        sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
-                 drive.outcome_file(os.path.join(rd, drive.OUTCOME)), log_file(plog), writeback.sink(ctx)]
-        with open(plog, "a") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
+        with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
+            sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
+                     drive.outcome_file(os.path.join(rd, drive.OUTCOME)), drive.terminal(err), writeback.sink(ctx)]
             result = drive.start(launch, run, params, client=client, sinks=sinks,
                                  popen=functools.partial(popen, stderr=err))
         rc = result.returncode
@@ -215,15 +187,15 @@ def inner(a, *, gql, popen, runs, root):
         if isinstance(e, SystemExit) and isinstance(e.code, int):
             rc = e.code  # the signal handler's
         else:
-            _append(plog, f"{_stamp()} run-error {a.issue}: {one_line(e)}")
+            _append(plog, f"run-error {a.issue}: {one_line(e)}")
     finally:
-        line = f"{_stamp()} end {a.issue} session={a.sid} exit={rc}"
+        line = f"end {a.issue} session={a.sid} exit={rc}"
         _append(plog, line)
         _append(runs, line)
         if result and result.outcome:
             writeback.finish(ctx, result.outcome)
         else:
-            _append(plog, f"{_stamp()} no-outcome {a.issue}: {(result.error if result else '') or 'no result'}")
+            _append(plog, f"no-outcome {a.issue}: {(result.error if result else '') or 'no result'}")
         if reg := sessions.post(a.issue, rec, rc, gql=harness):
             _append(plog, reg)
     return 0
@@ -240,7 +212,7 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
     ap.add_argument("--uuid")
     ap.add_argument("--target")
     a = ap.parse_args(argv)
-    if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", a.issue) or not re.fullmatch(sessions.SID, a.sid):
+    if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"run.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
     if not a.inner:

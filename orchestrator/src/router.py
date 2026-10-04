@@ -14,14 +14,14 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, load_config, role_for, runnable, session,  # noqa: E402
                     stage_order, transcript)
-from linear import humans, linear_gql, log, parse_time, role_ids, task_group, team  # noqa: E402
+from linear import STAMP, append, humans, linear_gql, log, parse_time, role_ids, task_group, team  # noqa: E402
+import drive  # noqa: E402
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -47,7 +47,7 @@ Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { 
 
 
 def local_time(s):
-    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").astimezone(timezone.utc)
+    return datetime.strptime(s, STAMP).astimezone(timezone.utc)
 
 
 def parse_log(path):
@@ -82,15 +82,7 @@ def prune(path, now):
             keep.append(line)
     if len(keep) == len(lines):
         return
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".runs.log.")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.writelines(keep)
-        os.chmod(tmp, os.stat(path).st_mode & 0o777)
-        os.replace(tmp, path)
-    except BaseException:
-        os.unlink(tmp)
-        raise
+    drive.save(path, "".join(keep))
 
 
 def latest_sid(entries, issue):
@@ -373,12 +365,6 @@ class Board:
         else:
             log(f"pick: {only} is not a Todo issue assigned to a role account" if only else "pick: queue empty")
         return None
-
-
-def append(path, line):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
-        f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
 
 
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):

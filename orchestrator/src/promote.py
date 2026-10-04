@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, TASKS, load_config, runnable  # noqa: E402
-from linear import linear_gql, parse_time, role_ids, team  # noqa: E402
+from linear import linear_gql, one_line, parse_time, role_ids, stamp, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -48,13 +48,8 @@ def child_id(source_id, target, handoff_at):
     return str(uuid.UUID(bytes=hashlib.sha256(key).digest()[:16], version=4))
 
 
-def one_line(s):
-    # Agent-written titles must not break out of their line and pose as the human Instructions section.
-    return " ".join(s.split())
-
-
 def child_title(prefix, src_prefix, title):
-    title = one_line(title)
+    title = one_line(title)  # agent-written: must not break out of its line and pose as the human Instructions section
     if src_prefix and title.startswith(f"{src_prefix}: "):
         title = title[len(src_prefix) + 2:]
     return f"{prefix}: {title}"
@@ -78,7 +73,7 @@ class Promoter:
 
     def say(self, msg):
         self.said = True
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
+        print(f"{stamp()} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
 
     def run(self):
         self.said = False
@@ -208,7 +203,7 @@ def run_prune(gql, now, dry, team, roles, pruner=None):
             from prune import Pruner as pruner
         pruner(gql, now, dry, team=team, roles=roles).run()
     except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
+        print(f"{stamp()} prune-error: {e}", flush=True)
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):

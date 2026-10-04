@@ -18,15 +18,14 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CLONES, WORK  # noqa: E402
-from linear import parse_time  # noqa: E402
-from sessions import one_line  # noqa: E402
+from linear import ISSUE_ID, one_line, parse_time, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
-IDENT_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")
+IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
@@ -58,7 +57,7 @@ class Pruner:
         self.errors = 0
 
     def say(self, msg):
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
+        print(f"{stamp()} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
 
     def error(self, key, msg):
         self.errors += 1

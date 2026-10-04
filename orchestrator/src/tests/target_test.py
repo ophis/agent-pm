@@ -3,7 +3,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import issues  # noqa: E402
 import config  # noqa: E402
-import linear  # noqa: E402
+import repo  # noqa: E402
 import target  # noqa: E402
 
 def ok(stdout="", code=0, stderr=""):
@@ -136,15 +136,15 @@ class Check(unittest.TestCase):
 
     def test_ok_without_a_local_clone_asks_the_remote(self):
         self.assertEqual(self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-        self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), linear.SHORT), (tuple(self.ls_remote), linear.SHORT)])
+        self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), (tuple(self.ls_remote), repo.SHORT)])
 
     def test_local_clone_branches_come_first(self):
         self.git_dir()
         r = self.check(local=ok("TASK-26-old-name\n"))
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-old-name"))
         self.assertEqual(self.run_.calls, [
-            (("gh", "api", "repos/ophis/agent-pm"), linear.SHORT),
-            ((*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), linear.SHORT)])
+            (("gh", "api", "repos/ophis/agent-pm"), repo.SHORT),
+            ((*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), repo.SHORT)])
 
     def test_local_clone_without_branches_falls_back_to_the_remote(self):
         self.git_dir()
@@ -207,7 +207,7 @@ class Check(unittest.TestCase):
     def test_mapping_without_repo_line(self):
         r = self.check(**self.MAPPED)
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), linear.SHORT), self.run_.calls)
+        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), self.run_.calls)
 
     def test_repo_line_wins_over_mapping(self):
         r = self.check(repos={PROJ: "ophis/other"}, project=PROJ)

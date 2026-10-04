@@ -6,14 +6,12 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 
-import config
-
-SHORT = 60
+import config  # noqa: E402
+import drive  # noqa: E402
 
 
 @functools.cache
@@ -36,24 +34,31 @@ def linear_gql(query, *, timeout=30, service=None, **variables):
     return body["data"]
 
 
-def err_text(res):
-    return (res.stderr or "").strip()[:200]
+STAMP = "%Y-%m-%d %H:%M:%S"
+ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 
 
-def atomic_write(path, text):
-    """Write path through a fresh temp file and os.replace: a planted symlink at path is replaced, never followed."""
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        os.unlink(tmp)
-        raise
+def stamp():
+    """Now, local, in STAMP."""
+    return datetime.now().strftime(STAMP)
+
+
+def append(path, line):
+    """Appends `<stamp> <line>` to path (its directory created) and returns that line; raises OSError."""
+    text = f"{stamp()} {line}".encode("utf-8", "replace").decode()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    drive.append_line(path, text + "\n")
+    return text
 
 
 def log(msg):
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}", file=sys.stderr, flush=True)
+    print(f"{stamp()} {msg}", file=sys.stderr, flush=True)
+
+
+def one_line(x):
+    """An exception as `<Type>: <message>` (other attributes, a process's output or the request, may hold the key), anything else as str; whitespace collapsed."""
+    text = f"{type(x).__name__}: {x}" if isinstance(x, BaseException) else str(x)
+    return " ".join(text.split())
 
 
 def parse_time(s):

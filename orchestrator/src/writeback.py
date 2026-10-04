@@ -8,14 +8,12 @@ import stat
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import TASKS  # noqa: E402
-from linear import atomic_write  # noqa: E402
+from linear import append, one_line  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
-from sessions import one_line  # noqa: E402
 from target import MAPPED  # noqa: E402
 
 M_SUBSCRIBE = "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
@@ -73,8 +71,7 @@ def approve_line(repo):
 
 def _log(ctx, line):
     try:
-        with open(ctx.plog, "a", encoding="utf-8", errors="replace") as f:
-            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {line}\n")
+        append(ctx.plog, line)
     except OSError:
         pass
 
@@ -131,7 +128,7 @@ def _step(ctx, step, call):
         call()
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, []).append(step)
-        atomic_write(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
+        drive.save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (Exception, SystemExit) as e:
         _reraise_signal(e)
         _log(ctx, f"writeback-error {ctx.ident}: {step}: {one_line(e)}")

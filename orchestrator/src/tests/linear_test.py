@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -148,46 +149,54 @@ class LinearGql(unittest.TestCase):
         self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {})
 
 
-class Helpers(unittest.TestCase):
-    def test_err_text(self):
-        self.assertEqual(linear.SHORT, 60)
-        for stderr, want in ((None, ""), ("", ""), ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"), ("x" * 300, "x" * 200)):
-            with self.subTest(stderr=stderr):
-                self.assertEqual(linear.err_text(SimpleNamespace(stderr=stderr)), want)
-
-
-
-class AtomicWrite(unittest.TestCase):
+class Lines(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.path = os.path.join(self.dir, "input.md")
+        self.path = os.path.join(self.dir, "sub", "p.log")
 
-    def read(self, path):
-        with open(path) as f:
+    def read(self):
+        with open(self.path, encoding="utf-8") as f:
             return f.read()
 
-    def test_writes_and_replaces(self):
-        linear.atomic_write(self.path, "one\n")
-        linear.atomic_write(self.path, "two\n")
-        self.assertEqual((self.read(self.path), os.listdir(self.dir)), ("two\n", ["input.md"]))
+    def test_stamp_is_local_time_in_the_stamp_format(self):
+        self.assertEqual(linear.STAMP, "%Y-%m-%d %H:%M:%S")
+        self.assertRegex(linear.stamp(), r"\A\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\Z")
 
-    def test_planted_symlink_replaced_not_followed(self):
-        outside = os.path.join(self.dir, "outside")
-        with open(outside, "w") as f:
-            f.write("keep\n")
-        os.symlink(outside, self.path)
-        linear.atomic_write(self.path, "new\n")
-        self.assertFalse(os.path.islink(self.path))
-        self.assertEqual((self.read(self.path), self.read(outside)), ("new\n", "keep\n"))
+    def test_append_creates_the_directory_and_returns_the_stamped_line(self):
+        with mock.patch.object(linear, "stamp", return_value="2026-10-04 01:02:03"):
+            self.assertEqual(linear.append(self.path, "end TASK-7"), "2026-10-04 01:02:03 end TASK-7")
+            linear.append(self.path, "next")
+        self.assertEqual(self.read(), "2026-10-04 01:02:03 end TASK-7\n2026-10-04 01:02:03 next\n")
 
-    def test_no_temp_left_on_error(self):
-        linear.atomic_write(self.path, "old\n")
-        with mock.patch.object(linear.os, "replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                linear.atomic_write(self.path, "new\n")
-        self.assertEqual((self.read(self.path), os.listdir(self.dir)), ("old\n", ["input.md"]))
+    def test_append_refuses_a_symlink(self):
+        os.makedirs(os.path.dirname(self.path))
+        os.symlink(os.path.join(self.dir, "elsewhere"), self.path)
+        with self.assertRaises(OSError):
+            linear.append(self.path, "x")
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "elsewhere")))
+
+    def test_append_refuses_a_fifo(self):
+        os.makedirs(os.path.dirname(self.path))
+        os.mkfifo(self.path)
+        with self.assertRaises(OSError):
+            linear.append(self.path, "x")
+
+    def test_append_replaces_a_lone_surrogate(self):
+        out = linear.append(self.path, "a\udc80b")
+        self.assertTrue(out.endswith(" a?b"), out)
+        self.assertTrue(self.read().endswith(" a?b\n"))
+
+    def test_issue_id_is_unanchored(self):
+        self.assertEqual(re.findall(linear.ISSUE_ID, "see ENG-12, PM-3."), ["ENG-12", "PM-3"])
+        for bad in ("task-7", "7-ENG", "ENG-", "ENG-7 "):
+            self.assertIsNone(re.fullmatch(linear.ISSUE_ID, bad), bad)
+
+    def test_one_line(self):
+        self.assertEqual(linear.one_line("a\n\n  b\tc "), "a b c")
+        self.assertEqual(linear.one_line(RuntimeError("two\nlines")), "RuntimeError: two lines")
+        self.assertEqual(linear.one_line(SystemExit("api error")), "SystemExit: api error")
 
 
 if __name__ == "__main__":

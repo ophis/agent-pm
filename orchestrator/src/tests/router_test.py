@@ -582,20 +582,27 @@ class Prune(Base):
                     f"{self.stamp(days=6)} skip: queue empty\n",
                     "plan: new\n",
                     f"{self.stamp(hours=1)} start TASK-1 session=b transcript=x\n"])
-        mode = os.stat(self.log).st_mode
-        with mock.patch.object(router.os, "replace", wraps=os.replace) as rep:
+        with mock.patch.object(router.drive.os, "replace", wraps=os.replace) as rep:
             router.prune(self.log, NOW)
         [(src, dst), _] = rep.call_args
-        self.assertEqual((os.path.dirname(src), dst), (self.tmp.name, self.log))
+        self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp.name, self.log))
         with open(self.log) as f:
             self.assertEqual(f.read(), f"{self.stamp(days=6)} skip: queue empty\nplan: new\n"
                                        f"{self.stamp(hours=1)} start TASK-1 session=b transcript=x\n")
-        self.assertEqual(os.stat(self.log).st_mode, mode)
         self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.log", "transcripts"])
+
+    def test_no_temp_left_when_the_rewrite_fails(self):
+        self.write([f"{self.stamp(days=8)} skip: old\n", f"{self.stamp(hours=1)} skip: new\n"])
+        with mock.patch.object(router.drive.os, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                router.prune(self.log, NOW)
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.log", "transcripts"])
+        with open(self.log) as f:
+            self.assertEqual(len(f.readlines()), 2)
 
     def test_unchanged_file_not_rewritten(self):
         self.write([f"{self.stamp(days=1)} skip: queue empty\n"])
-        with mock.patch.object(router.os, "replace") as rep:
+        with mock.patch.object(router.drive.os, "replace") as rep:
             router.prune(self.log, NOW)
         rep.assert_not_called()
 

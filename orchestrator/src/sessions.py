@@ -12,9 +12,10 @@ import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config  # noqa: E402
 import linear  # noqa: E402
+from linear import one_line  # noqa: E402
 
-SID = r"[0-9a-f-]{36}"
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
 Q_FIND = ("query($i: String!, $p: String!) { issue(id: $i) { comments(filter: { user: { isMe: { eq: true } }, "
@@ -31,7 +32,7 @@ def is_record(attachment):
 def is_comment(comment):
     """True for a session comment: by the harness account and starting `Run <sid> · `. isMe means the harness account
     because callers query with its key (linear.linear_gql)."""
-    return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {SID} · ", comment["body"]) is not None
+    return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {config.UUID_RE.pattern} · ", comment["body"]) is not None
 
 
 def base(*, sid, cwd, started_at):
@@ -58,11 +59,6 @@ def body(rec, rc=None, ended_at=None):
 
 def now():
     return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def one_line(e):
-    """type and message only: other attributes (a process's output, the request) may hold the key."""
-    return " ".join(f"{type(e).__name__}: {e}".split())
 
 
 def write(gql, issue, sid, text, limit=LIMIT):
@@ -93,10 +89,10 @@ def write(gql, issue, sid, text, limit=LIMIT):
 
 def post(issue, rec, rc=None, *, gql=None, ended_at=None):
     """Record the session rec on issue: running for rc None, else its end (ended_at defaults to now). gql defaults to
-    the harness account's, bounded by LIMIT. None once written, else the one registry-error line (no newline)."""
+    the harness account's, bounded by LIMIT. None once written, else the one unstamped registry-error line."""
     sid = rec["sid"]
     text = body(rec) if rc is None else body(rec, rc, ended_at or now())
     reason = write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, sid, text)
     if reason:
-        return " ".join(f"{datetime.now():%Y-%m-%d %H:%M:%S} registry-error {issue} session={sid}: {reason}".split())
+        return one_line(f"registry-error {issue} session={sid}: {reason}")
     return None

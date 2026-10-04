@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
-import linear  # noqa: E402
+import repo  # noqa: E402
 import target  # noqa: E402
 
 DOCS = config.Docs("ophis/private_docs", "main", {"deep-research": "Research/", "light-research": "Research/",
@@ -94,8 +94,8 @@ class Gather(unittest.TestCase):
         src = inputs.gather(iss, "deep-research", DOCS, run=gh)
         self.assertEqual(src.docs, (inputs.Doc(BASE + "Research/2026-08-01-RES-2-a.md", "Research/2026-08-01-RES-2-a.md", "# A\n"),))
         self.assertIsNone(src.earlier)
-        self.assertEqual(gh.calls, [(["gh", "api", endpoint("Research")], linear.SHORT),
-                                    (RAW + [endpoint("Research/2026-08-01-RES-2-a.md")], linear.SHORT)])
+        self.assertEqual(gh.calls, [(["gh", "api", endpoint("Research")], repo.SHORT),
+                                    (RAW + [endpoint("Research/2026-08-01-RES-2-a.md")], repo.SHORT)])
 
     def test_path_is_quoted_not_the_query_separator(self):
         gh = Gh({endpoint("Product%20Design/x%23y.md"): ok("t"), endpoint("Product%20Design"): listing()})
@@ -160,8 +160,8 @@ class Gather(unittest.TestCase):
         src = inputs.gather(issue(""), "light-research", DOCS, run=gh)
         self.assertEqual(src.earlier, inputs.Doc(BASE + "Research/2026-09-05-RES-4-new.md", "Research/2026-09-05-RES-4-new.md", "# New\n"))
         self.assertEqual(src.docs, ())
-        self.assertEqual(gh.calls[0], (["gh", "api", endpoint("Research")], linear.SHORT))
-        self.assertEqual(gh.calls[1], (RAW + [endpoint("Research/2026-09-05-RES-4-new.md")], linear.SHORT))
+        self.assertEqual(gh.calls[0], (["gh", "api", endpoint("Research")], repo.SHORT))
+        self.assertEqual(gh.calls[1], (RAW + [endpoint("Research/2026-09-05-RES-4-new.md")], repo.SHORT))
 
     def test_earlier_version_is_not_also_a_linked_doc(self):
         p = "Research/2026-09-05-RES-4-new.md"

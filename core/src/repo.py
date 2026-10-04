@@ -76,21 +76,21 @@ def origin(url: str) -> str | None:
     return "/".join(m.groups()).lower() if m else None
 
 
-def _err(res: subprocess.CompletedProcess) -> str:
+def err_text(res: subprocess.CompletedProcess) -> str:
     return (res.stderr or "").strip()[:200]
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT) -> str:
     res = run(["git", "-C", wt, *args], timeout)
     if res.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)[:100]}: {_err(res)}")
+        raise RuntimeError(f"git {' '.join(args)[:100]}: {err_text(res)}")
     return res.stdout
 
 
 def gh_json(run: Runner, argv: list[str]):
     res = run(["gh", *argv], SHORT)
     if res.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {_err(res)}")
+        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {err_text(res)}")
     try:
         return json.loads(res.stdout)
     except ValueError as e:
@@ -104,7 +104,7 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
             raise Invalid(f"{repo.slug}: not found or no access (HTTP {code.group(1)})")
-        raise RuntimeError(f"gh api: {_err(res)}")
+        raise RuntimeError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
         return data["permissions"]["push"] is True, data["default_branch"]
@@ -130,7 +130,7 @@ def clone(repo: Repo, wt: str, *extra: str, run: Runner) -> None:
     # The repo is untrusted: no symlinks that could point outside the checkout.
     res = run(["gh", "repo", "clone", repo.slug, wt, "--", "-c", "core.symlinks=false", *extra], LONG)
     if res.returncode != 0:
-        raise RuntimeError(f"gh repo clone: {_err(res)}")
+        raise RuntimeError(f"gh repo clone: {err_text(res)}")
 
 
 def prepare(repo: Repo, base: str, *, run: Runner = sh) -> dict:
