@@ -75,6 +75,18 @@ claude -p '<prompt>' \
 - `core/team/`: `guide.md` (the prompt's opening: what each section is, and precedence), `principles.md` (rules for every run), one charter per role, one file per task, and the report (numbered `[n]` sources) and PRD (stable `FR-<n>`, `NFR-<n>`, `P<n>` ids) templates.
 - `core/config/config.toml`: per role and task, `tier`, `effort`, extra `read`/`write` dirs, pre-approved `commands`, the `output` (the docs repo, branch and folder of the document tasks; they must share one github.com repo and branch) and `language`. `core/config/clients/claude.toml` maps tiers and efforts to models and holds the `claude` flags. See `core/CLAUDE.md`.
 
+### Dependencies
+
+Nothing checks them; a missing one fails the run.
+
+- The `claude` CLI (claude client): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; its subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research).
+- The `autopilot` plugin, with `superpowers` (engineering's build).
+- `python3` 3.11+ (stdlib only), `git` and `gh` logged in: `repo.py` and the `github` and `pull-request` destinations.
+- GitHub and the web.
+- Skills (`core/skills/`): `${CLAUDE_SKILL_DIR}`.
+
+Runs load your user settings (`--setting-sources user`): `~/.claude/CLAUDE.md`, your skills, plugins and permissions reach every run; MCP servers don't (`--strict-mcp-config`).
+
 ## Orchestrator
 
 The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that turns the Linear board into core runs. Each role has its own Linear account (`[roles.<role>]` in `orchestrator/config.toml`) and a `next` role (researcher → pm → engineer). An issue assigned to a role account runs the task its `Tasks` label picks (see Task labels), else the role's default task. launchd runs the router and promote; they act in Linear as the harness account `frank.agent.w@gmail.com`, write-back as the run's role account.
