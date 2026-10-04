@@ -541,6 +541,15 @@ class Sink(Base):
         writeback.sink(replace(ctx, gql=ok))(start)
         self.assertEqual(ok.calls, [comment("Build started: x")])
 
+    def test_signal_exit_passes_through(self):
+        gql = Gql(fail=lambda name, v: SystemExit(129))
+        ctx = self.ctx(gql=gql)
+        with self.assertRaises(SystemExit) as cm:
+            writeback.sink(ctx)(drive.Event("progress", text="x", name="start"))
+        self.assertEqual(cm.exception.code, 129)
+        self.assertFalse(os.path.exists(os.path.join(ctx.workdir, "writeback.json")))
+        self.assertEqual(self.lines(), [])
+
     def test_never_raises(self):
         gql = Gql(fail=lambda name, v: RuntimeError("boom"))
         ctx = replace(self.ctx(gql=gql), plog=os.path.join(self.tmp, "missing", "p.log"))
@@ -553,6 +562,16 @@ class FinishNeverRaises(Base):
     def test_unknown_task_logged(self):
         self.assertFalse(writeback.finish(self.ctx("nope"), outcome("done", summary="x")))
         self.assertEqual(self.lines(), [f"writeback-error {ID}: finish: KeyError: 'nope'"])
+
+    def test_signal_exit_stops_the_steps(self):
+        for name in ("read", "subscribe", "comment", "attach"):
+            with self.subTest(name=name):
+                gql = Gql(fail=lambda n, v: SystemExit(143) if n == name else None)
+                ctx = self.ctx(gql=gql)
+                self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
+                self.assertEqual(gql.calls[-1][0], name)
+                self.assertEqual(self.lines()[-1], f"writeback-error {ID}: finish: SystemExit: 143")
+                self.assertNotIn("state", [c[0] for c in gql.calls])
 
 
 HANDOFF = ("Handoff from PRD-3: https://linear.app/t/issue/PRD-3\n\n## Source\n- PRD: x\n\n"
@@ -630,6 +649,14 @@ class Bounce(Base):
         writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
         self.assertEqual(gql.calls[-2:], [comment(self.question("r") + "\n\nCould not subscribe ann@example.com: "
                                                   "RuntimeError: issueSubscribe: success: false"), move("in_review")])
+
+    def test_signal_exit_raises(self):
+        for name in ("unarchive", "subscribe"):
+            with self.subTest(name=name):
+                gql = Gql(issue=self.src(), fail=lambda n, v: SystemExit(129) if n == name else None)
+                with self.assertRaises(SystemExit):
+                    writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+                self.assertEqual(gql.calls[-1][0], name)
 
     def test_other_failures_raise(self):
         gql = Gql(issue=self.src(), fail=lambda name, v: False if name == "comment" else None)

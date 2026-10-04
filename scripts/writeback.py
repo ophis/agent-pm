@@ -78,6 +78,13 @@ def _log(ctx, line):
         pass
 
 
+def _reraise_signal(e):
+    """The runner's signal handler raises SystemExit(128 + signum), which must reach drive's loop to kill claude;
+    linear_gql's SystemExit (a str code) is an API error."""
+    if isinstance(e, SystemExit) and isinstance(e.code, int):
+        raise e
+
+
 def _call(gql, query, field, **v):
     if not gql(query, **v)[field]["success"]:
         raise RuntimeError(f"{field}: success: false")
@@ -97,7 +104,8 @@ def _subscribe(gql, issue, humans):
     for email in humans:
         try:
             _call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
+        except (Exception, SystemExit) as e:
+            _reraise_signal(e)
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 
@@ -124,6 +132,7 @@ def _step(ctx, step, call):
         ledger.setdefault(ctx.sid, []).append(step)
         atomic_write(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (Exception, SystemExit) as e:
+        _reraise_signal(e)
         _log(ctx, f"writeback-error {ctx.ident}: {step}: {one_line(e)}")
         return e
     _log(ctx, f"writeback {ctx.ident}: {step}")
@@ -132,7 +141,7 @@ def _step(ctx, step, call):
 
 def sink(ctx) -> drive.Sink:
     """Phases 1 and 2: the `start` mark as the task's start comment, once per sid; a mark named in the task's `progress`
-    as `Progress (<name>): <text>`. Never raises: a raising sink kills the run."""
+    as `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the run."""
     def handle(event):
         try:
             if event.kind != "progress":
@@ -145,6 +154,7 @@ def sink(ctx) -> drive.Sink:
                 _step(ctx, f"progress:{event.name}:{digest}",
                       lambda: _comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))
         except (Exception, SystemExit) as e:
+            _reraise_signal(e)
             _log(ctx, f"writeback-error {ctx.ident}: sink: {one_line(e)}")
     return handle
 
@@ -183,7 +193,7 @@ def _url(ctx, url):
 def finish(ctx, outcome: drive.Outcome) -> bool:
     """Phase 3: the outcome as comments, title, attachment and state; steps ledgered per sid, stopping at the first
     error. True once every step is done (a file post or subscribe failure is noted in the comment instead); logs,
-    never raises."""
+    never raises: a signal SystemExit stops the steps and returns False, so the runner still posts its end lines."""
     try:
         return _finish(ctx, outcome)
     except (Exception, SystemExit) as e:
@@ -211,6 +221,7 @@ def _finish(ctx, o):
     try:
         attached = {a["url"] for a in gql(Q_STATE, i=issue)["issue"]["attachments"]["nodes"]}
     except (Exception, SystemExit) as e:
+        _reraise_signal(e)
         _log(ctx, f"writeback-error {ctx.ident}: read: {one_line(e)}")
         return False
 
@@ -264,7 +275,7 @@ def _finish(ctx, o):
 def bounce(ctx, issue: Issue, reason: str) -> None:
     """The pre-run engineering bounce: a Handoff issue whose source is in ctx.team goes back to that source (unarchived,
     In Review) and this issue is Canceled; else a `Question:` and In Review. Raises on any failure but unarchive's and
-    subscribe's (noted in the comment)."""
+    subscribe's (noted in the comment), and on a signal SystemExit."""
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
     if src and src["team"]["id"] == ctx.team:
@@ -273,8 +284,8 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
                 + (" Or fix pipeline.toml's [project_repos] entry." if reason.startswith(MAPPED) else ""))
         try:
             _call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        except (Exception, SystemExit):
-            pass
+        except (Exception, SystemExit) as e:
+            _reraise_signal(e)
         notes = _subscribe(gql, src["id"], ctx.humans)
         _comment(gql, src["id"], text + notes)
         _move(gql, src["id"], ctx.states["in_review"])
