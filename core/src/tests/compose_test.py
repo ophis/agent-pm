@@ -194,6 +194,20 @@ class Validate(Fake):
         for language in ("a\nb", 7):
             self.fails("language must be one line of text", task="long-note", layers=[{"language": language}])
 
+    def test_show_is_unset_by_default_and_a_layer_sets_it_at_any_level(self):
+        self.assertIn("show", compose.RUN_KEYS)
+        self.assertIsNone(self.compose(task="long-note")[1].show)
+        _, run = self.compose(task="long-note", layers=[{"show": ""}])
+        self.assertEqual(run.show, "")
+        _, run = self.compose(task="long-note", layers=[{"show": "open-it {{session}}"}])
+        self.assertEqual(run.show, "open-it {{session}}")
+        _, run = self.compose(task="long-note", layers=[{"roles": {"writer": {"tasks": {"long-note": {"show": "x {{session}}"}}}}}])
+        self.assertEqual(run.show, "x {{session}}")
+
+    def test_show_is_one_line_of_text(self):
+        for show in ("a\nb", 7):
+            self.fails("show must be one line of shell command", task="long-note", layers=[{"show": show}])
+
     def test_replace_is_checked(self):
         _, run = self.compose(task="long-note")
         with self.assertRaises(compose.ConfigError):
