@@ -12,28 +12,34 @@ handoff     = "6d876dc6-7732-4473-a0b2-30041d93d0aa"
 done        = "414a4381-7260-46e7-8057-d8cec9d4b11f"
 canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 
-# The docs repo: researcher reports and pm PRDs are published here, engineer reads PRDs from here.
-[docs]
-repo = "ophis/private_docs"          # <owner>/<name> on GitHub
-clone = "~/playground/private_docs"  # local clone; ~ allowed
-branch = "main"
-
 # A task's Linear label (a child of the Tasks group), by label id: <task> = "<label id>". Default tasks need no entry.
 [task_labels]
 light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
 
-# Each role's place in the pipeline, keyed by role name (roles/<role>.md + roles/<role>.toml);
-# an issue assigned to the role's account runs the role's default task unless its Tasks label picks another of the role's tasks through [task_labels].
+# A role: its Linear account and the Keychain service of that account's API key (write-back acts as it).
+# Its tasks are core/config/config.toml's roles.<role>.tasks, default_task first.
+# An issue assigned to the account runs the role's default task unless its Tasks label picks another through [task_labels].
 [roles.researcher]
+account = "frank.agent.w+researcher@gmail.com"
+key = "linear-api-key-researcher"
 next = "pm"                        # promote hands the role's Handoff issues to this role
 
 [roles.pm]
+account = "frank.agent.w+pm@gmail.com"
+key = "linear-api-key-pm"
 next = "engineer"
 require_instructions = false       # a PRD carries enough context; Handoff comments are optional
 
 [roles.engineer]                   # no next: the last stage
+account = "frank.agent.w+engineer@gmail.com"
+key = "linear-api-key-engineer"
 
 # Target repo of an Engineering issue with no Repo: line, by its Linear project id; a Repo: line wins.
 [project_repos]
 "121166b1-191a-4461-bec4-42f1c2dc0ddd" = "ophis/agent-pm"           # Agent PM
 "ae72ede7-67a6-469d-a959-8ea51ab71fb8" = "ophis/claude-autopilot"   # Autopilot
+
+# Core run keys for the orchestrator's runs, in core/config/config.toml's layout under [core], applied after
+# core/config/clients/claude.toml (drive.plan layers). pipeline.overlay() fills {{root}} with this repo's root.
+[core.roles.researcher.tasks.deep-research]
+gate = "python3 {{root}}/scripts/router.py --brake"

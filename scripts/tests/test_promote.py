@@ -8,7 +8,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import HEADER, STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
+from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table, team_node  # noqa: E402
 import pipeline  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
@@ -17,11 +17,12 @@ NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
           "Handoff": IDS_BY_KEY["handoff"], "Done": IDS_BY_KEY["done"]}
 PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd"}
-ROLE = {name: r.account for name, r in pipeline.registry()[0].items()}  # the repo's roles/
+ROLE = ACCOUNTS
 HUMAN = {"email": "me@x.com", "name": "Me"}
 AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
-CONFIG = HEADER + 'human_members = ["me@x.com"]\n[roles.researcher]\nnext = "pm"\n'
+CONFIG = HEADER + 'human_members = ["me@x.com"]\n' + role_table("researcher", 'next = "pm"') + role_table("pm") + role_table("engineer")
+PM_NEXT = CONFIG.replace(role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false"))
 
 
 def ago(minutes):
@@ -352,15 +353,24 @@ class TestScopeAndConfig(Base):
         self.assertEqual(src["state"], "Handoff")
 
     def test_config_only_extension(self):
-        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\nrequire_instructions = false\n')
+        self.config = self.write_config(PM_NEXT)
         self.ready(role="pm", title="PRD: Title DR-1")
         self.run_main()
         (child,) = self.fake.children.values()
         self.assertEqual((child["projectId"], child["assigneeId"], child["title"]), ("p-dr", "u-engineer", "ENG: Title DR-1"))
         self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X")
 
+    def test_child_titles_from_tasks(self):
+        self.config = self.write_config(PM_NEXT)
+        self.ready(role="pm", title="DES: Title DR-1")
+        tasks = {"product-design": pipeline.Task("design", prefix="DES"), "engineering": pipeline.Task("build", prefix="BLD")}
+        with mock.patch.dict(pipeline.TASKS, tasks):
+            self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(child["title"], "BLD: Title DR-1")
+
     def test_instructions_optional(self):
-        self.config = self.write_config(CONFIG + '[roles.pm]\nnext = "engineer"\nrequire_instructions = false\n')
+        self.config = self.write_config(PM_NEXT)
         src = self.fake.add("PD-1", project="Product Design", role="pm")
         self.fake.moved("PD-1", 60, "In Review")
         self.fake.moved("PD-1", 30, "Handoff", frm=STATES["In Review"])

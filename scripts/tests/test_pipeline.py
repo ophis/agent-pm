@@ -1,7 +1,9 @@
-import dataclasses
 import io
 import json
 import os
+import re
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,23 +11,17 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from board_ids import DOCS_CLONE, HEADER, STATES, TASK_GROUP, TEAM, team_node  # noqa: E402
+from board_ids import ACCOUNTS, HEADER, STATES, TASK_GROUP, TEAM, role, team_node  # noqa: E402
 import pipeline  # noqa: E402
 
-BASE = HEADER + """[roles.researcher]
-next = "pm"
-[roles.pm]
-next = "engineer"
-[roles.engineer]
-[roles.solo]
-"""
+BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
 
 
 class ConfigFile:
-    """setUp, load and rejects for TestCases that write a pipeline.toml into self.dir."""
+    """setUp and load for TestCases that write a pipeline.toml into self.dir."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -36,13 +32,6 @@ class ConfigFile:
         with open(path, "w") as f:
             f.write(text)
         return pipeline.load_config(path)
-
-    def rejects(self, fragment, text):
-        with self.assertRaises(SystemExit) as cm:
-            self.load(text)
-        msg = str(cm.exception.code)
-        self.assertTrue(msg.startswith("pipeline.toml: "), msg)
-        self.assertIn(fragment, msg)
 
 
 class Config(ConfigFile, unittest.TestCase):
@@ -57,8 +46,21 @@ class Config(ConfigFile, unittest.TestCase):
         group = "task_label_group must be a Linear label group id (UUID): "
         label = BASE + f'[task_labels]\nlight-research = "{LABEL1}"\n'
         upper = "ABCDEF00-0000-4000-8000-000000000021"
+        solo = role("solo")
+        x = BASE + "[roles.x]\n"
         cases = [
-            (BASE + '[roles.a]\nnext = "b"\n[roles.b]\nnext = "a"\n', "the next chain from 'a' has a cycle"),
+            (BASE + role("a", 'next = "b"') + role("b", 'next = "a"'), "the next chain from 'a' has a cycle"),
+            (HEADER + 'docs = { repo = "acme/notes", clone = "/nonexistent/notes", branch = "trunk" }\n' + body, "unknown keys: docs"),
+            (HEADER + '[projects.p]\nnext = "q"\n' + body, "unknown keys: projects"),
+            (BASE + '[tasks.x]\nmodel = "opus"\n[docs]\nrepo = "acme/notes"\n', "unknown keys: docs, tasks"),
+            (BASE.replace(solo, role("solo", 'role = "x"', 'task = "y"')), "[roles.solo] has unknown keys: role, task"),
+            (BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")), "[roles.solo] has unknown keys: read_only, tasks"),
+            (x + 'key = "k-x"\n', "[roles.x] account must be the role's Linear email: None"),
+            (x + 'account = ""\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: ''"),
+            (x + 'account = 5\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: 5"),
+            (x + 'account = "x@agents.test"\n', "[roles.x] key must be a Keychain service name: None"),
+            (x + 'account = "x@agents.test"\nkey = ""\n', "[roles.x] key must be a Keychain service name: ''"),
+            (x + 'account = "x@agents.test"\nkey = ["k"]\n', "[roles.x] key must be a Keychain service name: ['k']"),
             (BASE.replace('harness_key = "linear-api-key"\n', ""), "harness_key must be a Keychain service name: None"),
             (BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"), "harness_key must be a Keychain service name: 1"),
             ('team = "Frank\'s Agents"\n' + states + body, "team must be a Linear team id (UUID): \"Frank's Agents\""),
@@ -86,6 +88,9 @@ class Config(ConfigFile, unittest.TestCase):
                 self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
         cfg = self.load(BASE)
         self.assertEqual((cfg["harness_key"], cfg["task_label_group"]), ("linear-api-key", TASK_GROUP))
+        self.assertEqual(cfg["roles"]["pm"], {"account": "pm@agents.test", "key": "linear-api-key-pm", "next": "engineer"})
+        self.assertEqual(self.load(HEADER)["roles"], {})
+        self.assertEqual(self.load(BASE + '[core.roles.pm]\ntier = 1\n')["core"], {"roles": {"pm": {"tier": 1}}})
 
     def test_task_labels_loads(self):
         self.assertEqual(self.load(BASE)["task_labels"], {})
@@ -93,456 +98,241 @@ class Config(ConfigFile, unittest.TestCase):
         self.assertEqual(cfg["task_labels"], {"light-research": LABEL1, "deep-research": LABEL2})
 
 
-DOCS = {"repo": "acme/notes", "clone": DOCS_CLONE, "branch": "trunk"}
+PIPELINE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
+RESEARCHER = pipeline.Role("researcher@agents.test", "linear-api-key-researcher", ("deep-research", "light-research"))
+PM = pipeline.Role("pm@agents.test", "linear-api-key-pm", ("product-design",))
+ENGINEER = pipeline.Role("engineer@agents.test", "linear-api-key-engineer", ("engineering",))
+GATE = f"python3 {shlex.quote(pipeline.ROOT)}/scripts/router.py --brake"
 
 
-def with_docs(value):
-    """BASE with its docs line replaced: a dict becomes an inline table, anything else a bare value, None drops the key."""
-    if isinstance(value, dict):
-        value = "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in value.items()) + " }"
-    head = BASE[:BASE.index("docs = ")]
-    return head + ("" if value is None else f"docs = {value}\n") + BASE[BASE.index("[roles"):]
+class Runnable(ConfigFile, unittest.TestCase):
+    """runnable() over the repo's core config and pipeline.toml's [core]."""
+    def runs(self, text=PIPELINE):
+        return pipeline.runnable(self.load(text))
 
-
-class Docs(ConfigFile, unittest.TestCase):
-    def test_accepted(self):
-        self.assertEqual(self.load(BASE)["docs"], DOCS)
-
-    def test_clone_normalized(self):
-        cases = {"~/docs-x": os.path.expanduser("~/docs-x"), "/nonexistent/a/../notes/": "/nonexistent/notes"}
-        for clone, want in cases.items():
-            with self.subTest(clone):
-                self.assertEqual(self.load(with_docs({**DOCS, "clone": clone}))["docs"]["clone"], want)
-
-    def test_missing_or_unknown_keys(self):
-        cases = [("[docs] is missing: repo, clone, branch", value) for value in (None, '"x"', "[1]")]
-        cases += [(f"[docs] is missing: {key}", {k: v for k, v in DOCS.items() if k != key}) for key in DOCS]
-        cases += [("[docs] is missing: clone, branch", {"repo": "acme/notes"}),
-                  ("[docs] has unknown keys: folder", {**DOCS, "folder": "x"}),
-                  ("[docs] has unknown keys: a, b", {**DOCS, "b": "x", "a": "x"})]
-        for fragment, value in cases:
-            with self.subTest(fragment, value=value):
-                self.rejects(fragment, with_docs(value))
-
-    def test_bad_repo(self):
-        for repo in ("acme", "https://github.com/acme/notes", "acme/", "acme/..", "", 5, ["acme/notes"]):
-            with self.subTest(repo=repo):
-                self.rejects("docs.repo", with_docs({**DOCS, "repo": repo}))
-
-    def test_bad_clone(self):
-        cases = ["notes", "", "~someone-nobody/x", 5, ["/nonexistent/x"], "/nonexistent/a\nb", "/nonexistent/a\tb", "/nonexistent/a\x7fb",
-                 "/nonexistent/a*", "/nonexistent/a?", "/nonexistent/[a]", "/nonexistent/a,b", "/nonexistent/(a)", "/nonexistent/{a}"]
-        for clone in cases:
-            with self.subTest(clone=clone):
-                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
-
-    def test_clone_overlapping_root(self):
-        link = os.path.join(self.dir, "link")
-        os.symlink(pipeline.ROOT, link)
-        for label, clone in (("root", pipeline.ROOT), ("under root", os.path.join(pipeline.ROOT, "docs")),
-                             ("ancestor of root", os.path.dirname(pipeline.ROOT)), ("filesystem root", "/"),
-                             ("symlink into root", link)):
-            with self.subTest(label):
-                self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
-
-    def test_clone_checked_as_stored(self):
-        root = os.path.join(self.dir, "parent", "root")
-        deep = os.path.join(self.dir, "elsewhere", "deep")
-        os.makedirs(root)
-        os.makedirs(deep)
-        os.symlink(deep, os.path.join(self.dir, "parent", "link"))
-        clone = os.path.join(self.dir, "parent", "link", "..", "root", "sub")
-        with mock.patch.object(pipeline, "ROOT", root):
-            self.rejects("docs.clone", with_docs({**DOCS, "clone": clone}))
-
-    def test_clone_overlapping_protected(self):
-        home = os.path.join(self.dir, "home")
-        with mock.patch.dict(os.environ, {"HOME": home}):
-            for d in (".claude", ".claude/x", "Library/LaunchAgents", "Library/LaunchAgents/x", "Library", ""):
-                with self.subTest(d or "home"):
-                    self.rejects("docs.clone", with_docs({**DOCS, "clone": os.path.join(home, d).rstrip("/")}))
-            self.assertEqual(self.load(with_docs({**DOCS, "clone": "~/notes"}))["docs"]["clone"], os.path.join(home, "notes"))
-
-    def test_branch(self):
-        for branch in ("main", "trunk", "feature/a-b_c.d", "TASK-99-build"):
-            with self.subTest(branch=branch):
-                self.assertEqual(self.load(with_docs({**DOCS, "branch": branch}))["docs"]["branch"], branch)
-        for branch in ("", 5, ["trunk"], "-x", "a..b", "a b", "a\nb", "a*", "a:b"):
-            with self.subTest(branch=branch):
-                self.rejects("docs.branch", with_docs({**DOCS, "branch": branch}))
-
-
-ROLES = HEADER + '[roles.researcher]\nnext = "engineer"\n'
-RESEARCHER_ID = 'tasks = ["deep-research"]\naccount = "r@x.com"\nkey = "k-researcher"\n'
-ENGINEER_ID = 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = "k-engineer"\n'
-FILES = {
-    "roles/principles.md": "",
-    "roles/researcher.md": "", "roles/researcher.toml": RESEARCHER_ID,
-    "roles/engineer.md": "", "roles/engineer.toml": 'read_only = ["{docs_clone}"]\n' + ENGINEER_ID,
-    "tasks/deep-research.md": "",
-    "tasks/deep-research.toml": 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n',
-    "tasks/engineering.md": "", "tasks/engineering.toml": 'model = "opus"\neffort = "high"\nrepo_from_issue = true\nprefix = "ENG"\n',
-}
-ENGINEERING = FILES["tasks/engineering.toml"]
-
-
-class Runnable(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.join(tmp.name, "root")
-        self.outside = os.path.join(tmp.name, "outside")
-        os.makedirs(self.outside)
-        os.makedirs(os.path.join(self.root, "templates"))
-        for rel, text in FILES.items():
-            self.write(rel, text)
-
-    def write(self, rel, text):
-        path = os.path.join(self.root, rel)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(text)
-
-    def read_role(self, name):
-        with open(os.path.join(self.root, "roles", f"{name}.toml")) as f:
-            return f.read()
-
-    def remove(self, rel):
-        os.remove(os.path.join(self.root, rel))
-
-    def load(self, text=ROLES):
-        path = os.path.join(self.outside, "pipeline.toml")
-        with open(path, "w") as f:
-            f.write(text)
-        return pipeline.load_config(path)
-
-    def runs(self, text=ROLES):
-        return pipeline.runnable(self.load(text), root=self.root)
-
-    def rejects(self, fragment, prefix="pipeline.toml", text=ROLES):
+    def fails(self, message, text):
         with self.assertRaises(SystemExit) as cm:
             self.runs(text)
-        msg = str(cm.exception.code)
-        self.assertTrue(msg.startswith(prefix + ":") or msg.startswith(prefix + " "), msg)
-        self.assertIn(fragment, msg)
+        self.assertEqual(cm.exception.code, message)
+
+    def test_roles_in_pipeline_order_default_first(self):
+        runs = self.runs()
+        self.assertEqual(runs, {"researcher": RESEARCHER, "pm": PM, "engineer": ENGINEER})
+        self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
+        self.assertEqual((RESEARCHER.default, PM.default), ("deep-research", "product-design"))
+        self.assertEqual(list(self.runs(HEADER + role("engineer") + role("researcher"))), ["engineer", "researcher"])
+
+    def test_core_roles_outside_pipeline_toml_ignored(self):
+        self.assertEqual(self.runs(HEADER + role("researcher")), {"researcher": RESEARCHER})
+
+    def test_role_not_in_core(self):
+        self.fails("pipeline.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
+
+    def test_task_without_tasks_entry(self):
+        self.fails("pipeline.toml: dummy-tester's task 'echo' has no entry in pipeline.TASKS", PIPELINE + role("dummy-tester"))
+
+    def test_next(self):
+        self.fails("pipeline.toml: next of 'researcher' names undefined role 'pm'", HEADER + role("researcher", 'next = "pm"'))
+        self.fails("pipeline.toml: next of 'pm' is role 'researcher', whose default task 'deep-research' has no prefix",
+                   HEADER + role("researcher") + role("pm", 'next = "researcher"'))
+
+    def test_keys(self):
+        self.fails("pipeline.toml: [roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
+                   PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"))
+        self.fails("pipeline.toml: [roles.engineer] key 'linear-api-key' is harness_key",
+                   PIPELINE.replace("linear-api-key-engineer", "linear-api-key"))
+
+    def test_task_labels_keys(self):
+        text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nengineering = "{LABEL2}"\n'
+        self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
+        for task, text in (("echo", PIPELINE), ("ghost", PIPELINE), ("product-design", HEADER + role("researcher"))):
+            with self.subTest(task):
+                self.fails(f"pipeline.toml: task_labels.{task} is not a task of a role in pipeline.toml",
+                           text + f'[task_labels]\n{task} = "{LABEL1}"\n')
 
     def test_role_for(self):
         runs = self.runs()
-        for email in ("r@x.com", "R@X.COM"):
+        for email in ("researcher@agents.test", "RESEARCHER@Agents.Test"):
             self.assertEqual(pipeline.role_for(runs, email), "researcher")
-        self.assertEqual(pipeline.role_for(runs, "E@x.com"), "engineer")
         for email in ("nobody@x.com", None, ""):
             self.assertIsNone(pipeline.role_for(runs, email))
 
-    def test_runs(self):
-        runs = self.runs()
-        self.assertEqual(sorted(runs), ["engineer", "researcher"])
-        r, e = runs["researcher"], runs["engineer"]
-        self.assertEqual([f.name for f in dataclasses.fields(pipeline.Run)],
-                         ["task_name", "task", "charter", "instructions", "memory", "read_only", "key", "account", "tasks"])
-        self.assertEqual((r.key, e.key), ("k-researcher", "k-engineer"))
-        self.assertEqual((r.account, e.account), ("r@x.com", "e@x.com"))
-        self.assertEqual((r.task_name, e.task_name), ("deep-research", "engineering"))
-        self.assertEqual((r.task["effort"], r.memory, r.read_only), ("xhigh", None, ()))
-        self.assertEqual(r.charter, os.path.join(self.root, "roles", "researcher.md"))
-        self.assertEqual(e.charter, os.path.join(self.root, "roles", "engineer.md"))
-        self.assertEqual(r.instructions, os.path.join(self.root, "tasks", "deep-research.md"))
-        self.assertEqual(e.read_only, (DOCS_CLONE,))
-        self.assertEqual(r.task["add_dirs"], [DOCS_CLONE])
-        self.assertTrue(e.task["repo_from_issue"])
-
-    def two_tasks(self, task=None, read_only='["{docs_clone}"]'):
-        """engineer runs engineering, then light-research (task: its toml, default repo_from_issue)."""
-        self.write("roles/engineer.toml", f"read_only = {read_only}\n" + ENGINEER_ID.replace('["engineering"]', '["engineering", "light-research"]'))
-        self.write("tasks/light-research.md", "")
-        self.write("tasks/light-research.toml", task or 'model = "sonnet"\neffort = "low"\nrepo_from_issue = true\nprefix = "LR"\n')
-
-    def test_run_tasks_in_role_order(self):
-        self.two_tasks()
-        runs = self.runs()
-        e, r = runs["engineer"], runs["researcher"]
-        self.assertEqual(list(e.tasks), ["engineering", "light-research"])
-        self.assertEqual(e.tasks["engineering"], e.task)
-        self.assertEqual(e.tasks["light-research"], {"model": "sonnet", "effort": "low", "repo_from_issue": True, "prefix": "LR"})
-        self.assertEqual(e.task_name, "engineering")
-        self.assertEqual(r.tasks, {"deep-research": r.task})
-        self.write("roles/engineer.toml", self.read_role("engineer").replace('"engineering", "light-research"', '"light-research", "engineering"'))
-        e = self.runs()["engineer"]
-        self.assertEqual((list(e.tasks), e.task_name), (["light-research", "engineering"], "light-research"))
-
-    def test_with_task(self):
-        self.two_tasks()
-        e = self.runs()["engineer"]
-        light = e.with_task("light-research")
-        self.assertEqual((light.task_name, light.task["model"], light.instructions),
-                         ("light-research", "sonnet", os.path.join(self.root, "tasks", "light-research.md")))
-        self.assertEqual(light.task, e.tasks["light-research"])
-        for field in ("charter", "memory", "read_only", "key", "account", "tasks"):
-            self.assertEqual(getattr(light, field), getattr(e, field), field)
-        self.assertEqual(e.with_task("engineering"), e)
-        self.assertEqual(e.task_name, "engineering")
-        for bad in ("deep-research", "../x", "", "Light-Research", "nope"):
-            with self.subTest(bad):
-                with self.assertRaises(KeyError):
-                    e.with_task(bad)
-
-    def test_projects_table_rejected(self):
-        self.rejects("pipeline.toml has unknown keys: projects", text=ROLES + '[projects.p]\nnext = "q"\n')
-        self.rejects("pipeline.toml has unknown keys: tasks", text=ROLES + '[tasks.x]\nmodel = "opus"\n')
-
-    def test_next_names_undefined_role(self):
-        self.rejects("pipeline.toml: next of 'researcher' names undefined role 'ghost'",
-                     text=ROLES.replace('next = "engineer"', 'next = "ghost"'))
-
-    def test_next_role_default_task_needs_prefix(self):
-        self.write("tasks/engineering.toml", ENGINEERING.replace('prefix = "ENG"\n', ""))
-        self.rejects("pipeline.toml: next of 'researcher' is role 'engineer', whose default task 'engineering' has no prefix")
-
-    def test_hands_off_to_repo(self):
-        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + 'prefix = "DR"\n')
-        cases = [
-            (ROLES, "researcher", True),  # next's default task has repo_from_issue
-            (ROLES + "[roles.engineer]\n", "engineer", False),  # no next
-            (ROLES, "engineer", False),  # no [roles.engineer] entry
-            (HEADER + '[roles.engineer]\nnext = "researcher"\n', "engineer", False),  # next's task lacks repo_from_issue
-        ]
-        for text, role, want in cases:
-            with self.subTest(text=text, role=role):
-                self.assertIs(pipeline.hands_off_to_repo(self.load(text), self.runs(text), role), want)
-
-    def test_roles_table_needs_a_role_pair(self):
-        self.rejects("pipeline.toml: [roles.ghost] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.ghost]\n")
-        self.rejects("pipeline.toml: [roles.principles] has no roles/<role>.md + .toml pair", text=ROLES + "[roles.principles]\n")
-
-    def test_roles_table_unknown_keys(self):
-        self.rejects("pipeline.toml: [roles.researcher] has unknown keys: role, task",
-                     text=ROLES + 'role = "x"\ntask = "y"\n')
-
-    def test_load_config_ignores_role_checks(self):
-        self.remove("tasks/engineering.md")
-        self.assertIn("researcher", self.load()["roles"])
-        self.assertIn("ghost", self.load(ROLES + '[roles.ghost]\nfoo = "x"\n[projects.old]\n')["roles"])
-        self.assertEqual(self.load(ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')["task_labels"], {"ghost": LABEL1})
-
     def test_role_ids(self):
         runs = self.runs()
-        gql = lambda q, **v: {"users": {"nodes": [{"id": "u-" + v["e"]}]}}
-        self.assertEqual(pipeline.role_ids(gql, runs), {"u-e@x.com": "engineer", "u-r@x.com": "researcher"})
+        gql = lambda q, **v: {"users": {"nodes": [{"id": "u-" + v["e"]}]}}  # noqa: E731
+        self.assertEqual(pipeline.role_ids(gql, runs), {f"u-{a}": r for r, a in ACCOUNTS.items()})
         with self.assertRaises(SystemExit) as cm:
             pipeline.role_ids(lambda q, **v: {"users": {"nodes": []}}, {"engineer": runs["engineer"]})
-        self.assertEqual(str(cm.exception.code), "roles/engineer.toml: account 'e@x.com' not found in Linear")
+        self.assertEqual(cm.exception.code, "pipeline.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear")
 
-    def test_orphans(self):
-        for rel, other in (("roles/engineer.toml", "roles/engineer.md"), ("roles/engineer.md", "roles/engineer.toml"),
-                           ("tasks/engineering.toml", "tasks/engineering.md"), ("tasks/engineering.md", "tasks/engineering.toml")):
-            with self.subTest(rel):
-                self.remove(rel)
-                self.rejects(rel, prefix=other)
-                self.write(rel, FILES[rel])
+    def test_run_config(self):
+        self.assertEqual(pipeline.run_config("researcher", "deep-research").gate, GATE)
+        self.assertEqual(pipeline.run_config("researcher", "light-research").gate, "")
+        self.assertEqual(pipeline.overlay(), {"roles": {"researcher": {"tasks": {"deep-research": {"gate": GATE}}}}})
+        self.assertEqual(pipeline.layers(), [pipeline.overlay()])
 
-    def test_principles_has_no_toml(self):
-        self.write("roles/principles.toml", "")
-        self.rejects("principles", prefix="roles/principles.toml")
+    def test_run_config_layers(self):
+        core = os.path.join(self.dir, "core")
+        with mock.patch.object(pipeline, "overlay", return_value={"tier": 3}) as overlay, \
+                mock.patch.object(pipeline.clients, "load_config", return_value={"flags": []}) as client, \
+                mock.patch.object(pipeline.compose, "load_run", return_value="run") as load_run:
+            self.assertEqual(pipeline.run_config("pm", "product-design", self.dir), "run")
+        overlay.assert_called_once_with(self.dir)
+        client.assert_called_once_with("claude", core)
+        load_run.assert_called_once_with(core, "pm", "product-design", layers=[{"flags": []}, {"tier": 3}])
 
-    def test_other_files_ignored(self):
-        self.write("roles/.DS_Store", "x")
-        self.write("roles/notes.txt", "x")
-        self.write("tasks/.engineering.toml.swp", "x")
-        self.write("roles/drafts/x.md", "")
-        self.assertEqual(sorted(self.runs()), ["engineer", "researcher"])
+    def test_clones_match_core(self):
+        self.assertEqual(pipeline.CLONES, ("src", "publish"))
+        with open(os.path.join(pipeline.CORE, "config", "config.toml")) as f:
+            dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
+        self.assertTrue(dirs)
+        self.assertEqual(set(dirs), {pipeline.CLONES[0]})
+        with open(os.path.join(pipeline.CORE, "output", "destinations", "github.md")) as f:
+            self.assertIn(f"`<Workdir>/{pipeline.CLONES[1]}`", f.read())
 
-    def test_bad_files_rejected(self):
-        placeholder = "Bash(git -C {docs_clone} status)"
-        cases = [
-            ("roles/Reviewer.md", "kebab", {"roles/Reviewer.md": "", "roles/Reviewer.toml": ""}),
-            ("tasks/deep_research.md", "kebab", {"tasks/deep_research.md": "", "tasks/deep_research.toml": 'model = "opus"\neffort = "high"\n'}),
-            ("tasks/engineering.toml", "", {"tasks/engineering.toml": "model = \n"}),
-            ("tasks/deep-research.toml", "effort", {"tasks/deep-research.toml": 'model = "opus"\n'}),
-            ("tasks/deep-research.toml", "model", {"tasks/deep-research.toml": 'effort = "high"\n'}),
-            ("roles/engineer.toml", "readonly", {"roles/engineer.toml": 'readonly = ["~/playground/private_docs"]\n' + ENGINEER_ID}),
-            ("tasks/engineering.toml", "instructions", {"tasks/engineering.toml": ENGINEERING + 'instructions = "x"\n'}),
-            ("roles/engineer.toml", "nope", {"roles/engineer.toml": ENGINEER_ID.replace('["engineering"]', '["engineering", "nope"]')}),
-            ("roles/researcher.toml", "k-researcher", {"roles/engineer.toml": ENGINEER_ID.replace("k-engineer", "k-researcher")}),
-            ("roles/engineer.toml", "harness_key", {"roles/engineer.toml": ENGINEER_ID.replace("k-engineer", "linear-api-key")}),
-            ("roles/pm.toml", "key", {"roles/pm.md": "", "roles/pm.toml": 'tasks = ["deep-research"]\naccount = "p@x.com"\n'}),
-            ("tasks/engineering.toml", f"tasks/engineering.toml: allowed_tools rule has unknown placeholder {{docs_clone}}: {placeholder!r}",
-             {"tasks/engineering.toml": ENGINEERING + f'allowed_tools = ["{placeholder}"]\n'}),
-        ]
-        for prefix, fragment, files in cases:
-            with self.subTest(prefix, fragment=fragment):
-                for rel, text in files.items():
-                    self.write(rel, text)
-                self.rejects(fragment, prefix=prefix)
-                for rel in files:
-                    if rel in FILES:
-                        self.write(rel, FILES[rel])
-                    else:
-                        self.remove(rel)
+    def test_paths(self):
+        self.assertEqual(pipeline.CORE, os.path.join(pipeline.ROOT, "core"))
+        self.assertEqual((pipeline.SHORT, pipeline.LONG), (60, 600))
 
-    def test_role_identity_rejected(self):
-        ro = 'read_only = ["~/playground/private_docs"]\n'
-        cases = {
-            "tasks": ro + 'account = "e@x.com"\nkey = "k-engineer"\n',
-            "tasks ": ro + 'tasks = []\naccount = "e@x.com"\nkey = "k-engineer"\n',
-            "tasks  ": ro + 'tasks = "engineering"\naccount = "e@x.com"\nkey = "k-engineer"\n',
-            "account": ro + 'tasks = ["engineering"]\nkey = "k-engineer"\n',
-            "account ": ro + 'tasks = ["engineering"]\naccount = ""\nkey = "k-engineer"\n',
-            "key": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\n',
-            "key ": ro + 'tasks = ["engineering"]\naccount = "e@x.com"\nkey = ""\n',
-        }
-        for label, text in cases.items():
-            with self.subTest(label):
-                self.write("roles/engineer.toml", text)
-                self.rejects(label.strip(), prefix="roles/engineer.toml")
 
-    def test_read_only_paths(self):
-        for bad in ('["playground/private_docs"]', '["~/playground/../private_docs"]', '["{repo}/x"]', '"/"', '["{docs_clone}/x"]',
-                    '["{docs_clone}", "{docs_clone}/x"]', '["x{docs_clone}"]', '["{docs_clone"]', '["{DOCS_CLONE}"]'):
-            with self.subTest(bad):
-                self.write("roles/engineer.toml", f"read_only = {bad}\n" + ENGINEER_ID)
-                self.rejects("read_only", prefix="roles/engineer.toml")
+CORE_TOML = """tier = 2
+effort = "high"
+output = { type = "local" }
 
-    def test_docs_clone_in_read_only_and_add_dirs(self):
-        self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/a", "{docs_clone}", "/b/c/"]\n')
-        runs = self.runs()
-        self.assertEqual(runs["researcher"].task["add_dirs"], ["~/a", DOCS_CLONE, "/b/c/"])
-        self.assertEqual(runs["engineer"].read_only, (DOCS_CLONE,))
-        _, tasks = pipeline.registry(self.root, DOCS_CLONE)
-        self.assertEqual(tasks["engineering"], {"model": "opus", "effort": "high", "repo_from_issue": True, "prefix": "ENG"})
+[roles.researcher]
+default_task = "deep-research"
 
-    def test_docs_clone_follows_the_config(self):
-        clone = os.path.join(self.outside, "notes")
-        runs = self.runs(ROLES.replace(DOCS_CLONE, clone))
-        self.assertEqual(runs["engineer"].read_only, (clone,))
-        self.assertEqual(runs["researcher"].task["add_dirs"], [clone])
+[roles.researcher.tasks.deep-research]
+output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Research/" }
 
-    def test_docs_clone_normalized_like_a_literal_path(self):
-        self.assertEqual(pipeline.registry(self.root, "/nonexistent/notes/")[0]["engineer"].read_only, ("/nonexistent/notes",))
-        for bad in ("notes", "/nonexistent/../notes", "/nonexistent/{x}"):
-            with self.subTest(bad):
+[roles.researcher.tasks.light-research]
+output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Research/" }
+
+[roles.pm]
+default_task = "product-design"
+
+[roles.pm.tasks.product-design]
+output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }
+
+[roles.engineer]
+default_task = "engineering"
+
+[roles.engineer.tasks.engineering]
+output = { type = "pull-request" }
+"""
+DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }'
+DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-design": "Designs/"}
+
+
+class OtherRoot(ConfigFile, unittest.TestCase):
+    """A repo root with its own pipeline.toml (load() writes it) and core/config/config.toml; core's text and client
+    configs are the real ones."""
+    def setUp(self):
+        super().setUp()
+        self.dir = self.root = os.path.join(self.dir, "my root")
+        os.makedirs(os.path.join(self.root, "core", "config"))
+        for rel in ("team", "output", os.path.join("config", "clients")):
+            os.symlink(os.path.join(pipeline.CORE, rel), os.path.join(self.root, "core", rel))
+        self.core(CORE_TOML)
+
+    def core(self, text):
+        with open(os.path.join(self.root, "core", "config", "config.toml"), "w") as f:
+            f.write(text)
+
+    def runs(self, text=PIPELINE):
+        return pipeline.runnable(self.load(text), root=self.root)
+
+    def fails(self, message, text=PIPELINE):
+        with self.assertRaises(SystemExit) as cm:
+            self.runs(text)
+        self.assertEqual(cm.exception.code, message)
+
+    def test_default_task_first_then_core_order(self):
+        self.core(CORE_TOML.replace('default_task = "deep-research"', 'default_task = "light-research"'))
+        researcher = self.runs()["researcher"]
+        self.assertEqual((researcher.tasks, researcher.default), (("light-research", "deep-research"), "light-research"))
+
+    def test_overlay_fills_root(self):
+        self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
+                  '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/x --y {{root}}"\n')
+        q = shlex.quote(self.root)
+        self.assertTrue(q.startswith("'"), q)
+        want = {"tier": 3, "commands": [f"ls {q}/a", "true"], "roles": {"researcher": {"tasks": {"deep-research": {"gate": f"python3 {q}/x --y {q}"}}}}}
+        self.assertEqual(pipeline.overlay(self.root), want)
+        self.assertEqual(pipeline.layers(self.root), [want])
+        run = pipeline.run_config("researcher", "deep-research", self.root)
+        self.assertEqual((run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}"))
+        self.assertEqual(pipeline.run_config("pm", "product-design", self.root).gate, "")
+
+    def test_no_core_table(self):
+        self.load(PIPELINE)
+        self.assertEqual((pipeline.overlay(self.root), pipeline.layers(self.root)), ({}, [{}]))
+        self.assertEqual(pipeline.run_config("researcher", "deep-research", self.root).gate, "")
+
+    def test_overlay_unknown_keys(self):
+        cases = [("[core]\nfoo = 1\n", "'foo' in the global table"),
+                 ('[core]\nusers = ["octocat"]\n', "'users' in the global table"),
+                 ('[core.roles.researcher]\ndefault_task = "light-research"\n', "'default_task' in roles.researcher"),
+                 ('[core.roles.researcher.tasks.deep-research]\ntasks = 1\n', "'tasks' in roles.researcher.tasks.deep-research")]
+        for text, message in cases:
+            with self.subTest(message):
+                self.load(PIPELINE + text)
                 with self.assertRaises(SystemExit) as cm:
-                    pipeline.registry(self.root, bad)
-                self.assertTrue(str(cm.exception.code).startswith("roles/engineer.toml: read_only"), cm.exception.code)
+                    pipeline.overlay(self.root)
+                self.assertEqual(cm.exception.code, "pipeline.toml [core]: unknown key " + message)
 
-    def test_registry_reads_the_config_only_for_the_placeholder(self):
-        with mock.patch.object(pipeline, "load_config", return_value={"docs": {"clone": "/from/config"}}) as load:
-            roles, tasks = pipeline.registry(self.root)
-            load.assert_called_once_with()
-            self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), (("/from/config",), ["/from/config"]))
-            self.assertEqual(pipeline.registry(self.root, "/d")[1]["deep-research"]["add_dirs"], ["/d"])
-            self.write("roles/engineer.toml", 'read_only = ["~/docs"]\n' + ENGINEER_ID)
-            self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["~/docs"]\n')
-            roles, tasks = pipeline.registry(self.root)
-            self.assertEqual((roles["engineer"].read_only, tasks["deep-research"]["add_dirs"]), ((os.path.expanduser("~/docs"),), ["~/docs"]))
-            self.assertEqual(load.call_count, 1)
-            self.write("tasks/deep-research.toml", 'model = "opus"\neffort = "xhigh"\nadd_dirs = ["{docs_clone}"]\n')
-            self.assertEqual(pipeline.registry(self.root)[1]["deep-research"]["add_dirs"], ["/from/config"])
-            self.assertEqual(load.call_count, 2)
+    def test_core_errors(self):
+        self.core(CORE_TOML.replace("[roles.engineer.tasks.engineering]\n", "[roles.engineer.tasks.engineering]\ntier = 9\n"))
+        self.fails("core: tier must be an integer 1–4, got 9")
+        self.core(CORE_TOML)
+        self.fails("core: gate must be one line of shell command without backticks",
+                   PIPELINE + '[core.roles.researcher.tasks.light-research]\ngate = "echo `id`"\n')
 
-    def test_docs_clone_add_dirs_rejected_forms(self):
-        for bad in ('["{docs_clone}/x"]', '["{repo}"]', '["x{docs_clone}"]', '["{docs_clone"]', '["a}"]', '"{docs_clone}"', '"~/a"', "[5]", '[["~/a"]]'):
-            with self.subTest(bad):
-                self.write("tasks/deep-research.toml", f'model = "opus"\neffort = "xhigh"\nadd_dirs = {bad}\n')
-                self.rejects("add_dirs", prefix="tasks/deep-research.toml")
+    def test_docs(self):
+        runs = self.runs()
+        self.assertEqual(pipeline.docs(runs, self.root), pipeline.Docs("acme/notes", "trunk", DIRS))
+        self.assertEqual(pipeline.docs({"pm": runs["pm"], "engineer": runs["engineer"]}, self.root),
+                         pipeline.Docs("acme/notes", "trunk", {"product-design": "Designs/"}))
+        self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", ', host = "github.com" }')))
+        self.assertEqual(pipeline.docs(runs, self.root), pipeline.Docs("acme/notes", "trunk", DIRS))
 
-    def test_repo_read_only(self):
-        self.write("roles/researcher.toml", 'read_only = ["{repo}"]\n' + RESEARCHER_ID)
-        self.rejects("read_only {repo} needs default task 'deep-research' with repo_from_issue and no allowed_tools", prefix="roles/researcher.toml")
-        self.write("roles/researcher.toml", RESEARCHER_ID)
-        self.write("roles/engineer.toml", 'read_only = ["{repo}"]\n' + ENGINEER_ID)
-        self.assertEqual(self.runs()["engineer"].read_only, ("{repo}",))
-        self.two_tasks(read_only='["{repo}"]')
-        self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
-        bad = {"no repo_from_issue": 'model = "sonnet"\neffort = "low"\n',
-               "allowed_tools": 'model = "sonnet"\neffort = "low"\nrepo_from_issue = true\nallowed_tools = []\n'}
-        for label, task in bad.items():
-            with self.subTest(label):
-                self.write("tasks/light-research.toml", task)
-                self.rejects("read_only {repo} needs task 'light-research' with repo_from_issue and no allowed_tools",
-                             prefix="roles/engineer.toml")
-        self.write("tasks/engineering.toml", ENGINEERING + "allowed_tools = []\n")
-        self.rejects("read_only {repo} needs default task 'engineering' with repo_from_issue and no allowed_tools",
-                     prefix="roles/engineer.toml")
-        self.write("tasks/engineering.toml", ENGINEERING)
-        self.two_tasks(task=bad["no repo_from_issue"], read_only='["/nonexistent/x"]')
-        self.assertEqual(sorted(self.runs()["engineer"].tasks), ["engineering", "light-research"])
-
-    def memory(self, path, read_only):
-        self.write("roles/engineer.toml", f'read_only = ["{read_only}"]\nmemory = "{path}"\n' + ENGINEER_ID)
-
-    def test_memory(self):
-        ro, mem, link = (os.path.join(self.outside, d) for d in ("docs", "engineer", "link"))
-        for d in (os.path.join(ro, "sub"), os.path.join(self.root, "notes"), mem):
-            os.makedirs(d)
-        os.symlink(os.path.join(self.root, "templates"), link)
-        cases = [("relative", "mem"), ("missing", os.path.join(self.outside, "nope")),
-                 ("under root", os.path.join(self.root, "notes")), ("root itself", self.root),
-                 ("roles", os.path.join(self.root, "roles")), ("ancestor of root", os.path.dirname(self.root)),
-                 ("symlink into root", link),
-                 ("at read_only", ro), ("under read_only", os.path.join(ro, "sub")), ("ancestor of read_only", self.outside)]
-        text = ROLES.replace(DOCS_CLONE, ro)
-        for read_only in (ro, "{docs_clone}"):
-            for label, path in cases:
-                with self.subTest(label, read_only=read_only):
-                    self.memory(path, read_only=read_only)
-                    self.rejects("memory", prefix="roles/engineer.toml", text=text)
-            self.memory(mem, read_only=read_only)
-            self.assertEqual(self.runs(text)["engineer"].memory, mem)
-
-    def test_memory_protected_both_ways(self):
-        home = os.path.join(self.outside, "home")
-        for d in (".claude/mem", "Library/LaunchAgents/mem", "notes"):
-            os.makedirs(os.path.join(home, d))
-        ro = os.path.join(self.outside, "docs")
-        os.makedirs(ro)
-        with mock.patch.dict(os.environ, {"HOME": home}):
-            for d in (".claude", ".claude/mem", "Library/LaunchAgents", "Library/LaunchAgents/mem", "Library", ""):
-                with self.subTest(d or "home"):
-                    self.memory(os.path.join(home, d).rstrip("/"), read_only=ro)
-                    self.rejects("memory", prefix="roles/engineer.toml")
-            self.memory(os.path.join(home, "notes"), read_only=ro)
-            self.assertEqual(self.runs()["engineer"].memory, os.path.join(home, "notes"))
-
-    def test_allowed_tools_checked_in_task_file(self):
-        self.write("tasks/engineering.toml", ENGINEERING + 'allowed_tools = ["Bash(git push origin *)"]\n')
-        self.rejects("tasks/engineering.toml: allowed_tools rule has a wildcard: 'Bash(git push origin *)'", prefix="tasks/engineering.toml")
-        rule = "Bash(git -c core.hooksPath=/dev/null -C {worktree} push -u git@github.com:{owner}/{name}.git {branch})"
-        self.write("tasks/engineering.toml", ENGINEERING + f'allowed_tools = ["{rule}"]\n')
-        self.assertEqual(self.runs()["engineer"].task["allowed_tools"], [rule])
-
-    def test_read_repo(self):
-        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + "read_repo = true\n")
-        self.assertIs(self.runs()["researcher"].task["read_repo"], True)
-        self.write("tasks/deep-research.toml", FILES["tasks/deep-research.toml"] + "read_repo = true\nrepo_from_issue = true\n")
-        self.rejects("read_repo and repo_from_issue are exclusive", prefix="tasks/deep-research.toml")
-
-    def test_task_labels_key_needs_task_pair(self):
-        self.rejects("pipeline.toml: task_labels.ghost has no tasks/ghost.md + .toml pair",
-                     text=ROLES + f'[task_labels]\nghost = "{LABEL1}"\n')
-        self.rejects("pipeline.toml: task_labels.light-research has no tasks/light-research.md + .toml pair",
-                     text=ROLES + f'[task_labels]\nengineering = "{LABEL1}"\nlight-research = "{LABEL2}"\n')
-        self.two_tasks()
-        text = ROLES + f'[task_labels]\nlight-research = "{LABEL1}"\nengineering = "{LABEL2}"\n'
-        self.assertEqual(sorted(self.runs(text)), ["engineer", "researcher"])
+    def test_docs_mismatch(self):
+        message = "core: document tasks must publish to one github.com repo and branch"
+        for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
+                       DESIGN.replace(" }", ', host = "ghe.example.com" }')):
+            with self.subTest(design):
+                self.core(CORE_TOML.replace(DESIGN, design))
+                self.fails(message)
+        self.core(CORE_TOML)
+        self.fails(message, HEADER + role("engineer"))
 
 
 P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51ab71fb8"
 
 
 class RealConfig(unittest.TestCase):
-    """The repo's pipeline.toml values that test_launch's RealConfig does not pin."""
+    """The repo's pipeline.toml, core config and TASKS together."""
     def test_real_config(self):
         cfg = pipeline.load_config()
-        self.assertEqual(sorted(pipeline.runnable(cfg)), ["engineer", "pm", "researcher"])
+        runs = pipeline.runnable(cfg)
+        self.assertEqual(runs, {
+            "researcher": pipeline.Role("frank.agent.w+researcher@gmail.com", "linear-api-key-researcher", ("deep-research", "light-research")),
+            "pm": pipeline.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",)),
+            "engineer": pipeline.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("engineering",))})
+        self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
+        self.assertEqual(pipeline.docs(runs), pipeline.Docs("ophis/private_docs", "main", {
+            "deep-research": "Research/", "light-research": "Research/", "product-design": "Product Design/"}))
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
-        self.assertEqual(cfg["docs"], {
-            "repo": "ophis/private_docs", "clone": os.path.expanduser("~/playground/private_docs"), "branch": "main"})
+        self.assertNotIn("docs", cfg)
+        self.assertEqual(cfg["core"], {"roles": {"researcher": {"tasks": {"deep-research": {
+            "gate": "python3 {{root}}/scripts/router.py --brake"}}}}})
         self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
         self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
-        tasks = pipeline.registry()[1]
-        self.assertEqual([tasks[t].get("prefix") for t in ("product-design", "engineering", "deep-research")], ["PRD", "ENG", None])
+        self.assertEqual({t: (x.kind, x.prefix) for t, x in pipeline.TASKS.items()},
+                         {"deep-research": ("research", ""), "light-research": ("research", ""),
+                          "product-design": ("design", "PRD"), "engineering": ("build", "ENG")})
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):
@@ -675,51 +465,6 @@ class Paths(unittest.TestCase):
         self.assertIsNone(pipeline.transcript("TASK-9", "../x"))
 
 
-class AllowedTools(unittest.TestCase):
-    def check(self, allowed_tools, repo_from_issue=True):
-        p = {"allowed_tools": allowed_tools}
-        if repo_from_issue:
-            p["repo_from_issue"] = True
-        pipeline.check_allowed_tools("tasks/engineering.toml", p)
-
-    def rejects(self, what, rule, **kw):
-        with self.assertRaises(SystemExit) as cm:
-            self.check([rule], **kw)
-        self.assertEqual(cm.exception.code, f"tasks/engineering.toml: allowed_tools {what}: {rule!r}")
-
-    def test_rejects_root(self):
-        self.rejects("rule contains root", f"Bash(cat {pipeline.ROOT}/secret)")
-
-    def test_rejects_root_in_home_forms(self):
-        home = os.path.expanduser("~")
-        for form in ("~", "$HOME", "${HOME}"):
-            rule = f"Bash(cat {form}/x/agent-pm/secret)"
-            with self.assertRaises(SystemExit, msg=form) as cm:
-                pipeline.check_allowed_tools("tasks/e.toml", {"repo_from_issue": True, "allowed_tools": [rule]},
-                                             root=os.path.join(home, "x", "agent-pm"))
-            self.assertEqual(cm.exception.code, f"tasks/e.toml: allowed_tools rule contains root: {rule!r}", form)
-
-    def test_rejects_interpreter_on_script(self):
-        for rule in ("Bash(python3 /tmp/x.py)", "Bash(bash ./do.sh)", "Bash(node x.js)", "Bash(python3.12 x.py)",
-                     "Bash(make)", "Bash(make -C {worktree} test)", "Bash(npm test)", "Bash(npx jest)",
-                     "Bash(pnpm test)", "Bash(yarn build)", "Bash(bun run x)", "Bash(cargo test)", "Bash(go test ./...)",
-                     "Bash(pytest)", "Bash(uv run x)"):
-            with self.subTest(rule):
-                self.rejects("rule runs an interpreter on a script", rule)
-
-    def test_malformed_template_is_config_error(self):
-        for rule in ("Bash(git -C {worktree push)", "Bash(git -C worktree} push)"):
-            with self.assertRaises(SystemExit) as cm:
-                self.check([rule])
-            self.assertTrue(str(cm.exception.code).startswith("tasks/engineering.toml: allowed_tools rule is not a valid template ("),
-                            cm.exception.code)
-
-    def test_rejects_without_repo_from_issue(self):
-        with self.assertRaises(SystemExit) as cm:
-            self.check(["Bash(git status)"], repo_from_issue=False)
-        self.assertEqual(cm.exception.code, "tasks/engineering.toml: allowed_tools without repo_from_issue")
-
-
 class LinearGql(unittest.TestCase):
     def test_harness_key_by_service_only(self):
         calls = []
@@ -753,6 +498,66 @@ class LinearGql(unittest.TestCase):
         pipeline.harness_service.cache_clear()
         self.addCleanup(pipeline.harness_service.cache_clear)
         self.assertEqual(pipeline.harness_service(), "linear-api-key")
+
+    def test_service_names_the_keychain_item(self):
+        run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(b'{"data": {}}')
+        with mock.patch.object(pipeline, "harness_service", side_effect=AssertionError("harness key read")), \
+                mock.patch.object(pipeline.subprocess, "run", run), \
+                mock.patch.object(pipeline.urllib.request, "urlopen", return_value=resp) as urlopen:
+            pipeline.linear_gql("query { viewer { id } }", service="linear-api-key-pm")
+        self.assertEqual(run.call_args[0][0], ["security", "find-generic-password", "-s", "linear-api-key-pm", "-w"])
+        self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {})
+
+
+class Shell(unittest.TestCase):
+    def test_sh_run(self):
+        with mock.patch.object(pipeline.subprocess, "run", return_value="res") as run, \
+                mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}):
+            self.assertEqual(pipeline.sh_run(["git", "status"], 5), "res")
+            env = {**os.environ, "PATH": pipeline.PATH}
+        run.assert_called_once_with(["git", "status"], capture_output=True, text=True, timeout=5,
+                                    stdin=subprocess.DEVNULL, env=env)
+        self.assertEqual(env["KEEP"], "1")
+
+    def test_err_text(self):
+        for stderr, want in ((None, ""), ("", ""), ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"), ("x" * 300, "x" * 200)):
+            with self.subTest(stderr=stderr):
+                self.assertEqual(pipeline.err_text(SimpleNamespace(stderr=stderr)), want)
+
+
+class AtomicWrite(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.path = os.path.join(self.dir, "input.md")
+
+    def read(self, path):
+        with open(path) as f:
+            return f.read()
+
+    def test_writes_and_replaces(self):
+        pipeline.atomic_write(self.path, "one\n")
+        pipeline.atomic_write(self.path, "two\n")
+        self.assertEqual((self.read(self.path), os.listdir(self.dir)), ("two\n", ["input.md"]))
+
+    def test_planted_symlink_replaced_not_followed(self):
+        outside = os.path.join(self.dir, "outside")
+        with open(outside, "w") as f:
+            f.write("keep\n")
+        os.symlink(outside, self.path)
+        pipeline.atomic_write(self.path, "new\n")
+        self.assertFalse(os.path.islink(self.path))
+        self.assertEqual((self.read(self.path), self.read(outside)), ("new\n", "keep\n"))
+
+    def test_no_temp_left_on_error(self):
+        pipeline.atomic_write(self.path, "old\n")
+        with mock.patch.object(pipeline.os, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                pipeline.atomic_write(self.path, "new\n")
+        self.assertEqual((self.read(self.path), os.listdir(self.dir)), ("old\n", ["input.md"]))
 
 
 if __name__ == "__main__":

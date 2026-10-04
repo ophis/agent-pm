@@ -290,10 +290,10 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(gql.archived, ["id-TASK-1"])
 
         with mock.patch.object(prune, "runnable"), \
-                mock.patch.object(prune, "role_ids", side_effect=SystemExit("roles/pm.toml: account 'x' not found")):
+                mock.patch.object(prune, "role_ids", side_effect=SystemExit("pipeline.toml [roles.pm]: account 'x' not found in Linear")):
             code, out = self.prune(gql, roles=None)
         self.assertEqual(code, 3)
-        self.assertEqual(msgs(out), ["prune-error archive: Linear: roles/pm.toml: account 'x' not found"])
+        self.assertEqual(msgs(out), ["prune-error archive: Linear: pipeline.toml [roles.pm]: account 'x' not found in Linear"])
 
     def test_given_team_skips_team_query(self):
         wt = self.mkw("TASK-49", "TASK-49-x")

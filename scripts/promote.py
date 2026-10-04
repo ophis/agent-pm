@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
+from pipeline import CONFIG, TASKS, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -142,7 +142,7 @@ class Promoter:
             child = found[0] = ok(self.gql(M_CREATE, **{"in": {
                 "id": cid, "teamId": self.team.id, "projectId": src["project"]["id"], "assigneeId": self.ids[nxt],
                 "stateId": self.states["todo"], "priority": src["priority"],
-                "title": child_title(self.runs[nxt].task["prefix"], self.runs[role].task.get("prefix"), src["title"]),
+                "title": child_title(TASKS[self.runs[nxt].default].prefix, TASKS[self.runs[role].default].prefix or None, src["title"]),
                 "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
