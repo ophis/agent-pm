@@ -1,6 +1,6 @@
 """Clients: one class per agent client, turning a composed run into the command that starts it.
 
-A client gets the prompt, the run config and neutral Access (extra dirs, exact commands) and returns a Launch: a
+A client gets the prompt, the run config and neutral Access (extra dirs, commands to pre-approve) and returns a Launch: a
 command to start, files to write, or both. Its data (model names, effort names, fixed flags, env) comes from
 clients/<name>.toml (core/clients/) when it needs any; its behavior is code.
 Add a client: a module here with a Client subclass, registered in REGISTRY, plus clients/<name>.toml if it

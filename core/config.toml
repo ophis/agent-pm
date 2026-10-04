@@ -5,7 +5,7 @@
 #   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
 #   write      extra dirs the run writes; the workdir and the output file's dir are always reachable
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
-#              {{scripts}} is core's scripts/ dir
+#              {{scripts}} is core's scripts/ dir, {{workdir}} the run's workdir
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 #   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
 
@@ -23,7 +23,7 @@ default_task = "deep-research"
 
 [roles.researcher.tasks.deep-research]
 templates = ["research-report"]
-commands = ["python3 {{scripts}}/repo.py prepare *"]
+commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]
 
 [roles.researcher.tasks.deep-research.output]
 type = "github"
@@ -34,7 +34,7 @@ dir = "Research/"
 
 [roles.researcher.tasks.light-research]
 templates = ["research-report"]
-commands = ["python3 {{scripts}}/repo.py prepare *"]
+commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]
 
 [roles.researcher.tasks.light-research.output]
 type = "github"
@@ -63,7 +63,7 @@ default_task = "engineering"
 
 [roles.engineer.tasks.engineering]
 effort = "xhigh"
-commands = ["python3 {{scripts}}/repo.py checkout *", "python3 {{scripts}}/repo.py status *"]
+commands = ["python3 {{scripts}}/repo.py checkout --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
 
 [roles.engineer.tasks.engineering.output]
 type = "pull-request"
@@ -75,3 +75,8 @@ default_task = "echo"
 [roles.dummy-tester.tasks.echo]
 tier = 4
 effort = "low"
+
+[roles.dummy-tester.tasks.prepare-test]
+tier = 3             # haiku has no auto mode, so it can't write the Output file
+effort = "low"
+commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]

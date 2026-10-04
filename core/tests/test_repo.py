@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import repo  # noqa: E402
@@ -104,6 +105,12 @@ class Prepare(Base):
         self.assertIn("HTTP 404", err)
         self.assertFalse(run.ran("gh", "repo", "clone"))
 
+    def test_a_second_dir_is_refused(self):
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
+            repo.main(["prepare", "--dir", self.dir, "o/n", "--dir", os.path.expanduser("~/.claude/skills")], run=Fake([]))
+        self.assertIn("--dir given twice", err.getvalue())
+
     def test_network_failure_exits_1(self):
         run = Fake([info(), (["gh", "repo", "clone"], fail("connection reset"))])
         code, _, err = self.main(["prepare", "o/n", "--dir", self.dir], run)
@@ -127,7 +134,14 @@ class Checkout(Base):
     def test_remote_branch_is_tracked(self):
         (code, _, _), run = self.checkout(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
         self.assertEqual(code, 0)
+        self.assertTrue(run.ran("git", "-C", self.wt, "ls-remote", "--heads", "origin", "refs/heads/TASK-1-x"))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--track", "-b", "TASK-1-x", "origin/TASK-1-x"))
+
+    def test_default_branch_is_invalid(self):
+        (code, _, err), run = self.checkout(info(default="main"), branch="main")
+        self.assertEqual(code, 2)
+        self.assertIn("default branch", err)
+        self.assertFalse(run.ran("gh", "repo", "clone"))
 
     def test_existing_checkout_fetches_and_switches_to_the_local_branch(self):
         (code, _, _), run = self.checkout(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")))

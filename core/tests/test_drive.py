@@ -17,7 +17,6 @@ import drive  # noqa: E402
 CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SID = "11111111-2222-3333-4444-555555555555"
 NO_ACCESS = drive.Access(dirs=[], commands=[])
-PREPARE = f"python3 {CORE}/scripts/repo.py prepare *"
 RUN = {"role": "r", "task": "t", "tier": 2, "effort": "high"}
 
 
@@ -64,7 +63,7 @@ class Claude(Base):
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
-            "--allowedTools", f"Bash({PREPARE})"])
+            "--allowedTools", f"Bash(python3 {CORE}/scripts/repo.py prepare --dir {self.work}/src *)"])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
@@ -72,7 +71,7 @@ class Claude(Base):
         argv = self.plan("engineer", "engineering", client="claude").argv
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
-            f"Bash(python3 {CORE}/scripts/repo.py {cmd} *)" for cmd in ("checkout", "status")])
+            f"Bash(python3 {CORE}/scripts/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")])
 
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
@@ -122,15 +121,15 @@ class Generic(Base):
     def test_driver_hands_the_client_neutral_access(self):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
-        self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[PREPARE]))
+        self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[f"python3 {CORE}/scripts/repo.py prepare --dir {self.work}/src *"]))
         self.assertEqual((seen["sid"], seen["resume"], seen["run"]["task"]), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Principles"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
 
     def test_repo_entry_binds_to_the_repo_arg(self):
-        run = {"read": [], "write": ["repo"], "commands": ["{{scripts}}/x *"]}
+        run = {"read": [], "write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}
         acc = drive.access(run, repo=self.repo, out=os.path.join(self.work, "o.md"), workdir=self.work, scripts="/s")
-        self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=["/s/x *"]))
+        self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[f"/s/x --dir {self.work}/src *"]))
 
     def test_output_dir_outside_workdir_is_added(self):
         out = os.path.join(self.tmp.name, "elsewhere", "out.md")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Driver: composes a run, has its client (scripts/clients.py) build the command, starts it and checks the output.
+"""Driver: composes a run, has its client (scripts/clients/) build the command, starts it and checks the output.
 
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--dry-run]
@@ -25,7 +25,7 @@ STATUSES = ("done", "needs_input", "failed")
 
 @dataclass
 class Access:
-    """A run's client-neutral constraints, as absolute paths and exact commands."""
+    """A run's client-neutral constraints, as absolute paths and commands to pre-approve."""
     dirs: list        # extra dirs the run may reach
     commands: list    # shell commands to pre-approve
 
@@ -38,13 +38,13 @@ def bind(entry, repo):
 
 
 def access(run, *, repo, out, workdir, scripts):
-    """The run's Access, `{{scripts}}` in commands filled. Edit limits are left to the client's permission mode (auto)."""
+    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled. Edit limits are left to the client's permission mode (auto)."""
     workdir, out_dir = os.path.abspath(workdir), os.path.dirname(os.path.abspath(out))
     dirs = [] if out_dir == workdir or out_dir.startswith(workdir + os.sep) else [out_dir]
     for p in (bind(e, repo) for e in run["read"] + run["write"]):
         if p and p not in dirs:
             dirs.append(p)
-    return Access(dirs, [fill(c, {"scripts": scripts}, "commands") for c in run["commands"]])
+    return Access(dirs, [fill(c, {"scripts": scripts, "workdir": workdir}, "commands") for c in run["commands"]])
 
 
 def override(client, run):

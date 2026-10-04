@@ -294,7 +294,7 @@ class RealCore(unittest.TestCase):
         for role, task in ALL:
             prompt, run = compose.compose(CORE, role, task, **PATHS)
             for cmd in run["commands"]:
-                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "scripts")}, task).removesuffix(" *")
+                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "scripts"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
 
     def test_no_orchestration_references(self):

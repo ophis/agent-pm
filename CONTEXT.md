@@ -19,7 +19,7 @@ Rules every role follows; on conflict, principles > charter > task.
 A role's text: the rules shared by all of that role's tasks.
 
 **Run**:
-One fresh `claude -p` session doing one task as one role.
+One task done once as one role: a fresh `claude -p` session, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -36,8 +36,11 @@ The part of the delegate that assembles principles, role, task and input into a 
 The part of the delegate that starts a run through a client and checks its output; the same for every client.
 
 **Client**:
-An agent runtime a run executes in (Claude Code today); it turns a composed run into its own command and enforces the run's hard constraints.
+A way to execute a composed run (Claude Code `claude -p`, a skill); it turns the run into its own launch (a command, or files) and enforces what hard constraints it can.
 _Avoid_: runtime, backend
+
+**Destination**:
+Where a run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.
 
 **Deliverable**:
 The Markdown a run delivers to its destination (report, PRD, PR description); the output file's body after the frontmatter.
@@ -47,5 +50,5 @@ _Avoid_: document, result, report
 A form a prompt is delivered in (skill, plugin agent, `claude -p` prompt); roles and tasks stay vehicle-neutral.
 
 **Orchestration layer**:
-The code that turns a Linear issue into free text, calls the delegate, publishes the output and writes back to Linear.
+The code that turns a Linear issue into free text, calls the delegate and maps the run's outcome back to Linear; the orchestrator of the pipeline's runs.
 _Avoid_: runner

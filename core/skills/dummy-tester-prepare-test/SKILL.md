@@ -1,11 +1,11 @@
 ---
-name: dummy-tester-echo
-description: "Return the input unchanged. Use only to check that a role, a task and their output work end to end."
+name: dummy-tester-prepare-test
+description: "Clone the named repo read-only and report the checkout. Use only to check that repo.py prepare works end to end."
 ---
 
 # Principles
 
-On conflict: [Principles](#principles) > [Dummy Tester rules](#dummy-tester) > [Echo rules](#echo).
+On conflict: [Principles](#principles) > [Dummy Tester rules](#dummy-tester) > [Prepare Test rules](#prepare-test).
 
 ## Work
 
@@ -33,14 +33,15 @@ You check that a role, a task and their output work end to end.
 - `<repo>`: the one repo the input names: its `Repo:` line, else an `<owner>/<name>`, `<host>/<owner>/<name>` or repo URL in the text.
 - **Prepare**: run exactly `python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare --dir <Workdir>/src <repo>` as its own command (no `cd`, pipe, redirect or `&&`).
 
-# Echo
+# Prepare Test
 
-Return the input unchanged.
+Prepare the input's repo and nothing else.
 
 ## Steps
 
-1. **Echo.** The deliverable is the input, verbatim: copying, not writing, so Principles › Writing doesn't apply.
-2. **Finish.** `status: done`; `title: echo`; `summary` the input's first line.
+1. **Read** the input. No repo named → `needs_input`, stop.
+2. **Prepare** (Dummy Tester › Target). Exit 2 → `needs_input`, a `questions` entry quoting its error; exit 1 → `failed`, `summary` the error; stop either way.
+3. **Finish.** `status: done`; `title: prepare-test`; `summary` the JSON's `repo`, `commit` and `worktree`; the deliverable is the JSON, verbatim. Read nothing in the checkout.
 
 
 # Output

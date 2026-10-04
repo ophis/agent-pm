@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Target repos for runs, checked out into DIR/<name>; a checkout of the same repo there is reused.
 
-repo.py prepare REPO --dir DIR             read-only, shallow, detached at the default branch; prints
+repo.py prepare --dir DIR REPO             read-only, shallow, detached at the default branch; prints
                                            {"repo", "host", "commit", "worktree", "permalink_base"}
-repo.py checkout REPO --branch B --dir DIR  writable, on branch B (from origin/B, else the default branch); needs push
+repo.py checkout --dir DIR --branch B REPO  writable, on branch B (from origin/B, else the default branch); needs push
                                            permission; prints {"repo", "host", "default", "branch", "worktree"}
-repo.py status REPO --branch B --dir DIR    after checkout: {"pr", "plan_docs", "user", "others"}, `user` and `others`
+repo.py status --dir DIR --branch B REPO    after checkout: {"pr", "plan_docs", "user", "others"}, `user` and `others`
                                            being PR comments and reviews by the user (config.toml's `users`, else
                                            the gh login) and by anyone else since the latest plan doc commit
-REPO is `owner/name`, `host/owner/name` or `https://host/owner/name`.
+REPO is `owner/name`, `host/owner/name` or `https://host/owner/name`. Each option may be given once, so a command
+pre-approved by its `--dir` prefix can't be redirected elsewhere by a second `--dir`.
 Exits 2 when REPO or B is invalid or unreachable (not found, no access or push permission, DIR/<name> holds
 something else), 1 on any other failure.
 """
@@ -33,6 +34,13 @@ CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 
 class Invalid(Exception):
     pass
+
+
+class Once(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest) is not None:
+            parser.error(f"{option_string} given twice")
+        setattr(namespace, self.dest, values)
 
 
 def sh(argv, timeout):
@@ -135,6 +143,8 @@ def checkout(spec, branch, dir, run=sh):
         raise Invalid(f"{host}/{owner}/{name}: no push permission")
     if not isinstance(default, str) or not BRANCH.fullmatch(default):
         raise Invalid(f"{host}/{owner}/{name}: unsafe default branch name")
+    if branch == default:
+        raise Invalid(f"{branch} is the default branch; build on another")
     if not exists:
         clone(run, host, owner, name, wt)
     else:
@@ -142,7 +152,7 @@ def checkout(spec, branch, dir, run=sh):
     if git(run, wt, "branch", "--show-current").strip() != branch:
         if git(run, wt, "branch", "--list", branch).strip():
             git(run, wt, "checkout", branch)
-        elif git(run, wt, "ls-remote", "--heads", "origin", branch).strip():
+        elif git(run, wt, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
             git(run, wt, "checkout", "--track", "-b", branch, f"origin/{branch}")
         else:
             git(run, wt, "checkout", "--no-track", "-b", branch, f"origin/{default}")
@@ -212,10 +222,10 @@ def main(argv, run=sh, out=sys.stdout, err=sys.stderr, config=CONFIG):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("prepare", "checkout", "status"):
         p = sub.add_parser(cmd)
-        p.add_argument("repo")
-        p.add_argument("--dir", required=True)
+        p.add_argument("--dir", required=True, action=Once)
         if cmd != "prepare":
-            p.add_argument("--branch", required=True)
+            p.add_argument("--branch", required=True, action=Once)
+        p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "prepare":
