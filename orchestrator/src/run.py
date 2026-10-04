@@ -70,24 +70,41 @@ def _context(a, cfg, role, gql, plog, issue_id, repo):
         states=cfg["states"], repos=cfg["project_repos"], team=cfg["team"], target=repo)
 
 
-def outer(a, *, sh, gql, run, projects, keychain, root):
-    """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
-    os.environ["PATH"] = PATH
+class Setup(Exception):
+    """A run that cannot start: message, exit code (1 config, 2 role or task) and the project log known so far."""
+
+    def __init__(self, msg, rc, plog=None):
+        super().__init__(msg)
+        self.msg, self.rc, self.plog = msg, rc, plog
+
+
+def setup(a, root):
+    """(cfg, roles, name, role, plog) for the run's assignee and task, else Setup."""
     try:
         cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         roles = runnable(cfg, root)
     except SystemExit as e:
-        print(f"run.py: {e.code}", file=sys.stderr)
-        return 1
+        raise Setup(str(e.code), 1)
     name = role_for(roles, a.assignee)
     if name is None:
-        print(f"run.py: {a.assignee!r} is not a role account", file=sys.stderr)
-        return 2
+        raise Setup(f"{a.assignee!r} is not a role account", 2)
     role, logs = roles[name], os.path.join(root, "logs")
     if a.task not in role.tasks:
-        return fail(project_log(role.default, logs), a.issue, "config-error",
-                    f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2)
-    plog = project_log(a.task, logs)
+        raise Setup(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2,
+                    project_log(role.default, logs))
+    return cfg, roles, name, role, project_log(a.task, logs)
+
+
+def outer(a, *, sh, gql, run, projects, keychain, root):
+    """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
+    os.environ["PATH"] = PATH
+    try:
+        cfg, roles, name, role, plog = setup(a, root)
+    except Setup as e:
+        if e.plog:
+            return fail(e.plog, a.issue, "config-error", e.msg, e.rc)
+        print(f"run.py: {e.msg}", file=sys.stderr)
+        return e.rc
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
@@ -148,18 +165,11 @@ def inner(a, *, gql, popen, runs, root):
     signal.signal(signal.SIGHUP, stop)
     plog = None
     try:
-        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
-        roles = runnable(cfg, root)
-        name = role_for(roles, a.assignee)
-        if name is None:
-            raise SystemExit(f"{a.assignee!r} is not a role account")
-        role, logs = roles[name], os.path.join(root, "logs")
-        if a.task not in role.tasks:
-            plog = project_log(role.default, logs)
-            raise SystemExit(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})")
-        plog = project_log(a.task, logs)
+        cfg, roles, name, role, plog = setup(a, root)
     except (Exception, SystemExit) as e:
-        print(f"run.py: {e.code if isinstance(e, SystemExit) else one_line(e)}", file=sys.stderr)
+        plog = e.plog if isinstance(e, Setup) else None
+        print(f"run.py: {e.msg if isinstance(e, Setup) else e.code if isinstance(e, SystemExit) else one_line(e)}",
+              file=sys.stderr)
         line = f"end {a.issue} session={a.sid} exit=1"
         for path in (runs, plog) if plog else (runs,):
             _append(path, line)
