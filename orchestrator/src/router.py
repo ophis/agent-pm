@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, load_config, role_for, runnable, session,  # noqa: E402
                     stage_order, transcript)
+import linear  # noqa: E402
 from linear import STAMP, append, humans, linear_gql, log, parse_time, role_ids, task_group, team  # noqa: E402
 import drive  # noqa: E402
 
@@ -44,6 +45,7 @@ UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
 Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
+Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
 def local_time(s):
@@ -251,12 +253,8 @@ class Board:
     def last_move(self, issue, state, by_user=False):
         """Latest time the issue was moved to state (by_user: by a `human_members` user)."""
         if issue["id"] not in self.hist:
-            # orderBy createdAt returns newest first, so the latest moves are on this page.
-            self.hist[issue["id"]] = self.gql("""query($i: String!) { issue(id: $i) { history(first: 250, orderBy: createdAt) {
-                    nodes { createdAt actorId toStateId } } } }""", i=issue["id"])["issue"]["history"]["nodes"]
-        times = [parse_time(n["createdAt"]) for n in self.hist[issue["id"]] if n["toStateId"] == self.states[state]
-                 and (not by_user or n["actorId"] in self.humans)]
-        return max(times, default=None)
+            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
+        return linear.last_move(self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None)
 
     def attempts(self, issue):
         n = attempt_count(self.entries, issue["identifier"])
@@ -270,17 +268,14 @@ class Board:
         moved = self.last_move(issue, "in_progress")
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
-    def comment_and_move(self, issue, body, state):
+    def comment_and_move(self, issue, body, state, frm, prefix):
+        """linear.comment_and_move from frm to state, the humans subscribed for In Review; a skipped move is logged."""
         if self.dry:
             return
-        if state == "in_review":
-            for email in self.emails:
-                self.gql("mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }",
-                         i=issue["id"], e=email)
-        self.gql("mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
-                 i=issue["id"], b=body)
-        self.gql("mutation($i: String!, $u: IssueUpdateInput!) { issueUpdate(id: $i, input: $u) { success } }",
-                 i=issue["id"], u={"stateId": self.states[state]})
+        left = linear.comment_and_move(self.gql, issue["id"], body, self.states[state], self.states[frm],
+                                       self.emails if state == "in_review" else ())
+        if left is not None:
+            log(f"{prefix} {issue['identifier']}: issue is {left}")
 
     def recover(self):
         """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, task) or None."""
@@ -295,7 +290,7 @@ class Board:
                 continue
             if sid and self.attempts(issue) >= CAP:
                 log(f"recover: {ident} reached {CAP} attempts; In Review")
-                self.comment_and_move(issue, CAP_COMMENT, "in_review")
+                self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover:")
             elif sid and has_transcript(self.tdir, ident, sid):
                 role = self.role(issue)
                 run = self.runs[role]
@@ -303,16 +298,17 @@ class Board:
                 if task not in run.tasks:
                     log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
                     self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
-                                                 f'({", ".join(run.tasks)}); needs a look.', "in_review")
+                                                 f'({", ".join(run.tasks)}); needs a look.', "in_review", "in_progress",
+                                          "recover:")
                 else:
                     cand = cand or (issue, sid, task)
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
-                    self.comment_and_move(issue, INTERRUPTED, "todo")
+                    self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover:")
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
-                self.comment_and_move(issue, INTERRUPTED, "todo")
+                self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover:")
         return cand
 
     def next_run(self):
@@ -338,7 +334,7 @@ class Board:
         for issue in queue:
             if self.attempts(issue) >= CAP:
                 log(f"pick: {issue['identifier']} reached {CAP} attempts; In Review")
-                self.comment_and_move(issue, CAP_COMMENT, "in_review")
+                self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick:")
                 continue
             log(f"pick: {issue['identifier']} ({len(queue)} in queue)")
             if self.dry:
@@ -354,11 +350,10 @@ class Board:
             task, comment = task_for(current["labels"]["nodes"], self.group, role, role_tasks, self.label_tasks)
             if comment:
                 log(f"claim: {ident} bad task label; In Review")
-                self.comment_and_move(issue, comment, "in_review")
+                self.comment_and_move(issue, comment, "in_review", "todo", "claim:")
                 continue
             log(f"claim: {ident} task={task}")
-            self.gql("mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }",
-                     i=issue["id"], s=self.states["in_progress"])
+            linear.call(self.gql, linear.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
             return issue, task
         if queue:
             log("pick: nothing claimable")

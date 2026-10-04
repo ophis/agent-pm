@@ -48,6 +48,7 @@ class FakeLinear:
         self.queries = []
         self.todo_error = False
         self.unreadable = set()
+        self.refuse = set()   # issues whose state change returns success: false
         # the task_label_group's issueLabel node, its children the labels TaskLabels maps
         self.group = {"isGroup": True, "children": {"nodes": [{"id": i} for i in (LIGHT, DEEP, ORPHAN_LABEL)]}}
 
@@ -69,12 +70,13 @@ class FakeLinear:
                 issue.setdefault("subscribers", []).append(v["e"])
             elif "commentCreate" in query:
                 issue.setdefault("comments", []).append(v["b"])
+            elif v["i"] in self.refuse:
+                return {"issueUpdate": {"success": False}}
             else:
-                upd = v.get("u") or {"stateId": v["s"]}
-                issue["state"] = NAMES[upd["stateId"]]
-                if "assigneeId" in upd:
-                    issue["assignee"] = upd["assigneeId"]
-            return {}
+                issue["state"] = NAMES[v["s"]]
+            return {op(query): {"success": True}}
+        if query == linear.Q_ISSUE_STATE:
+            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         if "issues(filter" in query:
             f = v["f"]
             if "id" in f:
@@ -100,8 +102,14 @@ class FakeLinear:
         return [q for q, v in self.queries if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES[state]}}]
 
 
-def ops(fake):
-    return [re.search(r"\{ (\w+)\(", q).group(1) for q, _ in fake.mutations]
+def op(query):
+    return re.search(r"\{ (\w+)\(", query).group(1)
+
+
+def writes(fake):
+    """(operation, issue) of each mutation and each move's state read ("read"), in order."""
+    return [("read" if q == linear.Q_ISSUE_STATE else op(q), v["i"]) for q, v in fake.queries
+            if q == linear.Q_ISSUE_STATE or "mutation" in q]
 
 
 def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01T00:00:00Z", project=DR, inverse=(), labels=()):
@@ -120,6 +128,20 @@ def blocker(ident, state="started", kind="blocks"):
 def label(name, id, group=TASK_GROUP):
     """A labels node of the re-check: id and name in the label group (None = not in a group)."""
     return {"id": id, "name": name, "parent": group and {"id": group}}
+
+
+class Moved(FakeLinear):
+    """A human moves every issue to state `to` right after each list read."""
+    def __init__(self, issues, to):
+        super().__init__(issues)
+        self.to = to
+
+    def __call__(self, query, **v):
+        out = super().__call__(query, **v)
+        if "issues(filter" in query:
+            for i in self.issues.values():
+                i["state"] = self.to
+        return out
 
 
 class Base(unittest.TestCase):
@@ -527,8 +549,9 @@ class Plan(Base):
                 t = fake.issues["TASK-1"]
                 self.assertEqual((t["state"], t["assignee"], t["comments"], t.get("subscribers", [])),
                                  ("In Review", who("researcher"), [router.CAP_COMMENT], members))
-                self.assertEqual(ops(fake), ["issueSubscribe"] * len(members) + ["commentCreate", "issueUpdate"])
-                self.assertEqual(fake.mutations[-1][1]["u"], {"stateId": STATES["In Review"]})
+                self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1")] * len(members)
+                                 + [("read", "TASK-1"), ("issueUpdate", "TASK-1"), ("commentCreate", "TASK-1")])
+                self.assertEqual(fake.mutations[-2][1]["s"], STATES["In Review"])
 
     def test_unknown_human_fails_loud(self):
         self.config = self.write_config('human_members = ["nobody@x.com"]\n' + CONFIG)
@@ -556,6 +579,14 @@ class Plan(Base):
                                  {"createdAt": ago(minutes=360), "actorId": None, "toStateId": STATES["Todo"]}])
         self.assertEqual(out, "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+
+    def test_skipped_move_posts_no_comment(self):
+        fake = Moved([issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))], "In Review")
+        self.assertEqual(self.plan(fake), "")
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Review", []))
+        self.assertNotIn("comments", fake.issues["TASK-1"])
+        self.assertEqual(writes(fake), [("read", "TASK-1")])
+        self.assertIn(f"recover: TASK-1: issue is {STATES['In Review']}", self.said())
 
     def test_one_history_fetch_per_issue(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")])
@@ -701,6 +732,27 @@ class Claim(Base):
         self.assertEqual(self.claim(fake), "")
         self.assertIn("claim: TASK-1 is no longer Todo; skipping", self.err)
         self.assertEqual(fake.mutations, [])
+
+    def test_skipped_cap_move_posts_no_comment(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Progress")
+        for sid in "abcd":
+            self.add("start", "TASK-1", sid, 300)
+        self.assertEqual(self.claim(fake), "")
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["subscribers"]), ("In Progress", ["me@x.com"]))
+        self.assertNotIn("comments", t)
+        self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1")])
+        self.assertEqual(self.said(), ["pick: TASK-1 reached 4 attempts; In Review",
+                                       f"pick: TASK-1: issue is {STATES['In Progress']}", "pick: nothing claimable"])
+
+    def test_refused_claim_raises(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        fake.refuse.add("TASK-1")
+        with self.assertRaises(RuntimeError) as cm:
+            self.claim(fake)
+        self.assertEqual(str(cm.exception), "issueUpdate: success: false")
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
 
     def test_pick_recovers_then_claims(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))])
@@ -1073,10 +1125,9 @@ class TaskLabels(Base):
         t = fake.issues["TASK-1"]
         self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
                          ("In Review", who("researcher"), [self.ORPHAN], ["me@x.com"]))
-        self.assertEqual([(op, v["i"]) for op, (_, v) in zip(ops(fake), fake.mutations)],
-                         [("issueSubscribe", "TASK-1"), ("commentCreate", "TASK-1"), ("issueUpdate", "TASK-1"),
-                          ("issueUpdate", "TASK-2")])
-        self.assertEqual(fake.mutations[2][1]["u"], {"stateId": STATES["In Review"]})
+        self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1"), ("issueUpdate", "TASK-1"),
+                                        ("commentCreate", "TASK-1"), ("issueUpdate", "TASK-2")])
+        self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"])
         self.assertIn("claim: TASK-1 bad task label; In Review", self.said())
         self.assertEqual(self.launched(), "TASK-2")
         self.assertEqual([line.split()[2:4] for line in self.state.splitlines()], [["start", "TASK-2"]])
@@ -1171,8 +1222,9 @@ class TaskLabels(Base):
             self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
                              ("In Review", who(role), [f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks ({tasks}); needs a look.'],
                               ["me@x.com"]), role)
-            self.assertEqual(ops(fake), ["issueSubscribe", "commentCreate", "issueUpdate"], role)
-            self.assertEqual(fake.mutations[2][1]["u"], {"stateId": STATES["In Review"]}, role)
+            self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1"), ("issueUpdate", "TASK-1"),
+                                            ("commentCreate", "TASK-1")], role)
+            self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"], role)
             self.assertEqual(self.said(), [f"recover: TASK-1 task={task} is not one of {role}'s tasks; In Review",
                                            "plan: nothing to do", "skip: nothing to do"], role)
             self.assertEqual((self.sh.launches(), self.state), ([], before), role)

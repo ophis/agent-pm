@@ -277,7 +277,7 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(gql.archived, ["id-TASK-1", "id-TASK-2", "id-TASK-3"])
         self.assertEqual(msgs(out), ["prune-error TASK-1: archive: linear api error: boom",
-                                     "prune-error TASK-2: archive: success: false", "prune-archived TASK-3"])
+                                     "prune-error TASK-2: archive: issueArchive: success: false", "prune-archived TASK-3"])
 
     def test_archive_reads_every_page_first(self):
         done = ("Done", [(30, "Done")])

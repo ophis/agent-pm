@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import board_ids  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
+import linear  # noqa: E402
 import writeback  # noqa: E402
 import drive  # noqa: E402
 
@@ -29,15 +30,16 @@ APPROVE_MAPPED = ("**🔴 Target repo:** `ophis/agent-pm` **(from the project ma
                   "Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**")
 TS = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 
-NAMES = {writeback.M_SUBSCRIBE: "subscribe", writeback.M_COMMENT: "comment", writeback.M_STATE: "state",
+NAMES = {linear.M_SUBSCRIBE: "subscribe", linear.M_COMMENT: "comment", linear.M_STATE: "state",
          writeback.M_TITLE: "title", writeback.M_ATTACH: "attach", writeback.M_UNARCHIVE: "unarchive",
-         writeback.Q_STATE: "read", writeback.Q_ID: "id"}
+         writeback.Q_STATE: "read", linear.Q_ISSUE_STATE: "reread", writeback.Q_ID: "id"}
 FIELDS = {"subscribe": "issueSubscribe", "comment": "commentCreate", "state": "issueUpdate", "title": "issueUpdate",
           "attach": "attachmentLinkURL", "unarchive": "issueUnarchive"}
 
 
 class Gql:
-    """Fake role-account gql recording (name, variables). `states`: what each Q_STATE read returns, the last repeating;
+    """Fake role-account gql recording (name, variables). `states`: what each state read (Q_STATE, or a move's
+    Q_ISSUE_STATE) returns, the last repeating;
     `fail(name, v)` → an exception to raise, False for `success: false`, else None."""
     def __init__(self, states=(STATES["in_progress"],), attachments=(), fail=lambda name, v: None, issue=None):
         self.calls, self.states, self.attachments, self.fail, self.issue = [], list(states), attachments, fail, issue
@@ -48,7 +50,7 @@ class Gql:
         r = self.fail(name, v)
         if isinstance(r, BaseException):
             raise r
-        if name == "read":
+        if name in ("read", "reread"):
             s = self.states.pop(0) if len(self.states) > 1 else self.states[0]
             return {"issue": {"state": {"id": s}, "attachments": {"nodes": [{"url": u} for u in self.attachments]}}}
         if name == "id":
@@ -57,6 +59,10 @@ class Gql:
 
 
 READ = ("read", {"i": UUID})
+
+
+def reread(i=UUID):
+    return ("reread", {"i": i})
 
 
 def sub(e, i=UUID):
@@ -93,7 +99,7 @@ def expect(*, body, state, files=(), title=None, subscribe=True, attach=None, at
     calls.append(comment(body))
     if attach:
         calls.append(("attach", {"i": UUID, "u": attach, "t": attach_title}))
-    return calls + [READ, move(state)]
+    return calls + [reread(), move(state)]
 
 
 class Base(unittest.TestCase):
@@ -151,9 +157,6 @@ class SayAndApprove(Base):
         self.assertEqual(writeback.approve_line("ophis/agent-pm"), APPROVE_MAPPED)
 
     def test_queries_verbatim(self):
-        self.assertEqual(writeback.M_SUBSCRIBE, "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }")
-        self.assertEqual(writeback.M_COMMENT, "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }")
-        self.assertEqual(writeback.M_STATE, "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }")
         self.assertEqual(writeback.M_TITLE, "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }")
         self.assertEqual(writeback.M_ATTACH, "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }")
         self.assertEqual(writeback.M_UNARCHIVE, "mutation($i: String!) { issueUnarchive(id: $i) { success } }")
@@ -342,7 +345,7 @@ class FinishSteps(Base):
         gql = Gql(states=[STATES["in_progress"], STATES["in_review"]])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
-        self.assertEqual(gql.calls[-1], READ)
+        self.assertEqual(gql.calls[-1], reread())
         self.assertEqual(self.lines()[-1], f"writeback {ID}: move:in_review")
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
@@ -350,14 +353,14 @@ class FinishSteps(Base):
         gql = Gql(states=[STATES["in_progress"], STATES["todo"]])
         ctx = self.ctx("deep-research", gql=gql, target=None)
         self.assertTrue(writeback.finish(ctx, outcome("failed", summary="gh api failed")))
-        self.assertEqual(gql.calls, [READ, comment("gh api failed"), READ])
+        self.assertEqual(gql.calls, [READ, comment("gh api failed"), reread()])
         self.assertIn("move:todo", self.ledger(ctx)[SID])
 
     def test_state_never_overrides_a_user_move(self):
         gql = Gql(states=[STATES["in_progress"], STATES["handoff"]])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
-        self.assertEqual(gql.calls[-1], READ)
+        self.assertEqual(gql.calls[-1], reread())
         self.assertIn(f"writeback-skip {ID}: move to in_review: issue is {STATES['handoff']}", self.lines())
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
@@ -588,6 +591,8 @@ def issue(description):
 
 
 class Bounce(Base):
+    DONE = (STATES["done"], STATES["in_progress"])   # the source's state, then this issue's
+
     def src(self, team=board_ids.TEAM):
         return {"id": SRC_UUID, "team": {"id": team}}
 
@@ -596,14 +601,22 @@ class Bounce(Base):
                 f"`Repo: <owner>/<name>` naming the target repo.{tail}")
 
     def test_handoff_path(self):
-        gql = Gql(issue=self.src())
+        gql = Gql(issue=self.src(), states=self.DONE)
         reason = "ophis/x: no push permission"
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), reason)
         t = self.text(reason)
         self.assertEqual(gql.calls, [("id", {"i": "PRD-3"}), ("unarchive", {"i": SRC_UUID}),
                                      sub(HUMANS[0], SRC_UUID), sub(HUMANS[1], SRC_UUID), comment(t, SRC_UUID),
-                                     move("in_review", SRC_UUID), comment(t), move("canceled")])
+                                     reread(SRC_UUID), move("in_review", SRC_UUID), comment(t), reread(), move("canceled")])
         self.assertEqual(self.lines(), [])
+
+    def test_skipped_moves_logged(self):
+        gql = Gql(issue=self.src(), states=(STATES["handoff"], STATES["todo"]))
+        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+        t = self.text("r")
+        self.assertEqual(gql.calls[-4:], [comment(t, SRC_UUID), reread(SRC_UUID), comment(t), reread()])
+        self.assertEqual(self.lines(), [f"writeback-skip PRD-3: move to in_review: issue is {STATES['handoff']}",
+                                        f"writeback-skip {ID}: move to canceled: issue is {STATES['todo']}"])
 
     def test_mapped_reason_names_project_repos(self):
         gql = Gql(issue=self.src())
@@ -614,18 +627,18 @@ class Bounce(Base):
     def test_unarchive_failure_ignored(self):
         for err in (SystemExit("linear api error: not archived"), False):
             with self.subTest(err=err):
-                gql = Gql(issue=self.src(), fail=lambda name, v: err if name == "unarchive" else None)
+                gql = Gql(issue=self.src(), states=self.DONE, fail=lambda name, v: err if name == "unarchive" else None)
                 writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
                 self.assertEqual(gql.calls[-1], move("canceled"))
 
     def test_subscribe_failure_noted_move_made(self):
-        gql = Gql(issue=self.src(),
+        gql = Gql(issue=self.src(), states=self.DONE,
                   fail=lambda name, v: SystemExit("linear api error: boom") if name == "subscribe" and v["e"] == HUMANS[1] else None)
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
         t = self.text("r")
         self.assertIn(comment(t + "\n\nCould not subscribe bob@example.com: SystemExit: linear api error: boom", SRC_UUID),
                       gql.calls)
-        self.assertEqual(gql.calls[-3:], [move("in_review", SRC_UUID), comment(t), move("canceled")])
+        self.assertEqual(gql.calls[-5:], [reread(SRC_UUID), move("in_review", SRC_UUID), comment(t), reread(), move("canceled")])
 
     def question(self, reason):
         return ("Question: repo check failed: " + reason
@@ -635,24 +648,25 @@ class Bounce(Base):
         gql = Gql()
         writeback.bounce(self.ctx(gql=gql), issue("Repo: nope\n\nBuild it."), "unreadable Repo line: 'nope'")
         self.assertEqual(gql.calls, [sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("unreadable Repo line: 'nope'")),
-                                     move("in_review")])
+                                     reread(), move("in_review")])
 
     def test_src_in_another_team_question_path(self):
         gql = Gql(issue=self.src(team="00000000-0000-4000-8000-0000000000ff"))
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
         self.assertEqual(gql.calls, [("id", {"i": "PRD-3"}), sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("r")),
-                                     move("in_review")])
+                                     reread(), move("in_review")])
 
     def test_src_missing_question_path(self):
         gql = Gql(issue=None)
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
-        self.assertEqual(gql.calls[1:], [sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("r")), move("in_review")])
+        self.assertEqual(gql.calls[1:], [sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("r")), reread(),
+                                         move("in_review")])
 
     def test_question_subscribe_failure_noted(self):
         gql = Gql(fail=lambda name, v: False if name == "subscribe" and v["e"] == HUMANS[0] else None)
         writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
-        self.assertEqual(gql.calls[-2:], [comment(self.question("r") + "\n\nCould not subscribe ann@example.com: "
-                                                  "RuntimeError: issueSubscribe: success: false"), move("in_review")])
+        self.assertEqual(gql.calls[-3:], [comment(self.question("r") + "\n\nCould not subscribe ann@example.com: "
+                                                  "RuntimeError: issueSubscribe: success: false"), reread(), move("in_review")])
 
     def test_signal_exit_raises(self):
         for name in ("unarchive", "subscribe"):

@@ -22,7 +22,7 @@ from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CLONES, WORK  # noqa: E402
-from linear import ISSUE_ID, one_line, parse_time, stamp  # noqa: E402
+from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -30,19 +30,12 @@ ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
 
-Q_ISSUE = """query($i: String!) { issue(id: $i) { state { id }
-  history(first: 250, orderBy: createdAt) { nodes { createdAt toStateId } } } }"""
+Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
-  nodes { id identifier history(first: 250, orderBy: createdAt) { nodes { createdAt toStateId } } }
+  nodes { id identifier """ + HISTORY + """ }
   pageInfo { hasNextPage endCursor } } }"""
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
-
-
-def finished_at(nodes, finished):
-    """The latest move into a finished state among the history nodes, or None.
-    Never the creation time: an old issue that only just finished must not look finished long ago."""
-    return max((parse_time(h["createdAt"]) for h in nodes if h["toStateId"] in finished), default=None)
 
 
 class Skip(Exception):
@@ -120,7 +113,7 @@ class Pruner:
             return
         for node in nodes:
             ident = node["identifier"]
-            since = finished_at(node["history"]["nodes"], finished)
+            since = last_move(node["history"]["nodes"], finished)
             if since is None:
                 self.say(f"prune-skip {ident}: archive: finish time unknown")
             elif self.now - since < QUARANTINE:
@@ -129,14 +122,11 @@ class Pruner:
                 self.say(f"prune-plan {ident}: archive")
             else:
                 try:
-                    ok = self.gql(M_ARCHIVE, i=node["id"])["issueArchive"]["success"]
+                    call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except (Exception, SystemExit) as e:
                     self.error(ident, f"archive: {e}")
                     continue
-                if ok:
-                    self.say(f"prune-archived {ident}")
-                else:
-                    self.error(ident, "archive: success: false")
+                self.say(f"prune-archived {ident}")
 
     def run(self):
         """0, or 3 if anything failed."""
@@ -154,7 +144,7 @@ class Pruner:
                 continue
             if not issue or issue["state"]["id"] not in finished:
                 continue
-            since = finished_at(issue["history"]["nodes"], finished)
+            since = last_move(issue["history"]["nodes"], finished)
             if since is None:
                 self.say(f"prune-skip {ident}: finish time unknown")
             elif self.now - since >= QUARANTINE:

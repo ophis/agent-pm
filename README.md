@@ -101,7 +101,7 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
 | `config.py` | Shared | Loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
-| `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, and small helpers. |
+| `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, the comment, subscribe and state-move writes, and small helpers. |
 
 ## Using the board
 
@@ -116,7 +116,7 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ### Task labels
 
-A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one by its id, through `orchestrator/config.toml`'s `[task_labels]` (`<task> = "<label id>"`), so renaming a label keeps working; with no such label the issue runs the role's default task. The task must be one of the assignee role's. If the label isn't in `[task_labels]`, its task isn't one of the assignee role's, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
+A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one by its id, through `orchestrator/config.toml`'s `[task_labels]` (`<task> = "<label id>"`), so renaming a label keeps working; with no such label the issue runs the role's default task. The task must be one of the assignee role's. If the label isn't in `[task_labels]`, its task isn't one of the assignee role's, or an issue has several task labels, no run starts and no attempt counts: the router subscribes you, moves the issue to In Review and comments why. Fix the label, then move the issue back to Todo.
 
 To upgrade a Light Research issue, remove the label, comment the claims to verify and move the issue back to Todo: the next run is `deep-research`, with the earlier report in its input.
 

@@ -1,4 +1,5 @@
-"""Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, and small shared helpers.
+"""Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
+and history, and small shared helpers.
 Imports config, which puts core/src on sys.path.
 """
 import functools
@@ -63,6 +64,66 @@ def one_line(x):
 
 def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
+M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
+M_SUBSCRIBE = "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
+Q_ISSUE_STATE = "query($i: String!) { issue(id: $i) { state { id } } }"
+# orderBy createdAt returns newest first, so the latest moves are on this page.
+HISTORY = "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId fromStateId toStateId } }"
+
+
+def call(gql, query, field, **v):
+    """The result's field; RuntimeError when its success is false."""
+    out = gql(query, **v)[field]
+    if not out["success"]:
+        raise RuntimeError(f"{field}: success: false")
+    return out
+
+
+def comment(gql, issue, body):
+    call(gql, M_COMMENT, "commentCreate", i=issue, b=body)
+
+
+def subscribe(gql, issue, emails):
+    """Subscribes each email; returns the failures as notes for a comment. A signal SystemExit (an int code: a runner's
+    handler) re-raises; linear_gql's (a str code) is an API error."""
+    notes = ""
+    for email in emails:
+        try:
+            call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
+        except (Exception, SystemExit) as e:
+            if isinstance(e, SystemExit) and isinstance(e.code, int):
+                raise
+            notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
+    return notes
+
+
+def move(gql, issue, to, frm):
+    """Moves the issue to state `to` only from state `frm` (ids), re-read first: None once moved, else the state it is in
+    (already `to`, or not `frm`: the caller logs a skip)."""
+    now = gql(Q_ISSUE_STATE, i=issue)["issue"]["state"]["id"]
+    if now != frm:
+        return now
+    call(gql, M_STATE, "issueUpdate", i=issue, s=to)
+    return None
+
+
+def comment_and_move(gql, issue, body, to, frm, emails=()):
+    """subscribe, move, then body with the subscribe notes; returns move's result. Move first: a failed or skipped move
+    posts no comment, so a retry never repeats it."""
+    notes = subscribe(gql, issue, emails)
+    left = move(gql, issue, to, frm)
+    if left is None:
+        comment(gql, issue, body + notes)
+    return left
+
+
+def last_move(nodes, states, actors=None):
+    """Latest createdAt among the history nodes moved into states (by actors, when given), or None."""
+    return max((parse_time(n["createdAt"]) for n in nodes
+                if n["toStateId"] in states and (actors is None or n["actorId"] in actors)), default=None)
 
 
 Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { nodes { id } } }"

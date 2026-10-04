@@ -20,7 +20,6 @@ URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
 Q_FIND = ("query($i: String!, $p: String!) { issue(id: $i) { comments(filter: { user: { isMe: { eq: true } }, "
           "body: { startsWith: $p } }) { nodes { id createdAt } } } }")
-M_CREATE = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
 M_UPDATE = "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
 
 
@@ -73,7 +72,7 @@ def write(gql, issue, sid, text, limit=LIMIT):
                 earliest = min(found, key=lambda c: c["createdAt"])  # uniform UTC ISO strings sort by time
                 out["ok"] = gql(M_UPDATE, c=earliest["id"], b=text)["commentUpdate"]["success"]
             else:
-                out["ok"] = gql(M_CREATE, i=issue, b=text)["commentCreate"]["success"]
+                out["ok"] = gql(linear.M_COMMENT, i=issue, b=text)["commentCreate"]["success"]
         except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
             out["error"] = e
 

@@ -11,14 +11,11 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import TASKS  # noqa: E402
-from linear import append, one_line  # noqa: E402
+from linear import append, call, comment, move, one_line, subscribe  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
 from target import MAPPED  # noqa: E402
 
-M_SUBSCRIBE = "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
-M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
-M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
 M_TITLE = "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
 M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
 M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
@@ -83,29 +80,11 @@ def _reraise_signal(e):
         raise e
 
 
-def _call(gql, query, field, **v):
-    if not gql(query, **v)[field]["success"]:
-        raise RuntimeError(f"{field}: success: false")
-
-
-def _comment(gql, issue, body):
-    _call(gql, M_COMMENT, "commentCreate", i=issue, b=body)
-
-
-def _move(gql, issue, state):
-    _call(gql, M_STATE, "issueUpdate", i=issue, s=state)
-
-
-def _subscribe(gql, issue, humans):
-    """Subscribes each human; returns the failures as notes for the comment."""
-    notes = ""
-    for email in humans:
-        try:
-            _call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except (Exception, SystemExit) as e:
-            _reraise_signal(e)
-            notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
-    return notes
+def _guarded_move(ctx, issue, ident, to, frm):
+    """linear.move from frm to to (logical states); a skip, the issue in neither, is logged."""
+    now = move(ctx.gql, issue, ctx.states[to], ctx.states[frm])
+    if now not in (None, ctx.states[to]):
+        _log(ctx, f"writeback-skip {ident}: move to {to}: issue is {now}")
 
 
 def _ledger(ctx):
@@ -146,11 +125,11 @@ def sink(ctx) -> drive.Sink:
                 return
             task = TASKS[ctx.task]
             if event.name == "start":
-                _step(ctx, "start", lambda: _comment(ctx.gql, ctx.issue_id, say(task.start, event.text)))
+                _step(ctx, "start", lambda: comment(ctx.gql, ctx.issue_id, say(task.start, event.text)))
             else:
                 digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
                 _step(ctx, f"progress:{event.name}:{digest}",
-                      lambda: _comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))
+                      lambda: comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))
         except (Exception, SystemExit) as e:
             _reraise_signal(e)
             _log(ctx, f"writeback-error {ctx.ident}: sink: {one_line(e)}")
@@ -236,15 +215,15 @@ def _finish(ctx, o):
             posts.append(("Plan" if PLAN_MARK in text else "Spec", name, text, hashlib.sha256(data).hexdigest()[:12]))
         for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
             if err := _step(ctx, f"file:{name}:{digest}",
-                            lambda: _comment(gql, issue, f"**{kind}** `{name}`\n\n---\n\n{text}")):
+                            lambda: comment(gql, issue, f"**{kind}** `{name}`\n\n---\n\n{text}")):
                 body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
 
     if task.retitle and o.status == "done":
-        if _step(ctx, "retitle", lambda: _call(gql, M_TITLE, "issueUpdate", i=issue, t=f"{task.prefix}: {o.title}")):
+        if _step(ctx, "retitle", lambda: call(gql, M_TITLE, "issueUpdate", i=issue, t=f"{task.prefix}: {o.title}")):
             return False
     if state == "in_review":
-        body += _subscribe(gql, issue, ctx.humans)
-    if _step(ctx, "comment", lambda: _comment(gql, issue, body)):
+        body += subscribe(gql, issue, ctx.humans)
+    if _step(ctx, "comment", lambda: comment(gql, issue, body)):
         return False
 
     if o.status == "done" and url:
@@ -252,28 +231,21 @@ def _finish(ctx, o):
             if url in attached:
                 return
             try:
-                _call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
+                call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
             except (Exception, SystemExit) as e:
                 if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
                     raise
         if _step(ctx, f"attach:{url}", attach):
             return False
 
-    def move():
-        now = gql(Q_STATE, i=issue)["issue"]["state"]["id"]
-        if now == ctx.states[state]:
-            return
-        if now != ctx.states["in_progress"]:
-            _log(ctx, f"writeback-skip {ctx.ident}: move to {state}: issue is {now}")
-            return
-        _move(gql, issue, ctx.states[state])
-    return _step(ctx, f"move:{state}", move) is None
+    return _step(ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")) is None
 
 
 def bounce(ctx, issue: Issue, reason: str) -> None:
     """The pre-run engineering bounce: a Handoff issue whose source is in ctx.team goes back to that source (unarchived,
-    In Review) and this issue is Canceled; else a `Question:` and In Review. Raises on any failure but unarchive's and
-    subscribe's (noted in the comment), and on a signal SystemExit."""
+    In Review) and this issue is Canceled; else a `Question:` and In Review. A move happens only from the expected state
+    (this issue In Progress, the source Done), else is logged. Raises on any failure but unarchive's and subscribe's
+    (noted in the comment), and on a signal SystemExit."""
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
     if src and src["team"]["id"] == ctx.team:
@@ -281,16 +253,16 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
                 "`Repo: <owner>/<name>` naming the target repo."
                 + (" Or fix orchestrator/config.toml's [project_repos] entry." if reason.startswith(MAPPED) else ""))
         try:
-            _call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
+            call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         except (Exception, SystemExit) as e:
             _reraise_signal(e)
-        notes = _subscribe(gql, src["id"], ctx.humans)
-        _comment(gql, src["id"], text + notes)
-        _move(gql, src["id"], ctx.states["in_review"])
-        _comment(gql, ctx.issue_id, text)
-        _move(gql, ctx.issue_id, ctx.states["canceled"])
+        notes = subscribe(gql, src["id"], ctx.humans)
+        comment(gql, src["id"], text + notes)
+        _guarded_move(ctx, src["id"], h.source, "in_review", "done")
+        comment(gql, ctx.issue_id, text)
+        _guarded_move(ctx, ctx.issue_id, ctx.ident, "canceled", "in_progress")
     else:
-        notes = _subscribe(gql, ctx.issue_id, ctx.humans)
-        _comment(gql, ctx.issue_id, say("Question:", f"repo check failed: {reason}. Fix the description's `Repo:` "
-                                                     "line, then move this issue back to Todo.") + notes)
-        _move(gql, ctx.issue_id, ctx.states["in_review"])
+        notes = subscribe(gql, ctx.issue_id, ctx.humans)
+        comment(gql, ctx.issue_id, say("Question:", f"repo check failed: {reason}. Fix the description's `Repo:` "
+                                                    "line, then move this issue back to Todo.") + notes)
+        _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")

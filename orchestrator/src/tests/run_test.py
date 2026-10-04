@@ -16,6 +16,7 @@ from board_ids import HEADER, STATES, role  # noqa: E402
 import config  # noqa: E402
 import inputs  # noqa: E402
 import issues  # noqa: E402
+import linear  # noqa: E402
 import router  # noqa: E402
 import run  # noqa: E402
 import sessions  # noqa: E402
@@ -81,9 +82,9 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
             "inverseRelations": {"nodes": []}}
 
 
-NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", writeback.M_COMMENT: "comment", sessions.M_UPDATE: "update",
-         writeback.Q_STATE: "read", writeback.M_STATE: "state", writeback.M_SUBSCRIBE: "subscribe",
-         writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
+NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", linear.M_COMMENT: "comment", sessions.M_UPDATE: "update",
+         writeback.Q_STATE: "read", linear.Q_ISSUE_STATE: "reread", linear.M_STATE: "state",
+         linear.M_SUBSCRIBE: "subscribe", writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
 FIELDS = {"comment": "commentCreate", "update": "commentUpdate", "state": "issueUpdate", "subscribe": "issueSubscribe",
           "attach": "attachmentLinkURL"}
 
@@ -105,6 +106,8 @@ class Gql:
             return {"issue": {"comments": {"nodes": []}}}
         if name == "read":
             return {"issue": {"state": {"id": STATES["in_progress"]}, "attachments": {"nodes": []}}}
+        if name == "reread":
+            return {"issue": {"state": {"id": STATES["in_progress"]}}}
         if name == "id":
             return {"issue": None}
         return {FIELDS[name]: {"success": True}}
@@ -330,6 +333,7 @@ class Outer(Base):
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Question: repo check failed: {reason}. Fix the description's `Repo:` "
                                               "line, then move this issue back to Todo."}),
+            ("reread", KEY, {"i": UUID}),
             ("state", KEY, {"i": UUID, "s": STATES["in_review"]})])
         self.assertEqual(self.plog(), [f"<ts> bounce TASK-7: {reason}"])
         self.assertEqual((self.sh_calls, os.path.exists(self.rd)), ([], False))
@@ -435,7 +439,7 @@ class Inner(Base):
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Build ready: Opened the PR.\n\n{PR}"}),
             ("attach", KEY, {"i": UUID, "u": PR, "t": "TASK-7: Session registry"}),
-            ("read", KEY, {"i": UUID}),
+            ("reread", KEY, {"i": UUID}),
             ("state", KEY, {"i": UUID, "s": STATES["in_review"]}),
             *posts[2:]])
         (argv, kw), = self.popen_calls
