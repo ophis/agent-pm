@@ -21,6 +21,7 @@ class Launch:
     env: dict[str, str] = field(default_factory=dict)      # added to the caller's environment
     cwd: str = ""
     files: dict[str, str] = field(default_factory=dict)    # path → text, written by the driver
+    interactive: list[str] = field(default_factory=list)   # the same run's interactive command; empty: none
 
 
 @dataclass(frozen=True)

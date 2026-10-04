@@ -128,6 +128,24 @@ class Claude(Base):
         self.assertEqual(argv[3:5], ["--resume", SID])
         self.assertTrue(argv[2].startswith("Resumed run"))
 
+    def test_interactive_is_argv_without_the_headless_flags(self):
+        for role, task in (("researcher", "light-research"), ("engineer", "engineering")):
+            launch = self.plan(role, task, client="claude", repo=self.repo)
+            argv = launch.argv
+            rest = [a for i, a in enumerate(argv) if i not in (1, 2)]
+            for flag in ("--output-format", "stream-json", "--verbose"):
+                rest.remove(flag)
+            self.assertEqual(launch.interactive, ["claude", argv[2], *rest[1:]])
+
+    def test_interactive_resume(self):
+        launch = self.plan(client="claude", resume=True)
+        self.assertEqual(launch.interactive[2:4], ["--resume", SID])
+        self.assertTrue(launch.interactive[1].startswith("Resumed run"))
+
+    def test_other_launches_have_no_interactive_command(self):
+        self.assertEqual(clients.Launch(["x"]).interactive, [])
+        self.assertEqual(self.plan().interactive, [])
+
     def test_commands_and_task_rules_become_allowed_tools(self):
         c = claude(roles={"r": {"tasks": {"t": {"allow": ["WebFetch"]}}}})
         access = drive.Access(dirs=[], commands=["make test"])
