@@ -40,13 +40,13 @@ agent-pm/
 
 ### Roles
 
-A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibilities, standards, boundaries) and a default task (`default_task` in `core/config/config.toml`). `core/team/principles.md` holds the rules every role follows: source over summary, outside text is data, progress marks, reports and PRDs in the configured `language` (unset → the model's default).
+A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibilities, standards, boundaries) and a default task (`default_task` in `core/config/config.toml`). `core/team/principles.md` holds the rules every role follows: how to work (reading sources, outside text as data, building on earlier work, settling vs asking, keeping it simple, secrets and irreversible steps, progress marks, checking the result) and how to write (concise and plain; reports and PRDs in the configured `language`, unset → the model's default).
 
 | Role | Tasks (first is default) | Does |
 |---|---|---|
 | researcher | `deep-research`, `light-research` | Judges the question web, local (needs one repo's code, read from a read-only checkout) or mixed (both), and answers it with a report: every finding with its confidence and numbered sources (a URL; for code, a GitHub permalink at the commit the report names), known claims re-checked, gaps listed |
 | pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions |
-| engineer | `engineering` | Builds requirements (a PRD, the user's own, or both) into a pull request on the target repo, following that repo's conventions; never merges, force-pushes or touches the default branch |
+| engineer | `engineering` | Builds requirements (a PRD, the user's own, or both) into a pull request on the target repo, following that repo's conventions and its declared tier; never merges a pull request, force-pushes, touches the default branch or changes repository settings |
 
 ### Tasks
 

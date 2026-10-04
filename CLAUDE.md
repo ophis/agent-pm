@@ -2,6 +2,8 @@
 
 Unattended agent pipeline on a Linear board. launchd runs `router.py`, which starts one `run.py` per Todo issue assigned to a role account (researcher → pm → engineer; the project is the product, the assignee the stage). A run is a core role doing one core task (`core/team/roles/<role>.md`, `core/team/tasks/<task>.md`): the one the issue's `Tasks` label picks through `orchestrator/config.toml`'s `[task_labels]`, else the role's default. `core/` knows nothing of Linear (`core/CLAUDE.md`); the orchestrator (`orchestrator/src/`, config `orchestrator/config.toml`) turns an issue into the run's input and the run's outcome into Linear changes.
 
+agent-pm builds and reviews at the prototype tier.
+
 ## Commands
 
 ```bash
