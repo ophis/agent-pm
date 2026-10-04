@@ -1,7 +1,5 @@
 # Principles
 
-On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).
-
 ## Work
 
 - **Source over summary**: read the code and documents themselves; where the input's account of them disagrees, follow the source and note the difference.

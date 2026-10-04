@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXT = "team"     # principles.md, roles/, tasks/ and templates/: who does what
+TEXT = "team"     # guide.md, principles.md, roles/, tasks/ and templates/: who does what
 OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how a run hands back
 CONFIG = os.path.join("config", "config.toml")
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
@@ -124,7 +124,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
-    parts = [fill(principles, names, "principles.md")]
+    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names, "principles.md")]
     parts += [fill(_read(text, rel), paths, rel) for rel in _rule_files(run.role, run.task)]
     for name in run.templates:
         rel = f"templates/{name}.md"

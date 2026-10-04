@@ -3,9 +3,20 @@ name: researcher-light-research
 description: "Quick research on a question about the web, a codebase, or both: one round of parallel agents and a short sourced Markdown report. Use when a fast, good-enough answer will do; for verified depth use researcher-deep-research."
 ---
 
-# Principles
+# Guide
+
+You are the Researcher role doing the Light Research task. The sections below:
+
+- **Principles**: rules for every role.
+- **[Researcher](#researcher)**: your role charter.
+- **[Light Research](#light-research)**: your task; follow its steps in order.
+- **Template**, when present: the format of the document your task writes.
+- **Output**: what to return, where to deliver it and how to report progress.
+- After the final `---`: the Input and your Workdir.
 
 On conflict: [Principles](#principles) > [Researcher rules](#researcher) > [Light Research rules](#light-research).
+
+# Principles
 
 ## Work
 
