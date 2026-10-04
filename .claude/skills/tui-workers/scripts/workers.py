@@ -1,6 +1,8 @@
 """Starts and directs Claude Code workers in tmux panes through core/src/tui.py. Stdlib only."""
 from __future__ import annotations
 
+import argparse
+import glob
 import json
 import os
 import re
@@ -92,3 +94,89 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
         if res.returncode != 0:
             raise WorkersError(f"tmux set-option {key}: {(res.stderr or '').strip()}")
     return sid
+
+
+def _option(name: str, key: str, proc) -> str:
+    res = proc(["tmux", "show-options", "-t", f"={name}:", "-v", key], **RUN)
+    if res.returncode != 0:
+        raise WorkersError(f"{name}: not a worker")
+    return res.stdout.rstrip("\n")
+
+
+def restart(name: str, *, proc=subprocess.run) -> str:
+    """Respawn worker `name`'s pane resuming its session; returns the shell string it ran."""
+    if not NAME.fullmatch(name):
+        raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
+    opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "claude", "env", "flags")}
+    words = ["env", *(w for v in STRIP for w in ("-u", v)),
+             *(f"{k}={v}" for k, v in json.loads(opt["env"]).items()),
+             opt["claude"], "--resume", opt["sid"], "--name", name, "--settings", hooks(opt["events"]),
+             *json.loads(opt["flags"])]
+    cmd = " ".join(shlex.quote(w) for w in words)
+    print(cmd, file=sys.stderr)
+    res = proc(["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd], **RUN)
+    if res.returncode != 0:
+        raise WorkersError((res.stderr or "").strip() or f"tmux respawn-pane exited {res.returncode}")
+    return cmd
+
+
+def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
+    """The text blocks of worker `name`'s last assistant message that has any, joined by newlines."""
+    sid = _option(name, "@sid", proc)
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", sid):
+        raise WorkersError(f"{name}: bad session id {sid!r}")
+    config = config or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    found = glob.glob(os.path.join(glob.escape(config), "projects", "*", sid + ".jsonl"))
+    if not found:
+        raise WorkersError(f"no transcript for {sid}: started with a leaked Claude Code variable?")
+    last = ""
+    with open(found[0], encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            try:
+                entry = json.loads(raw)
+                content = entry["message"]["content"]
+                if entry["type"] != "assistant" or not isinstance(content, list):
+                    continue
+                texts = [b["text"] for b in content if b["type"] == "text"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if texts:
+                last = "\n".join(texts)
+    return last
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    flags = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, flags = argv[:i], argv[i + 1:]
+    ap = argparse.ArgumentParser(prog="workers.py")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("start")
+    p.add_argument("name")
+    p.add_argument("--events", required=True)
+    p.add_argument("--cwd")
+    p.add_argument("--prompt")
+    for cmd in ("restart", "reply"):
+        sub.add_parser(cmd).add_argument("name")
+    a = ap.parse_args(argv)
+    try:
+        if a.cmd == "start":
+            sid = start(a.name, a.events, cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
+                        env=dict(os.environ), proc=subprocess.run)
+            print(f"{a.name} {sid}")
+        elif a.cmd == "restart":
+            restart(a.name, proc=subprocess.run)
+        else:
+            text = reply(a.name, proc=subprocess.run)
+            if text:
+                print(text)
+    except WorkersError as e:
+        print(f"workers: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

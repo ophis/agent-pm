@@ -1,12 +1,16 @@
+import contextlib
+import io
 import json
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import workers  # noqa: E402
@@ -27,10 +31,19 @@ class Fake:
     def __init__(self, sessions=None, tui_rc=0, tui_err=""):
         self.sessions, self.tui_rc, self.tui_err = sessions, tui_rc, tui_err
         self.calls, self.kwargs = [], []
+        self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         self.kwargs.append(kw)
+        if argv[0] == "tmux" and argv[1] == "set-option":
+            self.store[argv[4]] = argv[5]
+        if argv[0] == "tmux" and argv[1] == "show-options":
+            if argv[5] not in self.store:
+                return subprocess.CompletedProcess(argv, 1, "", f"invalid option: {argv[5]}")
+            return subprocess.CompletedProcess(argv, 0, self.store[argv[5]] + "\n", "")
+        if argv[0] == "tmux" and argv[1] == "respawn-pane":
+            return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
         if argv[0] == "tmux" and argv[1] == "list-sessions":
             if self.sessions is None:
                 return subprocess.CompletedProcess(argv, 1, "", "no server running")
@@ -252,6 +265,225 @@ class StartTest(unittest.TestCase):
     def test_tui_failure(self):
         fake = Fake(tui_rc=1, tui_err="tui: boom\n")
         self.assertIn("tui: boom", self.assert_fails(fake))
+
+
+class WorkerCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = os.path.realpath(self.tmp.name)
+        self.bin = os.path.join(self.dir, "bin")
+        os.mkdir(self.bin)
+        self.claude = os.path.join(self.bin, "claude")
+        executable(self.claude, "#!/bin/sh\n")
+        self.events = os.path.join(self.dir, "it's events")
+        self.env = {"PATH": self.bin + ":/a b", "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "cfg")}
+
+    def started(self, fake, flags=("--model", "m c")):
+        return workers.start("w1", self.events, cwd=self.dir, flags=flags, env=self.env, proc=fake)
+
+
+class RestartTest(WorkerCase):
+    def setUp(self):
+        super().setUp()
+        quiet = contextlib.redirect_stderr(io.StringIO())
+        quiet.__enter__()
+        self.addCleanup(quiet.__exit__, None, None, None)
+
+    def test_argv_and_cmd(self):
+        fake = Fake()
+        sid = self.started(fake)
+        cmd = workers.restart("w1", proc=fake)
+        argv = fake.calls[-1]
+        self.assertEqual(argv, ["tmux", "respawn-pane", "-k", "-t", "=w1:", "-c", self.dir, cmd])
+        self.assertEqual(fake.kwargs[-1]["stdin"], subprocess.DEVNULL)
+        unset = [w for v in workers.STRIP for w in ("-u", v)]
+        self.assertEqual(shlex.split(cmd), ["env", *unset, f"PATH={self.env['PATH']}",
+                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", self.claude,
+                                            "--resume", sid, "--name", "w1", "--settings",
+                                            workers.hooks(self.events), "--model", "m c"])
+
+    def test_agrees_with_start(self):
+        fake = Fake()
+        self.started(fake)
+        (tui,) = fake.tui()
+        cmd = shlex.split(workers.restart("w1", proc=fake))
+        self.assertEqual(cmd[cmd.index("--settings") + 1], tui[tui.index("--settings") + 1])
+        self.assertIn(tui[5], cmd)
+        self.assertIn(f"PATH={self.env['PATH']}", cmd)
+        self.assertIn(f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", cmd)
+
+    def test_prints_cmd_to_stderr(self):
+        fake = Fake()
+        self.started(fake)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cmd = workers.restart("w1", proc=fake)
+        self.assertEqual(err.getvalue(), cmd + "\n")
+
+    def test_not_a_worker(self):
+        fake = Fake()
+        with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
+            workers.restart("w1", proc=fake)
+        self.assertEqual([c[1] for c in fake.calls if c[1] == "respawn-pane"], [])
+
+    def test_bad_name(self):
+        fake = Fake()
+        with self.assertRaises(workers.WorkersError):
+            workers.restart("a b", proc=fake)
+        self.assertEqual(fake.calls, [])
+
+    def test_respawn_failure(self):
+        fake = Fake()
+        self.started(fake)
+        fake.respawn_rc, fake.respawn_err = 1, "can't find pane\n"
+        with self.assertRaisesRegex(workers.WorkersError, "can't find pane"):
+            workers.restart("w1", proc=fake)
+
+    def test_no_config_dir(self):
+        del self.env["CLAUDE_CONFIG_DIR"]
+        fake = Fake()
+        self.started(fake, flags=())
+        cmd = workers.restart("w1", proc=fake)
+        self.assertNotIn("CLAUDE_CONFIG_DIR", cmd)
+        self.assertEqual(shlex.split(cmd)[-1], workers.hooks(self.events))
+
+
+SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
+
+
+def line(kind, *blocks):
+    return json.dumps({"type": kind, "message": {"content": list(blocks)}}) + "\n"
+
+
+def text(t):
+    return {"type": "text", "text": t}
+
+
+TOOL = {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}
+
+
+class ReplyTest(WorkerCase):
+    def setUp(self):
+        super().setUp()
+        self.cfg = self.env["CLAUDE_CONFIG_DIR"]
+
+    def transcript(self, *lines, sid=SID, project="-p"):
+        d = os.path.join(self.cfg, "projects", project)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            f.write("".join(lines))
+
+    def fake(self, sid=SID):
+        fake = Fake()
+        fake.store["@sid"] = sid
+        return fake
+
+    def reply(self, fake=None, **kw):
+        return workers.reply("w1", proc=fake or self.fake(), config=self.cfg, **kw)
+
+    def test_last_assistant_text_wins(self):
+        self.transcript(line("assistant", text("first")), line("user", text("q")),
+                        line("assistant", text("a"), TOOL, text("b")), line("assistant", TOOL),
+                        "not json\n", line("user", text("later")))
+        self.assertEqual(self.reply(), "a\nb")
+
+    def test_none_yet(self):
+        self.transcript(line("user", text("q")), line("assistant", TOOL))
+        self.assertEqual(self.reply(), "")
+
+    def test_no_transcript(self):
+        with self.assertRaises(workers.WorkersError) as cm:
+            self.reply()
+        self.assertIn(f"no transcript for {SID}", str(cm.exception))
+
+    def test_other_session_not_used(self):
+        self.transcript(line("assistant", text("x")), sid="1" + SID[1:])
+        with self.assertRaises(workers.WorkersError):
+            self.reply()
+
+    def test_bad_sid_before_glob(self):
+        self.transcript(line("assistant", text("x")), sid="evil")
+        with mock.patch.object(workers.glob, "glob") as g:
+            with self.assertRaisesRegex(workers.WorkersError, "bad session id"):
+                self.reply(self.fake("*"))
+            g.assert_not_called()
+
+    def test_not_a_worker(self):
+        with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
+            self.reply(Fake())
+
+    def test_config_from_env(self):
+        self.transcript(line("assistant", text("hi")))
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.cfg}):
+            self.assertEqual(workers.reply("w1", proc=self.fake()), "hi")
+
+    def test_config_default_home(self):
+        home = os.path.join(self.dir, "home")
+        d = os.path.join(home, ".claude", "projects", "p")
+        os.makedirs(d)
+        with open(os.path.join(d, SID + ".jsonl"), "w") as f:
+            f.write(line("assistant", text("home")))
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+        env["HOME"] = home
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(workers.reply("w1", proc=self.fake()), "home")
+
+
+class MainTest(WorkerCase):
+    def run_main(self, argv, fake=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(workers.subprocess, "run", fake or Fake()), \
+                mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = workers.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_start(self):
+        fake = Fake()
+        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir,
+                                      "--prompt", "go", "--", "--model", "sonnet", "--permission-mode", "default"],
+                                     fake)
+        self.assertEqual(rc, 0, err)
+        sid = fake.store["@sid"]
+        self.assertEqual(out, f"w1 {sid}\n")
+        self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
+        self.assertEqual(fake.tui()[0][-1], "go")
+
+    def test_start_defaults_cwd(self):
+        fake = Fake()
+        rc, _, err = self.run_main(["start", "w1", "--events", self.events], fake)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fake.store["@cwd"], os.path.realpath(os.getcwd()))
+        self.assertEqual(fake.store["@flags"], "[]")
+
+    def test_error_exit(self):
+        rc, out, err = self.run_main(["restart", "w1"])
+        self.assertEqual((rc, out, err), (1, "", "workers: w1: not a worker\n"))
+
+    def test_restart(self):
+        fake = Fake()
+        self.started(fake)
+        rc, out, err = self.run_main(["restart", "w1"], fake)
+        self.assertEqual((rc, out), (0, ""))
+        self.assertIn("--resume", err)
+
+    def test_reply(self):
+        fake = Fake()
+        fake.store["@sid"] = SID
+        d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "p")
+        os.makedirs(d)
+        with open(os.path.join(d, SID + ".jsonl"), "w") as f:
+            f.write(line("assistant", text("done")))
+        self.assertEqual(self.run_main(["reply", "w1"], fake), (0, "done\n", ""))
+        with open(os.path.join(d, SID + ".jsonl"), "w") as f:
+            f.write(line("user", text("q")))
+        self.assertEqual(self.run_main(["reply", "w1"], fake), (0, "", ""))
+
+    def test_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            workers.main(["start", "w1"])
+        self.assertEqual(cm.exception.code, 2)
 
 
 if __name__ == "__main__":
