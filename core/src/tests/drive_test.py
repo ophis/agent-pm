@@ -426,6 +426,17 @@ class Report(Base):
             self.assertNotEqual(self.report(*argv)[0], 0, argv)
         self.assertEqual(self.lines(), [])
 
+    def test_a_fifo_channel_is_refused_not_waited_on(self):
+        os.mkfifo(self.channel)
+        self.assertEqual(self.report("progress", "x", "y")[0], 1)
+
+    def test_a_deliverable_that_is_not_utf8_is_an_error_line(self):
+        doc = os.path.join(self.work, "doc.md")
+        with open(doc, "wb") as f:
+            f.write(b"\xff\xfe")
+        code, _ = self.report("outcome", "--status", "done", "--title", "T", "--summary", "S", "--deliverable", doc)
+        self.assertEqual((code, self.lines()), (1, []))
+
     def test_a_symlinked_channel_is_refused(self):
         target = os.path.join(self.tmp.name, "zshrc")
         with open(target, "w") as f:
@@ -595,11 +606,22 @@ class Start(Base):
 
     def test_malformed_channel_lines_are_skipped(self):
         seen = []
-        bad = [{"kind": "progress", "name": "a b", "text": "x"}, {"kind": "progress", "name": "x", "text": "a\nb"},
-               {"kind": "progress", "name": "x", "text": " "}, {"kind": "outcome", "outcome": "done"}, {"kind": "x"}]
+        bad = [{"kind": "progress", "name": "a b", "text": "x"}, {"kind": "progress", "name": "x", "text": " \n "},
+               {"kind": "outcome", "outcome": "done"}, {"kind": "x"}]
         r, _, _ = self.start([*bad, progress("ok", "yes")], sinks=[seen.append])
         self.assertEqual([(e.kind, e.name) for e in seen], [("progress", "ok")])
         self.assertIsNone(r.outcome)
+
+    def test_a_multi_line_progress_report_becomes_one_line(self):
+        seen = []
+        self.start([progress("start", "new build,\n  phase P1")], sinks=[seen.append])
+        self.assertEqual([(e.name, e.text) for e in seen if e.kind == "progress"], [("start", "new build, phase P1")])
+
+    def test_a_fifo_at_the_channel_is_refused_not_waited_on(self):
+        os.makedirs(self.work)
+        os.mkfifo(os.path.join(self.work, ".report.jsonl"))
+        with self.assertRaises(OSError):
+            self.start([outcome(DONE)])
 
     def test_garbage_and_partial_lines(self):
         def items():

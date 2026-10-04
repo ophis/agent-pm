@@ -46,7 +46,7 @@ def main(argv: list[str]) -> int:
                     data["deliverable"] = f.read()
             line = {"kind": "outcome", "outcome": data}
         append_line(a.to, json.dumps(line, ensure_ascii=False) + "\n")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         print(f"report.py: {e}", file=sys.stderr)
         return 1
     print(f"report.py: {a.kind} reported")
