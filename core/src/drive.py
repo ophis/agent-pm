@@ -57,6 +57,10 @@ class InvalidOutcome(Exception):
     pass
 
 
+class RunnerError(Exception):
+    """A runner's host failed: the run ends with no outcome, rc 1."""
+
+
 @dataclass(frozen=True)
 class Outcome:
     status: Status
@@ -342,12 +346,13 @@ class Runner(Protocol):
     """How a run's command is hosted, and when the run counts as done; the driver loop is the same for every runner."""
     starts: str   # the Launch field holding the command it starts
 
+    # begin and poll raise RunnerError when the host fails.
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None: ...
     def poll(self, timeout: float) -> tuple[list[Event], bool]: ...   # the host's own events; whether it ended
     def seen(self, event: Event) -> None: ...   # each channel event, before the sinks get it
     def done(self, outcome_arrived: bool) -> bool: ...   # finished while the host still runs
     def returncode(self) -> int: ...
-    def stop(self) -> None: ...   # on a driver exception
+    def stop(self) -> None: ...   # on a driver exception or a RunnerError, begin's too
 
 
 class Headless:
@@ -355,7 +360,7 @@ class Headless:
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
-        self.client, self.popen = client, popen
+        self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         self.proc = self.popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
@@ -390,8 +395,9 @@ class Headless:
         return self.proc.wait()
 
     def stop(self) -> None:
-        self.proc.kill()
-        self.proc.wait()
+        if self.proc is not None:   # None: popen failed
+            self.proc.kill()
+            self.proc.wait()
 
 
 class Tui:
@@ -403,13 +409,21 @@ class Tui:
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
         self.run, self.name = run, f"{run.role}-{run.task}-{params.sid[:8]}"
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
+        self.started = False
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
-        tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show)
+        try:
+            tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show)
+        except tui.TuiError as e:
+            raise RunnerError(str(e)) from e
+        self.started = True
 
     def poll(self, timeout: float) -> tuple[list[Event], bool]:
         time.sleep(timeout)
-        state = tui.status(self.name)
+        try:
+            state = tui.status(self.name)
+        except tui.TuiError as e:
+            raise RunnerError(str(e)) from e
         if state == tui.RUNNING:
             return [], False
         self.rc = state or 0   # None: the session is gone
@@ -441,6 +455,8 @@ class Tui:
         return 0 if self.outcome else self.rc
 
     def stop(self) -> None:
+        if not self.started:   # tui.start leaves no session when it raises; a live one of that name isn't this run's
+            return
         try:
             tui.kill(self.name)
         except tui.TuiError as e:   # the driver's own exception is the one to raise
@@ -466,7 +482,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
     and a `missing` event first. Raises ConfigError, before anything starts, when the client lacks the runner's
-    command."""
+    command; a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     host = RUNNERS[runner](run=run, params=params, client=client, popen=popen)
     write(launch.files)
@@ -494,9 +510,6 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
 
     try:
         host.begin(argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env})
-    except tui.TuiError as e:
-        return Result(1, None, f"tui: {e}")
-    try:
         while True:
             events, ended = host.poll(POLL)
             for event in tail():   # first: a report made before a stdout line comes before it
@@ -506,6 +519,9 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
                 hand(event)
             if ended or host.done(raw is not None):
                 break
+    except RunnerError as e:
+        host.stop()
+        return Result(1, None, f"{runner}: {e}")
     except BaseException:
         host.stop()
         raise
@@ -560,6 +576,8 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
             cmd = command(launch, a.runner, client)
         else:
+            if a.runner != "headless":
+                raise ConfigError(f"{type(client).__name__} writes files; it takes no --runner {a.runner}")
             launch = export(root, client, a.role, a.task, dest=a.out)
             cmd = launch.argv
     except ConfigError as e:

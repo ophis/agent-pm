@@ -395,6 +395,16 @@ class Skill(Base):
             self.assertTrue(f.read().startswith("---\nname: dummy-tester-echo\n"))
         self.assertIn(f"wrote {path}", err.getvalue())
 
+    def test_main_refuses_a_runner_other_than_headless(self):
+        skills = os.path.join(self.tmp.name, "skills")
+        for extra in ((), ("--dry-run",)):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stderr(err), redirect_stdout(out):
+                code = drive.main(["--role", "dummy-tester", "--client", "skill", "--out", skills, "--runner", "tui",
+                                   *extra], root=CORE)
+            self.assertEqual((code, out.getvalue(), os.path.exists(skills)), (2, "", False))
+            self.assertIn("drive.py: SkillClient writes files; it takes no --runner tui\n", err.getvalue())
+
 
 class FakeProc:
     def __init__(self, lines, rc=0):
@@ -950,6 +960,50 @@ class Command(unittest.TestCase):
             self.assertIn(msg, str(e.exception))
 
 
+class HostFailure(Base):
+    """drive.start with a runner whose begin or poll raises."""
+    def start(self, *, begin=None, poll=None):
+        self.stopped = []
+        stopped = self.stopped
+
+        class Failing:
+            starts = "argv"
+
+            def __init__(self, **kw):
+                pass
+
+            def begin(self, argv, **kw):
+                if begin:
+                    raise begin
+
+            def poll(self, timeout):
+                raise poll
+
+            def stop(self):
+                stopped.append(True)
+
+        with unittest.mock.patch.dict(drive.RUNNERS, {"failing": Failing}):
+            return drive.start(drive.Launch(["x"]), run(), self.params(), client=Recorder({}), runner="failing",
+                               sinks=[])
+
+    def test_an_interrupted_begin_stops_the_host(self):
+        for error in (KeyboardInterrupt(), SystemExit(1), RuntimeError("x")):
+            with self.subTest(error=error), self.assertRaises(type(error)):
+                self.start(begin=error)
+            self.assertEqual(self.stopped, [True])
+
+    def test_a_runner_error_stops_the_host_and_is_the_result(self):
+        for kw in ({"begin": drive.RunnerError("no host")}, {"poll": drive.RunnerError("no host")}):
+            with self.subTest(**kw):
+                self.assertEqual(self.start(**kw), drive.Result(1, None, "failing: no host"))
+                self.assertEqual(self.stopped, [True])
+
+    def test_headless_raises_a_failed_popen(self):
+        popen = unittest.mock.Mock(side_effect=FileNotFoundError(2, "No such file or directory", "fake"))
+        with self.assertRaises(FileNotFoundError):
+            drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), sinks=[], popen=popen)
+
+
 class TuiRunner(Base):
     NAME = f"r-t-{SID[:8]}"
 
@@ -963,11 +1017,11 @@ class TuiRunner(Base):
                             sinks=[seen.append] if sinks is None else sinks)
         return r, self.fake.calls, [e.kind for e in seen], self.err.getvalue()
 
-    def main(self, *steps):
+    def main(self, *steps, api=None):
         fake, err = FakeTui(os.path.join(self.work, ".report.jsonl"), steps), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
                 "--workdir", self.work, "--runner", "tui"]
-        with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
+        with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
             return drive.main(argv, root=CORE), fake.calls, err.getvalue()
 
     def test_session_name_and_start_arguments(self):
@@ -1016,6 +1070,19 @@ class TuiRunner(Base):
     def test_a_tui_error_on_start_is_the_result(self):
         r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui.TuiError("no tmux"))})
         self.assertEqual((r, calls), (drive.Result(1, None, "tui: no tmux"), []))
+
+    def test_an_interrupted_start_kills_no_session_it_did_not_start(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.start(api={"start": unittest.mock.Mock(side_effect=KeyboardInterrupt)})
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_tui_error_reading_the_session_kills_it_and_is_the_result(self):
+        status = unittest.mock.Mock(side_effect=drive.tui.TuiError("no server"))
+        r, calls, _, _ = self.start(api={"status": status})
+        self.assertEqual((r, [c[0] for c in calls]), (drive.Result(1, None, "tui: no server"), ["start", "kill"]))
+        code, calls, err = self.main(api={"status": status})
+        self.assertEqual((code, [c[0] for c in calls]), (3, ["start", "kill"]))
+        self.assertIn("drive.py: tui: no server\n", err)
 
     def test_a_missing_start_mark_is_reported(self):
         r, _, kinds, err = self.start([progress("round", "x"), outcome(DONE)], progress=("start", "round"))
