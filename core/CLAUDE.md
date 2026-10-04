@@ -1,6 +1,6 @@
 # core
 
-The portable core pack: `team/` text (principles, roles, tasks, templates) and `output/` (how a run hands back) compiled by `src/compose.py` and run by `src/drive.py` through a client in `src/clients/`. It knows nothing of Linear or a fixed docs repo (`docs/adr/0001`).
+The portable core pack: `team/` text (guide, principles, roles, tasks, templates) and `output/` (how a run hands back) compiled by `src/compose.py` and run by `src/drive.py` through a client in `src/clients/`. It knows nothing of Linear or a fixed docs repo (`docs/adr/0001`).
 
 ## Commands
 

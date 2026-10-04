@@ -68,7 +68,7 @@ class Claude(Base):
     def test_light_research_argv(self):
         launch = self.plan(client="claude", repo=self.repo)
         self.assertEqual(launch.argv[:2], ["claude", "-p"])
-        self.assertTrue(launch.argv[2].startswith("# Principles"))
+        self.assertTrue(launch.argv[2].startswith("# Guide"))
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
@@ -147,7 +147,7 @@ class Generic(Base):
         seen, = Recorder.seen
         self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[f"python3 {CORE}/src/repo.py prepare --dir {self.work}/src *"]))
         self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
-        self.assertTrue(seen["prompt"].startswith("# Principles"))
+        self.assertTrue(seen["prompt"].startswith("# Guide"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
 
     def test_layers_apply_after_the_clients_config(self):
@@ -216,7 +216,7 @@ class Skill(Base):
         head, body = text.split("\n---\n", 1)
         self.assertEqual(head.splitlines()[:2], ["---", "name: researcher-light-research"])
         self.assertIn('description: "Quick research on a question', head)
-        self.assertTrue(body.lstrip().startswith("# Principles"))
+        self.assertTrue(body.lstrip().startswith("# Guide"))
         self.assertIn("Input: $ARGUMENTS", body)
         self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare ", body)
         self.assertNotIn(self.tmp.name, body)

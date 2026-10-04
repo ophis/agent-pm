@@ -26,7 +26,8 @@ CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 
 FILES = {
-    "team/principles.md": "# Principles\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
+    "team/guide.md": "# Guide\n\nYou are {{role}} doing {{task}}.\n\nOn conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > [{{task}} rules](#{{task_anchor}}).\n",
+    "team/principles.md": "# Principles\n",
     "team/roles/writer.md": "# Writer\n\nWrite well.\n",
     "team/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
     "team/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
@@ -245,12 +246,23 @@ class Prompt(Fake):
         prompt, _ = self.compose(task="short-note")
         prose = re.sub(r"```markdown\n.*?\n```\n", "", prompt, flags=re.S)
         heads = [line for line in prose.splitlines() if line.startswith(("# ", "## "))]
-        self.assertEqual(heads, ["# Principles", "# Writer", "# Short Note", "# Template: `templates/note.md`",
+        self.assertEqual(heads, ["# Guide", "# Principles", "# Writer", "# Short Note", "# Template: `templates/note.md`",
                                  "# Output", "## Destination"])
 
     def test_precedence_line_names_role_and_task(self):
         prompt, _ = self.compose(task="short-note")
         self.assertIn("[Writer rules](#writer) > [Short Note rules](#short-note)", prompt)
+
+    def test_guide_is_filled_and_holds_the_precedence_line(self):
+        prompt, _ = self.compose(task="short-note")
+        guide = prompt.split("# Principles", 1)[0]
+        self.assertIn("You are Writer doing Short Note.", guide)
+        self.assertEqual(prompt.count("On conflict:"), 1)
+        self.assertIn("On conflict:", guide)
+
+    def test_missing_guide(self):
+        os.remove(os.path.join(self.root, "team", "guide.md"))
+        self.fails("missing file guide.md")
 
     def test_destination_is_filled(self):
         prompt, _ = self.compose(task="long-note")
@@ -298,9 +310,9 @@ class Prompt(Fake):
 
     def test_resume_starts_with_resumed_run(self):
         prompt, _ = self.compose(task="short-note", resume=True)
-        self.assertTrue(prompt.startswith("Resumed run"))
+        self.assertTrue(prompt.startswith(compose.RESUME + "# Guide"))
         prompt, _ = self.compose(task="short-note")
-        self.assertTrue(prompt.startswith("# Principles"))
+        self.assertTrue(prompt.startswith("# Guide"))
 
     def test_leftover_placeholder_in_a_rule_file(self):
         self.write({"team/tasks/short-note.md": "# Short Note\n\nUse {{tool}}.\n"})
@@ -371,6 +383,15 @@ class RealCore(unittest.TestCase):
     def test_default_tasks(self):
         for role, task in (("pm", "product-design"), ("engineer", "engineering")):
             self.assertEqual(composed(role)[1].task, task)
+
+    def test_every_prompt_opens_with_the_guide(self):
+        for role, task in ALL:
+            prompt, run = composed(role, task)
+            guide = prompt.split("\n# Principles\n", 1)[0]
+            self.assertTrue(guide.startswith("# Guide\n"), task)
+            self.assertIn(f"[{run.task_title}](#{compose.anchor(run.task_title)})", guide, task)
+            self.assertEqual(prompt.count("On conflict:"), 1, task)
+            self.assertIn("On conflict:", guide, task)
 
     def test_product_design(self):
         prompt, run = composed("pm", "product-design")
