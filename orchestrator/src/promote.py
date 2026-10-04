@@ -199,13 +199,13 @@ class Promoter:
         self.comment(src, body)
 
 
-def run_prune(gql, cfg, now, dry, pruner=None, team=None, roles=None):
+def run_prune(gql, now, dry, team, roles, pruner=None):
     """Prune finished issues' clones and archive finished pm and engineer issues.
     A prune failure, even an ImportError, is logged and never breaks promote."""
     try:
         if pruner is None:
             from prune import Pruner as pruner
-        pruner(gql, cfg, now, dry, team=team, roles=roles).run()
+        pruner(gql, now, dry, team=team, roles=roles).run()
     except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
         print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
 
@@ -219,7 +219,7 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     dry = "--dry-run" in argv
     promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
     promoter.run()
-    run_prune(gql, cfg, now, dry, pruner, promoter.team, promoter.roles)
+    run_prune(gql, now, dry, promoter.team, promoter.roles, pruner)
     return 0
 
 

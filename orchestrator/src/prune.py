@@ -50,9 +50,9 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, cfg, now, dry, *, work=WORK, team, roles):
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles):
         """roles: {Linear user id: role} as pipeline.role_ids returns."""
-        self.gql, self.cfg, self.now, self.dry, self.work = gql, cfg, now, dry, work
+        self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles = team, roles
         self.errors = 0
 
@@ -101,7 +101,7 @@ class Pruner:
             return
         self.say(f"prune-removed {key}: clone")
 
-    def archive(self, team, finished):
+    def archive(self, finished):
         try:
             ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
             if not ids:
@@ -109,7 +109,7 @@ class Pruner:
             # Every page before any archive: archiving shifts the pages.
             nodes, cursor = [], None
             while True:
-                page = self.gql(Q_FINISHED, t=team.id, s=sorted(finished), a=ids, c=cursor)["issues"]
+                page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)["issues"]
                 nodes += page["nodes"]
                 end = page["pageInfo"]["endCursor"]
                 if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
@@ -140,8 +140,7 @@ class Pruner:
 
     def run(self):
         """0, or 3 if anything failed."""
-        team = self.team
-        finished = {team.states["done"], team.states["canceled"]}
+        finished = {self.team.states["done"], self.team.states["canceled"]}
         try:
             idents = [n for n in sorted(os.listdir(self.work))
                       if IDENT_RE.fullmatch(n) and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))]
@@ -161,5 +160,5 @@ class Pruner:
             elif self.now - since >= QUARANTINE:
                 for parts in self.entries(ident):
                     self.prune(ident, parts)
-        self.archive(team, finished)
+        self.archive(finished)
         return 3 if self.errors else 0

@@ -102,8 +102,8 @@ class FakePruner:
     """Stands in for prune.Pruner; records its constructor args."""
     calls = []
 
-    def __init__(self, gql, cfg, now, dry, team=None, roles=None):
-        FakePruner.calls.append((gql, cfg, now, dry, team, roles))
+    def __init__(self, gql, now, dry, *, team, roles):
+        FakePruner.calls.append((gql, now, dry, team, roles))
 
     def run(self):
         return 0
@@ -478,7 +478,7 @@ class TestPruneHook(Base):
     def test_prune_runs_each_tick(self):
         self.run_main("--dry-run")
         self.assertEqual(len(FakePruner.calls), 1)
-        gql, cfg, now, dry, team, roles = FakePruner.calls[0]
+        gql, now, dry, team, roles = FakePruner.calls[0]
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)

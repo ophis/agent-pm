@@ -11,7 +11,6 @@ import promote_test as tp  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
-CFG = {"team": TEAM, "states": dict(IDS_BY_KEY)}
 ROLES = {"u-researcher": "researcher", "u-pm": "pm", "u-engineer": "engineer"}
 TEAM_OBJ = pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY))
 
@@ -88,7 +87,7 @@ class PruneTest(unittest.TestCase):
     def prune(self, gql, dry=False):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = prune.Pruner(gql, CFG, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES).run()
+            code = prune.Pruner(gql, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES).run()
         return code, out.getvalue()
 
     def mkg(self, ident, *parts, git="file"):
