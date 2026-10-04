@@ -1,9 +1,9 @@
 # Core pack config. A task's value overrides its role's, which overrides the global one.
-#   tier       model tier 1–4 (1 = strongest); the driver config maps it to a model
-#   effort     low | medium | high | xhigh | max; the driver config maps it to the client's effort
+#   tier       model tier 1–4 (1 = strongest); each client config (clients/<name>.toml) maps it to a model
+#   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
 #   templates  files under templates/ inlined into the prompt
-#   read       dirs the run may read but never edit; `repo` is the target repo's worktree
-#   write      extra writable dirs; the workdir and the output file's dir are always writable
+#   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
+#   write      extra dirs the run writes; the workdir and the output file's dir are always reachable
 #   commands   exact shell commands the driver pre-approves
 #   output     destination: type = github (repo, branch, dir) | local | pull-request
 
@@ -61,3 +61,11 @@ write = ["repo"]
 
 [roles.engineer.tasks.engineering.output]
 type = "pull-request"
+
+# ── Dummy Tester ────────────────────────────────────────
+[roles.dummy-tester]
+default_task = "echo"
+
+[roles.dummy-tester.tasks.echo]
+tier = 4
+effort = "low"

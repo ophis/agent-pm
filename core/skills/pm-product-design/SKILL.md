@@ -1,3 +1,8 @@
+---
+name: pm-product-design
+description: "Turn a product request, notes or research reports into a reviewed PRD: problem, scope, requirements and phased delivery. Use when an idea needs to become a buildable spec before engineering."
+---
+
 # Principles
 
 On conflict: [Principles](#principles) > [PM rules](#pm) > [Product Design rules](#product-design).
@@ -124,19 +129,10 @@ url: <link>           # set by Output › Destination once delivered
 
 ## Destination
 
-Publish the document (the body, without frontmatter) to `ophis/private_docs`, branch `main`, folder `Product Design/`. `<pub>` is `<Workdir>/publish`.
-
-1. `<pub>` missing → `gh repo clone ophis/private_docs <pub> -- --branch main`; else `git -C <pub> fetch origin` and `git -C <pub> rebase --autostash origin/main`, after `git -C <pub> rebase --abort` if `git -C <pub> status` shows a rebase in progress.
-2. **File**: reuse `Product Design/*-<Reference>-*.md`, else create `Product Design/<date +%Y-%m-%d-%H%M>-<Reference>-<kebab-slug>.md` (`<Reference>`: the id the input gives, e.g. `TASK-142`; none → drop that part).
-3. `git -C <pub> add <file>`, `git -C <pub> commit -m "<Add|Update> <Reference>: <title>" -- <file>`; then `git -C <pub> fetch origin`, `git -C <pub> rebase origin/main` and `git -C <pub> push origin HEAD:main`, repeating those three on rejection.
-4. Set `url: https://github.com/ophis/private_docs/blob/main/<path>` (spaces as `%20`) in `Output:`.
-
-**Published**: `git -C <pub> status --porcelain -- <file>` and, after a fetch, `git -C <pub> log origin/main..HEAD` print nothing.
+Return the document to your caller; publish, post or save it nowhere. `url:` stays empty.
 
 ---
 
-Output: /Users/francis/playground/agent-pm/work/TASK-142/out.md
-Workdir: /Users/francis/playground/agent-pm/work/TASK-142
-Input:
-
-<the input's free text or file path>
+Input: $ARGUMENTS
+Output: your final reply to the caller: the frontmatter, then the document; no file
+Workdir: a new temp dir (`mktemp -d`), made once per invocation

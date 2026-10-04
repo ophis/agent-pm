@@ -2,7 +2,7 @@
 
 Supplied by the delegate, not a rule set.
 
-Write one Markdown file at `Output:`, starting with frontmatter:
+Write one Markdown document to `Output:`, starting with frontmatter:
 
 ```yaml
 ---

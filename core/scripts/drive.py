@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Driver: composes a run, has its client (scripts/clients.py) build the command, starts it and checks the output.
 
-drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out FILE --workdir DIR [--repo DIR] [--client NAME]
+drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--dry-run]
-Prints the session id on stderr. --dry-run prints {"argv", "cwd", "env"} and starts nothing.
-Exits 0 when the run leaves a valid Output frontmatter, 1 when it doesn't, 2 on a config error, 3 when the client fails.
+--out is the run's Output file, or for a client that only writes files (skill) the dir it writes under.
+Prints the session id on stderr. --dry-run prints {"argv", "cwd", "env", "files"} and changes nothing.
+Exits 0 when the run leaves a valid Output frontmatter (or the files are written), 1 when it doesn't,
+2 on a config error, 3 when the client fails.
 """
 import argparse
 import json
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-from compose import ROOT, ConfigError, compose  # noqa: E402
+from compose import ROOT, ConfigError, compose, render, resolve_run  # noqa: E402
 
 STATUSES = ("done", "needs_input", "failed")
 
@@ -25,13 +27,7 @@ STATUSES = ("done", "needs_input", "failed")
 class Access:
     """A run's client-neutral constraints, as absolute paths and exact commands."""
     dirs: list        # extra dirs the run may reach
-    read_only: list   # dirs the run may read but never edit
     commands: list    # shell commands to pre-approve
-
-
-def overlaps(a, b):
-    a, b = os.path.realpath(a), os.path.realpath(b)
-    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
 
 
 def bind(entry, repo):
@@ -41,28 +37,33 @@ def bind(entry, repo):
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run, root, *, repo, out, workdir):
-    """The run's Access; raises ConfigError when a read-only dir overlaps the workdir or the output's dir."""
-    workdir, out_dir, root = os.path.abspath(workdir), os.path.dirname(os.path.abspath(out)), os.path.abspath(root)
-    reads = [p for p in (bind(e, repo) for e in run["read"]) if p]
-    writes = [p for p in (bind(e, repo) for e in run["write"]) if p]
+def access(run, *, repo, out, workdir):
+    """The run's Access. Edit limits are left to the client's permission mode (auto)."""
+    workdir, out_dir = os.path.abspath(workdir), os.path.dirname(os.path.abspath(out))
     dirs = [] if out_dir == workdir or out_dir.startswith(workdir + os.sep) else [out_dir]
-    dirs += [p for p in reads + writes if p not in dirs]
-    read_only = [root] + [p for p in reads if p != root]
-    for p in read_only:
-        if hit := next((w for w in (workdir, out_dir) if overlaps(p, w)), None):
-            raise ConfigError(f"read-only dir {p} overlaps the writable {hit}")
-    return Access(dirs, read_only, list(run["commands"]))
+    for p in (bind(e, repo) for e in run["read"] + run["write"]):
+        if p and p not in dirs:
+            dirs.append(p)
+    return Access(dirs, list(run["commands"]))
 
 
 def plan(root, role, task=None, *, client, input, out, workdir, repo=None, sid=None, resume=False):
     """The Launch for one run; raises ConfigError."""
     c = clients.get(client, root)
+    if not c.runs:
+        run = resolve_run(root, role, task)
+        run["output"] = c.output(run)
+        return c.launch(render(root, run), run, sid=None, resume=False, access=Access([], list(run["commands"])), out=out)
+    if input is None or workdir is None:
+        raise ConfigError(f"client {client!r} needs --input and --workdir")
     if resume and not sid:
         raise ConfigError("--resume needs --sid")
     sid = sid or str(uuid.uuid4())
-    prompt, run = compose(root, role, task, input=input, out=out, workdir=workdir, resume=resume)
-    launch = c.launch(prompt, run, sid=sid, resume=resume, access=access(run, root, repo=repo, out=out, workdir=workdir))
+    run = resolve_run(root, role, task)
+    run["output"] = c.output(run)
+    prompt = render(root, run, input=input, out=out, workdir=workdir, resume=resume)
+    acc = access(run, repo=repo, out=out, workdir=workdir)
+    launch = c.launch(prompt, run, sid=sid, resume=resume, access=acc, out=out)
     launch.cwd = os.path.abspath(workdir)
     return launch
 
@@ -88,8 +89,9 @@ def main(argv, root=ROOT, run=subprocess.run):
     ap = argparse.ArgumentParser(prog="drive.py")
     ap.add_argument("--role", required=True)
     ap.add_argument("--task")
-    for flag in ("--input", "--out", "--workdir"):
-        ap.add_argument(flag, required=True)
+    ap.add_argument("--input")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--workdir")
     ap.add_argument("--repo")
     ap.add_argument("--client", default="claude")
     ap.add_argument("--sid")
@@ -105,9 +107,18 @@ def main(argv, root=ROOT, run=subprocess.run):
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2
-    print(f"drive.py: session {sid}", file=sys.stderr)
+    if launch.argv:
+        print(f"drive.py: session {sid}", file=sys.stderr)
     if a.dry_run:
-        print(json.dumps({"argv": launch.argv, "cwd": launch.cwd, "env": launch.env}, ensure_ascii=False, indent=1))
+        print(json.dumps({"argv": launch.argv, "cwd": launch.cwd, "env": launch.env, "files": launch.files},
+                         ensure_ascii=False, indent=1))
+        return 0
+    for path, text in launch.files.items():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+        print(f"drive.py: wrote {path}", file=sys.stderr)
+    if not launch.argv:
         return 0
     os.makedirs(launch.cwd, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)

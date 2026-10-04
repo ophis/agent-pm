@@ -43,6 +43,11 @@ def title(text, rel):
     return first[2:].strip()
 
 
+def summary(text):
+    """The first paragraph line after a file's heading."""
+    return next((line.strip() for line in text.splitlines()[1:] if line.strip() and not line.startswith("#")), "")
+
+
 def anchor(heading):
     """GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens."""
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
@@ -100,17 +105,25 @@ def resolve(cfg, role, task=None):
     return run
 
 
-def compose(root, role, task=None, *, input, out, workdir, resume=False):
-    """(prompt, run config) for one run; raises ConfigError."""
+def resolve_run(root, role, task=None):
+    """The run config for role/task, with the role's and task's titles and the task's summary; raises ConfigError."""
     with open(os.path.join(root, "config.toml"), "rb") as f:
         run = resolve(tomllib.load(f), role, task)
-    role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
     text = os.path.join(root, TEXT)
+    role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
     role_md, task_md = read(text, role_rel), read(text, task_rel)
-    names = {"role": title(role_md, role_rel), "task": title(task_md, task_rel)}
+    return run | {"role_title": title(role_md, role_rel), "task_title": title(task_md, task_rel),
+                  "task_summary": summary(task_md)}
+
+
+def render(root, run, *, input=None, out=None, workdir=None, resume=False):
+    """The prompt for a resolved run, ending with the Input/Output/Workdir tail when all three are given."""
+    text = os.path.join(root, TEXT)
+    role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
+    names = {"role": run["role_title"], "task": run["task_title"]}
     names |= {"role_anchor": anchor(names["role"]), "task_anchor": anchor(names["task"])}
     parts = [fill(read(root, "principles.md"), names, "principles.md"),
-             fill(role_md, {}, role_rel), fill(task_md, {}, task_rel)]
+             fill(read(text, role_rel), {}, role_rel), fill(read(text, task_rel), {}, task_rel)]
     for name in run["templates"]:
         rel = f"templates/{name}.md"
         body = read(text, rel)
@@ -121,10 +134,18 @@ def compose(root, role, task=None, *, input, out, workdir, resume=False):
     if not os.path.isfile(os.path.join(text, dest_rel)):
         raise ConfigError(f"no destination {output['type']!r} ({dest_rel})")
     parts.append(fill(read(text, "output/output.md"), {}, "output/output.md") + "\n" + fill(read(text, dest_rel), output, dest_rel))
-    tail = f"Output: {os.path.abspath(out)}\nWorkdir: {os.path.abspath(workdir)}"
-    tail = f"Input: {os.path.abspath(input)}\n{tail}" if os.path.isfile(input) else f"{tail}\nInput:\n\n{input.strip()}"
-    prompt = (RESUME if resume else "") + "\n".join(parts) + f"\n---\n\n{tail}\n"
-    return prompt, run
+    prompt = (RESUME if resume else "") + "\n".join(parts)
+    if None not in (input, out, workdir):
+        tail = f"Output: {os.path.abspath(out)}\nWorkdir: {os.path.abspath(workdir)}"
+        tail = f"Input: {os.path.abspath(input)}\n{tail}" if os.path.isfile(input) else f"{tail}\nInput:\n\n{input.strip()}"
+        prompt += f"\n---\n\n{tail}\n"
+    return prompt
+
+
+def compose(root, role, task=None, *, input=None, out=None, workdir=None, resume=False):
+    """(prompt, run config) for one run; raises ConfigError."""
+    run = resolve_run(root, role, task)
+    return render(root, run, input=input, out=out, workdir=workdir, resume=resume), run
 
 
 def main(argv, root=ROOT):

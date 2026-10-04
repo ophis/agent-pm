@@ -5,6 +5,7 @@ import re
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
@@ -179,6 +180,19 @@ class Prompt(Fake):
         self.assertEqual(tail.strip().splitlines(), ["Output: /w/out.md", "Workdir: /w", "Input:", "",
                                                      "Compare cmux and tmux.", "Keep it short."])
 
+    def test_resolve_then_render_with_another_output(self):
+        run = compose.resolve_run(self.root, "writer", "long-note")
+        run["output"] = {"type": "local"}
+        prompt = compose.render(self.root, run)
+        self.assertIn("Keep it local.", prompt)
+        self.assertNotIn("Push to", prompt)
+
+    def test_no_paths_no_tail(self):
+        prompt, run = compose.compose(self.root, "writer", "short-note")
+        self.assertNotIn("Output: ", prompt)
+        self.assertTrue(prompt.rstrip().endswith("Keep it local."))
+        self.assertEqual((run["role_title"], run["task_title"], run["task_summary"]), ("Writer", "Short Note", "Write a note."))
+
     def test_resume_starts_with_resumed_run(self):
         prompt, _ = self.compose(task="short-note", resume=True)
         self.assertTrue(prompt.startswith("Resumed run"))
@@ -224,7 +238,8 @@ class Main(Fake):
         self.assertIn("compose.py: task 'essay'", err)
 
 
-ALL = [("researcher", "deep-research"), ("researcher", "light-research"), ("pm", "product-design"), ("engineer", "engineering")]
+with open(os.path.join(CORE, "config.toml"), "rb") as _f:
+    ALL = [(r, t) for r, role in tomllib.load(_f)["roles"].items() for t in role.get("tasks", {})]
 
 
 class RealCore(unittest.TestCase):

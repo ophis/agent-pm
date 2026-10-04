@@ -1,0 +1,37 @@
+# Skill client data, read by SkillClient (scripts/clients/skill.py).
+
+# Same layout as config.toml; an entry here replaces the same one there.
+#   description  the SKILL.md description, which tells a model when to use the skill;
+#                without one, it is "<Task> as <Role>: <the task file's first line>"
+#   output       caller → the document goes back to the caller; tasks without an entry keep their own (engineering: pull-request)
+
+# ── Researcher ─────────────────────────────────────────
+[roles.researcher.tasks.deep-research]
+description = "Deep, verified research on a question about the web, a codebase, or both: research workflows, key claims checked by independent votes, a sourced Markdown report with its gaps listed. Use when the answer must be reliable or a quick pass left gaps; for a fast answer use researcher-light-research."
+
+[roles.researcher.tasks.deep-research.output]
+type = "caller"
+
+[roles.researcher.tasks.light-research]
+description = "Quick research on a question about the web, a codebase, or both: one round of parallel agents and a short sourced Markdown report. Use when a fast, good-enough answer will do; for verified depth use researcher-deep-research."
+
+[roles.researcher.tasks.light-research.output]
+type = "caller"
+
+# ── PM ─────────────────────────────────────────────────
+[roles.pm.tasks.product-design]
+description = "Turn a product request, notes or research reports into a reviewed PRD: problem, scope, requirements and phased delivery. Use when an idea needs to become a buildable spec before engineering."
+
+[roles.pm.tasks.product-design.output]
+type = "caller"
+
+# ── Engineer ───────────────────────────────────────────
+[roles.engineer.tasks.engineering]
+description = "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review, then push the branch and open the PR. Use when an approved PRD is ready to implement."
+
+# ── Dummy Tester ───────────────────────────────────────
+[roles.dummy-tester.tasks.echo]
+description = "Return the input unchanged. Use only to check that the delegate pipeline works end to end."
+
+[roles.dummy-tester.tasks.echo.output]
+type = "caller"

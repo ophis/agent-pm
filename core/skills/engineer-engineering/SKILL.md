@@ -1,3 +1,8 @@
+---
+name: engineer-engineering
+description: "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review, then push the branch and open the PR. Use when an approved PRD is ready to implement."
+---
+
 # Principles
 
 On conflict: [Principles](#principles) > [Engineer rules](#engineer) > [Engineering rules](#engineering).
@@ -99,8 +104,6 @@ The document is the pull request description for the input's `Repo:` and `Branch
 
 ---
 
-Output: /Users/francis/playground/agent-pm/work/TASK-142/out.md
-Workdir: /Users/francis/playground/agent-pm/work/TASK-142
-Input:
-
-<the input's free text or file path>
+Input: $ARGUMENTS
+Output: the path the input names, else `./engineer-engineering-<date +%Y%m%d-%H%M>.md` in the current directory
+Workdir: a new temp dir (`mktemp -d`), made once per invocation
