@@ -5,7 +5,7 @@
 #   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
 #   write      extra dirs the run writes; the workdir and the output file's dir are always reachable
 #   commands   exact shell commands the driver pre-approves
-#   output     destination: type = github (repo, branch, dir) | local | pull-request
+#   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 
 # ── Global ──────────────────────────────────────────────
 tier = 2

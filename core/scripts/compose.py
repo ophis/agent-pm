@@ -20,7 +20,7 @@ GLOBAL_KEYS = RUN_KEYS | {"roles"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 LISTS = ("read", "write", "commands", "templates")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
+PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 
 
@@ -54,7 +54,11 @@ def anchor(heading):
 
 
 def fill(text, values, where):
-    out = PLACEHOLDER.sub(lambda m: str(values.get(m.group(1), m.group(0))), text)
+    def value(m):
+        if m.group(1) in values:
+            return str(values[m.group(1)])
+        return m.group(2) if m.group(2) is not None else m.group(0)
+    out = PLACEHOLDER.sub(value, text)
     if m := PLACEHOLDER.search(out):
         raise ConfigError(f"unfilled placeholder {m.group(0)} in {where}")
     return out

@@ -204,6 +204,18 @@ class Prompt(Fake):
         self.fails("unfilled placeholder {{tool}}", task="short-note")
 
 
+class Fill(unittest.TestCase):
+    def test_default_used_when_value_missing(self):
+        self.assertEqual(compose.fill("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "t"), "https://github.com/o/n")
+
+    def test_value_beats_default(self):
+        self.assertEqual(compose.fill("{{host|github.com}}", {"host": "ghe.example.com"}, "t"), "ghe.example.com")
+
+    def test_missing_without_default_fails(self):
+        with self.assertRaises(compose.ConfigError):
+            compose.fill("{{repo}}", {}, "t")
+
+
 class Anchor(unittest.TestCase):
     def test_github_style(self):
         self.assertEqual(compose.anchor("Light Research"), "light-research")
@@ -290,6 +302,14 @@ class RealCore(unittest.TestCase):
             prompt, _ = compose.compose(CORE, role, task, **PATHS)
             for word in ("router.py", "research.py", "usage.py", "eng.py", "Linear", "In Review", "Todo", "Handoff", "issue"):
                 self.assertNotIn(word, prompt, f"{task}: {word}")
+
+    def test_github_host_defaults_and_overrides(self):
+        run = compose.resolve_run(CORE, "researcher", "light-research")
+        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run))
+        run["output"] = {**run["output"], "host": "ghe.example.com"}
+        prompt = compose.render(CORE, run)
+        self.assertIn("gh repo clone ghe.example.com/ophis/private_docs", prompt)
+        self.assertIn("https://ghe.example.com/ophis/private_docs/blob/main/", prompt)
 
     def test_researcher_light_research_compiles(self):
         prompt, run = compose.compose(CORE, "researcher", "light-research", **PATHS)
