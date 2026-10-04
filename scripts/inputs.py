@@ -45,7 +45,9 @@ def _head(description):
 
 
 def _link_re(docs):
-    return re.compile(rf"https://github\.com/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`]+)")
+    """A docs link; the path ends at the first raw `#` or `?` (GitHub percent-encodes real ones), the rest is ignored."""
+    return re.compile(rf"https://github\.com/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
+                      r"(?:[#?][^\s)>\]`]*)?")
 
 
 def doc_path(url, docs) -> str | None:

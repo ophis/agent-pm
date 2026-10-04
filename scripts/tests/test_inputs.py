@@ -66,8 +66,15 @@ class DocPath(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertEqual(inputs.doc_path(url, DOCS), want)
 
+    def test_fragment_and_query_end_the_path(self):
+        for suffix in ("#L10", "#L10-L20", "#section", "?plain=1", "?plain=1#L3", "#a/b?c"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(inputs.doc_path(BASE + "Product%20Design/x.md" + suffix, DOCS), "Product Design/x.md")
+        self.assertEqual(inputs.doc_path(BASE + "x%23y%3Fz.md#L1", DOCS), "x#y?z.md")
+
     def test_rejected(self):
-        for url in ("https://github.com/other/repo/blob/main/a.md", "https://github.com/ophis/private_docs/blob/dev/a.md",
+        for url in ("https://github.com/other/repo/blob/main/a.md", BASE + "#L10", BASE + "?plain=1", BASE + "../a.md#L1",
+                    BASE + "a.md#L1)", BASE + "a.md#L 1", "https://github.com/ophis/private_docs/blob/dev/a.md",
                     "https://github.com/ophis/private_docs/tree/main/a.md", "https://example.com/a.md",
                     BASE, BASE + "../a.md", BASE + "a/../b.md", BASE + "a/%2e%2e/b.md", BASE + "a%0Ab.md",
                     BASE + "a.md)", BASE + "a b.md", "x " + BASE + "a.md"):
@@ -116,6 +123,28 @@ class Gather(unittest.TestCase):
         self.assertEqual([d.path for d in src.docs], ["Research/a.md", "Research/b.md", "Research/c.md", "Research/e.md"])
         self.assertEqual(src.docs[2].url, c)
         self.assertNotIn(endpoint("Research/d.md"), [c[0][-1] for c in gh.calls])
+
+    def test_fragment_and_query_links_resolve_to_the_bare_path_and_dedupe(self):
+        d, e = BASE + "Research/a.md", BASE + "Research/b.md"
+        description = f"Lines {d}#L10 and [b]({e}?plain=1) and <{d}> and `{BASE}Research/c.md#section`."
+        links = (issues.Link("Spec", d + "#section"), issues.Link("Plan", e), issues.Link("D", BASE + "Research/d.md?plain=1#L3"))
+        gh = Gh({endpoint(f"Research/{n}.md"): ok(n) for n in "abcd"} | {endpoint("Research"): listing()})
+        src = inputs.gather(issue(description, links=links), "deep-research", DOCS, run=gh)
+        self.assertEqual([x.path for x in src.docs], ["Research/a.md", "Research/b.md", "Research/c.md", "Research/d.md"])
+        self.assertEqual([x.text for x in src.docs], list("abcd"))
+        self.assertEqual([x.url for x in src.docs], [d + "#L10", e + "?plain=1", BASE + "Research/c.md#section", BASE + "Research/d.md?plain=1#L3"])
+        self.assertEqual([c[0][-1] for c in gh.calls], [endpoint("Research")] + [endpoint(f"Research/{n}.md") for n in "abcd"])
+
+    def test_fragment_link_to_a_design_doc_is_found_for_the_prd_fallback_and_build(self):
+        url = BASE + "Product%20Design/2026-08-01-PM-1-x.md#L10"
+        gh = Gh({endpoint("Product%20Design"): listing(), endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
+        src = inputs.gather(issue(url, ident="PM-9"), "product-design", DOCS, run=gh)
+        self.assertEqual((src.earlier.path, src.earlier.url, src.earlier.text), ("Product Design/2026-08-01-PM-1-x.md", url, "p1"))
+        gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
+        src = inputs.gather(issue("", links=(issues.Link("PRD", url),), ident="ENG-7"), "engineering", DOCS, run=gh)
+        got = inputs.render(issue("D", ident="ENG-7"), "engineering", src, humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS)
+        self.assertIn("## PRD: `Product Design/2026-08-01-PM-1-x.md`\n\n" + fenced("p1"), got)
+        self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {url}\n", got)
 
     def test_comments_header_with_crlf(self):
         description = f"{BASE}Research/a.md\r\n## Comments\r\n  > {BASE}Research/b.md"
