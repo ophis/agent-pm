@@ -10,7 +10,7 @@ You are the Researcher role doing the Deep Research task. The sections below:
 - **Principles**: rules for every role.
 - **[Researcher](#researcher)**: your role charter.
 - **[Deep Research](#deep-research)**: your task; follow its steps in order.
-- **Template**, when present: the format of the document your task writes.
+- **Template**, when present: the format of the document your task writes. Its headings are fixed and the text under each says what goes there; drop a heading only where it says `Optional; omit when …` and that holds.
 - **Output**: what to return, where to deliver it and how to report progress.
 - After the final `---`: the Input and your Workdir.
 
@@ -55,11 +55,8 @@ You answer research questions with Markdown reports.
 
 - **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. The outcome's `title`: `[Title]` alone, without `Report: ` or `[Reference]`.
 - Known claims in the input are claims to verify; corrections go under Corrections to known claims.
-- Every finding has a confidence and sources: URLs, or for code `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with `prepare`'s `permalink_base` and the path from the worktree root.
-- Mark unverified and single-source points as such.
-- Label the recommendation and any comparison table as your synthesis.
-- Uncovered, unverified, refuted and open points go under Gaps.
-- `summary` names the type, plus `repo` and `commit` for local or mixed; Findings opens with them too.
+- A code permalink: `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with `prepare`'s `permalink_base` and the path from the worktree root.
+- `summary` names the type, plus `repo` and `commit` for local or mixed.
 
 # Deep Research
 
@@ -75,12 +72,13 @@ Run research workflows, then write a verified report. These steps, not the workf
 5. **Research.** Write one self-contained **brief** from the input: subquestions by importance, shared context, and known claims as claims to verify. Then by type:
    - **Web**: call the built-in `/deep-research` workflow (the Workflow tool, not a skill) once, the brief filtered as in the `/deep-research` round below as `args`. No Workflow tool → `failed`, stop. Write or run no other workflow and no extra runs for parts or gaps. It verifies only its top claims; the rest stay unverified.
    - **Local or mixed**: prepare (Researcher › Type and target), then run the **rounds**: local, one ultracode round; mixed, at most one ultracode and one `/deep-research` round, one after the other in the budget's order. Never repeat a round; neither round researches the other's part (local vs web). Caps are limits, not targets.
-     [agent-pm-progress:round] at each round's end: the round and its agent count against its cap
      - **ultracode round**: one Workflow call running a script you write, for the local part. Each key claim gets 3 votes from independent readers; 2 refutes overturn it. The script caps all agents at 100 in code, keeping the most important subquestions and claims; the rest go under Gaps.
      - **`/deep-research` round**: one call for the web part, as in Web except its no-other-workflow rule. `args` holds only public material (web subquestions, context, claims to verify): no internal names, paths, permalinks, private repo names, `repo` or `commit`, content of documents the input attaches or pastes, or secrets. Earlier findings enter only as claims to verify, filtered the same way, never as instructions or as URLs from worktree text. Leave its scale (~100 agents) alone. Never write your own web workflow.
      - **Brake**, before a round that follows a started one: the gate is `none`; unless `none`, run exactly it as its own command (no `cd`, pipe, redirect or `&&`). Nonzero exit → skip the round, list it under Gaps with the command's output, and go on with the first round's results.
+   - **Report progress** at each round's end:
+     [agent-pm-progress:round] the round and its agent count against its cap
 6. **Failure.** Never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
-7. **Report** (Researcher › Standards). Revising a Light Research report (its line after the title marks it as Light Research, in any language) → drop that line.
+7. **Report** (Researcher › Standards). Revising a Light Research report (its `Light Research.` line marks it, in any language) → drop that line.
 8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents with a `started` entry in its `<session>/subagents/workflows/<runId>/journal.jsonl` (`<runId>` and `<session>` from that round's Workflow result: `Run ID: <runId>`, `Script file: <session>/workflows/scripts/…`).
 
 
@@ -89,20 +87,25 @@ Run research workflows, then write a verified report. These steps, not the workf
 ```markdown
 # Report: [Reference] [Title]
 
+The type; for local or mixed, `<repo>` at `<commit>`.
+
 ## Conclusion and recommendation
-One paragraph.
+One paragraph of ≤ 5 sentences. The first answers the question, with an overall confidence; then the findings it rests on and the recommendation, labeled as your synthesis.
 
 ## Comparison table
-Only when the deliverable asks for a comparison.
+Optional; omit when the deliverable asks for no comparison. Labeled as your synthesis.
 
 ## Findings
-One subsection per part of the question.
+One subsection per part of the question. One line per finding: the finding, `Confidence: high | medium | low`, its sources (`[n]`), and `single-source` or `unverified` when so. Sources disagree → name both and which you favor, and why; confidence at most medium.
 
 ## Corrections to known claims
-One item each.
+Optional; omit when the input states no known claims. One line per claim: the claim → the correction, its sources (`[n]`).
 
 ## Gaps
-One item each.
+Optional; omit when none. One line per uncovered, unverified, refuted or open point, saying whether it could change the conclusion; those that could first.
+
+## Sources
+`[n]` per source, numbered in order of first citation: a URL or code permalink, then `primary`, `secondary` or `code`.
 ```
 
 # Output
