@@ -3,7 +3,8 @@
 
 compose.py --role ROLE [--task TASK] --input FILE|TEXT|- --out FILE --workdir DIR [--resume] [--json]
 Prints the prompt, or with --json {"prompt": ..., "run": {...}}. Exits 2 on a config error. Needs Python 3.11+.
-Principles get {{role}}, {{task}} and their anchors; a destination gets its output values.
+Principles get {{role}}, {{task}} and their anchors; role and task text get {{scripts}} (this dir, or the client's path
+to it); a destination gets its output values.
 """
 import argparse
 import json
@@ -125,14 +126,15 @@ def resolve_run(root, role, task=None):
                   "task_summary": summary(task_md)}
 
 
-def render(root, run, *, input=None, out=None, workdir=None, resume=False):
+def render(root, run, *, input=None, out=None, workdir=None, resume=False, scripts=None):
     """The prompt for a resolved run, ending with the Input/Output/Workdir tail when all three are given."""
+    paths = {"scripts": scripts or os.path.join(os.path.abspath(root), "scripts")}
     text = os.path.join(root, TEXT)
     role_rel, task_rel = f"roles/{run['role']}.md", f"tasks/{run['task']}.md"
     names = {"role": run["role_title"], "task": run["task_title"]}
     names |= {"role_anchor": anchor(names["role"]), "task_anchor": anchor(names["task"])}
     parts = [fill(read(root, "principles.md"), names, "principles.md"),
-             fill(read(text, role_rel), {}, role_rel), fill(read(text, task_rel), {}, task_rel)]
+             fill(read(text, role_rel), paths, role_rel), fill(read(text, task_rel), paths, task_rel)]
     for name in run["templates"]:
         rel = f"templates/{name}.md"
         body = read(text, rel)

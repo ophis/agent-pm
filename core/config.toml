@@ -4,7 +4,8 @@
 #   templates  files under templates/ inlined into the prompt
 #   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
 #   write      extra dirs the run writes; the workdir and the output file's dir are always reachable
-#   commands   exact shell commands the driver pre-approves
+#   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
+#              {{scripts}} is core's scripts/ dir
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 
 # ── Global ──────────────────────────────────────────────
@@ -20,7 +21,7 @@ default_task = "deep-research"
 
 [roles.researcher.tasks.deep-research]
 templates = ["research-report"]
-read = ["repo"]
+commands = ["python3 {{scripts}}/repo.py prepare *"]
 
 [roles.researcher.tasks.deep-research.output]
 type = "github"
@@ -31,7 +32,7 @@ dir = "Research/"
 
 [roles.researcher.tasks.light-research]
 templates = ["research-report"]
-read = ["repo"]
+commands = ["python3 {{scripts}}/repo.py prepare *"]
 
 [roles.researcher.tasks.light-research.output]
 type = "github"
@@ -60,7 +61,7 @@ default_task = "engineering"
 
 [roles.engineer.tasks.engineering]
 effort = "xhigh"
-write = ["repo"]
+commands = ["python3 {{scripts}}/repo.py checkout *", "python3 {{scripts}}/repo.py status *"]
 
 [roles.engineer.tasks.engineering.output]
 type = "pull-request"

@@ -17,6 +17,7 @@ import drive  # noqa: E402
 CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SID = "11111111-2222-3333-4444-555555555555"
 NO_ACCESS = drive.Access(dirs=[], commands=[])
+PREPARE = f"python3 {CORE}/scripts/repo.py prepare *"
 RUN = {"role": "r", "task": "t", "tier": 2, "effort": "high"}
 
 
@@ -63,14 +64,15 @@ class Claude(Base):
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
-            "--add-dir", self.repo])
+            "--allowedTools", f"Bash({PREPARE})"])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
-    def test_engineering_xhigh_and_writable_repo(self):
-        argv = self.plan("engineer", "engineering", client="claude", repo=self.repo).argv
+    def test_engineering_xhigh_and_repo_commands(self):
+        argv = self.plan("engineer", "engineering", client="claude").argv
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
-        self.assertIn(self.repo, argv)
+        self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
+            f"Bash(python3 {CORE}/scripts/repo.py {cmd} *)" for cmd in ("checkout", "status")])
 
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
@@ -120,14 +122,15 @@ class Generic(Base):
     def test_driver_hands_the_client_neutral_access(self):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
-        self.assertEqual(seen["access"], drive.Access(dirs=[self.repo], commands=[]))
+        self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[PREPARE]))
         self.assertEqual((seen["sid"], seen["resume"], seen["run"]["task"]), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Principles"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
 
-    def test_writable_repo_is_reachable(self):
-        self.plan("engineer", "engineering", repo=self.repo)
-        self.assertEqual(Recorder.seen[0]["access"], drive.Access(dirs=[self.repo], commands=[]))
+    def test_repo_entry_binds_to_the_repo_arg(self):
+        run = {"read": [], "write": ["repo"], "commands": ["{{scripts}}/x *"]}
+        acc = drive.access(run, repo=self.repo, out=os.path.join(self.work, "o.md"), workdir=self.work, scripts="/s")
+        self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=["/s/x *"]))
 
     def test_output_dir_outside_workdir_is_added(self):
         out = os.path.join(self.tmp.name, "elsewhere", "out.md")
@@ -135,8 +138,8 @@ class Generic(Base):
         self.assertEqual(Recorder.seen[0]["access"].dirs, [os.path.dirname(out)])
 
     def test_repo_ignored_without_repo_arg(self):
-        self.plan()
-        self.assertEqual(Recorder.seen[0]["access"], drive.Access(dirs=[], commands=[]))
+        self.plan("engineer", "engineering")
+        self.assertEqual(Recorder.seen[0]["access"].dirs, [])
 
     def test_resume_needs_sid(self):
         with self.assertRaises(compose.ConfigError):
@@ -164,7 +167,9 @@ class Skill(Base):
         self.assertIn('description: "Quick research on a question', head)
         self.assertTrue(body.lstrip().startswith("# Principles"))
         self.assertIn("Input: $ARGUMENTS", body)
+        self.assertIn("`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo.py prepare ", body)
         self.assertNotIn(self.tmp.name, body)
+        self.assertNotIn(CORE, body)
 
     def skill_text(self, role, task):
         launch = drive.plan(CORE, role, task, client="skill", input=None, out=self.tmp.name, workdir=None)

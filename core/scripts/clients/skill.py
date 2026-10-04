@@ -13,6 +13,9 @@ class SkillClient(Client):
     keys = frozenset({"description", "roles"})
     runs = False
 
+    def scripts(self, root, run, out):
+        return "${CLAUDE_PLUGIN_ROOT}/scripts"   # the skills ship in core's plugin
+
     def launch(self, prompt, run, *, sid, resume, access, out):
         name = f"{run['role']}-{run['task']}"
         description = self.value(run, "description") or f"{run['task_title']} as {run['role_title']}: {run['task_summary']}"

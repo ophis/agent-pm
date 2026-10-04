@@ -276,7 +276,7 @@ class RealCore(unittest.TestCase):
         prompt, run = compose.compose(CORE, "engineer", "engineering", **PATHS)
         self.assertIn("[Engineer rules](#engineer) > [Engineering rules](#engineering)", prompt)
         self.assertIn("gh pr create", prompt)
-        self.assertEqual((run["effort"], run["write"], run["output"]), ("xhigh", ["repo"], {"type": "pull-request"}))
+        self.assertEqual((run["effort"], run["write"], run["output"]), ("xhigh", [], {"type": "pull-request"}))
 
     def test_researcher_defaults_to_deep_research(self):
         _, run = compose.compose(CORE, "researcher", **PATHS)
@@ -288,14 +288,14 @@ class RealCore(unittest.TestCase):
         self.assertIn("# Template: `templates/research-report.md`", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", ["repo"]))
-        self.assertEqual(run["commands"], [])
+        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", []))
 
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:
             prompt, run = compose.compose(CORE, role, task, **PATHS)
             for cmd in run["commands"]:
-                self.assertIn(f"`{cmd}`", prompt, task)
+                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "scripts")}, task).removesuffix(" *")
+                self.assertIn(f"`{cmd}", prompt, task)
 
     def test_no_orchestration_references(self):
         for role, task in ALL:
@@ -316,7 +316,7 @@ class RealCore(unittest.TestCase):
         self.assertIn("[Researcher rules](#researcher) > [Light Research rules](#light-research)", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", ["repo"]))
+        self.assertEqual((run["tier"], run["effort"], run["read"]), (2, "high", []))
 
 
 if __name__ == "__main__":

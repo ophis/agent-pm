@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-from compose import ROOT, RUN_KEYS, ConfigError, check, compose, render, resolve_run  # noqa: E402
+from compose import ROOT, RUN_KEYS, ConfigError, check, compose, fill, render, resolve_run  # noqa: E402
 
 STATUSES = ("done", "needs_input", "failed")
 
@@ -37,14 +37,14 @@ def bind(entry, repo):
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run, *, repo, out, workdir):
-    """The run's Access. Edit limits are left to the client's permission mode (auto)."""
+def access(run, *, repo, out, workdir, scripts):
+    """The run's Access, `{{scripts}}` in commands filled. Edit limits are left to the client's permission mode (auto)."""
     workdir, out_dir = os.path.abspath(workdir), os.path.dirname(os.path.abspath(out))
     dirs = [] if out_dir == workdir or out_dir.startswith(workdir + os.sep) else [out_dir]
     for p in (bind(e, repo) for e in run["read"] + run["write"]):
         if p and p not in dirs:
             dirs.append(p)
-    return Access(dirs, list(run["commands"]))
+    return Access(dirs, [fill(c, {"scripts": scripts}, "commands") for c in run["commands"]])
 
 
 def override(client, run):
@@ -60,15 +60,17 @@ def plan(root, role, task=None, *, client, input, out, workdir, repo=None, sid=N
     c = clients.get(client, root)
     if not c.runs:
         run = override(c, resolve_run(root, role, task))
-        return c.launch(render(root, run), run, sid=None, resume=False, access=Access([], list(run["commands"])), out=out)
+        return c.launch(render(root, run, scripts=c.scripts(root, run, out)), run, sid=None, resume=False,
+                        access=Access([], []), out=out)
     if input is None or workdir is None:
         raise ConfigError(f"client {client!r} needs --input and --workdir")
     if resume and not sid:
         raise ConfigError("--resume needs --sid")
     sid = sid or str(uuid.uuid4())
     run = override(c, resolve_run(root, role, task))
-    prompt = render(root, run, input=input, out=out, workdir=workdir, resume=resume)
-    acc = access(run, repo=repo, out=out, workdir=workdir)
+    scripts = c.scripts(root, run, out)
+    prompt = render(root, run, input=input, out=out, workdir=workdir, resume=resume, scripts=scripts)
+    acc = access(run, repo=repo, out=out, workdir=workdir, scripts=scripts)
     launch = c.launch(prompt, run, sid=sid, resume=resume, access=acc, out=out)
     launch.cwd = os.path.abspath(workdir)
     return launch

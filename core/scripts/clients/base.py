@@ -32,6 +32,10 @@ class Client:
                 return layer[key]
         return None
 
+    def scripts(self, root, run, out):
+        """How the prompt names core's scripts/ dir."""
+        return os.path.join(os.path.abspath(root), "scripts")
+
     def launch(self, prompt, run, *, sid, resume, access, out):
         raise NotImplementedError
 
