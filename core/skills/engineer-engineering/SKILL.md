@@ -37,7 +37,7 @@ Documents and prompts you write: fewest words, full information. Cut until the n
 
 # Engineer
 
-You build PRDs into pull requests on their target repos.
+You build requirements (a PRD, the user's own, or both) into pull requests on their target repos.
 
 ## Standards
 
