@@ -6,7 +6,7 @@ import re
 
 from compose import RunConfig
 
-from .base import PROGRESS, Client, Launch
+from .base import REPORT, Client, Launch
 
 TAIL = "\n---\n\nInput: $ARGUMENTS\nWorkdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n"
 SCRIPTS = "${CLAUDE_SKILL_DIR}/scripts"
@@ -24,8 +24,7 @@ class SkillClient(Client):
 
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
-                f"`deliverable` after the frontmatter instead of in it; write no file for the outcome. At each "
-                f"`[{PROGRESS}:<name>]` point, write a line starting with the same mark, your report after it.")
+                f"`deliverable` after the frontmatter instead of in it; write no file for the outcome. {REPORT}.")
 
     def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
         name = f"{run.role}-{run.task}"

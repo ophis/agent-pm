@@ -52,6 +52,7 @@ default_task = "product-design"
 
 [roles.pm.tasks.product-design]
 templates = ["prd"]
+commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]
 
 [roles.pm.tasks.product-design.output]
 type = "github"

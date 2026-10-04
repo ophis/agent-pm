@@ -148,6 +148,13 @@ class Resolve(Fake):
         prompt, run = self.compose(task="long-note", layers=[{"language": ""}])
         self.assertNotIn("Reports are in", prompt)
 
+    def test_progress_names_come_from_the_task_in_order_once_each(self):
+        self.write({"team/tasks/short-note.md": "# Short Note\n\n1. a\n   [agent-pm-progress:start] what\n"
+                    "   - [agent-pm-progress:round-1] x\n   [agent-pm-progress:start] again\n"
+                    "see [agent-pm-progress:mid] mid-line\n"})
+        self.assertEqual(self.compose(task="short-note")[1].progress, ["start", "round-1"])
+        self.assertEqual(self.compose(task="long-note")[1].progress, [])
+
     def test_layers_ignore_their_own_keys(self):
         _, run = self.compose(task="long-note", layers=[{"flags": ["-x"], "description": "d"}])
         self.assertEqual(run.tier, 1)
@@ -416,6 +423,10 @@ class RealCore(unittest.TestCase):
                 text = f.read()
             self.assertEqual(len(re.findall(r"^\s*\[agent-pm-progress:start\] \S", text, re.M)), 1, task)
             self.assertNotIn("agent-pm-progress:budget", text, task)
+
+    def test_progress_names_of_the_real_tasks(self):
+        self.assertEqual(compose.load_run(CORE, "researcher", "deep-research").progress, ["start", "round"])
+        self.assertEqual(compose.load_run(CORE, "pm", "product-design").progress, ["start"])
 
     def test_github_host_defaults_and_overrides(self):
         run = compose.load_run(CORE, "researcher", "light-research")

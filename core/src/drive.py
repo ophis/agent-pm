@@ -181,7 +181,7 @@ def _file(path, workdir: str) -> str:
         raise InvalidOutcome(f"file {str(path)[:200]!r} is not a single-link .md file under the workdir")
     return str(real)
 
-Sink = Callable[[Event], None]   # receives each text and progress event as the run goes, then its checked outcome
+Sink = Callable[[Event], None]   # receives each text and progress event as the run goes, then a missing mark and the checked outcome
 
 
 def terminal(log=sys.stderr) -> Sink:
@@ -226,7 +226,9 @@ def default_sinks(params: RunParams) -> list[Sink]:
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, sinks: Sequence[Sink] | None = None,
           popen=subprocess.Popen) -> Result:
     """Starts the run and waits, handing its events to `sinks` (default_sinks() when None); then checks the client's
-    last outcome, saves the deliverable to params.out where the destination says so, and hands the outcome on too."""
+    last outcome, saves the deliverable to params.out where the destination says so, and hands the outcome on too.
+    A done or failed new run whose task marks `start` but never reported it gets a stderr line and a `missing`
+    event first."""
     write(launch.files)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(launch.cwd or workdir, exist_ok=True)
@@ -235,7 +237,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     out = Path(params.out).absolute()
     if not out.is_dir():
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this run's
-    raw = None
+    raw, seen = None, set()
     proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
     try:
@@ -243,6 +245,8 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
             if event.kind == "outcome":
                 raw = event.outcome
                 continue
+            if event.kind == "progress":
+                seen.add(event.name)
             for sink in sinks:
                 sink(event)
     except BaseException:
@@ -262,6 +266,11 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         save(out, outcome.deliverable)
         if run.output["type"] == "local":
             outcome = replace(outcome, url=str(out))
+    # A resumed session reported its start before the interruption.
+    if outcome.status != "needs_input" and "start" in run.progress and "start" not in seen and not params.resume:
+        print("drive.py: missing progress mark: start", file=sys.stderr)
+        for sink in sinks:
+            sink(Event("missing", name="start"))
     for sink in sinks:
         sink(Event("outcome", outcome=asdict(outcome)))
     return Result(rc, outcome)

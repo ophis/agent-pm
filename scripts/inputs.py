@@ -163,12 +163,15 @@ def _split(issue, humans):
     return user, [n for n in issue.notes if n not in user]
 
 
+def _reference(issue, target):
+    return "\n".join(["Reference: " + issue.identifier] + ([f"Repo: {target.owner}/{target.name}"] if target else []))
+
+
 def _research(issue, sources, humans, target, docs):
     user, other = _split(issue, humans)
-    head = ["Reference: " + issue.identifier] + ([f"Repo: {target.owner}/{target.name}"] if target else [])
     e = sources.earlier
     return _join([
-        "\n".join(head), PRECEDENCE["research"],
+        _reference(issue, target), PRECEDENCE["research"],
         _section("Question", issue.title, issues.brief(issue).strip()),
         _section("The user's comments", *(_user(n) for n in user)),
         _section("Other comments (context)", "\n".join(_quoted(n) for n in other)),
@@ -181,7 +184,7 @@ def _design(issue, sources, humans, target, docs):
     user, other = _split(issue, humans)
     h, e = issue.handoff, sources.earlier
     return _join([
-        "Reference: " + issue.identifier, PRECEDENCE["design"],
+        _reference(issue, target), PRECEDENCE["design"],
         _section("Brief", issue.title, issues.brief(issue).strip()),
         _section("The user's later words", *(_user(n) for n in user)),
         _section("Reports", *(_doc(d, docs.branch) for d in sources.docs)),
@@ -216,7 +219,7 @@ def _build(issue, sources, humans, target, docs):
 
 
 def render(issue, task, sources, *, humans, target, docs) -> str:
-    """The input text for the task's kind. `target`: research → research_repo() or None; build → the checked Target;
-    design → None. `docs` names the branch in "not found" lines and the design dirs a PRD link is picked from."""
+    """The input text for the task's kind. `target`: research, design → research_repo() or None; build → the checked
+    Target. `docs` names the branch in "not found" lines and the design dirs a PRD link is picked from."""
     layout = {"research": _research, "design": _design, "build": _build}[TASKS[task].kind]
     return layout(issue, sources, humans, target, docs)

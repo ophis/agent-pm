@@ -6,12 +6,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
-from compose import RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
+from compose import PROGRESS, RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
 
-
-# A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`; a run reports it with a line
-# starting the same way, its report after the mark.
-PROGRESS = "agent-pm-progress"
+# A run reports a progress point with a line starting with the task's mark, its report after it.
+REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
+          "containing only that line: the mark, then your report")
 PROGRESS_LINE = re.compile(rf"^\s*(?:[-*]\s+)?[`*]*\[{PROGRESS}:([\w-]+)\][`*]*\s*(.*?)[`*]*\s*$")   # `quoted` or **bold** too
 
 
@@ -33,8 +32,8 @@ class Launch:
 @dataclass(frozen=True)
 class Event:
     """One thing a run's output says: text to show, a progress report (named by its point), or its outcome (the last
-    one counts)."""
-    kind: Literal["text", "progress", "outcome"]
+    one counts); or, from the driver, a progress point the run never reported (`missing`, named by it)."""
+    kind: Literal["text", "progress", "outcome", "missing"]
     text: str = ""
     name: str = ""
     outcome: dict | None = None

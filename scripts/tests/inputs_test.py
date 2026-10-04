@@ -321,6 +321,13 @@ class RenderDesign(unittest.TestCase):
                             inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
         self.assertEqual(got, lines("Reference: PM-9", "", DESIGN_PRECEDENCE, "", "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
 
+    def test_golden_direct_issue_with_repo(self):
+        got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
+                            inputs.Sources((), None), humans=HUMANS, target=target.Target("ophis", "agent-pm", mapped=True),
+                            docs=DOCS)
+        self.assertEqual(got, lines("Reference: PM-9", "Repo: ophis/agent-pm", "", DESIGN_PRECEDENCE, "",
+                                    "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
+
     def test_direct_issue_user_words_and_prd_fallback_earlier(self):
         ns = (note("More.", "2026-09-02T00:00:00.000Z", ANN),)
         src = inputs.Sources((), inputs.Doc(BASE + "Product%20Design/p.md", "Product Design/p.md", None))

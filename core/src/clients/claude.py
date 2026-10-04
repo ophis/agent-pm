@@ -7,16 +7,15 @@ from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams
 
-from .base import PROGRESS, PROGRESS_LINE, Access, Client, Event, Launch
+from .base import PROGRESS, PROGRESS_LINE, REPORT, Access, Client, Event, Launch
 
 
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
 
     def handover(self) -> str:
-        return (f"Return the outcome as your structured output when you finish. At each `[{PROGRESS}:<name>]` point, "
-                f"write a line in your reply starting with the same mark, your report after it, e.g. "
-                f"`[{PROGRESS}:start] local: one ultracode round, cap 80`.")
+        return (f"Return the outcome as your structured output when you finish. {REPORT}, e.g. "
+                f"`[{PROGRESS}:start] <what that line asks you to report>`.")
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access, schema: dict) -> Launch:
         c = self.config

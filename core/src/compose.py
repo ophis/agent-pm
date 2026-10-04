@@ -25,6 +25,9 @@ RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates"
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
+# A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.
+PROGRESS = "agent-pm-progress"
+PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 
 
@@ -55,6 +58,7 @@ class RunConfig:
     role_title: str = ""
     task_title: str = ""
     task_summary: str = ""
+    progress: list[str] = field(default_factory=list)   # the task's progress point names, in order
 
     def __post_init__(self):
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
@@ -107,7 +111,7 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
         run = replace(run, **_run_keys(layer, role, task))
     role_md, task_md = (_read(os.path.join(root, TEXT), rel) for rel in _rule_files(role, task))
     return replace(run, role_title=_title(role_md, f"roles/{role}.md"), task_title=_title(task_md, f"tasks/{task}.md"),
-                   task_summary=_summary(task_md))
+                   task_summary=_summary(task_md), progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:

@@ -153,7 +153,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
                 return fail(plog, a.issue, "transient", f"bounce: {one_line(e)}", 3)
             _append(plog, f"{_stamp()} bounce {a.issue}: {repo.reason}")
             return 0
-    elif kind == "research":
+    elif kind in ("research", "design"):
         repo = target.research_repo(issue, repos)
     rd = run_dir(a.issue)
     for path in _legacy(rd):
