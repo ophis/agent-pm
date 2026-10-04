@@ -14,6 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, role  # noqa: E402
+from router_test import STRAY, FakeLinear, blocker, issue as todo_issue, label  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
 import inputs  # noqa: E402
@@ -43,6 +44,7 @@ TUI_NAME = "engineer-engineering-0b6f2c1e"
 ATTACH = ("run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'\n"
           f"run.py: tui: tmux attach -t '={TUI_NAME}'\n")
 LAYOUT, CLOSE = attended.layout, attended.close
+LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
              "user": {"email": "ME@x.com", "name": "Me", "isMe": False}}
 LS_REMOTE = ("git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "ls-remote", "--heads",
@@ -174,8 +176,8 @@ def args(assignee=ENGINEER, task="engineering", mode="new"):
     return ["--issue", ID, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task, "--mode", mode]
 
 
-def forwarded(assignee=ENGINEER, task="engineering", mode="new"):
-    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={SID}", f"--task={task}", f"--mode={mode}"]
+def forwarded(assignee=ENGINEER, task="engineering", mode="new", sid=SID):
+    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}", f"--task={task}", f"--mode={mode}"]
 
 
 class Base(unittest.TestCase):
@@ -196,6 +198,7 @@ class Base(unittest.TestCase):
         self.gql = Gql(node(comments=[USER_NOTE]))
         self.run = Run(ENG_RUN)
         self.sh_calls, self.sh_error, self.missing, self.keychain_calls = [], None, set(), []
+        self.tmux_sessions = []
         self.popen_calls, self.proc = [], None
         self.lines, self.rc, self.claude_stderr = [], 0, b""
 
@@ -212,6 +215,8 @@ class Base(unittest.TestCase):
         self.sh_calls.append((argv, kw))
         if self.sh_error:
             raise self.sh_error
+        if argv == LIST:
+            return subprocess.CompletedProcess(argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), "")
         return subprocess.CompletedProcess(argv, 0)
 
     def popen(self, argv, **kw):
@@ -460,6 +465,128 @@ class Attended(Base):
                 self.assertEqual(self.err, f"run.py: {msg}\n")
         self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
         self.assertFalse(os.path.exists(self.rd))
+
+
+class ClaimLinear(FakeLinear):
+    """router_test's fake Linear for the claim; issues.Q_ISSUE, the outer's read, gets the outer's issue node."""
+    def __init__(self, todo, issue):
+        super().__init__([todo])
+        self.issue = issue
+
+    def __call__(self, query, **v):
+        if query == issues.Q_ISSUE:
+            self.queries.append((query, v))
+            return {"issue": self.issue}
+        return super().__call__(query, **v)
+
+
+class AttendedEntry(Base):
+    """run.py --issue ID --tui: the claim on a fake Linear, then the outer with the tui runner."""
+    def setUp(self):
+        super().setUp()
+        self.todo = todo_issue(ID, "Todo", "engineer")
+        self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
+        self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
+        self.tmux, self.tty = Tmux(live=["dev"]), False
+        place = lambda split, beside: LAYOUT(split, beside, proc=self.tmux, environ={}, isatty=lambda fd: self.tty)  # noqa: E731
+        p = mock.patch.object(attended, "layout", place)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def sh(self, argv, **kw):
+        """Base's, noting runs.log's text when the driver session starts."""
+        if argv[1] == "new-session":
+            self.at_launch.append(self.read(self.runs))
+        return super().sh(argv, **kw)
+
+    def entry(self, *extra):
+        return self.main(["--issue", ID, "--tui", *extra])
+
+    def said(self):
+        return [TS.sub("", line) for line in self.err.splitlines()]
+
+    def test_claims_then_starts_the_run_attended(self):
+        cases = [(("--split", "below", "--beside", "dev"), False, True, ["--runner=tui", "--split=below", "--beside=dev"]),
+                 ((), True, False, ["--runner=tui", "--split=right"])]
+        for extra, tty, detach, tail in cases:
+            with self.subTest(extra=extra):
+                self.todo["state"], self.tty, self.sh_calls, self.gql.mutations = "Todo", tty, [], []
+                self.tmux_sessions = [TUI_NAME, "agent-pm-engineer-TASK-70", "agent-pm-engineer-TASK-8"]
+                if os.path.exists(self.runs):
+                    os.remove(self.runs)
+                self.at_launch = []
+                self.assertEqual(self.entry(*extra), 0)
+                (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
+                sid = line.split(" ")[2].removeprefix("session=")
+                self.assertRegex(sid, config.UUID_RE)
+                self.assertEqual(line, router.start_line(ID, sid, "engineering", self.projects))
+                self.assertEqual(self.at_launch, [self.read(self.runs)])
+                self.assertEqual(self.sh_calls, [
+                    (LIST, {"capture_output": True, "text": True}),
+                    (["tmux", "new-session", *(["-d"] if detach else []), "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
+                      sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(sid=sid),
+                      *tail], {"check": True})])
+                self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=engineering",
+                                               "run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'",
+                                               f"run.py: tui: tmux attach -t '=engineer-engineering-{sid[:8]}'"])
+                self.assertEqual(self.gql.mutations, [(linear.M_STATE, {"i": ID, "s": STATES["in_progress"]})])
+                self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+
+    def test_only_issue_split_and_beside(self):
+        for argv in (["--tui"], ["--tui", "--split", "below"], *(["--issue", ID, "--tui", *x] for x in (
+                ["--project", PROJECT], ["--assignee", ENGINEER], ["--sid", SID], ["--task", "engineering"], ["--mode", "new"],
+                ["--inner"], ["--uuid", UUID], ["--target", "Ophis/Agent-PM"], ["--runner", "tui"], ["--runner", "headless"]))):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
+                run.main(argv, sh=self.sh, gql=self.gql, run=self.run, popen=self.popen, runs=self.runs,
+                         projects=self.projects, keychain=self.keychain, root=self.root)
+            self.assertEqual(cm.exception.code, 2)
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_bad_issue_id(self):
+        self.assertEqual(self.main(["--issue", "task-7", "--tui"]), 2)
+        self.assertEqual(self.err, "run.py: bad issue id: task-7\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_config_error_exits_1(self):
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
+        self.assertEqual(self.entry(), 1)
+        self.assertEqual(self.err, "run.py: orchestrator/config.toml: unknown keys: bogus\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_no_place_for_the_pane_before_any_linear_call(self):
+        cases = [((), "no pane to show the TUI beside: run from tmux or a terminal, or pass --beside SESSION"),
+                 (("--split", "left"), "split must be one of right, below"),
+                 (("--beside", "gone"), "no tmux session gone")]
+        for extra, msg in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(self.entry(*extra), 2)
+                self.assertEqual(self.err, f"run.py: {msg}\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, os.path.exists(self.runs)), ([], [], False))
+        self.assertEqual(os.environ["PATH"], config.PATH)
+
+    def test_a_live_run_is_refused(self):
+        for role in ("engineer", "pm"):
+            with self.subTest(role=role):
+                self.sh_calls, self.tmux_sessions = [], [f"agent-pm-{role}-{ID}"]
+                self.assertEqual(self.entry("--beside", "dev"), 1)
+                self.assertEqual(self.err, f"run.py: {ID} has a live run: tmux attach -t '=agent-pm-{role}-{ID}'\n")
+                self.assertEqual(self.sh_calls, [(LIST, {"capture_output": True, "text": True})])
+        self.assertEqual((self.gql.queries, os.path.exists(self.runs)), ([], False))
+
+    def test_nothing_claimed_exits_1_without_a_start_line(self):
+        cases = [(dict(state="In Progress"), "pick: TASK-7 is not a Todo issue assigned to a role account", "In Progress"),
+                 (dict(inverseRelations={"nodes": [blocker("TASK-9")]}), "blocked: TASK-7 by TASK-9", "Todo"),
+                 (dict(labels=[label("Stray", STRAY)]),
+                  "claim: TASK-7 bad task label; In Review", "In Review")]
+        for change, said, state in cases:
+            with self.subTest(said=said):
+                self.todo.update(state="Todo", inverseRelations={"nodes": []}, labels=[])
+                self.todo.update(change)
+                self.sh_calls = []
+                self.assertEqual(self.entry("--beside", "dev"), 1)
+                self.assertIn(said, self.said())
+                self.assertEqual((self.todo["state"], self.sh_calls), (state, [(LIST, {"capture_output": True, "text": True})]))
+        self.assertFalse(os.path.exists(self.runs))
 
 
 class Inner(Base):

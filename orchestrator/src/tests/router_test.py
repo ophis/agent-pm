@@ -14,8 +14,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
 import config  # noqa: E402
+import attended  # noqa: E402
 import linear  # noqa: E402
 import router  # noqa: E402
+import drive  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
 AGENT, USER = "agent", "user"   # history actor ids: an agent account, a human_members user
@@ -672,13 +674,18 @@ class Usage(unittest.TestCase):
     def test_unknown_flags_rejected(self):
         for argv in (["--help"], ["--prune", "x"], ["--gate", "new"], ["--gate", "resume"],
                      ["-h"], ["--issue", "TASK-1"],
-                     ["--brake", "new"], ["--brake", "--dry-run"], ["--dry-run", "--brake"], ["--brake", "--brake"]):
+                     ["--brake", "new"], ["--brake", "--dry-run"], ["--dry-run", "--brake"], ["--brake", "--brake"],
+                     ["--tui", "--issue", "TASK-1"], ["--now", "--issue", "TASK-1", "--tui"], ["--tui", "--brake"],
+                     ["--brake", "--tui"], ["--split", "right"], ["--now", "--beside", "dev"], ["--dry-run", "--split", "below"],
+                     ["--tui", "--split"], ["--tui", "--beside", "--now"], ["--now", "--issue", "--dry-run"],
+                     ["--tui", "--split", "right", "--split", "below"], ["--tui", "dev"], ["--tui", "--split=right"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
-                with redirect_stderr(err):
+                with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("probe ran"))), 2)
-                self.assertIn("usage:", err.getvalue())
-        self.assertIn(" | --brake", router.USAGE)
+                self.assertEqual(err.getvalue(), router.USAGE + "\n")
+        self.assertEqual(router.USAGE,
+                         "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake")
         self.assertNotIn("--gate", router.USAGE + router.__doc__)
 
 
@@ -1251,6 +1258,84 @@ class Tick(Base):
             self.tick(fake)
         self.assertIn("skip: prune failed", self.err)
         self.assertEqual(len(self.sh.launches()), 1)
+
+    def test_start_line(self):
+        sid = self.sid("a")
+        self.assertEqual(router.start_line("TASK-1", sid, "deep-research", "/p"),
+                         f"start TASK-1 session={sid} transcript=/p/{config.escape(config.run_dir('TASK-1'))}/{sid}.jsonl "
+                         "task=deep-research")
+
+    def test_driver_session_counts_toward_max_runs_and_a_tui_session_does_not(self):
+        tui = drive.tui_session("engineer", "engineering", self.sid("a"))
+        for live, runs in (([tui, "agent-pm-engineer-TASK-9"], []), ([tui], [("TASK-1", "new")])):
+            with self.subTest(live=live):
+                self.tick(FakeLinear([issue("TASK-1", "Todo", "engineer")]), shell=FakeShell(live))
+                self.assertEqual(self.launched_runs(), runs)
+        self.assertEqual(router.live_sessions(["engineer"], FakeShell([tui, "agent-pm-engineer-TASK-9"])), {"engineer": ["TASK-9"]})
+
+
+class TuiTick(Base):
+    """router.py --tui: attended.layout (patched) before the tick; the tick's run.py launch gains --runner=tui."""
+    def tui_tick(self, fake, *argv, layout=None, **kw):
+        place = mock.Mock(side_effect=layout, return_value=(drive.Layout(), False))
+        with mock.patch.object(attended, "layout", place):
+            rc = self.tick(fake, *argv, **kw)
+        self.layout = place.call_args_list
+        return rc
+
+    def test_new_run_launch_argv(self):
+        rows = ((("--now", "--tui"), None, None, ["--runner=tui"]),
+                (("--tui", "--beside", "dev", "--now", "--split", "below"), "below", "dev",
+                 ["--runner=tui", "--split=below", "--beside=dev"]),
+                (("--beside", "-x", "--tui"), None, "-x", ["--runner=tui", "--beside=-x"]),
+                (("--split", "right", "--tui"), "right", None, ["--runner=tui", "--split=right"]))
+        for argv, split, beside, tail in rows:
+            with self.subTest(argv=argv):
+                self.lines = []
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                (launch,) = self.sh.launches()
+                sid = launch[launch.index("--sid") + 1]
+                self.assertEqual(launch, [sys.executable, router.RUN, "--issue", "TASK-1", "--project", IDS[DR],
+                                          "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research",
+                                          "--mode", "new", *tail])
+                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", sid, "deep-research", self.tdir) + "\n"))
+                self.assertEqual(self.layout, [mock.call(split, beside)])
+                self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_resume_launch_argv(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
+        self.resumable("TASK-1", "a", 60)
+        self.tui_tick(fake, "--tui", "--split", "below")
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch[-4:], ["--mode", "resume", "--runner=tui", "--split=below"])
+        self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=deep-research\n"))
+
+    def test_dry_run_launches_nothing(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        self.tui_tick(fake, "--tui", "--dry-run", "--now")
+        self.assertEqual(self.said()[:2], ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)"])
+        self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
+        self.assertEqual(self.layout, [mock.call(None, None)])
+
+    def test_no_place_for_the_pane_exits_2_before_the_tick(self):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        before = self.unmap("\n".join(self.lines) + "\n")
+        for argv in (("--tui", "--beside", "gone"), ("--now", "--tui", "--dry-run", "--beside", "gone")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv, layout=attended.Bad("no tmux session gone")), 2)
+                self.assertEqual(self.err, "router.py: no tmux session gone\n")
+                self.assertEqual((fake.queries, self.sh.calls, self.state), ([], [], before))
+
+    def test_without_tui_no_layout_and_a_headless_launch(self):
+        for argv in ((), ("--now",), ("--now", "--issue", "TASK-1")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                with mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
+                    self.tick(fake, *argv)
+                (launch,) = self.sh.launches()
+                self.assertEqual(launch[-2:], ["--mode", "new"])
 
 
 class TaskLabels(Base):

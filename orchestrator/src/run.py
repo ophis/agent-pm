@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Runner: one core run for an issue the router already claimed (or resumes it), per orchestrator/config.toml.
+"""Runner: one core run, per orchestrator/config.toml, of an issue the router claimed or resumes or the attended entry claims.
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--beside SESSION]
-  Outer, in the router tick: checks the run can start, bounces an engineering issue whose repo check fails, writes
-  work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or
-  bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config
-  error or transient failure is also logged to the task's project log.
+  Outer, in the router tick or the attended entry: checks the run can start, bounces an engineering issue whose repo
+  check fails, writes work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts
+  nothing. Exits 0 started or bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config
+  error, 3 transient; a config error or transient failure is also logged to the task's project log.
   --runner tui (default headless; --split and --beside need it): attended.layout places the TUI pane first (exit 2 when
   it can't), the driver and TUI sessions' attach commands go to stderr, and from a plain terminal the driver session
   starts attached to it.
+run.py --issue ID --tui [--split right|below] [--beside SESSION]
+  Attended entry, run by hand: claims the issue as router.py --now --issue does, without its hours, max_runs or usage
+  gate, appends its start line to runs.log, then runs the outer with --runner tui. Exits 2 bad arguments or no place for
+  the TUI pane, 1 config error, a live run of the issue or nothing claimed, else the outer's code.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] <the same arguments>
   Inner, in that tmux session: closes the issue's recorded TUI sessions (attended.close) and records the tui runner's,
   the session comments, core's run with the orchestrator's sinks, the end lines in the project log and runs.log, then
@@ -23,12 +27,15 @@ import re
 import signal
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
+import router  # noqa: E402
 import sessions  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
@@ -84,13 +91,18 @@ class Setup(Exception):
         self.msg, self.rc, self.plog = msg, rc, plog
 
 
-def setup(a, root):
-    """(cfg, roles, name, role, plog) for the run's assignee and task, else Setup."""
+def load(root):
+    """(cfg, roles) of root's orchestrator/config.toml, else Setup."""
     try:
         cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
-        roles = runnable(cfg, root)
+        return cfg, runnable(cfg, root)
     except SystemExit as e:
         raise Setup(str(e.code), 1)
+
+
+def setup(a, root):
+    """(cfg, roles, name, role, plog) for the run's assignee and task, else Setup."""
+    cfg, roles = load(root)
     name = role_for(roles, a.assignee)
     if name is None:
         raise Setup(f"{a.assignee!r} is not a role account", 2)
@@ -174,6 +186,37 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     return 0
 
 
+def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
+    """run.py --issue ID --tui: claim the issue, log its start line, then the outer with the tui runner."""
+    os.environ["PATH"] = PATH
+    if not re.fullmatch(ISSUE_ID, a.issue):
+        print(f"run.py: bad issue id: {a.issue}", file=sys.stderr)
+        return 2
+    try:
+        cfg, roles = load(root)
+    except Setup as e:
+        print(f"run.py: {e.msg}", file=sys.stderr)
+        return e.rc
+    try:
+        attended.layout(a.split, a.beside)
+    except attended.Bad as e:
+        print(f"run.py: {e}", file=sys.stderr)
+        return 2
+    live = router.live_sessions(roles, sh)
+    if role := next((r for r, ids in live.items() if a.issue in ids), None):
+        print(f"run.py: {a.issue} has a live run: tmux attach -t '={session(role, a.issue)}'", file=sys.stderr)
+        return 1
+    taken = router.Board(gql, router.parse_log(runs), projects, datetime.now(timezone.utc), False, cfg, root).take(a.issue)
+    if taken is None:
+        return 1
+    issue, task = taken
+    sid = str(uuid.uuid4())
+    append(runs, router.start_line(a.issue, sid, task, projects))
+    hosted = argparse.Namespace(issue=a.issue, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
+                                task=task, mode="new", runner="tui", split=a.split, beside=a.beside)
+    return outer(hosted, sh=sh, gql=gql, run=run, projects=projects, keychain=keychain, root=root)
+
+
 def inner(a, *, layout, gql, popen, runs, root):
     """In tmux, cwd work/<ID>: 1 when config, role or task fails, else 0; the run's own code goes to the end lines.
     `layout` is the tui runner's, None for headless."""
@@ -241,7 +284,15 @@ def inner(a, *, layout, gql, popen, runs, root):
 
 def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subprocess.Popen,
          runs=RUNS_LOG, projects=PROJECTS, keychain=has_key, root=ROOT):
-    """--inner → inner, else outer."""
+    """--tui → the attended entry, --inner → inner, else outer."""
+    if "--tui" in argv:
+        ap = argparse.ArgumentParser(prog="run.py")
+        ap.add_argument("--issue", required=True)
+        ap.add_argument("--tui", action="store_true")
+        ap.add_argument("--split")
+        ap.add_argument("--beside")
+        return attended_run(ap.parse_args(argv), sh=sh, gql=gql, run=run, runs=runs, projects=projects, keychain=keychain,
+                            root=root)
     ap = argparse.ArgumentParser(prog="run.py")
     for f in ("--issue", "--project", "--assignee", "--sid", "--task"):
         ap.add_argument(f, required=True)
