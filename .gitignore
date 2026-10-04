@@ -3,3 +3,4 @@ docs/specs/*.r[0-9]*.md
 logs/
 __pycache__/
 docs/.autopilot/
+.DS_Store
