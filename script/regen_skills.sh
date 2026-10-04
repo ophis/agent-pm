@@ -1,0 +1,1 @@
+../core/regen_skills.sh
