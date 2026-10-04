@@ -32,14 +32,14 @@ TS = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 
 NAMES = {linear.M_SUBSCRIBE: "subscribe", linear.M_COMMENT: "comment", linear.M_STATE: "state",
          writeback.M_TITLE: "title", writeback.M_ATTACH: "attach", writeback.M_UNARCHIVE: "unarchive",
-         writeback.Q_STATE: "read", linear.Q_ISSUE_STATE: "reread", writeback.Q_ID: "id"}
+         writeback.Q_ATTACHED: "read", linear.Q_ISSUE_STATE: "reread", writeback.Q_ID: "id"}
 FIELDS = {"subscribe": "issueSubscribe", "comment": "commentCreate", "state": "issueUpdate", "title": "issueUpdate",
           "attach": "attachmentLinkURL", "unarchive": "issueUnarchive"}
 
 
 class Gql:
-    """Fake role-account gql recording (name, variables). `states`: what each state read (Q_STATE, or a move's
-    Q_ISSUE_STATE) returns, the last repeating;
+    """Fake role-account gql recording (name, variables). `states`: what each move's state read (Q_ISSUE_STATE)
+    returns, the last repeating;
     `fail(name, v)` → an exception to raise, False for `success: false`, else None."""
     def __init__(self, states=(STATES["in_progress"],), attachments=(), fail=lambda name, v: None, issue=None):
         self.calls, self.states, self.attachments, self.fail, self.issue = [], list(states), attachments, fail, issue
@@ -50,9 +50,11 @@ class Gql:
         r = self.fail(name, v)
         if isinstance(r, BaseException):
             raise r
-        if name in ("read", "reread"):
+        if name == "read":
+            return {"issue": {"attachments": {"nodes": [{"url": u} for u in self.attachments]}}}
+        if name == "reread":
             s = self.states.pop(0) if len(self.states) > 1 else self.states[0]
-            return {"issue": {"state": {"id": s}, "attachments": {"nodes": [{"url": u} for u in self.attachments]}}}
+            return {"issue": {"state": {"id": s}}}
         if name == "id":
             return {"issue": self.issue}
         return {FIELDS[name]: {"success": r is not False}}
@@ -160,7 +162,7 @@ class SayAndApprove(Base):
         self.assertEqual(writeback.M_TITLE, "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }")
         self.assertEqual(writeback.M_ATTACH, "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }")
         self.assertEqual(writeback.M_UNARCHIVE, "mutation($i: String!) { issueUnarchive(id: $i) { success } }")
-        self.assertEqual(writeback.Q_STATE, "query($i: String!) { issue(id: $i) { state { id } attachments(first: 50) { nodes { url } } } }")
+        self.assertEqual(writeback.Q_ATTACHED, "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }")
         self.assertEqual(writeback.Q_ID, "query($i: String!) { issue(id: $i) { id team { id } } }")
 
 
@@ -342,7 +344,7 @@ class FinishSteps(Base):
         self.assertEqual(self.lines()[-1], f"writeback-error {ID}: attach:{PR}: SystemExit: linear api error: boom")
 
     def test_state_already_target(self):
-        gql = Gql(states=[STATES["in_progress"], STATES["in_review"]])
+        gql = Gql(states=[STATES["in_review"]])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         self.assertEqual(gql.calls[-1], reread())
@@ -350,14 +352,14 @@ class FinishSteps(Base):
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
     def test_research_failed_new_already_todo(self):
-        gql = Gql(states=[STATES["in_progress"], STATES["todo"]])
+        gql = Gql(states=[STATES["todo"]])
         ctx = self.ctx("deep-research", gql=gql, target=None)
         self.assertTrue(writeback.finish(ctx, outcome("failed", summary="gh api failed")))
         self.assertEqual(gql.calls, [READ, comment("gh api failed"), reread()])
         self.assertIn("move:todo", self.ledger(ctx)[SID])
 
     def test_state_never_overrides_a_user_move(self):
-        gql = Gql(states=[STATES["in_progress"], STATES["handoff"]])
+        gql = Gql(states=[STATES["handoff"]])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         self.assertEqual(gql.calls[-1], reread())

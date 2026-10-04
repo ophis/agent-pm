@@ -86,16 +86,21 @@ def comment(gql, issue, body):
     call(gql, M_COMMENT, "commentCreate", i=issue, b=body)
 
 
+def reraise_signal(e):
+    """The runner's signal handler raises SystemExit(128 + signum), which must reach drive's loop to kill claude;
+    linear_gql's SystemExit (a str code) is an API error."""
+    if isinstance(e, SystemExit) and isinstance(e.code, int):
+        raise e
+
+
 def subscribe(gql, issue, emails):
-    """Subscribes each email; returns the failures as notes for a comment. A signal SystemExit (an int code: a runner's
-    handler) re-raises; linear_gql's (a str code) is an API error."""
+    """Subscribes each email; returns the failures as notes for a comment."""
     notes = ""
     for email in emails:
         try:
             call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
         except (Exception, SystemExit) as e:
-            if isinstance(e, SystemExit) and isinstance(e.code, int):
-                raise
+            reraise_signal(e)
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 

@@ -720,15 +720,7 @@ class Claim(Base):
         self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
 
     def test_claim_skipped_when_no_longer_todo(self):
-        class Racy(FakeLinear):
-            def __call__(self, query, **v):
-                out = super().__call__(query, **v)
-                if "issues(filter" in query:
-                    for i in self.issues.values():
-                        i["state"] = "In Review"
-                return out
-
-        fake = Racy([issue("TASK-1", "Todo", "researcher")])
+        fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Review")
         self.assertEqual(self.claim(fake), "")
         self.assertIn("claim: TASK-1 is no longer Todo; skipping", self.err)
         self.assertEqual(fake.mutations, [])

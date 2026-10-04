@@ -83,7 +83,7 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
 
 
 NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", linear.M_COMMENT: "comment", sessions.M_UPDATE: "update",
-         writeback.Q_STATE: "read", linear.Q_ISSUE_STATE: "reread", linear.M_STATE: "state",
+         writeback.Q_ATTACHED: "read", linear.Q_ISSUE_STATE: "reread", linear.M_STATE: "state",
          linear.M_SUBSCRIBE: "subscribe", writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
 FIELDS = {"comment": "commentCreate", "update": "commentUpdate", "state": "issueUpdate", "subscribe": "issueSubscribe",
           "attach": "attachmentLinkURL"}
@@ -105,7 +105,7 @@ class Gql:
         if name == "find":
             return {"issue": {"comments": {"nodes": []}}}
         if name == "read":
-            return {"issue": {"state": {"id": STATES["in_progress"]}, "attachments": {"nodes": []}}}
+            return {"issue": {"attachments": {"nodes": []}}}
         if name == "reread":
             return {"issue": {"state": {"id": STATES["in_progress"]}}}
         if name == "id":

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import TASKS  # noqa: E402
-from linear import append, call, comment, move, one_line, subscribe  # noqa: E402
+from linear import append, call, comment, move, one_line, reraise_signal, subscribe  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
 from target import MAPPED  # noqa: E402
@@ -19,7 +19,7 @@ from target import MAPPED  # noqa: E402
 M_TITLE = "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
 M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
 M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
-Q_STATE = "query($i: String!) { issue(id: $i) { state { id } attachments(first: 50) { nodes { url } } } }"
+Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
 Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
 
 LEDGER = "writeback.json"
@@ -73,13 +73,6 @@ def _log(ctx, line):
         pass
 
 
-def _reraise_signal(e):
-    """The runner's signal handler raises SystemExit(128 + signum), which must reach drive's loop to kill claude;
-    linear_gql's SystemExit (a str code) is an API error."""
-    if isinstance(e, SystemExit) and isinstance(e.code, int):
-        raise e
-
-
 def _guarded_move(ctx, issue, ident, to, frm):
     """linear.move from frm to to (logical states); a skip, the issue in neither, is logged."""
     now = move(ctx.gql, issue, ctx.states[to], ctx.states[frm])
@@ -109,7 +102,7 @@ def _step(ctx, step, call):
         ledger.setdefault(ctx.sid, []).append(step)
         drive.save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (Exception, SystemExit) as e:
-        _reraise_signal(e)
+        reraise_signal(e)
         _log(ctx, f"writeback-error {ctx.ident}: {step}: {one_line(e)}")
         return e
     _log(ctx, f"writeback {ctx.ident}: {step}")
@@ -131,7 +124,7 @@ def sink(ctx) -> drive.Sink:
                 _step(ctx, f"progress:{event.name}:{digest}",
                       lambda: comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))
         except (Exception, SystemExit) as e:
-            _reraise_signal(e)
+            reraise_signal(e)
             _log(ctx, f"writeback-error {ctx.ident}: sink: {one_line(e)}")
     return handle
 
@@ -196,9 +189,9 @@ def _finish(ctx, o):
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
 
     try:
-        attached = {a["url"] for a in gql(Q_STATE, i=issue)["issue"]["attachments"]["nodes"]}
+        attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
     except (Exception, SystemExit) as e:
-        _reraise_signal(e)
+        reraise_signal(e)
         _log(ctx, f"writeback-error {ctx.ident}: read: {one_line(e)}")
         return False
 
@@ -255,7 +248,7 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         except (Exception, SystemExit) as e:
-            _reraise_signal(e)
+            reraise_signal(e)
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)
         _guarded_move(ctx, src["id"], h.source, "in_review", "done")
