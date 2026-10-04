@@ -24,7 +24,7 @@ LOGS = os.path.join(ROOT, "logs")
 RUNS_LOG = os.path.join(LOGS, "runs.log")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
-SHORT, LONG = 60, 600
+SHORT = 60
 
 # No orchestrator module may be named clients, compose, drive or repo: these come from core/src.
 sys.path.insert(0, os.path.join(CORE, "src"))

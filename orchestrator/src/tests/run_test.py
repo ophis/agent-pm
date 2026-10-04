@@ -356,34 +356,6 @@ class Outer(Base):
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})] * 3)
         self.assertEqual(self.sh_calls, [])
 
-    def legacy(self):
-        """rd/src with a legacy linked worktree `old`, its dot-named and symlinked twins, and a core clone."""
-        clone = os.path.join(self.tmp, "clone")
-        gitdir = os.path.join(clone, ".git", "worktrees", "old")
-        self.write(os.path.join(gitdir, "HEAD"), "ref: refs/heads/TASK-7-old\n")
-        src = os.path.join(self.rd, "src")
-        for name in ("old", ".old"):
-            self.write(os.path.join(src, name, ".git"), f"gitdir: {gitdir}\n")
-        os.makedirs(os.path.join(src, "core", ".git"))
-        os.symlink(os.path.join(src, "old"), os.path.join(src, "link"))
-        return os.path.realpath(clone), os.path.join(src, "old")
-
-    def test_legacy_worktrees_removed(self):
-        clone, old = self.legacy()
-        self.run.table += [(("git", "-c", "core.fsmonitor=false"), res())]
-        self.assertEqual(self.main(args()), 0)
-        git = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", clone)
-        self.assertEqual(self.run.calls[2:], [((*git, "worktree", "remove", "--force", "--force", "--", old), 600),
-                                              ((*git, "branch", "-D", "--", "TASK-7-old"), 60)])
-        self.assertEqual(len(self.sh_calls), 1)
-
-    def test_legacy_worktree_failure(self):
-        _, old = self.legacy()
-        self.run.table += [(("git", "-c", "core.fsmonitor=false"), res(code=1, stderr="locked"))]
-        self.assertEqual(self.main(args()), 3)
-        self.assertEqual(self.plog(), [f"<ts> transient TASK-7: legacy worktree {old}: git worktree remove: locked"])
-        self.assertEqual(self.sh_calls, [])
-
     def test_docs_failure_is_transient(self):
         self.gql.issue = node(title="Compare queues", description="Which queue fits?")
         for r, reason in ((res(code=1, stderr="HTTP 500"), "gh api contents Research: HTTP 500"),

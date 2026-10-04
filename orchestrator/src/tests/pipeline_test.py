@@ -193,7 +193,7 @@ class Runnable(ConfigFile, unittest.TestCase):
 
     def test_paths(self):
         self.assertEqual(pipeline.CORE, os.path.join(pipeline.ROOT, "core"))
-        self.assertEqual((pipeline.SHORT, pipeline.LONG), (60, 600))
+        self.assertEqual(pipeline.SHORT, 60)
 
 
 CORE_TOML = """tier = 2

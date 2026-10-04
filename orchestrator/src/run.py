@@ -24,11 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import pipeline  # noqa: E402
-import prune  # noqa: E402
 import sessions  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
-from pipeline import (CLONES, PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, atomic_write, linear_gql,  # noqa: E402
+from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, atomic_write, linear_gql,  # noqa: E402
                       load_config, project_log, repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
 from sessions import one_line  # noqa: E402
 import clients  # noqa: E402
@@ -98,18 +97,6 @@ def _context(a, cfg, role, gql, plog, issue_id, repo):
         states=cfg["states"], repos=cfg["project_repos"], team=cfg["team"], target=repo)
 
 
-def _legacy(rd):
-    """Linked worktrees pre-core runs left in rd/src, where core clones now go: real dirs whose .git is a file."""
-    src = os.path.join(rd, CLONES[0])
-    try:
-        names = [] if os.path.islink(src) else sorted(os.listdir(src))
-    except OSError:
-        names = []
-    paths = [os.path.join(src, n) for n in names if not n.startswith(".")]
-    return [p for p in paths if not os.path.islink(p) and not os.path.islink(os.path.join(p, ".git"))
-            and os.path.isfile(os.path.join(p, ".git"))]
-
-
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
     os.environ["PATH"] = PATH
@@ -156,11 +143,6 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     else:
         repo = target.research_repo(issue, repos)
     rd = run_dir(a.issue)
-    for path in _legacy(rd):
-        try:
-            prune.remove_linked(path, run=run)
-        except (ValueError, prune.TransientError) as e:
-            return fail(plog, a.issue, "transient", f"legacy worktree {path}: {e}", 3)
     docs = pipeline.docs(roles, root)
     try:
         sources = inputs.gather(issue, a.task, docs, run=run)

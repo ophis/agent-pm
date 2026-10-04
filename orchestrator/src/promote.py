@@ -8,7 +8,7 @@ human instructions, relate it, and move the source to Done.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
 
-At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees of
+At the end of every tick, orchestrator/src/prune.py's Pruner removes the clones of
 finished issues (TASK-49) and archives finished pm and engineer issues; a prune
 failure is logged and never breaks the Handoff work.
 """
@@ -200,7 +200,7 @@ class Promoter:
 
 
 def run_prune(gql, cfg, now, dry, pruner=None, team=None, roles=None):
-    """Prune finished issues' worktrees and archive finished pm and engineer issues.
+    """Prune finished issues' clones and archive finished pm and engineer issues.
     A prune failure, even an ImportError, is logged and never breaks promote."""
     try:
         if pruner is None:
