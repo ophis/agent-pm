@@ -83,7 +83,7 @@ With tui:
 - Auto mode depends on the model: where it is unavailable (Haiku, tier 4), the session runs in manual mode and asks in the pane for what isn't pre-approved.
 - The open session is an agent nobody watches: after the outcome, or once `drive.py` gives up, it keeps the run's pre-approvals and `drive.py`'s environment, and nothing it does is reported. End it with `tmux kill-session -t '=<session>'`.
 - The nudge is typed into the pane up to about a second after the turn ends: if a new turn has opened a permission dialog by then (manual mode), the keys go to the dialog.
-- Start `drive.py` and `tui.py start` from a plain shell: a `claude` they start from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, saves no transcript and can't be resumed.
+- Start `drive.py` and `tui.py start` from a plain shell: a `claude` they start from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, saves no transcript and can't be resumed (the tui-workers helper strips it).
 
 In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s environment, e.g. to a command that asks a host-side watcher (yours to deploy) to attach, and leave `show` unset.
 
@@ -105,8 +105,8 @@ python3 core/src/tui.py --help                                    # options, and
 `.claude/skills/tui-workers/` builds on `tui.py`: with `/tui-workers`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 panes and directs them. Each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps and gotchas: [SKILL.md](.claude/skills/tui-workers/SKILL.md). Its helper:
 
 ```bash
-python3 .claude/skills/tui-workers/scripts/workers.py start a --events /tmp/w.events --prompt 'Summarize README.md'   # prints "a <session id>"; a pane right of this one
-python3 .claude/skills/tui-workers/scripts/workers.py start b --events /tmp/w.events -- --model sonnet                # a pane below a's; claude flags after --
+python3 .claude/skills/tui-workers/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md'      # prints "a <session id>"; a pane right of this one
+python3 .claude/skills/tui-workers/scripts/workers.py start b --events ~/w.events -- --model sonnet                   # a pane below a's; claude flags after --
 python3 .claude/skills/tui-workers/scripts/workers.py reply a                                                         # a's last answer, from its transcript
 python3 .claude/skills/tui-workers/scripts/workers.py restart a                                                       # a resumes its conversation in its pane
 ```

@@ -32,10 +32,15 @@ class Fake:
         self.sessions, self.tui_rc, self.tui_err = sessions, tui_rc, tui_err
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
+        self.list_err, self.fail_set, self.oserror = "no server running", None, None
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         self.kwargs.append(kw)
+        if self.oserror and self.oserror(argv):
+            raise OSError(2, "No such file or directory")
+        if argv[0] == "tmux" and argv[1] == "set-option" and argv[4] == self.fail_set:
+            return subprocess.CompletedProcess(argv, 1, "", "set boom")
         if argv[0] == "tmux" and argv[1] == "set-option":
             self.store[argv[4]] = argv[5]
         if argv[0] == "tmux" and argv[1] == "show-options":
@@ -46,7 +51,7 @@ class Fake:
             return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
         if argv[0] == "tmux" and argv[1] == "list-sessions":
             if self.sessions is None:
-                return subprocess.CompletedProcess(argv, 1, "", "no server running")
+                return subprocess.CompletedProcess(argv, 1, "", self.list_err)
             return subprocess.CompletedProcess(argv, 0, self.sessions, "")
         if argv[0] == sys.executable:
             return subprocess.CompletedProcess(argv, self.tui_rc, "", self.tui_err)
@@ -73,12 +78,11 @@ class HooksTest(unittest.TestCase):
             env["TMUX_PANE"] = "%1"
         return subprocess.run(["sh", "-c", cmd], env=env, capture_output=True, text=True)
 
-    def commands(self, events):
-        hooks = json.loads(workers.hooks(events))["hooks"]
-        return hooks
+    def hooks(self, events):
+        return json.loads(workers.hooks(events))["hooks"]
 
     def test_shape(self):
-        hooks = self.commands("/e")
+        hooks = self.hooks("/e")
         self.assertEqual(set(hooks), {"Stop", "Notification"})
         self.assertNotIn("matcher", hooks["Stop"][0])
         self.assertEqual(hooks["Notification"][0]["matcher"], "permission_prompt|elicitation_dialog|agent_needs_input")
@@ -91,7 +95,7 @@ class HooksTest(unittest.TestCase):
         for sub in ("a b", "it's"):
             events = os.path.join(self.tmp.name, sub, "e")
             os.makedirs(os.path.dirname(events))
-            hooks = self.commands(events)
+            hooks = self.hooks(events)
             for name, word in (("Stop", "done"), ("Notification", "blocked")):
                 res = self.run_hook(hooks[name][0]["hooks"][0]["command"], pane=True)
                 self.assertEqual(res.returncode, 0, res.stderr)
@@ -104,7 +108,7 @@ class HooksTest(unittest.TestCase):
     def test_outside_tmux_writes_nothing(self):
         events = os.path.join(self.tmp.name, "e")
         for name in ("Stop", "Notification"):
-            cmd = self.commands(events)[name][0]["hooks"][0]["command"]
+            cmd = self.hooks(events)[name][0]["hooks"][0]["command"]
             self.assertEqual(self.run_hook(cmd, pane=False).returncode, 0)
         self.assertFalse(os.path.exists(events))
 
@@ -143,7 +147,7 @@ class StartTest(unittest.TestCase):
         self.assertEqual(argv[9], "w1")
         self.assertEqual(argv[10], "--settings")
         self.assertEqual(argv[11], workers.hooks(self.events))
-        self.assertEqual(argv[12:], ["--model", "m", "do it"])
+        self.assertEqual(argv[12:], ["--model", "m", "--", "do it"])
 
     def test_no_prompt(self):
         fake = Fake()
@@ -266,6 +270,69 @@ class StartTest(unittest.TestCase):
         fake = Fake(tui_rc=1, tui_err="tui: boom\n")
         self.assertIn("tui: boom", self.assert_fails(fake))
 
+    def test_prompt_after_double_dash(self):
+        for prompt in ("-x --model", "plain"):
+            fake = Fake()
+            self.start(fake, prompt=prompt, flags=("--allowedTools", "Read", "Grep"))
+            argv = fake.tui()[0]
+            self.assertEqual(argv[-3:], ["Grep", "--", prompt])
+            self.assertEqual(argv.count("--"), 2)
+
+    def test_set_option_failure_kills_session(self):
+        fake = Fake()
+        fake.fail_set = "@env"
+        with self.assertRaisesRegex(workers.WorkersError, "set boom.*undone|undone.*set boom"):
+            self.start(fake)
+        self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
+
+    def test_kill_failure_ignored(self):
+        fake = Fake()
+        fake.fail_set = "@sid"
+        fake.oserror = lambda argv: argv[1] == "kill-session"
+        with self.assertRaisesRegex(workers.WorkersError, "undone"):
+            self.start(fake)
+
+    def test_list_sessions_error_no_layout(self):
+        fake = Fake(sessions=None)
+        fake.list_err = "protocol version mismatch"
+        self.start(fake)
+        self.assertEqual(fake.tui()[0][4], "--")
+
+    def test_beside_skips_own_name(self):
+        rows = [("w1", "1", self.events, "900"), ("a", "1", self.events, "100")]
+        fake = Fake(sessions="".join("\t".join(r) + "\n" for r in rows))
+        self.start(fake)
+        self.assertEqual(fake.tui()[0][4:6], ["--beside", "a"])
+        fake = Fake(sessions="\t".join(rows[0]) + "\n")
+        self.start(fake)
+        self.assertEqual(fake.tui()[0][4], "--")
+
+    def test_cwd_missing(self):
+        fake = Fake()
+        self.assert_fails(fake, cwd=os.path.join(self.dir, "nope"))
+        self.assertEqual(fake.tui(), [])
+
+    def test_oserror_from_proc(self):
+        for pick in (lambda a: a[0] == sys.executable, lambda a: a[1] == "list-sessions",
+                     lambda a: a[1] == "set-option"):
+            fake = Fake()
+            fake.oserror = pick
+            with self.assertRaises(workers.WorkersError):
+                self.start(fake)
+
+    def test_events_not_owned(self):
+        fake = Fake()
+        with mock.patch.object(workers.os, "getuid", return_value=os.getuid() + 1):
+            self.assertIn("owned", self.assert_fails(fake))
+        self.assertEqual(fake.tui(), [])
+
+    def test_events_not_regular(self):
+        fifo = mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
+        fake = Fake()
+        with mock.patch.object(workers.os, "fstat", return_value=fifo):
+            self.assertIn("regular", self.assert_fails(fake))
+        self.assertEqual(fake.tui(), [])
+
 
 class WorkerCase(unittest.TestCase):
     def setUp(self):
@@ -309,7 +376,7 @@ class RestartTest(WorkerCase):
         (tui,) = fake.tui()
         cmd = shlex.split(workers.restart("w1", proc=fake))
         self.assertEqual(cmd[cmd.index("--settings") + 1], tui[tui.index("--settings") + 1])
-        self.assertIn(tui[5], cmd)
+        self.assertIn(tui[tui.index("--") + 1], cmd)
         self.assertIn(f"PATH={self.env['PATH']}", cmd)
         self.assertIn(f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", cmd)
 
@@ -326,6 +393,31 @@ class RestartTest(WorkerCase):
         with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
             workers.restart("w1", proc=fake)
         self.assertEqual([c[1] for c in fake.calls if c[1] == "respawn-pane"], [])
+
+    def test_corrupt_options_not_a_worker(self):
+        for key, bad in (("@env", ""), ("@env", "{"), ("@env", "[]"), ("@env", '{"PATH": 1}'),
+                         ("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
+                         ("@sid", ""), ("@claude", ""), ("@cwd", ""), ("@events", "")):
+            fake = Fake()
+            self.started(fake)
+            fake.store[key] = bad
+            with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker", msg=f"{key}={bad!r}"):
+                workers.restart("w1", proc=fake)
+            self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
+
+    def test_missing_option_not_a_worker(self):
+        fake = Fake()
+        self.started(fake)
+        del fake.store["@claude"]
+        with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
+            workers.restart("w1", proc=fake)
+
+    def test_oserror_from_proc(self):
+        fake = Fake()
+        self.started(fake)
+        fake.oserror = lambda argv: argv[1] == "respawn-pane"
+        with self.assertRaises(workers.WorkersError):
+            workers.restart("w1", proc=fake)
 
     def test_bad_name(self):
         fake = Fake()
@@ -352,8 +444,11 @@ class RestartTest(WorkerCase):
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 
 
-def line(kind, *blocks):
-    return json.dumps({"type": kind, "message": {"content": list(blocks)}}) + "\n"
+def line(kind, *blocks, mid=None):
+    message = {"content": list(blocks)}
+    if mid:
+        message["id"] = mid
+    return json.dumps({"type": kind, "message": message}) + "\n"
 
 
 def text(t):
@@ -387,6 +482,22 @@ class ReplyTest(WorkerCase):
                         line("assistant", text("a"), TOOL, text("b")), line("assistant", TOOL),
                         "not json\n", line("user", text("later")))
         self.assertEqual(self.reply(), "a\nb")
+
+    def test_blocks_of_one_message_joined(self):
+        self.transcript(line("assistant", text("old"), mid="m0"), line("assistant", text("a"), mid="m1"),
+                        line("assistant", TOOL, mid="m1"), line("assistant", text("b"), mid="m1"),
+                        line("assistant", TOOL, mid="m2"))
+        self.assertEqual(self.reply(), "a\nb")
+
+    def test_lines_without_id_are_own_messages(self):
+        self.transcript(line("assistant", text("a")), line("assistant", text("b")))
+        self.assertEqual(self.reply(), "b")
+
+    def test_bad_name(self):
+        fake = self.fake()
+        with self.assertRaises(workers.WorkersError):
+            workers.reply("a b", proc=fake, config=self.cfg)
+        self.assertEqual(fake.calls, [])
 
     def test_none_yet(self):
         self.transcript(line("user", text("q")), line("assistant", TOOL))
@@ -479,6 +590,18 @@ class MainTest(WorkerCase):
         with open(os.path.join(d, SID + ".jsonl"), "w") as f:
             f.write(line("user", text("q")))
         self.assertEqual(self.run_main(["reply", "w1"], fake), (0, "", ""))
+
+    def test_oserror_exit(self):
+        fake = Fake()
+        fake.oserror = lambda argv: argv[0] == sys.executable
+        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir], fake)
+        self.assertEqual((rc, out), (1, ""))
+        self.assertRegex(err, r"^workers: .+\n$")
+
+    def test_missing_cwd_exit(self):
+        rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir + "/nope"])
+        self.assertEqual(rc, 1)
+        self.assertTrue(err.startswith("workers: "))
 
     def test_usage_error(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
