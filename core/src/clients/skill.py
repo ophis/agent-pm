@@ -41,13 +41,13 @@ class SkillClient(Client):
         skill = os.path.join(os.path.abspath(dest), name)
         files = {os.path.join(skill, "SKILL.md"): text}
         for script in sorted(set(re.findall(re.escape(SCRIPTS) + r"/([\w.-]+)", text))):
-            with open(os.path.join(CORE_SCRIPTS, script)) as f:
+            with open(os.path.join(CORE_SCRIPTS, script), encoding="utf-8") as f:
                 files[os.path.join(skill, "scripts", script)] = f.read()
         if METHODS in text:
             for d, dirs, names in os.walk(CORE_METHODS):
                 dirs[:] = sorted(n for n in dirs if not n.startswith("."))   # dotfiles (.DS_Store) are not methods
-                for name in sorted(n for n in names if not n.startswith(".")):
-                    path = os.path.join(d, name)
-                    with open(path) as f:
+                for filename in sorted(n for n in names if not n.startswith(".")):
+                    path = os.path.join(d, filename)
+                    with open(path, encoding="utf-8") as f:
                         files[os.path.join(skill, "methods", os.path.relpath(path, CORE_METHODS))] = f.read()
         return Launch([], files=files)

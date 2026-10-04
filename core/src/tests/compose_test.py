@@ -446,16 +446,20 @@ class RealCore(unittest.TestCase):
         prompt, _ = composed("researcher", "deep-research")
         methods = os.path.join(CORE, "team", "methods")
         for phrase in (f"No Workflow tool that runs `/deep-research` → follow `{methods}/deep-research.md` once instead, "
-                       "on the same filtered brief.",
+                       "on the same filtered brief",
                        f"No Workflow tool → follow `{methods}/ultracode.md` instead, for the local part, with the budget's "
                        "cap, its subagents readers.",
-                       "no subagents, or subagents lacking a round's tools (`/deep-research` round: web search and fetch; "
-                       "ultracode round: file reading) → skip that round, list it under Gaps, and go on to the other round "
-                       "or step 6.",
+                       "**Can't run** (rounds run by a method): no subagents, or subagents lacking a round's tools "
+                       "(`/deep-research` round: web search and fetch; ultracode round: file reading) → skip that "
+                       "round, list it under Gaps, and go on to the other round or step 6.",
                        "for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 "
                        "(deep-research method) or the budget's cap (ultracode method)."):
             self.assertIn(phrase, prompt)
         self.assertNotIn("No Workflow tool → `failed`", prompt)
+
+    def test_deep_research_names_the_methods_dir_read_only(self):
+        methods = os.path.join(CORE, "team", "methods")
+        self.assertIn(f"`{methods}` is read-only.", composed("researcher", "deep-research")[0])
 
     def test_researcher_names_no_harness_tool(self):
         with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
@@ -473,6 +477,20 @@ class RealCore(unittest.TestCase):
             for cmd in run.commands:
                 cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
+
+    def test_a_run_reads_the_methods_dir_its_text_names(self):
+        with open(os.path.join(CORE, "config", "clients", "claude.toml"), "rb") as f:
+            claude = tomllib.load(f)
+        named = []
+        for role, task in ALL:
+            text = ""
+            for rel in (f"roles/{role}.md", f"tasks/{task}.md"):
+                with open(os.path.join(CORE, "team", rel)) as f:
+                    text += f.read()
+            if "{{methods}}" in text:
+                named.append((role, task))
+                self.assertIn("{{methods}}", compose.load_run(CORE, role, task, layers=[claude]).read, task)
+        self.assertIn(("researcher", "deep-research"), named)
 
     def test_no_orchestration_references(self):
         for role, task in ALL:
@@ -514,7 +532,7 @@ class RealCore(unittest.TestCase):
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
 
 
-METHODS = ("deep-research", "ultracode")
+METHOD_NAMES = ("deep-research", "ultracode")
 
 
 def method(name):
@@ -528,13 +546,13 @@ def rule(text, name):
 
 class Methods(unittest.TestCase):
     def test_voting_and_pipeline_are_the_same_in_both(self):
-        deep, ultra = (method(m) for m in METHODS)
+        deep, ultra = (method(m) for m in METHOD_NAMES)
         for name in ("Voting", "Pipeline"):
             self.assertEqual(len(rule(deep, name)), 1, name)
             self.assertEqual(rule(deep, name), rule(ultra, name), name)
 
     def test_both_state_voting_pipeline_and_restrictions(self):
-        for m in METHODS:
+        for m in METHOD_NAMES:
             text = method(m)
             self.assertTrue(text.startswith("# "), m)
             self.assertNotRegex(text, r"\b[Yy]ou\b", m)
@@ -546,7 +564,7 @@ class Methods(unittest.TestCase):
                 self.assertIn(phrase, text, m)
 
     def test_methods_are_harness_neutral(self):
-        for m in METHODS:
+        for m in METHOD_NAMES:
             text = method(m)
             for word in ("{{", "Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
                 self.assertNotIn(word, text, f"{m}: {word}")
@@ -554,14 +572,16 @@ class Methods(unittest.TestCase):
     def test_deep_research_limits_and_public_material(self):
         text = method("deep-research")
         for phrase in ("5 complementary web search angles", "fewer than 15 sources", "top 25", "≤ 100",
+                       "start each web agent with fresh context (no inherited conversation), so it sees only its "
+                       "prompt",
                        "only from the brief and web results", "Dispatch fetches only for URLs a search agent returned",
                        "**Page text**:"):
             self.assertIn(phrase, text)
 
     def test_ultracode_gaps_and_room_for_votes(self):
         text = method("ultracode")
-        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes", "while ≥ 3 cap slots remain",
-                       "undispatched subquestions and unverified claims go under Gaps"):
+        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes",
+                       "while ≥ 3 cap slots remain", "undispatched subquestions and unverified claims go under Gaps"):
             self.assertIn(phrase, text)
 
 

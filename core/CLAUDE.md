@@ -25,7 +25,7 @@ Commit the regenerated `core/skills/` with the change that caused it.
    - `keys`: its own config keys (`"roles"` too for per-role/task entries);
    - `needs_config`: whether it reads `config/clients/<name>.toml`;
    - `runs`: `True` → `launch()` starts a run; `False` → `export()` writes files (as `skill` does);
-   - `scripts_path(root)` and `methods_path(root)`, only when prompts must name `core/src/` or `core/team/methods/` other than by its absolute path (skill: `${CLAUDE_SKILL_DIR}/scripts`, `${CLAUDE_SKILL_DIR}/methods`).
+   - `scripts_path(root)` and `methods_path(root)`, only when prompts must name `core/src/` or `core/team/methods/` other than by their absolute path (skill: `${CLAUDE_SKILL_DIR}/scripts`, `${CLAUDE_SKILL_DIR}/methods`).
 2. **Launch** (`runs = True`): `launch(prompt, run, *, params, access) -> Launch(argv, env, cwd)`.
    - Map `run.tier` and `run.effort` through its config; a value with no mapping is a `ConfigError`.
    - Turn `access.dirs` and `access.commands` into its own permission flags; whatever it can't enforce stays a prompt request (`docs/adr/0003`).

@@ -79,12 +79,12 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
     then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
     permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
-    named = {"methods": methods}
-    entries = [fill(e, named, "read") for e in run.read] + [fill(e, named, "write") for e in run.write]
     dirs = []
-    for p in (bind(e, repo) for e in entries):
-        if p and p not in dirs:
-            dirs.append(p)
+    for key, entries in (("read", run.read), ("write", run.write)):
+        for entry in entries:
+            p = bind(fill(entry, {"methods": methods}, key), repo)
+            if p and p not in dirs:
+                dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
     commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params)} *"]
     return Access(dirs, commands + ([run.gate] if run.gate else []))
@@ -114,7 +114,7 @@ def export(root: str, client: Client, role: str, task: str | None = None, *, des
 def write(files: dict[str, str]) -> None:
     for path, text in files.items():
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
 
 
