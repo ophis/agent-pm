@@ -26,9 +26,9 @@ import clients  # noqa: E402
 import compose  # noqa: E402
 
 
-def session(role):
-    """The tmux session of a role's runs."""
-    return f"agent-pm-{role}"
+def session(role, issue):
+    """The tmux session of a role's run on an issue."""
+    return f"agent-pm-{role}-{issue}"
 
 
 def sh_run(argv, timeout):

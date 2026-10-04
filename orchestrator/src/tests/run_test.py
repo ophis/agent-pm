@@ -225,7 +225,7 @@ class Base(unittest.TestCase):
 class Outer(Base):
     def test_engineering_starts_the_inner_in_tmux(self):
         self.assertEqual(self.main(args()), 0)
-        self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer", "-c", self.rd,
+        self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
                                            sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM",
                                            *forwarded()], {"check": True})])
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)

@@ -3,7 +3,7 @@
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
   Outer, in the router tick: checks the run can start, bounces an engineering issue whose repo check fails, writes
-  work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>; any failure starts nothing. Exits 0 started or
+  work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or
   bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config
   error or transient failure is also logged to the task's project log.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] <the same arguments>
@@ -146,7 +146,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         print(f"run.py: input.md: {one_line(e)}", file=sys.stderr)
         return 1
     try:
-        sh(["tmux", "new-session", "-d", "-s", session(name), "-c", rd, sys.executable, RUN, "--inner", "--uuid", issue.id,
+        sh(["tmux", "new-session", "-d", "-s", session(name, a.issue), "-c", rd, sys.executable, RUN, "--inner", "--uuid", issue.id,
             *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
             *(f"--{k}={getattr(a, k)}" for k in SHARED)], check=True)
     except subprocess.CalledProcessError as e:

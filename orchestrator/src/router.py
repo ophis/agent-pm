@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
-(no mode)           One tick (launchd): hours, per-role locks (all busy -> skip), prune, Recover and plan over idle roles,
-                    usage gate, resume or claim, launch.
+(no mode)           One tick (launchd): hours, live sessions vs max_runs (all roles full -> skip), prune, Recover, plan over
+                    roles not full, usage gate, resume or claim, launch.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and the usage; change nothing, launch nothing.
-  --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is busy.
+  --issue ID        With --now: claim this Todo issue instead of the top one; skip if its role is full.
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
 Needs Python 3.11+.
 """
@@ -129,9 +129,17 @@ def is_live(tdir, issue, sid, now):
     return False
 
 
-def busy_roles(roles, sh):
-    """Sorted names of the roles whose session agent-pm-<role> exists; "=" makes tmux match the name exactly, not as a prefix."""
-    return sorted(r for r in roles if sh(["tmux", "has-session", "-t", "=" + session(r)], capture_output=True).returncode == 0)
+def live_sessions(roles, sh):
+    """{role: sorted IDs of the issues with a session(role, ID)} for every role in roles, from one tmux list-sessions;
+    other names are ignored, and no tmux server means no sessions."""
+    out = sh(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True)
+    names = out.stdout.splitlines() if out.returncode == 0 else []
+    live = {}
+    for r in roles:
+        prefix = session(r, "")
+        ids = [n.removeprefix(prefix) for n in names if n.startswith(prefix)]
+        live[r] = sorted(i for i in ids if re.fullmatch(linear.ISSUE_ID, i))
+    return live
 
 
 def assignee_email(gql, team_id, ident):
@@ -198,13 +206,10 @@ def brake(sh):
 
 
 class Board:
-    def __init__(self, gql, entries, tdir, now, dry, cfg, only=None, root=ROOT):
+    def __init__(self, gql, entries, tdir, now, dry, cfg, root=ROOT):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
         self.hist, self.ready, self.blocked = {}, None, {}
         self.runs = runnable(cfg, root)
-        if only is not None:
-            if unknown := [r for r in only if r not in self.runs]:
-                raise SystemExit(f"no role {unknown[0]!r} in orchestrator/config.toml")
         self.stage = stage_order(cfg)
         self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
         t = team(gql, cfg)
@@ -212,7 +217,7 @@ class Board:
         self.team, self.states = t.id, t.states
         self.humans = set(humans(gql, cfg))
         self.emails = cfg.get("human_members") or []
-        self.roles = role_ids(gql, {r: run for r, run in self.runs.items() if only is None or r in only})
+        self.roles = role_ids(gql, self.runs)
 
     def issues(self, state, fields=""):
         flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
@@ -277,12 +282,13 @@ class Board:
         if left is not None:
             log(f"{prefix} {issue['identifier']}: issue is {left}")
 
-    def recover(self):
-        """Walk the role accounts' In Progress issues; returns the resume candidate (issue, sid, task) or None."""
-        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress")]
+    def recover(self, live=()):
+        """Walk the role accounts' In Progress issues, leaving those in live (IDs with a session) untouched; returns the resume
+        candidates [(issue, sid, task)] in resume order."""
+        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in live]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
-        cand = None
+        cands = []
         for issue, sid in mine:
             ident = issue["identifier"]
             latest = latest_sid(self.entries, ident)
@@ -301,7 +307,7 @@ class Board:
                                                  f'({", ".join(run.tasks)}); needs a look.', "in_review", "in_progress",
                                           "recover:")
                 else:
-                    cand = cand or (issue, sid, task)
+                    cands.append((issue, sid, task))
             elif sid:
                 if sid_times(self.entries, sid)[-1] < self.now - LIVE:
                     log(f"recover: {ident} session={sid} has no transcript")
@@ -309,26 +315,26 @@ class Board:
             elif parse_time(issue["updatedAt"]) < self.now - STALE:
                 log(f"recover: {ident} (last updated {issue['updatedAt']})")
                 self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover:")
-        return cand
+        return cands
 
-    def next_run(self):
-        """("resume", issue, sid, task), ("new",) or None, after Recover."""
-        cand = self.recover()
+    def next_run(self, live=(), full=()):
+        """("resume", issue, sid, task), ("new",) or None, after Recover; live: IDs with a session, full: roles at max_runs."""
+        cand = next((c for c in self.recover(live) if self.role(c[0]) not in full), None)
         if cand:
             issue, sid, task = cand
             log(f"plan: resume {issue['identifier']} session={sid}")
             return ("resume", issue, sid, task)
-        todo = self.todo()
+        todo = [i for i in self.todo() if self.role(i) not in full]
         if todo:
             log(f"plan: new ({len(todo)} in queue)")
             return ("new",)
         log("plan: nothing to do")
         return None
 
-    def take(self, only=None):
-        """(claimed Todo issue, its task), or None."""
+    def take(self, only=None, full=()):
+        """(claimed Todo issue of a role not in full, its task), or None."""
         # Pick: highest priority first, then later role, then oldest.
-        queue = sorted(self.todo(), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+        queue = sorted((i for i in self.todo() if self.role(i) not in full), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
         if only:
             queue = [i for i in queue if i["identifier"] == only]
         for issue in queue:
@@ -370,25 +376,25 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         if not dry:
             return 0
     roles = runnable(cfg, root)
-    busy = busy_roles(roles, sh)
-    if len(busy) == len(roles):
-        log(f"skip: all roles busy ({', '.join(busy)})")
+    live = live_sessions(roles, sh)
+    full = {r for r in roles if len(live[r]) >= roles[r].max_runs}
+    if len(full) == len(roles):
+        log(f"skip: all roles full ({', '.join(sorted(full))})")
         return 0
-    if busy:
-        log(f"busy: {', '.join(busy)}")
-        if issue_id:
-            role = role_for(roles, assignee_email(gql, cfg["team"], issue_id))
-            if role in busy:
-                log(f"skip: {issue_id} belongs to busy role {role}")
-                return 0
+    if any(live.values()):
+        log("live: " + ", ".join(f"{r} {len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids))
+    if issue_id and full:
+        role = role_for(roles, assignee_email(gql, cfg["team"], issue_id))
+        if role in full:
+            log(f"skip: {issue_id} belongs to full role {role}")
+            return 0
     if not dry:
         try:
             prune(runs, now)
         except Exception as e:
             log(f"skip: prune failed: {e}")
-    # Recover sees only idle roles' issues, so it never touches an issue whose session is running.
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, only=[r for r in roles if r not in busy], root=root)
-    run = board.next_run()
+    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
+    run = board.next_run({i for ids in live.values() for i in ids}, full)
     if issue_id:  # Recover still ran; the requested issue is claimed even if another run could be resumed
         if board.is_blocked(issue_id):
             return 0
@@ -413,7 +419,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
         append(runs, f"resume {issue['identifier']} session={sid} task={task}")
         mode = ["--mode", "resume"]
     else:
-        taken = board.take(issue_id)
+        taken = board.take(issue_id, full)
         if not taken:
             log("skip: nothing claimed")
             return 0
