@@ -477,5 +477,54 @@ class RealCore(unittest.TestCase):
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
 
 
+METHODS = ("deep-research", "ultracode")
+
+
+def method(name):
+    with open(os.path.join(CORE, "team", "methods", f"{name}.md")) as f:
+        return f.read()
+
+
+def rule(text, name):
+    return [line for line in text.splitlines() if line.startswith(f"- **{name}**:")]
+
+
+class Methods(unittest.TestCase):
+    def test_voting_and_pipeline_are_the_same_in_both(self):
+        deep, ultra = (method(m) for m in METHODS)
+        for name in ("Voting", "Pipeline"):
+            self.assertEqual(len(rule(deep, name)), 1, name)
+            self.assertEqual(rule(deep, name), rule(ultra, name), name)
+
+    def test_both_state_voting_pipeline_and_restrictions(self):
+        for m in METHODS:
+            text = method(m)
+            self.assertTrue(text.startswith("# "), m)
+            for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
+                           "else (agent errors, missing votes) → unverified", "votes that came back",
+                           "unsure → votes refuted", "≤ 10 subagents running at once",
+                           "only verification waits for all claims", "the calling task's restrictions for",
+                           "into every subagent prompt you write, voters included"):
+                self.assertIn(phrase, text, m)
+
+    def test_methods_are_harness_neutral(self):
+        for m in METHODS:
+            text = method(m)
+            for word in ("{{", "Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
+                self.assertNotIn(word, text, f"{m}: {word}")
+
+    def test_deep_research_limits_and_public_material(self):
+        text = method("deep-research")
+        for phrase in ("5 complementary web search angles", "fewer than 15 sources", "top 25", "≤ 100",
+                       "only from the brief and web results", "only URLs a search agent returned"):
+            self.assertIn(phrase, text)
+
+    def test_ultracode_gaps_and_room_for_votes(self):
+        text = method("ultracode")
+        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes",
+                       "undispatched subquestions and unverified claims go under Gaps"):
+            self.assertIn(phrase, text)
+
+
 if __name__ == "__main__":
     unittest.main()
