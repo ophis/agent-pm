@@ -500,11 +500,12 @@ class Methods(unittest.TestCase):
         for m in METHODS:
             text = method(m)
             self.assertTrue(text.startswith("# "), m)
+            self.assertNotRegex(text, r"\b[Yy]ou\b", m)
             for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
                            "else (agent errors, missing votes) → unverified", "votes that came back",
                            "unsure → votes refuted", "≤ 10 subagents running at once",
                            "only verification waits for all claims", "the calling task's restrictions for",
-                           "into every subagent prompt you write, voters included"):
+                           "into every subagent prompt, voters included"):
                 self.assertIn(phrase, text, m)
 
     def test_methods_are_harness_neutral(self):
@@ -516,12 +517,13 @@ class Methods(unittest.TestCase):
     def test_deep_research_limits_and_public_material(self):
         text = method("deep-research")
         for phrase in ("5 complementary web search angles", "fewer than 15 sources", "top 25", "≤ 100",
-                       "only from the brief and web results", "only URLs a search agent returned"):
+                       "only from the brief and web results", "Dispatch fetches only for URLs a search agent returned",
+                       "**Page text**:"):
             self.assertIn(phrase, text)
 
     def test_ultracode_gaps_and_room_for_votes(self):
         text = method("ultracode")
-        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes",
+        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes", "while ≥ 3 cap slots remain",
                        "undispatched subquestions and unverified claims go under Gaps"):
             self.assertIn(phrase, text)
 
