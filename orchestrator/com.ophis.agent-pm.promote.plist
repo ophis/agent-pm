@@ -7,7 +7,7 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/python3</string>
-		<string>/Users/francis/playground/agent-pm/scripts/promote.py</string>
+		<string>/Users/francis/playground/agent-pm/orchestrator/src/promote.py</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/francis/playground/agent-pm/logs/promote.log</string>

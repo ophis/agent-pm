@@ -1,4 +1,4 @@
-"""Shared by the harness scripts: Linear access, paths, pipeline.toml, core config with its [core] overlay, and TASKS.
+"""Shared by the orchestrator: Linear access, paths, orchestrator/config.toml, core config with its [core] overlay, and TASKS.
 Imports none of them. Needs Python 3.11+ (tomllib).
 """
 import functools
@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG = os.path.join(ROOT, "pipeline.toml")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
 CORE = os.path.join(ROOT, "core")
 WORK = os.path.join(ROOT, "work")
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -26,7 +26,7 @@ RUNS_LOG = os.path.join(LOGS, "runs.log")
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 SHORT, LONG = 60, 600
 
-# No scripts module may be named clients, compose, drive or repo: these come from core/src.
+# No orchestrator module may be named clients, compose, drive or repo: these come from core/src.
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
@@ -39,7 +39,7 @@ def session(role):
 
 @functools.cache
 def harness_service():
-    """Keychain service of the harness account's Linear key: pipeline.toml's harness_key."""
+    """Keychain service of the harness account's Linear key: orchestrator/config.toml's harness_key."""
     return load_config()["harness_key"]
 
 
@@ -159,7 +159,7 @@ TASKS = {
 
 @dataclass(frozen=True)
 class Role:
-    """A pipeline.toml role checked by runnable(); key is a Keychain service name, never the secret."""
+    """A orchestrator/config.toml role checked by runnable(); key is a Keychain service name, never the secret."""
     account: str        # Linear email
     key: str            # Keychain service of its API key
     tasks: tuple        # core config tasks, default_task first, then core order
@@ -188,19 +188,19 @@ def _uuid(v):
 
 def _check_ids(cfg):
     if not _uuid(cfg.get("team")):
-        raise SystemExit(f"pipeline.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}")
+        raise SystemExit(f"orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}")
     states = cfg.get("states")
     if not isinstance(states, dict):
         states = {}
     if missing := [k for k in STATES if k not in states]:
-        raise SystemExit(f"pipeline.toml: [states] is missing: {', '.join(missing)}")
+        raise SystemExit(f"orchestrator/config.toml: [states] is missing: {', '.join(missing)}")
     if extra := sorted(set(states) - set(STATES)):
-        raise SystemExit(f"pipeline.toml: [states] has unknown keys: {', '.join(extra)}")
+        raise SystemExit(f"orchestrator/config.toml: [states] has unknown keys: {', '.join(extra)}")
     for k in STATES:
         if not _uuid(states[k]):
-            raise SystemExit(f"pipeline.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
+            raise SystemExit(f"orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
     if not _uuid(cfg.get("task_label_group")):
-        raise SystemExit(f"pipeline.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
+        raise SystemExit(f"orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
 
 
 def load_config(path=CONFIG):
@@ -210,38 +210,38 @@ def load_config(path=CONFIG):
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
-        raise SystemExit(f"pipeline.toml: harness_key must be a Keychain service name: {hk!r}")
+        raise SystemExit(f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}")
     if extra := sorted(set(cfg) - TOP_KEYS):
-        raise SystemExit(f"pipeline.toml: unknown keys: {', '.join(extra)}")
+        raise SystemExit(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
-            raise SystemExit(f"pipeline.toml: [roles.{name}] has unknown keys: {', '.join(extra)}")
+            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}")
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
-                raise SystemExit(f"pipeline.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}")
+                raise SystemExit(f"orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}")
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
             if nxt in seen:
-                raise SystemExit(f"pipeline.toml: the next chain from {name!r} has a cycle")
+                raise SystemExit(f"orchestrator/config.toml: the next chain from {name!r} has a cycle")
             seen.add(nxt)
             nxt = roles.get(nxt, {}).get("next")
     repos = cfg.setdefault("project_repos", {})
     if not isinstance(repos, dict):
-        raise SystemExit('pipeline.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"')
+        raise SystemExit('orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"')
     for k, v in repos.items():
         if not _uuid(k) or not repo_slug(v):
-            raise SystemExit(f"pipeline.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
+            raise SystemExit(f"orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
-        raise SystemExit('pipeline.toml: task_labels must be a table of <task> = "<Linear label id>"')
+        raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
     seen = {}
     for k, v in labels.items():
         if not _uuid(v):
-            raise SystemExit(f"pipeline.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}")
+            raise SystemExit(f"orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}")
         if v in seen:
-            raise SystemExit(f"pipeline.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}")
+            raise SystemExit(f"orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}")
         seen[v] = k
     return cfg
 
@@ -258,13 +258,13 @@ def _fill_root(value, root):
 
 def _check_overlay_keys(table, allowed, where):
     if extra := sorted(set(table) - allowed):
-        raise SystemExit(f"pipeline.toml [core]: unknown key {extra[0]!r} in {where}")
+        raise SystemExit(f"orchestrator/config.toml [core]: unknown key {extra[0]!r} in {where}")
 
 
 def overlay(root=ROOT):
-    """<root>/pipeline.toml's [core] table ({} without one) with {{root}} filled; keys are checked here, since core checks
+    """<root>/orchestrator/config.toml's [core] table ({} without one) with {{root}} filled; keys are checked here, since core checks
     only its own config's."""
-    layer = _fill_root(load_config(os.path.join(root, "pipeline.toml")).get("core", {}), root)
+    layer = _fill_root(load_config(os.path.join(root, "orchestrator", "config.toml")).get("core", {}), root)
     _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
     for r, role in layer.get("roles", {}).items():
         _check_overlay_keys(role, compose.RUN_KEYS | {"tasks"}, f"roles.{r}")
@@ -285,19 +285,19 @@ def run_config(role, task, root=ROOT):
 
 
 def runnable(cfg, root=ROOT):
-    """{role: Role} of pipeline.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
-    broken one stops the caller (fail loud). Core roles absent from pipeline.toml are not orchestrated."""
+    """{role: Role} of orchestrator/config.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
+    broken one stops the caller (fail loud). Core roles absent from orchestrator/config.toml are not orchestrated."""
     with open(os.path.join(root, "core", compose.CONFIG), "rb") as f:
         core_roles = tomllib.load(f).get("roles", {})
     out = {}
     for name, p in cfg["roles"].items():
         if name not in core_roles:
-            raise SystemExit(f"pipeline.toml: role {name!r} is not in core/config/config.toml")
+            raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config/config.toml")
         default, tasks = core_roles[name].get("default_task"), list(core_roles[name].get("tasks", {}))
         tasks = tuple(dict.fromkeys([default, *tasks] if default else tasks))
         for t in tasks:
             if t not in TASKS:
-                raise SystemExit(f"pipeline.toml: {name}'s task {t!r} has no entry in pipeline.TASKS")
+                raise SystemExit(f"orchestrator/config.toml: {name}'s task {t!r} has no entry in pipeline.TASKS")
             try:
                 run_config(name, t, root)
             except compose.ConfigError as e:
@@ -306,22 +306,22 @@ def runnable(cfg, root=ROOT):
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
-            raise SystemExit(f"pipeline.toml: [roles.{name}] key {r.key!r} is harness_key")
+            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key")
         if r.key in owner:
-            raise SystemExit(f"pipeline.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s")
+            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s")
         owner[r.key] = name
     for name, p in cfg["roles"].items():
         nxt = p.get("next")
         if not nxt:
             continue
         if nxt not in out:
-            raise SystemExit(f"pipeline.toml: next of {name!r} names undefined role {nxt!r}")
+            raise SystemExit(f"orchestrator/config.toml: next of {name!r} names undefined role {nxt!r}")
         if not TASKS[out[nxt].default].prefix:
-            raise SystemExit(f"pipeline.toml: next of {name!r} is role {nxt!r}, whose default task {out[nxt].default!r} has no prefix")
+            raise SystemExit(f"orchestrator/config.toml: next of {name!r} is role {nxt!r}, whose default task {out[nxt].default!r} has no prefix")
     tasks = {t for r in out.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
-            raise SystemExit(f"pipeline.toml: task_labels.{task} is not a task of a role in pipeline.toml")
+            raise SystemExit(f"orchestrator/config.toml: task_labels.{task} is not a task of a role in orchestrator/config.toml")
     docs(out, root)
     return out
 
@@ -350,7 +350,7 @@ def humans(gql, cfg):
     emails = cfg.get("human_members") or []
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids) if not i]:
-        raise SystemExit(f"pipeline.toml: human_members not found in Linear: {', '.join(missing)}")
+        raise SystemExit(f"orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}")
     return ids
 
 
@@ -365,14 +365,14 @@ def role_ids(gql, runs):
     for name, run in runs.items():
         uid = user_id(gql, run.account)
         if not uid:
-            raise SystemExit(f"pipeline.toml [roles.{name}]: account {run.account!r} not found in Linear")
+            raise SystemExit(f"orchestrator/config.toml [roles.{name}]: account {run.account!r} not found in Linear")
         out[uid] = name
     return out
 
 
 @dataclass(frozen=True)
 class Team:
-    """The pipeline.toml team as checked by team(): {logical state: state id}."""
+    """The orchestrator/config.toml team as checked by team(): {logical state: state id}."""
     id: str
     name: str
     states: dict
@@ -383,14 +383,14 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 
 
 def team(gql, cfg):
-    """The pipeline.toml team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
+    """The orchestrator/config.toml team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
     nodes = gql(Q_TEAM, t=cfg["team"])["teams"]["nodes"]
     if not nodes:
-        raise SystemExit(f"pipeline.toml: team {cfg['team']} not found in Linear")
+        raise SystemExit(f"orchestrator/config.toml: team {cfg['team']} not found in Linear")
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg['states'][k]}" for k in STATES if cfg["states"][k] not in ids]:
-        raise SystemExit(f"pipeline.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}")
+        raise SystemExit(f"orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}")
     return Team(t["id"], t["name"], {k: cfg["states"][k] for k in STATES})
 
 
@@ -403,12 +403,12 @@ def task_group(gql, cfg):
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
     except SystemExit as e:
-        raise SystemExit(f"pipeline.toml: task_label_group {group} not found in Linear: {e.code}") from None
+        raise SystemExit(f"orchestrator/config.toml: task_label_group {group} not found in Linear: {e.code}") from None
     if not label["isGroup"]:
-        raise SystemExit(f"pipeline.toml: task_label_group {group} is not a label group")
+        raise SystemExit(f"orchestrator/config.toml: task_label_group {group} is not a label group")
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg["task_labels"].items() if i not in ids]:
-        raise SystemExit(f"pipeline.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}")
+        raise SystemExit(f"orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}")
 
 
 def stage_order(cfg):

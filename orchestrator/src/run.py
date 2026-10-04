@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runner: one core run for an issue the router already claimed (or resumes it), per pipeline.toml.
+"""Runner: one core run for an issue the router already claimed (or resumes it), per orchestrator/config.toml.
 
 run.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
   Outer, in the router tick: checks the run can start, bounces an engineering issue whose repo check fails, writes
@@ -114,7 +114,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
     os.environ["PATH"] = PATH
     try:
-        cfg = load_config(os.path.join(root, "pipeline.toml"))
+        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         roles = runnable(cfg, root)
     except SystemExit as e:
         print(f"run.py: {e.code}", file=sys.stderr)
@@ -193,7 +193,7 @@ def inner(a, *, gql, popen, runs, root):
     signal.signal(signal.SIGHUP, stop)
     plog = None
     try:
-        cfg = load_config(os.path.join(root, "pipeline.toml"))
+        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         roles = runnable(cfg, root)
         name = role_for(roles, a.assignee)
         if name is None:

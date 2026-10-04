@@ -1,16 +1,16 @@
 # CLAUDE.md
 
-Unattended agent pipeline on a Linear board. launchd runs `router.py`, which starts one `run.py` per Todo issue assigned to a role account (researcher → pm → engineer; the project is the product, the assignee the stage). A run is a core role doing one core task (`core/team/roles/<role>.md`, `core/team/tasks/<task>.md`): the one the issue's `Tasks` label picks through `pipeline.toml`'s `[task_labels]`, else the role's default. `core/` knows nothing of Linear (`core/CLAUDE.md`); `scripts/` turns an issue into the run's input and the run's outcome into Linear changes.
+Unattended agent pipeline on a Linear board. launchd runs `router.py`, which starts one `run.py` per Todo issue assigned to a role account (researcher → pm → engineer; the project is the product, the assignee the stage). A run is a core role doing one core task (`core/team/roles/<role>.md`, `core/team/tasks/<task>.md`): the one the issue's `Tasks` label picks through `orchestrator/config.toml`'s `[task_labels]`, else the role's default. `core/` knows nothing of Linear (`core/CLAUDE.md`); the orchestrator (`orchestrator/src/`, config `orchestrator/config.toml`) turns an issue into the run's input and the run's outcome into Linear changes.
 
 ## Commands
 
 ```bash
-python3 -m unittest discover -s scripts/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
-python3 -m unittest discover -s scripts/tests -p "*_test.py" -k attempt   # tests whose name matches
+python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
+python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
 core/regen_skills.sh                                              # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
-python3 scripts/router.py --now --dry-run                         # one tick: plan + usage probe, changes nothing
-python3 scripts/promote.py --dry-run                              # what Handoff and prune would do
+python3 orchestrator/src/router.py --now --dry-run                         # one tick: plan + usage probe, changes nothing
+python3 orchestrator/src/promote.py --dry-run                              # what Handoff and prune would do
 tmux ls                                                           # running sessions, agent-pm-<role>
 tmux attach -t agent-pm-<role>                                    # watch a role's live run
 ```
@@ -26,15 +26,15 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - `writeback.py`: the `start` mark and the outcome → Linear comments, title, attachment and state, as the role account. Any other mark posts as `Progress (<name>): <text>`, once per text. Per-task differences are `pipeline.TASKS` data. `work/<ID>/writeback.json` ledgers each step per session, so a resume repeats none; a failed step leaves the issue In Progress.
 - `sessions.py`: one `Run <sid> · …` comment per session, posted in-process by `run.py` with `harness_key`, not the role's key, so `isMe` is the harness account. Promote leaves these comments out of `## Comments`; `issues.read_issue` drops them.
 - `promote.py` (every 5 min): Handoff → a Todo issue for the next role, its id hashed from source, role and handoff time, so reruns are idempotent. Each tick ends with `prune.py`: it deletes the clones (`work/<ID>/src/*`, `work/<ID>/publish`) and legacy worktrees of issues finished ≥ 24 h ago and archives pm and engineer ones (hence engineering's `issueUnarchive`).
-- `pipeline.py`: the Linear client, config validation, core config with the overlay, `TASKS`. It puts `core/src` on `sys.path`, so no `scripts/` module may be named `clients`, `compose`, `drive` or `repo`.
-- Identity: scripts act as the harness account `frank.agent.w@gmail.com`; write-back and bounce act as the role's `account` (`key`). Only Keychain service names travel in env, argv, logs and prompts, never keys. A run gets no Linear key, but that is no enforced boundary: it runs as the same macOS user and could read Keychain items.
+- `pipeline.py`: the Linear client, config validation, core config with the overlay, `TASKS`. It puts `core/src` on `sys.path`, so no `orchestrator/src/` module may be named `clients`, `compose`, `drive` or `repo`.
+- Identity: the orchestrator acts as the harness account `frank.agent.w@gmail.com`; write-back and bounce act as the role's `account` (`key`). Only Keychain service names travel in env, argv, logs and prompts, never keys. A run gets no Linear key, but that is no enforced boundary: it runs as the same macOS user and could read Keychain items.
 - Every move to In Review, by write-back, bounce or the harness, subscribes each `human_members` email and keeps the assignee.
 - The router's state between ticks is only `logs/runs.log` (resume and Recover take the task from its `task=`, never the labels) and Linear history; it never reads session comments. A resumed run also reads `work/<ID>/writeback.json` and needs `~/.claude/projects/<escaped work/<ID>>/<sid>.jsonl`, so moving the repo or `work/` orphans sessions.
 
 ## Roles, tasks, rules
 
 - Roles, tasks, principles and templates are core's: `core/team/` (text), `core/config/config.toml` (tier, effort, `read`/`write`, `commands`, `output`, `language`), `core/config/clients/claude.toml`. A role's default task is its `default_task`.
-- `pipeline.toml` adds what core must not know: `[roles.<role>]` (`account`, `key`, `next`, `require_instructions`), `[task_labels]`, `[project_repos]`, and `[core]`, the overlay: core run keys for the orchestrator's runs, layered after the client config (`pipeline.overlay()` fills `{{root}}`). Title prefixes and write-back differences per task are `pipeline.TASKS`. An invalid or inconsistent config stops router, run and promote (`pipeline.runnable`).
+- `orchestrator/config.toml` adds what core must not know: `[roles.<role>]` (`account`, `key`, `next`, `require_instructions`), `[task_labels]`, `[project_repos]`, and `[core]`, the overlay: core run keys for the orchestrator's runs, layered after the client config (`pipeline.overlay()` fills `{{root}}`). Title prefixes and write-back differences per task are `pipeline.TASKS`. An invalid or inconsistent config stops router, run and promote (`pipeline.runnable`).
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py` / `pipeline.TASKS`. One rule, one place. Precedence: principles > charter > task.
 - Every task has a `## Resume` section; the shared resume text is `compose.RESUME`.
 
@@ -47,7 +47,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - tmux targets use `=agent-pm-<role>` for an exact match.
 - Keep `logs/` (gitignored): it is runner state, and launchd can't start a job whose log dir is missing.
-- Schedules are `scripts/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload: `launchctl bootout` + `bootstrap`). The router plist's `--now` skips the 01–06 h check.
+- Schedules are `orchestrator/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload: `launchctl bootout` + `bootstrap`). The router plist's `--now` skips the 01–06 h check.
 - Linear's lists can lag a just-made state change; re-read an issue's state before acting on it.
 
 ## Agent skills

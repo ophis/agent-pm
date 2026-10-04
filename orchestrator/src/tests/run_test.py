@@ -31,7 +31,7 @@ ENGINEER, RESEARCHER, PM = "engineer@agents.test", "researcher@agents.test", "pm
 KEY = "linear-api-key-engineer"
 CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
           + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
-          + '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/scripts/router.py --brake"\n')
+          + '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
 DONE = {"status": "done", "title": "TASK-7: Session registry", "summary": "Opened the PR.", "url": PR}
 NOW = "2026-10-04T10:00:00+08:00"
@@ -162,7 +162,7 @@ class Base(unittest.TestCase):
         self.root = os.path.join(self.tmp, "my root")
         os.makedirs(self.root)
         os.symlink(pipeline.CORE, os.path.join(self.root, "core"))
-        self.write(os.path.join(self.root, "pipeline.toml"), CONFIG)
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG)
         for p in (mock.patch.object(pipeline, "WORK", os.path.join(self.root, "work")), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
@@ -274,9 +274,9 @@ class Outer(Base):
         self.assertEqual(self.sh_calls, [])
 
     def test_config_error_exits_1(self):
-        self.write(os.path.join(self.root, "pipeline.toml"), CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
         self.assertEqual(self.main(args()), 1)
-        self.assertEqual(self.err, "run.py: pipeline.toml: unknown keys: bogus\n")
+        self.assertEqual(self.err, "run.py: orchestrator/config.toml: unknown keys: bogus\n")
 
     def test_not_a_role_account(self):
         self.assertEqual(self.main(args(assignee="x@y.com")), 2)
@@ -494,7 +494,7 @@ class Inner(Base):
     def test_deep_research_argv_has_the_brake(self):
         self.assertEqual(self.inner(RESEARCHER, "deep-research", target=None), 0)
         (argv, _), = self.popen_calls
-        self.assertIn(f"Bash(python3 {shlex.quote(self.root)}/scripts/router.py --brake)", argv)
+        self.assertIn(f"Bash(python3 {shlex.quote(self.root)}/orchestrator/src/router.py --brake)", argv)
         self.assertEqual(self.plog("deep-research")[0], "<ts> launch TASK-7 mode=new session=" + SID)
 
     def test_resume(self):
@@ -534,10 +534,10 @@ class Inner(Base):
         self.assertEqual((self.gql.calls, self.popen_calls), ([], []))
 
     def test_config_error_writes_the_end_line(self):
-        os.remove(os.path.join(self.root, "pipeline.toml"))
-        self.write(os.path.join(self.root, "pipeline.toml"), "team = 1\n")
+        os.remove(os.path.join(self.root, "orchestrator", "config.toml"))
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
         self.assertEqual(self.inner(), 1)
-        self.assertTrue(self.err.startswith("run.py: pipeline.toml: team must be"), self.err)
+        self.assertTrue(self.err.startswith("run.py: orchestrator/config.toml: team must be"), self.err)
         self.assertEqual([TS.sub("<ts> ", x) for x in self.read(self.runs).splitlines()],
                          ["<ts> end TASK-7 session=" + SID + " exit=1"])
 

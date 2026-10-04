@@ -1,4 +1,4 @@
-"""Linear team and state ids for the tests' pipeline.toml fixtures and fake Linear servers."""
+"""Linear team and state ids for the tests' orchestrator/config.toml fixtures and fake Linear servers."""
 TEAM = "00000000-0000-4000-8000-000000000001"
 STATES = {k: "00000000-0000-4000-8000-0000000000%02d" % i for i, k in
           enumerate(("todo", "in_progress", "in_review", "handoff", "done", "canceled"), start=11)}

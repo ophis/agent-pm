@@ -9,7 +9,7 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/python3</string>
-		<string>/Users/francis/playground/agent-pm/scripts/router.py</string>
+		<string>/Users/francis/playground/agent-pm/orchestrator/src/router.py</string>
 		<string>--now</string>
 	</array>
 	<key>StandardErrorPath</key>

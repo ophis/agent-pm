@@ -391,10 +391,10 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(gql.archived, ["id-TASK-1"])
 
         with mock.patch.object(prune, "runnable"), \
-                mock.patch.object(prune, "role_ids", side_effect=SystemExit("pipeline.toml [roles.pm]: account 'x' not found in Linear")):
+                mock.patch.object(prune, "role_ids", side_effect=SystemExit("orchestrator/config.toml [roles.pm]: account 'x' not found in Linear")):
             code, out = self.prune(gql, roles=None)
         self.assertEqual(code, 3)
-        self.assertEqual(msgs(out), ["prune-error archive: Linear: pipeline.toml [roles.pm]: account 'x' not found in Linear"])
+        self.assertEqual(msgs(out), ["prune-error archive: Linear: orchestrator/config.toml [roles.pm]: account 'x' not found in Linear"])
 
     def test_given_team_skips_team_query(self):
         wt = self.mkw("TASK-49", "TASK-49-x")
@@ -425,7 +425,7 @@ class PruneTest(unittest.TestCase):
     def test_main_config_error_propagates(self):
         with self.assertRaises(SystemExit) as cm:
             self.main(lambda query, **v: {"teams": {"nodes": []}})
-        self.assertEqual(cm.exception.code, f"pipeline.toml: team {TEAM} not found in Linear")
+        self.assertEqual(cm.exception.code, f"orchestrator/config.toml: team {TEAM} not found in Linear")
         self.assertEqual(self.err.getvalue(), "")
 
     def test_removes_the_worktree_then_its_branch(self):
@@ -471,7 +471,7 @@ class PruneTest(unittest.TestCase):
         linear.moved("DR-1", 60, "In Review")
         linear.said("DR-1", 45)
         linear.moved("DR-1", 30, "Handoff", frm=tp.STATES["In Review"])
-        config = os.path.join(self.root, "pipeline.toml")
+        config = os.path.join(self.root, "config.toml")
         write(config, tp.CONFIG)
 
         def gql(query, **v):

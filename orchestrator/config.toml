@@ -42,4 +42,4 @@ key = "linear-api-key-engineer"
 # Core run keys for the orchestrator's runs, in core/config/config.toml's layout under [core], applied after
 # core/config/clients/claude.toml (drive.plan layers). pipeline.overlay() fills {{root}} with this repo's root.
 [core.roles.researcher.tasks.deep-research]
-gate = "python3 {{root}}/scripts/router.py --brake"
+gate = "python3 {{root}}/orchestrator/src/router.py --brake"
