@@ -140,7 +140,7 @@ class Record(unittest.TestCase):
 
     def test_default_client_timeout_is_the_limit(self):
         found = {"issue": {"comments": {"nodes": []}}, "commentCreate": {"success": True}}
-        with mock.patch.object(sessions.pipeline, "linear_gql", return_value=found) as gql:
+        with mock.patch.object(sessions.linear, "linear_gql", return_value=found) as gql:
             self.assertIsNone(start(None, record()))
         self.assertEqual([c.kwargs["timeout"] for c in gql.call_args_list], [sessions.LIMIT] * 2)
         self.assertEqual(sessions.LIMIT, 10)

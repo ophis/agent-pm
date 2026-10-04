@@ -6,13 +6,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
-import pipeline, promote, prune  # noqa: E402
+import config, linear, promote, prune  # noqa: E402
 import promote_test as tp  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
 ROLES = {"u-researcher": "researcher", "u-pm": "pm", "u-engineer": "engineer"}
-TEAM_OBJ = pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY))
+TEAM_OBJ = linear.Team(TEAM, "Team", dict(IDS_BY_KEY))
 
 
 def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
@@ -26,7 +26,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
 
     def gql(query, **v):
         gql.calls.append(query)
-        if query == pipeline.Q_TEAM:
+        if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
         if query == prune.Q_FINISHED:
             gql.finished.append(v)
@@ -304,28 +304,28 @@ class PruneTest(unittest.TestCase):
         self.mkc("TASK-49", "src", "repo")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql)[0], 0)
-        self.assertNotIn(pipeline.Q_TEAM, gql.calls)
+        self.assertNotIn(linear.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
     def tick(self, prune_gql):
         """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output)."""
-        linear = tp.FakeLinear()
-        linear.add("DR-1")
-        linear.moved("DR-1", 60, "In Review")
-        linear.said("DR-1", 45)
-        linear.moved("DR-1", 30, "Handoff", frm=tp.STATES["In Review"])
+        fake = tp.FakeLinear()
+        fake.add("DR-1")
+        fake.moved("DR-1", 60, "In Review")
+        fake.said("DR-1", 45)
+        fake.moved("DR-1", 30, "Handoff", frm=tp.STATES["In Review"])
         config = os.path.join(self.root, "config.toml")
         write(config, tp.CONFIG)
 
         def gql(query, **v):
-            self.user_queries += query == pipeline.Q_USER
-            return (prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else linear)(query, **v)
+            self.user_queries += query == linear.Q_USER
+            return (prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else fake)(query, **v)
         self.user_queries = 0
         out = io.StringIO()
         with redirect_stdout(out):
             code = promote.main([], gql=gql, now=NOW, config=config,
                                 pruner=partial(prune.Pruner, work=self.work))
-        return code, linear.issues["DR-1"]["state"], out.getvalue()
+        return code, fake.issues["DR-1"]["state"], out.getvalue()
 
     def test_promote_tick_archives_with_its_roles(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
@@ -350,7 +350,7 @@ class Imports(unittest.TestCase):
         with open(prune.__file__) as f:
             modules = {n.module for n in ast.walk(ast.parse(f.read())) if isinstance(n, ast.ImportFrom)}
         self.assertNotIn("eng", modules)
-        self.assertIs(prune.CLONES, pipeline.CLONES)
+        self.assertIs(prune.CLONES, config.CLONES)
 
 
 if __name__ == "__main__":

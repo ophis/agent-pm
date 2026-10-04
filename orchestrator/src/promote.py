@@ -19,7 +19,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, TASKS, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
+from config import CONFIG, TASKS, load_config, runnable  # noqa: E402
+from linear import linear_gql, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)

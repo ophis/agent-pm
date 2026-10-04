@@ -13,7 +13,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import linear  # noqa: E402
 import router  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
@@ -52,9 +53,9 @@ class FakeLinear:
 
     def __call__(self, query, **v):
         self.queries.append((query, v))
-        if query == pipeline.Q_TEAM:
+        if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
-        if query == pipeline.Q_TASK_GROUP:
+        if query == linear.Q_TASK_GROUP:
             return {"issueLabel": self.group}
         if "users(filter" in query:
             users = {"me@x.com": USER, "b@x.com": "user-b", **{a.lower(): f"u-{r}" for r, a in ROLE.items()}}
@@ -132,7 +133,7 @@ class Base(unittest.TestCase):
         self.hist = {}
         self.names = {}
         self.config = self.write_config(CONFIG)
-        self.root = pipeline.ROOT
+        self.root = config.ROOT
 
     def sid(self, name):
         """A UUID for a short session name (transcript() accepts UUIDs only); outputs map it back to the name."""
@@ -168,12 +169,12 @@ class Base(unittest.TestCase):
         """A runs.log line; without task it is a line from before task= was recorded."""
         ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         s = self.sid(sid)
-        extra = "" if kind == "resume" else f" transcript={pipeline.transcript(ident, s, self.tdir)}"
+        extra = "" if kind == "resume" else f" transcript={config.transcript(ident, s, self.tdir)}"
         self.lines.append(f"{ts} {kind} {ident} session={s}{extra}" + (f" task={task}" if task else ""))
 
     def touch(self, ident, sid, minutes_ago, sub=None):
         """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
-        p = pipeline.transcript(ident, self.sid(sid), self.tdir)
+        p = config.transcript(ident, self.sid(sid), self.tdir)
         if sub:
             p = os.path.join(p[:-len(".jsonl")], sub)
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -187,7 +188,7 @@ class Base(unittest.TestCase):
             f.write("\n".join(self.lines) + "\n")
         err = io.StringIO()
         with redirect_stderr(err):
-            out = use(router.Board(fake, router.parse_log(self.log), self.tdir, NOW, dry, pipeline.load_config(self.config),
+            out = use(router.Board(fake, router.parse_log(self.log), self.tdir, NOW, dry, config.load_config(self.config),
                                    only=only, root=self.root))
         self.err = self.unmap(err.getvalue())
         return out
@@ -314,7 +315,7 @@ class Brake(unittest.TestCase):
         self.assertEqual(router.PROBE, ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json",
                                         "--verbose", "--setting-sources", "user", "--strict-mcp-config"])
         self.assertEqual(self.brake(event(five=0.79, seven_day=0.3)), (0, "status=allowed five_hour=0.79 seven_day=0.3\n"))
-        self.sh.assert_called_once_with(router.PROBE, cwd=pipeline.WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.sh.assert_called_once_with(router.PROBE, cwd=config.WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(self.path, router.PATH)
 
     def test_blocks_at_brake_5h(self):
@@ -818,10 +819,10 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         sid = launch[launch.index("--sid") + 1]
         self.assertEqual(launch[:2], [sys.executable, router.RUN])
-        self.assertEqual(router.RUN, os.path.join(pipeline.ROOT, "orchestrator", "src", "run.py"))
+        self.assertEqual(router.RUN, os.path.join(config.ROOT, "orchestrator", "src", "run.py"))
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--project", IDS[DR],
                                       "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
-        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}"
+        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(config.transcript('TASK-1', sid, self.tdir))}"
                                      r" task=deep-research\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
@@ -1120,13 +1121,13 @@ class TaskLabels(Base):
     def test_fr1_tick_checks_the_task_group_once_and_stops_on_a_bad_one(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake)
-        self.assertEqual([v for q, v in fake.queries if q == pipeline.Q_TASK_GROUP], [{"i": TASK_GROUP}])
+        self.assertEqual([v for q, v in fake.queries if q == linear.Q_TASK_GROUP], [{"i": TASK_GROUP}])
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.group = {"isGroup": False}
         with self.assertRaises(SystemExit) as cm:
             self.tick(fake)
         self.assertEqual(cm.exception.code, f"orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group")
-        self.assertEqual((fake.queries, fake.mutations), ([(pipeline.Q_TEAM, {"t": TEAM}), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP})], []))
+        self.assertEqual((fake.queries, fake.mutations), ([(linear.Q_TEAM, {"t": TEAM}), (linear.Q_TASK_GROUP, {"i": TASK_GROUP})], []))
         self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3)
 
     def test_fr9_fr13_resume_passes_the_recorded_task(self):

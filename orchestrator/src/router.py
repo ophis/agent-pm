@@ -19,8 +19,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, humans, load_config, linear_gql, log,  # noqa: E402
-                      parse_time, role_for, role_ids, runnable, session, stage_order, task_group, team, transcript)
+from config import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, load_config, role_for, runnable, session,  # noqa: E402
+                    stage_order, transcript)
+from linear import humans, linear_gql, log, parse_time, role_ids, task_group, team  # noqa: E402
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)

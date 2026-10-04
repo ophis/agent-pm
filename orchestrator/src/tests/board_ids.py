@@ -15,5 +15,5 @@ def role(name, *lines):
 
 
 def team_node(state_ids=None):
-    """teams.nodes[0] of pipeline.Q_TEAM."""
+    """teams.nodes[0] of linear.Q_TEAM."""
     return {"id": TEAM, "name": "Team", "states": {"nodes": [{"id": i} for i in (state_ids or STATES.values())]}}

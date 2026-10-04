@@ -6,7 +6,8 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CLONES, NAME, OWNER, REF, SHORT, WORK, err_text, repo_slug, sh_run  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, WORK, repo_slug, sh_run  # noqa: E402
+from linear import SHORT, err_text  # noqa: E402
 
 MAPPED = "project mapping "
 

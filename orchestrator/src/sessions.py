@@ -12,7 +12,7 @@ import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pipeline  # noqa: E402
+import linear  # noqa: E402
 
 SID = r"[0-9a-f-]{36}"
 URL = "https://agent-pm.invalid/run/"
@@ -30,7 +30,7 @@ def is_record(attachment):
 
 def is_comment(comment):
     """True for a session comment: by the harness account and starting `Run <sid> · `. isMe means the harness account
-    because callers query with its key (pipeline.linear_gql)."""
+    because callers query with its key (linear.linear_gql)."""
     return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {SID} · ", comment["body"]) is not None
 
 
@@ -96,7 +96,7 @@ def post(issue, rec, rc=None, *, gql=None, ended_at=None):
     the harness account's, bounded by LIMIT. None once written, else the one registry-error line (no newline)."""
     sid = rec["sid"]
     text = body(rec) if rc is None else body(rec, rc, ended_at or now())
-    reason = write(gql or functools.partial(pipeline.linear_gql, timeout=LIMIT), issue, sid, text)
+    reason = write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, sid, text)
     if reason:
         return " ".join(f"{datetime.now():%Y-%m-%d %H:%M:%S} registry-error {issue} session={sid}: {reason}".split())
     return None

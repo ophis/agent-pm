@@ -21,7 +21,8 @@ import sys
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CLONES, WORK, parse_time  # noqa: E402
+from config import CLONES, WORK  # noqa: E402
+from linear import parse_time  # noqa: E402
 from sessions import one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -51,7 +52,7 @@ class Skip(Exception):
 
 class Pruner:
     def __init__(self, gql, now, dry, *, work=WORK, team, roles):
-        """roles: {Linear user id: role} as pipeline.role_ids returns."""
+        """roles: {Linear user id: role} as linear.role_ids returns."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles = team, roles
         self.errors = 0

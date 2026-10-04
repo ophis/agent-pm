@@ -4,7 +4,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import board_ids  # noqa: E402
 import issues  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import linear  # noqa: E402
 import writeback  # noqa: E402
 import drive  # noqa: E402
 
@@ -163,7 +164,7 @@ class SayAndApprove(Base):
 
 class FinishGolden(Base):
     def outcomes(self, task, spec, plan):
-        kind = pipeline.TASKS[task].kind
+        kind = config.TASKS[task].kind
         if kind == "research":
             return {"done": outcome("done", summary="Three queues compared.\nRedis streams fit best.", url=DOC),
                     "needs_input": outcome("needs_input", questions=["Which repo?", "Which version?"], url=DOC),
@@ -199,16 +200,16 @@ class FinishGolden(Base):
             ("build", "failed"): expect(files=[spec_comment(), plan_comment()], state="in_review",
                                         body=f"Build failed: push not permitted\n\n{TREE}"),
         }
-        return table[(pipeline.TASKS[task].kind, status)]
+        return table[(config.TASKS[task].kind, status)]
 
     def test_every_task_status_and_mode(self):
-        self.assertEqual(set(pipeline.TASKS), {"deep-research", "light-research", "product-design", "engineering"})
-        for task in pipeline.TASKS:
+        self.assertEqual(set(config.TASKS), {"deep-research", "light-research", "product-design", "engineering"})
+        for task in config.TASKS:
             for status in drive.STATUSES:
                 for resume in (False, True):
                     with self.subTest(task=task, status=status, resume=resume):
                         gql = Gql()
-                        build = pipeline.TASKS[task].kind == "build"
+                        build = config.TASKS[task].kind == "build"
                         ctx = self.ctx(task, gql=gql, resume=resume, target=TARGET if build else None)
                         spec, plan = self.files(ctx)
                         self.assertTrue(writeback.finish(ctx, self.outcomes(task, spec, plan)[status]))

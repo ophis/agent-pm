@@ -13,7 +13,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, role  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import linear  # noqa: E402
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import router  # noqa: E402
@@ -165,9 +166,9 @@ class Base(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "my root")
         os.makedirs(self.root)
-        os.symlink(pipeline.CORE, os.path.join(self.root, "core"))
+        os.symlink(config.CORE, os.path.join(self.root, "core"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG)
-        for p in (mock.patch.object(pipeline, "WORK", os.path.join(self.root, "work")), mock.patch.dict(os.environ)):
+        for p in (mock.patch.object(config, "WORK", os.path.join(self.root, "work")), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
         self.rd = os.path.join(self.root, "work", ID)
@@ -216,7 +217,7 @@ class Base(unittest.TestCase):
         return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(task)).splitlines()]
 
     def transcript(self):
-        self.write(pipeline.transcript(ID, SID, self.projects), "")
+        self.write(config.transcript(ID, SID, self.projects), "")
 
 
 class Outer(Base):
@@ -229,7 +230,7 @@ class Outer(Base):
         self.assertEqual(os.listdir(self.rd), ["input.md"])
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})])
         self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
-        self.assertEqual(os.environ["PATH"], pipeline.PATH)
+        self.assertEqual(os.environ["PATH"], config.PATH)
         self.assertEqual((self.err, os.path.exists(self.plog_path())), ("", False))
 
     def test_research_has_no_target(self):
@@ -301,7 +302,7 @@ class Outer(Base):
 
     def test_resume_without_transcript(self):
         self.assertEqual(self.main(args(mode="resume")), 3)
-        path = pipeline.transcript(ID, SID, self.projects)
+        path = config.transcript(ID, SID, self.projects)
         self.assertEqual(self.plog(), [f"<ts> transient TASK-7: no transcript to resume at {path}"])
         self.assertEqual(TS.sub("<ts> ", self.err), f"<ts> transient TASK-7: no transcript to resume at {path}\n")
 
@@ -367,7 +368,7 @@ class Outer(Base):
         self.assertEqual(self.sh_calls, [])
 
     def test_input_write_failure_leaves_no_temp(self):
-        with mock.patch.object(pipeline.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(linear.os, "replace", side_effect=OSError("disk full")):
             self.assertEqual(self.main(args()), 1)
         self.assertEqual((os.listdir(self.rd), self.sh_calls), ([], []))
         self.assertEqual(self.err, "run.py: input.md: OSError: disk full\n")
@@ -443,7 +444,7 @@ class Inner(Base):
         self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"), argv[2][-200:])
         self.assertEqual((kw["stderr"].name, kw["stderr"].mode, kw["stderr"].closed), (self.plog_path(), "a", True))
         self.assertIn("Working on it", self.err)
-        self.assertEqual(os.environ["PATH"], pipeline.PATH)
+        self.assertEqual(os.environ["PATH"], config.PATH)
 
     def test_no_outcome_leaves_the_issue(self):
         self.lines = [said("Working on it")]

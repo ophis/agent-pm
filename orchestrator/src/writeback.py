@@ -1,5 +1,5 @@
 """Write-back: a core run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the pre-run engineering bounce. Per-task differences are pipeline.TASKS data."""
+and the pre-run engineering bounce. Per-task differences are config.TASKS data."""
 import fcntl
 import hashlib
 import json
@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import TASKS, atomic_write  # noqa: E402
+from config import TASKS  # noqa: E402
+from linear import atomic_write  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
 from sessions import one_line  # noqa: E402

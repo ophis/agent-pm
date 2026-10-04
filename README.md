@@ -25,7 +25,8 @@ agent-pm/
 │       ├── sessions.py    # records each run's session on its issue
 │       ├── promote.py     # Handoff to the next role
 │       ├── prune.py       # deletes finished issues' clones, archives pm and engineer ones
-│       ├── pipeline.py    # shared Linear client, config, per-task data (TASKS)
+│       ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
+│       ├── linear.py      # Linear client and lookups, shared helpers
 │       └── tests/
 ├── work/<ID>/             # a run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, clones in src/ and publish/ (gitignored)
 └── logs/                  # runner state and run output (gitignored)
@@ -99,7 +100,8 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
-| `pipeline.py` | Shared | Linear API client, loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
+| `config.py` | Shared | Loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
+| `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, and small helpers. |
 
 ## Using the board
 
@@ -120,7 +122,7 @@ To upgrade a Light Research issue, remove the label, comment the claims to verif
 
 The task is recorded in `logs/runs.log`, so a resumed run keeps it whatever the labels say (none recorded: the role's default). An interrupted run whose task is no longer one of the role's goes to In Review with a comment.
 
-To add a task to a role: create `core/team/tasks/<task>.md`, add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/pipeline.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
+To add a task to a role: create `core/team/tasks/<task>.md`, add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 
@@ -186,7 +188,7 @@ Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issu
 Core's configuration is under Core pack.
 
 - `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[core]`, the overlay: core run keys for the orchestrator's runs in `core/config/config.toml`'s layout, applied after `core/config/clients/claude.toml` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
-- `orchestrator/src/pipeline.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
+- `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development
 

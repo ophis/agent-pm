@@ -23,12 +23,13 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inputs  # noqa: E402
 import issues  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
 import sessions  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
-from pipeline import (PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, atomic_write, linear_gql,  # noqa: E402
-                      load_config, project_log, repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
+from config import (PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, load_config, project_log,  # noqa: E402
+                    repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
+from linear import atomic_write, linear_gql  # noqa: E402
 from sessions import one_line  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
@@ -128,7 +129,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     kind, repos, repo = TASKS[a.task].kind, cfg["project_repos"], None
     if kind == "build":
         try:
-            repo = target.check(issue, repos, run=run, work=pipeline.WORK)
+            repo = target.check(issue, repos, run=run, work=config.WORK)
         except Exception as e:  # a gh/git timeout or OS error
             return fail(plog, a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
@@ -143,7 +144,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     else:
         repo = target.research_repo(issue, repos)
     rd = run_dir(a.issue)
-    docs = pipeline.docs(roles, root)
+    docs = config.docs(roles, root)
     try:
         sources = inputs.gather(issue, a.task, docs, run=run)
     except Exception as e:  # gh's RuntimeError; a decode, timeout or OS error too
@@ -203,7 +204,7 @@ def inner(a, *, gql, popen, runs, root):
         client = clients.get("claude", core)
         params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume")
-        launch, run = drive.plan(core, client, name, a.task, params=params, layers=pipeline.layers(root))
+        launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root))
         sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
                  drive.outcome_file(os.path.join(rd, drive.OUTCOME)), log_file(plog), writeback.sink(ctx)]
         with open(plog, "a") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did

@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table, team_node  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import linear  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
 
@@ -58,9 +59,9 @@ class FakeLinear:
     def __call__(self, query, **v):
         if error := self.fail.get(query) or self.fail.get((query, v.get("i"))):
             raise SystemExit(f"linear api error: {error}")
-        if query == pipeline.Q_TEAM:
+        if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
-        if query == pipeline.Q_USER:
+        if query == linear.Q_USER:
             users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
             return {"users": {"nodes": [{"id": users[v["e"].lower()]}] if v["e"].lower() in users else []}}
         if query == promote.Q_HANDOFF:
@@ -363,8 +364,8 @@ class TestScopeAndConfig(Base):
     def test_child_titles_from_tasks(self):
         self.config = self.write_config(PM_NEXT)
         self.ready(role="pm", title="DES: Title DR-1")
-        tasks = {"product-design": pipeline.Task("design", prefix="DES"), "engineering": pipeline.Task("build", prefix="BLD")}
-        with mock.patch.dict(pipeline.TASKS, tasks):
+        tasks = {"product-design": config.Task("design", prefix="DES"), "engineering": config.Task("build", prefix="BLD")}
+        with mock.patch.dict(config.TASKS, tasks):
             self.run_main()
         (child,) = self.fake.children.values()
         self.assertEqual(child["title"], "BLD: Title DR-1")
@@ -482,7 +483,7 @@ class TestPruneHook(Base):
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)
-        self.assertEqual(team, pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY)))
+        self.assertEqual(team, linear.Team(TEAM, "Team", dict(IDS_BY_KEY)))
         self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
 
     def test_prune_error_does_not_break_promote(self):

@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pipeline  # noqa: E402
+import linear  # noqa: E402
 import sessions  # noqa: E402
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
@@ -78,7 +78,7 @@ def read_issue(gql, ident) -> Issue:
         raise LookupError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
     notes = sorted((Note(c["body"], c["createdAt"], (c["user"] or {}).get("email"), (c["user"] or {}).get("name"))
                     for c in node["comments"]["nodes"] if not sessions.is_comment(c)),
-                   key=lambda n: pipeline.parse_time(n.at))
+                   key=lambda n: linear.parse_time(n.at))
     linked = {}
     for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [x["issue"] for x in node["inverseRelations"]["nodes"]]:
         linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
@@ -134,4 +134,4 @@ def brief(issue) -> str:
 def build_cutoff(issue, humans) -> str:
     """`at` of the latest non-user note starting `Build started`, else the issue's creation time."""
     started = [n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())]
-    return max(started, key=pipeline.parse_time) if started else issue.created_at
+    return max(started, key=linear.parse_time) if started else issue.created_at
