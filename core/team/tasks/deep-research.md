@@ -7,7 +7,7 @@ Run research workflows, then write a verified report. These steps, not the workf
 1. **Read** the input; decide its type (Researcher › Type and target).
 2. **Too vague** (Output): no clear question, scope, deliverable or, for local or mixed, target (Researcher › Type and target) → `needs_input`, stop.
 3. **Budget**: before any round, decide the rounds step 5 will run, in order (web: one `/deep-research` round; mixed decides the order now), and the ultracode round's agent cap (≤ 100); a `/deep-research` round runs at its fixed ~100. The budget can only shrink.
-4. **Report start.**
+4. **Announce the start.**
    [agent-pm-progress:start] the type, the rounds in order and the ultracode cap
 5. **Research.** Write one self-contained **brief** from the input: subquestions by importance, shared context, and known claims as claims to verify. Then by type:
    - **Web**: call the built-in `/deep-research` workflow (the Workflow tool, not a skill) once, the brief filtered as in the `/deep-research` round below as `args`. No Workflow tool → `failed`, stop. Write or run no other workflow and no extra runs for parts or gaps. It verifies only its top claims; the rest stay unverified.
