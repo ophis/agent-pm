@@ -1,14 +1,19 @@
 """Generic tmux host: runs a command in a detached tmux session another agent or a person can watch and drive.
 
-One file, tmux plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
+One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
 
-start(session, argv, cwd=, env=)  a detached session running argv; the command line, cwd and env reach the pane
-                                  through a 0600 handover file, never through tmux; then show(session, show)
+start(session, argv, cwd=, env=, show=, split=, beside=)
+                                  a detached session running argv; the command line, cwd and env reach the pane
+                                  through a 0600 handover file, never through tmux; then show(session, show, split=,
+                                  beside=)
 status(session)                   None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)
 send(session, text)               types text into the pane, then Enter
 read(session, lines=)             the pane's text: the visible pane, or its last lines with history
-show(session, template)           prints how to attach, then runs the template, else $TUI_SHOW, else the iTerm2 split;
-                                  returns the failure reason instead of raising
+show(session, template, split=, beside=)
+                                  prints how to attach, then runs the template, else $TUI_SHOW, else
+                                  iterm(session, split=, beside=); returns the failure reason instead of raising
+iterm(session, split=, beside=)   the iTerm2 split: a pane split off right or below the one showing tmux session
+                                  beside, else the caller's, attached to the session; returns the failure reason
 kill(session)                     ends the session
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
 """

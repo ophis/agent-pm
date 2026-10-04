@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The command a run reports with: appends one progress report, its outcome or a turn end as a JSON line to the channel the
-driver tails (drive.start), which checks them.
+"""The command a run reports with: appends one progress report, its outcome or a turn end as a JSON line to the
+channel the driver tails (drive.start), which checks them.
 
 report.py --to CHANNEL progress NAME TEXT...
 report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...

@@ -46,7 +46,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - Never name Linear in core prompts; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - A tmux `-t agent-pm-<role>-<ID>` whose session is gone prefix-matches another (TASK-1 hits a live TASK-12); target `'=agent-pm-<role>-<ID>'` (quoted: zsh expands a leading `=`). The code targets no session: the router reads `list-sessions`, `run.py` names its session with `new-session -s`.
-- Keep `logs/` (gitignored): it is runner state, and launchd can't start a job whose log dir is missing.
+- Keep `logs/` (gitignored): it is router state, and launchd can't start a job whose log dir is missing.
 - Schedules are `orchestrator/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload: `launchctl bootout` + `bootstrap`). The router plist's `--now` skips the 01–06 h check.
 - Linear's lists can lag a just-made state change; re-read an issue's state before acting on it.
 

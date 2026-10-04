@@ -29,7 +29,7 @@ agent-pm/
 │       ├── linear.py      # Linear client and lookups, shared helpers
 │       └── tests/
 ├── work/<ID>/             # a run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, clones in src/ and publish/ (gitignored)
-└── logs/                  # runner state and run output (gitignored)
+└── logs/                  # router state and run output (gitignored)
 ```
 
 ## Core pack
@@ -71,7 +71,7 @@ claude -p '<prompt>' \
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
 
-`--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); the `show` run key or `$TUI_SHOW` replaces that split (`core/config/config.toml`'s header). The run is done once its outcome arrives; the session stays open.
+`--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); `core/config/config.toml`'s header says what replaces that split. The run is done once its outcome arrives; the session stays open.
 
 The `Stop` hook reports each turn end (`report.py … stop`). The first turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. There is no wait timeout: a dialog nobody answers waits in the pane.
 
@@ -80,7 +80,8 @@ With tui:
 - Interactive `claude` asks whether to trust a folder it doesn't trust yet (`-p` doesn't); answer in the pane.
 - Auto mode depends on the model: where it is unavailable (Haiku, tier 4), the session runs in manual mode and asks in the pane for what isn't pre-approved.
 - The open session is an agent nobody watches: after the outcome, or once `drive.py` gives up, it keeps the run's pre-approvals and `drive.py`'s environment, and nothing it does is reported. End it with `tmux kill-session -t '=<session>'`.
-- Start `drive.py` from a plain shell: a `claude` started inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, saves no transcript and can't be resumed.
+- The nudge is typed into the pane up to about a second after the turn ends: if a new turn has opened a permission dialog by then (manual mode), the keys go to the dialog.
+- Start `drive.py` and `tui.py start` from a plain shell: a `claude` they start from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, saves no transcript and can't be resumed.
 
 In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s environment, e.g. to a command that asks a host-side watcher (yours to deploy) to attach, and leave `show` unset.
 
@@ -91,7 +92,7 @@ In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s enviro
 ```bash
 python3 core/src/tui.py start a -- claude                         # a session running claude, in an iTerm2 pane right of this one
 python3 core/src/tui.py start b --beside a --split below -- cat   # an iTerm2 pane below a's
-python3 core/src/tui.py send a 'Summarize README.md'               # types the text, then Enter
+python3 core/src/tui.py send a 'Summarize README.md'              # types the text, then Enter
 python3 core/src/tui.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui.py show a --show ''                          # only prints a's attach command
 python3 core/src/tui.py --help                                    # options, and how --show and $TUI_SHOW pick the show
@@ -109,7 +110,7 @@ Nothing checks them; a missing one fails the run.
 - The `claude` CLI (claude client): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; for tui, interactive mode and `Stop` hooks in `--settings`; its subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research).
 - The `autopilot` plugin, with `superpowers` (engineering's build).
 - `python3` 3.11+ (stdlib only), `git` and `gh` logged in: `repo.py` and the `github` and `pull-request` destinations.
-- `tmux`: the tui runner and `tui.py`. `osascript` and a running iTerm2 only for the default show, the iTerm2 split.
+- `tmux` 3.3+: the tui runner and `tui.py`. `osascript` and a running iTerm2 only for the default show, the iTerm2 split.
 - GitHub and the web.
 - Skills (`core/skills/`): `${CLAUDE_SKILL_DIR}`.
 
