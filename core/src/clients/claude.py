@@ -16,7 +16,7 @@ class ClaudeClient(Client):
     def handover(self) -> str:
         return (f"Return the outcome as your structured output when you finish. At each `[{PROGRESS}:<name>]` point, "
                 f"write a line in your reply starting with the same mark, your report after it, e.g. "
-                f"`[{PROGRESS}:budget] ultracode only, cap 80`.")
+                f"`[{PROGRESS}:start] local: one ultracode round, cap 80`.")
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access, schema: dict) -> Launch:
         c = self.config

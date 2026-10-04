@@ -78,14 +78,15 @@ class Parse(unittest.TestCase):
 
 
 class Prepare(Base):
-    def test_fresh_shallow_detached_checkout(self):
+    def test_fresh_blobless_detached_checkout(self):
         run = Fake([info(), (["git", "-C", self.wt, "rev-parse"], ok(SHA + "\n"))])
         code, out, _ = self.main(["prepare", "o/n", "--dir", self.dir], run)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out), {"repo": "o/n", "host": "github.com", "commit": SHA, "worktree": self.wt,
                                            "permalink_base": f"https://github.com/o/n/blob/{SHA}/"})
-        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--depth", "1"],
+        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
                       run.calls)
+        self.assertFalse(any("--depth" in c for c in run.calls))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--detach"))
 
     def test_reuses_a_checkout_of_the_same_repo(self):

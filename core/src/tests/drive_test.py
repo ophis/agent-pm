@@ -55,8 +55,9 @@ class Base(unittest.TestCase):
         return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
                                     "workdir": self.work, "sid": SID, **kw})
 
-    def plan(self, role="researcher", task="light-research", client="fake", repo=None, **params):
-        return drive.plan(CORE, clients.get(client, CORE), role, task, params=self.params(**params), repo=repo)[0]
+    def plan(self, role="researcher", task="light-research", client="fake", repo=None, layers=(), **params):
+        return drive.plan(CORE, clients.get(client, CORE), role, task, params=self.params(**params), repo=repo,
+                          layers=layers)[0]
 
 
 class Claude(Base):
@@ -82,6 +83,13 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
             f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")])
+
+    def test_the_gate_is_pre_approved_verbatim(self):
+        gate = "python3 /u/usage.py --below 80"
+        argv = self.plan("researcher", "deep-research", client="claude", repo=self.repo,
+                         layers=[{"gate": gate}]).argv
+        self.assertEqual(argv[argv.index("--allowedTools"):][-1], f"Bash({gate})")
+        self.assertIn(f"the gate is `{gate}`", argv[2])
 
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
@@ -135,6 +143,20 @@ class Generic(Base):
         self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Principles"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
+
+    def test_layers_apply_after_the_clients_config(self):
+        client = Recorder({"tier": 3, "effort": "low"})
+        drive.plan(CORE, client, "researcher", "light-research", params=self.params())
+        drive.plan(CORE, client, "researcher", "light-research", params=self.params(), layers=[{"tier": 4}, {"tier": 1}])
+        plain, layered = (s["run"] for s in Recorder.seen)
+        self.assertEqual((plain.tier, plain.effort), (3, "low"))
+        self.assertEqual((layered.tier, layered.effort), (1, "low"))
+
+    def test_access_appends_the_gate_after_the_filled_commands(self):
+        gate = "python3 /u/usage.py {{workdir}} *"
+        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s")
+        self.assertEqual(acc.commands, ["/s/x *", gate])
+        self.assertEqual(drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s").commands, ["x"])
 
     def test_repo_entry_binds_to_the_repo_arg(self):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
@@ -277,11 +299,11 @@ class ClaudeEvents(unittest.TestCase):
         return [e.outcome for e in claude().events(lines) if e.kind == "outcome"]
 
     def test_text_and_progress_lines(self):
-        lines = stream(said("Starting.\n- [agent-pm-progress:budget]  2 rounds, cap 80\n\n"
+        lines = stream(said("Starting.\n- [agent-pm-progress:start]  2 rounds, cap 80\n\n"
                             "* `[agent-pm-progress:round_1]` one\n**[agent-pm-progress:x-y]** \n"
                             "Progress: not a report\nsee [agent-pm-progress:x] mid-line"))
         self.assertEqual(self.kinds("not json\n", *lines), [
-            ("text", "", "not json"), ("text", "", "Starting."), ("progress", "budget", "2 rounds, cap 80"),
+            ("text", "", "not json"), ("text", "", "Starting."), ("progress", "start", "2 rounds, cap 80"),
             ("progress", "round_1", "one"), ("progress", "x-y", ""), ("text", "", "Progress: not a report"),
             ("text", "", "see [agent-pm-progress:x] mid-line")])
 
@@ -302,6 +324,8 @@ class Handover(unittest.TestCase):
         for c in (claude(), clients.SkillClient({})):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
         self.assertIn("structured output", claude().handover())
+        self.assertIn("e.g. `[agent-pm-progress:start] local: one ultracode round, cap 80`.", claude().handover())
+        self.assertNotIn("progress:budget", claude().handover())
 
     def test_the_base_client_returns_no_outcome(self):
         self.assertEqual(clients.Client({}).handover(), "")

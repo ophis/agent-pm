@@ -2,7 +2,7 @@
 prompt. A module for the driver (drive.py); needs Python 3.11+.
 
 Principles get {{role}}, {{task}} and their anchors; role and task text get {{scripts}} (this dir, or the client's path
-to it); a destination gets its output values.
+to it) and {{gate}}; a destination gets its output values.
 """
 import json
 import os
@@ -21,7 +21,7 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output"})
+RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
@@ -50,6 +50,7 @@ class RunConfig:
     write: list[str] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
     templates: list[str] = field(default_factory=list)
+    gate: str = ""
     role_title: str = ""
     task_title: str = ""
     task_summary: str = ""
@@ -61,6 +62,8 @@ class RunConfig:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
         if "type" not in self.output:
             raise ConfigError("output.type is not set")
+        if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:
+            raise ConfigError("gate must be one line of shell command without backticks")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -110,7 +113,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
     names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title)}
-    paths = {"scripts": vehicle.scripts_path(root)}
+    paths = {"scripts": vehicle.scripts_path(root), "gate": run.gate or "none"}
     parts = [fill(_read(text, "principles.md"), names, "principles.md")]
     parts += [fill(_read(text, rel), paths, rel) for rel in _rule_files(run.role, run.task)]
     for name in run.templates:
