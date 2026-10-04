@@ -159,7 +159,7 @@ python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific 
 python3 orchestrator/src/router.py --brake                   # usage probe; exit 0 if a second research round may start (5-hour usage < 80%, no weekly limit full)
 python3 orchestrator/src/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux ls                                             # running sessions, agent-pm-<role>-<ID>
-tmux attach -t agent-pm-<role>-<ID>                 # watch one run
+tmux attach -t '=agent-pm-<role>-<ID>'              # watch one run; = matches the exact name
 ```
 
 To open a run's session, copy the command from the code block of its issue's `Run <sid>` comment (see Session records).
