@@ -125,8 +125,13 @@ def save(path: str | Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:
-        f.write(text)
-    os.replace(f.name, path)
+        try:
+            f.write(text)
+            f.close()
+            os.replace(f.name, path)
+        except BaseException:
+            os.unlink(f.name)
+            raise
 
 
 def append_line(path: str | Path, text: str) -> None:

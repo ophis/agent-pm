@@ -13,9 +13,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, role  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
 import inputs  # noqa: E402
 import issues  # noqa: E402
+import linear  # noqa: E402
 import router  # noqa: E402
 import run  # noqa: E402
 import sessions  # noqa: E402
@@ -81,9 +82,9 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
             "inverseRelations": {"nodes": []}}
 
 
-NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", writeback.M_COMMENT: "comment", sessions.M_UPDATE: "update",
-         writeback.Q_STATE: "read", writeback.M_STATE: "state", writeback.M_SUBSCRIBE: "subscribe",
-         writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
+NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", linear.M_COMMENT: "comment", sessions.M_UPDATE: "update",
+         writeback.Q_ATTACHED: "read", linear.Q_ISSUE_STATE: "reread", linear.M_STATE: "state",
+         linear.M_SUBSCRIBE: "subscribe", writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
 FIELDS = {"comment": "commentCreate", "update": "commentUpdate", "state": "issueUpdate", "subscribe": "issueSubscribe",
           "attach": "attachmentLinkURL"}
 
@@ -104,7 +105,9 @@ class Gql:
         if name == "find":
             return {"issue": {"comments": {"nodes": []}}}
         if name == "read":
-            return {"issue": {"state": {"id": STATES["in_progress"]}, "attachments": {"nodes": []}}}
+            return {"issue": {"attachments": {"nodes": []}}}
+        if name == "reread":
+            return {"issue": {"state": {"id": STATES["in_progress"]}}}
         if name == "id":
             return {"issue": None}
         return {FIELDS[name]: {"success": True}}
@@ -150,14 +153,12 @@ def outcome(data):
     return {"kind": "outcome", "outcome": data}
 
 
-def args(assignee=ENGINEER, task="engineering", mode="new", k=None):
-    return (["--issue", ID, "--url", URL, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task,
-             "--mode", mode] + (["--k", k] if k else []))
+def args(assignee=ENGINEER, task="engineering", mode="new"):
+    return ["--issue", ID, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task, "--mode", mode]
 
 
-def forwarded(assignee=ENGINEER, task="engineering", mode="new", k="1"):
-    return [f"--issue={ID}", f"--url={URL}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={SID}",
-            f"--task={task}", f"--mode={mode}", f"--k={k}"]
+def forwarded(assignee=ENGINEER, task="engineering", mode="new"):
+    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={SID}", f"--task={task}", f"--mode={mode}"]
 
 
 class Base(unittest.TestCase):
@@ -167,9 +168,9 @@ class Base(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "my root")
         os.makedirs(self.root)
-        os.symlink(pipeline.CORE, os.path.join(self.root, "core"))
+        os.symlink(config.CORE, os.path.join(self.root, "core"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG)
-        for p in (mock.patch.object(pipeline, "WORK", os.path.join(self.root, "work")), mock.patch.dict(os.environ)):
+        for p in (mock.patch.object(config, "WORK", os.path.join(self.root, "work")), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
         self.rd = os.path.join(self.root, "work", ID)
@@ -218,7 +219,7 @@ class Base(unittest.TestCase):
         return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(task)).splitlines()]
 
     def transcript(self):
-        self.write(pipeline.transcript(ID, SID, self.projects), "")
+        self.write(config.transcript(ID, SID, self.projects), "")
 
 
 class Outer(Base):
@@ -231,7 +232,7 @@ class Outer(Base):
         self.assertEqual(os.listdir(self.rd), ["input.md"])
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})])
         self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
-        self.assertEqual(os.environ["PATH"], pipeline.PATH)
+        self.assertEqual(os.environ["PATH"], config.PATH)
         self.assertEqual((self.err, os.path.exists(self.plog_path())), ("", False))
 
     def test_research_has_no_target(self):
@@ -239,7 +240,7 @@ class Outer(Base):
         self.run.table = [(LISTING, res("[]"))]
         self.assertEqual(self.main(args(RESEARCHER, "deep-research")), 0)
         (argv, _), = self.sh_calls
-        self.assertEqual(argv[-10:], ["--uuid", UUID, *forwarded(RESEARCHER, "deep-research")])
+        self.assertEqual(argv[-8:], ["--uuid", UUID, *forwarded(RESEARCHER, "deep-research")])
         self.assertNotIn("--target", argv)
         self.assertEqual(self.run.calls, [(LISTING, 60)])
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
@@ -260,8 +261,8 @@ class Outer(Base):
     def test_resume_rebuilds_the_input(self):
         self.transcript()
         self.write(os.path.join(self.rd, "input.md"), "stale")
-        self.assertEqual(self.main(args(mode="resume", k="2")), 0)
-        self.assertEqual(self.sh_calls[0][0][-8:], forwarded(mode="resume", k="2"))
+        self.assertEqual(self.main(args(mode="resume")), 0)
+        self.assertEqual(self.sh_calls[0][0][-6:], forwarded(mode="resume"))
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
     def test_argparse_error(self):
@@ -269,13 +270,20 @@ class Outer(Base):
             run.main(args()[:-2])
         self.assertEqual(cm.exception.code, 2)
 
+    def test_k_and_url_are_rejected(self):
+        for extra in (["--k", "1"], ["--url", URL]):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
+                run.main(args() + extra)
+            self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(self.sh_calls, [])
+
     def test_bad_issue_or_session_id(self):
-        for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"]):
+        for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"], ["--sid", "z" * 36]):
             with self.subTest(bad=bad):
                 argv = args()
                 argv[argv.index(bad[0]) + 1] = bad[1]
                 self.assertEqual(self.main(argv), 2)
-                issue, sid = ("task-7", SID) if bad[0] == "--issue" else (ID, "not-a-sid")
+                issue, sid = ("task-7", SID) if bad[0] == "--issue" else (ID, bad[1])
                 self.assertEqual(self.err, f"run.py: bad issue or session id: {issue} {sid}\n")
         self.assertEqual(self.sh_calls, [])
 
@@ -295,8 +303,8 @@ class Outer(Base):
         self.assertFalse(os.path.exists(self.plog_path()))
 
     def test_resume_without_transcript(self):
-        self.assertEqual(self.main(args(mode="resume", k="2")), 3)
-        path = pipeline.transcript(ID, SID, self.projects)
+        self.assertEqual(self.main(args(mode="resume")), 3)
+        path = config.transcript(ID, SID, self.projects)
         self.assertEqual(self.plog(), [f"<ts> transient TASK-7: no transcript to resume at {path}"])
         self.assertEqual(TS.sub("<ts> ", self.err), f"<ts> transient TASK-7: no transcript to resume at {path}\n")
 
@@ -325,6 +333,7 @@ class Outer(Base):
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Question: repo check failed: {reason}. Fix the description's `Repo:` "
                                               "line, then move this issue back to Todo."}),
+            ("reread", KEY, {"i": UUID}),
             ("state", KEY, {"i": UUID, "s": STATES["in_review"]})])
         self.assertEqual(self.plog(), [f"<ts> bounce TASK-7: {reason}"])
         self.assertEqual((self.sh_calls, os.path.exists(self.rd)), ([], False))
@@ -346,37 +355,9 @@ class Outer(Base):
         for mode, r, reason in cases:
             with self.subTest(reason=reason):
                 self.run.table = [(("gh", "api"), r)]
-                self.assertEqual(self.main(args(mode=mode, k="2" if mode == "resume" else None)), 3)
+                self.assertEqual(self.main(args(mode=mode)), 3)
                 self.assertEqual(self.plog()[-1], f"<ts> transient TASK-7: {reason}")
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})] * 3)
-        self.assertEqual(self.sh_calls, [])
-
-    def legacy(self):
-        """rd/src with a legacy linked worktree `old`, its dot-named and symlinked twins, and a core clone."""
-        clone = os.path.join(self.tmp, "clone")
-        gitdir = os.path.join(clone, ".git", "worktrees", "old")
-        self.write(os.path.join(gitdir, "HEAD"), "ref: refs/heads/TASK-7-old\n")
-        src = os.path.join(self.rd, "src")
-        for name in ("old", ".old"):
-            self.write(os.path.join(src, name, ".git"), f"gitdir: {gitdir}\n")
-        os.makedirs(os.path.join(src, "core", ".git"))
-        os.symlink(os.path.join(src, "old"), os.path.join(src, "link"))
-        return os.path.realpath(clone), os.path.join(src, "old")
-
-    def test_legacy_worktrees_removed(self):
-        clone, old = self.legacy()
-        self.run.table += [(("git", "-c", "core.fsmonitor=false"), res())]
-        self.assertEqual(self.main(args()), 0)
-        git = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", clone)
-        self.assertEqual(self.run.calls[2:], [((*git, "worktree", "remove", "--force", "--force", "--", old), 600),
-                                              ((*git, "branch", "-D", "--", "TASK-7-old"), 60)])
-        self.assertEqual(len(self.sh_calls), 1)
-
-    def test_legacy_worktree_failure(self):
-        _, old = self.legacy()
-        self.run.table += [(("git", "-c", "core.fsmonitor=false"), res(code=1, stderr="locked"))]
-        self.assertEqual(self.main(args()), 3)
-        self.assertEqual(self.plog(), [f"<ts> transient TASK-7: legacy worktree {old}: git worktree remove: locked"])
         self.assertEqual(self.sh_calls, [])
 
     def test_docs_failure_is_transient(self):
@@ -390,7 +371,7 @@ class Outer(Base):
         self.assertEqual(self.sh_calls, [])
 
     def test_input_write_failure_leaves_no_temp(self):
-        with mock.patch.object(pipeline.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
             self.assertEqual(self.main(args()), 1)
         self.assertEqual((os.listdir(self.rd), self.sh_calls), ([], []))
         self.assertEqual(self.err, "run.py: input.md: OSError: disk full\n")
@@ -416,8 +397,8 @@ class Inner(Base):
         return self.main(["--inner", "--uuid", uuid, *(["--target", target] if target else []),
                           *forwarded(assignee, task, mode)])
 
-    def rec(self, key=KEY):
-        return sessions.base(sid=SID, cwd=self.rd, key=key, started_at=NOW)
+    def rec(self):
+        return sessions.base(sid=SID, cwd=self.rd, started_at=NOW)
 
     def harness(self, rc):
         """The session start and end posts: harness account, bounded by sessions.LIMIT."""
@@ -458,7 +439,7 @@ class Inner(Base):
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Build ready: Opened the PR.\n\n{PR}"}),
             ("attach", KEY, {"i": UUID, "u": PR, "t": "TASK-7: Session registry"}),
-            ("read", KEY, {"i": UUID}),
+            ("reread", KEY, {"i": UUID}),
             ("state", KEY, {"i": UUID, "s": STATES["in_review"]}),
             *posts[2:]])
         (argv, kw), = self.popen_calls
@@ -466,7 +447,7 @@ class Inner(Base):
         self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"), argv[2][-200:])
         self.assertEqual((kw["stderr"].name, kw["stderr"].mode, kw["stderr"].closed), (self.plog_path(), "a", True))
         self.assertIn("Working on it", self.err)
-        self.assertEqual(os.environ["PATH"], pipeline.PATH)
+        self.assertEqual(os.environ["PATH"], config.PATH)
 
     def test_no_outcome_leaves_the_issue(self):
         self.lines = [said("Working on it")]
@@ -563,17 +544,6 @@ class Inner(Base):
 
 
 class Helpers(unittest.TestCase):
-    def test_log_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "p.log")
-            sink = run.log_file(path)
-            sink(drive.Event("text", "hi\x1b[2Jthere\tok"))
-            sink(drive.Event("progress", "phase 1", name="start"))
-            sink(drive.Event("outcome", outcome={"status": "done"}))
-            with open(path) as f:
-                self.assertEqual(f.read(), "hi[2Jthere\tok\nProgress (start): phase 1\n")
-            run.log_file(os.path.join(d, "missing", "p.log"))(drive.Event("text", "x"))
-
     def test_has_key_never_reads_the_secret(self):
         for code, want in ((0, True), (44, False)):
             with mock.patch.object(run.subprocess, "run", return_value=subprocess.CompletedProcess([], code)) as m:

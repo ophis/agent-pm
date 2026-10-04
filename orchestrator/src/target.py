@@ -6,7 +6,8 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CLONES, NAME, OWNER, REF, SHORT, WORK, err_text, repo_slug, sh_run  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, WORK, repo_slug, sh_run  # noqa: E402
+from repo import SHORT, err_text  # noqa: E402
 
 MAPPED = "project mapping "
 
@@ -16,7 +17,6 @@ class Target:
     owner: str
     name: str
     branch: str = ""
-    mapped: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ def research_repo(issue, repos) -> Target | None:
     if parse_repo(issue.description) != NO_LINE or issue.project_id not in repos:
         return None
     one = repo_slug(repos[issue.project_id])
-    return Target(*one, mapped=True) if one else None
+    return Target(*one) if one else None
 
 
 def _repo_info(o, n, run):
@@ -150,4 +150,4 @@ def check(issue, repos, *, run=sh_run, work=WORK) -> Target | Invalid | Transien
         return Invalid(f"several {ident}-* branches: {', '.join(names)[:200]}")
     if names and not re.fullmatch(rf"{re.escape(ident)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {ident}-<lowercase slug>")
-    return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}", mapped)
+    return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")

@@ -2,7 +2,8 @@ import json, os, shutil, sys, tempfile, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import issues  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import repo  # noqa: E402
 import target  # noqa: E402
 
 def ok(stdout="", code=0, stderr=""):
@@ -27,7 +28,7 @@ LOCAL = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", 
 
 def issue(description, title="ENG: Session Registry", ident="TASK-26", project=None):
     return issues.Issue(id="uuid-26", identifier=ident, url=f"https://linear.app/t/issue/{ident}", title=title,
-                        description=description, created_at="2026-09-01T00:00:00.000Z", state_id="s-1", project_id=project,
+                        description=description, created_at="2026-09-01T00:00:00.000Z", project_id=project,
                         notes=(), links=(), linked=())
 
 def api(full_name="ophis/agent-pm", default="main", push=True):
@@ -88,8 +89,8 @@ class ResearchRepo(unittest.TestCase):
 
     def test_mapping_when_no_repo_line(self):
         self.assertEqual(target.research_repo(issue("no repo here", project=PROJ), self.REPOS),
-                         target.Target("ophis", "agent-pm", "", True))
-        self.assertEqual(target.research_repo(issue("", project=PROJ), self.REPOS), target.Target("ophis", "agent-pm", mapped=True))
+                         target.Target("ophis", "agent-pm"))
+        self.assertEqual(target.research_repo(issue("", project=PROJ), self.REPOS), target.Target("ophis", "agent-pm"))
 
     def test_repo_line_wins(self):
         self.assertIsNone(target.research_repo(issue("Repo: ophis/other", project=PROJ), self.REPOS))
@@ -113,7 +114,7 @@ class Check(unittest.TestCase):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.clone = os.path.join(self.work, "TASK-26", pipeline.CLONES[0], "agent-pm")
+        self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "agent-pm")
         self.ls_remote = ["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                           "ls-remote", "--heads", "https://github.com/ophis/agent-pm.git", "TASK-26-*"]
 
@@ -131,19 +132,19 @@ class Check(unittest.TestCase):
 
     def test_constants(self):
         self.assertEqual(target.MAPPED, "project mapping ")
-        self.assertEqual(target.Target("o", "n"), target.Target("o", "n", "", False))
+        self.assertEqual(target.Target("o", "n"), target.Target("o", "n", ""))
 
     def test_ok_without_a_local_clone_asks_the_remote(self):
-        self.assertEqual(self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry", False))
-        self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), pipeline.SHORT), (tuple(self.ls_remote), pipeline.SHORT)])
+        self.assertEqual(self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), (tuple(self.ls_remote), repo.SHORT)])
 
     def test_local_clone_branches_come_first(self):
         self.git_dir()
         r = self.check(local=ok("TASK-26-old-name\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-old-name", False))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-old-name"))
         self.assertEqual(self.run_.calls, [
-            (("gh", "api", "repos/ophis/agent-pm"), pipeline.SHORT),
-            ((*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), pipeline.SHORT)])
+            (("gh", "api", "repos/ophis/agent-pm"), repo.SHORT),
+            ((*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), repo.SHORT)])
 
     def test_local_clone_without_branches_falls_back_to_the_remote(self):
         self.git_dir()
@@ -171,7 +172,7 @@ class Check(unittest.TestCase):
             os.unlink(git)
 
     def test_no_clone_dir_runs_no_local_git(self):
-        os.makedirs(os.path.join(self.work, "TASK-26", pipeline.CLONES[0]))
+        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0]))
         self.check()
         self.assertFalse(any(a[:len(LOCAL)] == LOCAL for a in self.argvs()))
 
@@ -181,7 +182,7 @@ class Check(unittest.TestCase):
         for over, want in (({"local": ok("TASK-26-a\nTASK-26-b\n")}, target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b")),
                            ({"local": ok("TASK-26-Bad$(x)\n")}, target.Invalid("existing branch name 'TASK-26-Bad$(x)' is not TASK-26-<lowercase slug>")),
                            ({"local": ok("TASK-26-" + "a" * 41 + "\n")}, target.Invalid(f"existing branch name {'TASK-26-' + 'a' * 41!r} is not TASK-26-<lowercase slug>")),
-                           ({"local": ok("TASK-26-" + "a" * 40 + "\n")}, target.Target("ophis", "agent-pm", "TASK-26-" + "a" * 40, False)),
+                           ({"local": ok("TASK-26-" + "a" * 40 + "\n")}, target.Target("ophis", "agent-pm", "TASK-26-" + "a" * 40)),
                            ({"local": ok("TASK-27-x\n")}, target.Invalid("existing branch name 'TASK-27-x' is not TASK-26-<lowercase slug>"))):
             with self.subTest(want=want):
                 self.assertEqual(self.check(**over), want)
@@ -205,12 +206,12 @@ class Check(unittest.TestCase):
 
     def test_mapping_without_repo_line(self):
         r = self.check(**self.MAPPED)
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry", True))
-        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), pipeline.SHORT), self.run_.calls)
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), self.run_.calls)
 
     def test_repo_line_wins_over_mapping(self):
         r = self.check(repos={PROJ: "ophis/other"}, project=PROJ)
-        self.assertEqual((r.owner, r.name, r.mapped), ("ophis", "agent-pm", False))
+        self.assertEqual((r.owner, r.name), ("ophis", "agent-pm"))
         self.assertNotIn(("gh", "api", "repos/ophis/other"), self.argvs())
 
     def test_bad_repo_line_is_not_replaced_by_mapping(self):
@@ -268,22 +269,21 @@ class Check(unittest.TestCase):
                 self.assertEqual(self.argvs(), [("gh", "api", "repos/ophis/agent-pm")])
 
     def test_o_and_n_come_from_full_name(self):
-        renamed = os.path.join(self.work, "TASK-26", pipeline.CLONES[0], "Agent-PM-2")
+        renamed = os.path.join(self.work, "TASK-26", config.CLONES[0], "Agent-PM-2")
         os.makedirs(os.path.join(renamed, ".git"))
         for desc, asked in (("Repo: OPHIS/agent-pm", "OPHIS/agent-pm"), ("Repo: https://github.com/ophis/Agent-PM.git", "ophis/Agent-PM")):
             with self.subTest(desc):
                 r = self.check(desc, api=api("Ophis/Agent-PM-2"), local=ok("TASK-26-x\n"))
-                self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-x", False))
+                self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-x"))
                 self.assertEqual(self.run_.calls[0][0], ("gh", "api", f"repos/{asked}"))
                 self.assertEqual(self.argvs()[1], (*LOCAL, renamed, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"))
         r = self.check(api=api("Ophis/Agent-PM-2"), remote=ok("abc\trefs/heads/TASK-26-y\n"))
-        self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-y", False))
+        self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-y"))
         self.assertEqual(self.argvs()[-1][-2:], ("https://github.com/Ophis/Agent-PM-2.git", "TASK-26-*"))
 
-    def test_mapping_failures_keep_the_prefix_and_the_mapped_flag(self):
+    def test_mapping_failures_keep_the_prefix(self):
         want = target.Invalid(target.MAPPED + "ophis/agent-pm: not found or no access (HTTP 404)")
         self.assertEqual(self.check(api=ok(code=1, stderr="gh: Not Found (HTTP 404)"), **self.MAPPED), want)
-        self.assertTrue(self.check(**self.MAPPED).mapped)
 
 if __name__ == "__main__":
     unittest.main()

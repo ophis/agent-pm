@@ -868,6 +868,39 @@ class Sinks(unittest.TestCase):
         self.assertEqual(log.getvalue(), "a]52;c;ZXZpbA==b\tc\nProgress (round): x[2J\n")
 
 
+class Save(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.path = os.path.join(self.dir, "sub", "f.txt")
+
+    def test_writes_replaces_and_makes_the_directory(self):
+        drive.save(self.path, "one\n")
+        drive.save(self.path, "two\n")
+        with open(self.path) as f:
+            self.assertEqual(f.read(), "two\n")
+        self.assertEqual(os.listdir(os.path.dirname(self.path)), ["f.txt"])
+
+    def test_a_planted_symlink_is_replaced_not_followed(self):
+        outside = os.path.join(self.dir, "outside")
+        with open(outside, "w") as f:
+            f.write("keep\n")
+        os.makedirs(os.path.dirname(self.path))
+        os.symlink(outside, self.path)
+        drive.save(self.path, "new\n")
+        with open(self.path) as f, open(outside) as g:
+            self.assertEqual((os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n"))
+
+    def test_no_temp_is_left_when_the_replace_fails(self):
+        drive.save(self.path, "old\n")
+        with unittest.mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                drive.save(self.path, "new\n")
+        with open(self.path) as f:
+            self.assertEqual((f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"]))
+
+
 class Main(Base):
     def run_main(self, *extra, lines=(), rc=0):
         calls = []

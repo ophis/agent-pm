@@ -5,17 +5,17 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import pipeline  # noqa: E402
+import linear  # noqa: E402
 import sessions  # noqa: E402
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
-  state { id } project { id }
+  project { id }
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
-  attachments(first: 50) { nodes { title url } }
+  attachments(first: 50) { nodes { url } }
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
-HANDOFF = re.compile(r"Handoff from ([A-Z][A-Z0-9]*-\d+): \S+")
+HANDOFF = re.compile(rf"Handoff from ({linear.ISSUE_ID}): \S+")
 SECTIONS = ("## Source", "## Instructions", "## Comments")
 
 
@@ -31,7 +31,6 @@ class Note:
 @dataclass(frozen=True)
 class Link:
     """An attachment."""
-    title: str | None
     url: str
 
 
@@ -47,7 +46,6 @@ class Linked:
 class Handoff:
     """A Handoff description's section bodies, stripped."""
     source: str
-    sources: str
     instructions: str
     comments: str
 
@@ -60,7 +58,6 @@ class Issue:
     title: str
     description: str
     created_at: str
-    state_id: str
     project_id: str | None
     notes: tuple[Note, ...]
     links: tuple[Link, ...]
@@ -81,15 +78,15 @@ def read_issue(gql, ident) -> Issue:
         raise LookupError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
     notes = sorted((Note(c["body"], c["createdAt"], (c["user"] or {}).get("email"), (c["user"] or {}).get("name"))
                     for c in node["comments"]["nodes"] if not sessions.is_comment(c)),
-                   key=lambda n: pipeline.parse_time(n.at))
+                   key=lambda n: linear.parse_time(n.at))
     linked = {}
     for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [x["issue"] for x in node["inverseRelations"]["nodes"]]:
         linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
     return Issue(
         id=node["id"], identifier=node["identifier"], url=node["url"], title=node["title"],
-        description=node["description"] or "", created_at=node["createdAt"], state_id=node["state"]["id"],
+        description=node["description"] or "", created_at=node["createdAt"],
         project_id=(node["project"] or {}).get("id"), notes=tuple(notes),
-        links=tuple(Link(a["title"], a["url"]) for a in node["attachments"]["nodes"]), linked=tuple(linked.values()))
+        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]), linked=tuple(linked.values()))
 
 
 def parse_handoff(description) -> Handoff | None:
@@ -120,7 +117,7 @@ def parse_handoff(description) -> Handoff | None:
             return ""
         end = min((s for s in starts.values() if s > starts[header]), default=len(lines))
         return "\n".join(lines[starts[header] + 1:end]).strip()
-    return Handoff(m.group(1), body(source), body(instructions), body(comments))
+    return Handoff(m.group(1), body(instructions), body(comments))
 
 
 def is_user(note, humans) -> bool:
@@ -137,4 +134,4 @@ def brief(issue) -> str:
 def build_cutoff(issue, humans) -> str:
     """`at` of the latest non-user note starting `Build started`, else the issue's creation time."""
     started = [n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())]
-    return max(started, key=pipeline.parse_time) if started else issue.created_at
+    return max(started, key=linear.parse_time) if started else issue.created_at

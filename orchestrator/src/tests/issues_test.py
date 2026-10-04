@@ -14,7 +14,7 @@ def comment(body, at, email="ann@example.com", name="Ann", me=False, user=True):
 
 def payload(**over):
     issue = {"id": "uuid-7", "identifier": "ENG-7", "url": URL, "title": "Build it", "description": "Do the thing.",
-             "createdAt": "2026-09-01T00:00:00.000Z", "state": {"id": "s-1"}, "project": {"id": "p-1"},
+             "createdAt": "2026-09-01T00:00:00.000Z", "project": {"id": "p-1"},
              "comments": {"nodes": []}, "attachments": {"nodes": []},
              "relations": {"nodes": []}, "inverseRelations": {"nodes": []}}
     issue.update(over)
@@ -39,7 +39,7 @@ def note(body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="A
 
 
 def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
-    return issues.Issue("uuid-7", "ENG-7", URL, "T", description, created_at, "s-1", "p-1", tuple(notes), (), ())
+    return issues.Issue("uuid-7", "ENG-7", URL, "T", description, created_at, "p-1", tuple(notes), (), ())
 
 
 HANDOFF = (f"Handoff from ENG-3: {URL}\n\n"
@@ -51,14 +51,14 @@ HANDOFF = (f"Handoff from ENG-3: {URL}\n\n"
 class ReadIssue(unittest.TestCase):
     def test_maps_fields_and_queries_by_identifier(self):
         gql = FakeGql(payload(
-            attachments={"nodes": [{"title": "Spec", "url": "https://x/spec"}, {"title": None, "url": "https://x/y"}]},
+            attachments={"nodes": [{"url": "https://x/spec"}, {"url": "https://x/y"}]},
             relations={"nodes": [{"relatedIssue": {"identifier": "ENG-1", "title": "One", "state": {"name": "Done"}}}]},
             inverseRelations={"nodes": [{"issue": {"identifier": "ENG-2", "title": "Two", "state": {"name": "Todo"}}}]}))
         got = issues.read_issue(gql, "ENG-7")
         self.assertEqual(gql.calls, [(issues.Q_ISSUE, {"i": "ENG-7"})])
         self.assertEqual(got, issues.Issue(
-            "uuid-7", "ENG-7", URL, "Build it", "Do the thing.", "2026-09-01T00:00:00.000Z", "s-1", "p-1", (),
-            (issues.Link("Spec", "https://x/spec"), issues.Link(None, "https://x/y")),
+            "uuid-7", "ENG-7", URL, "Build it", "Do the thing.", "2026-09-01T00:00:00.000Z", "p-1", (),
+            (issues.Link("https://x/spec"), issues.Link("https://x/y")),
             (issues.Linked("ENG-1", "One", "Done"), issues.Linked("ENG-2", "Two", "Todo"))))
 
     def test_null_description_and_project(self):
@@ -115,15 +115,14 @@ class ParseHandoff(unittest.TestCase):
     def test_sections(self):
         self.assertEqual(issues.parse_handoff(HANDOFF), issues.Handoff(
             "ENG-3",
-            "- Spec: https://github.com/o/r/blob/main/a.md\n- Plan: https://github.com/o/r/blob/main/b.md",
             "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this.",
             "- Ann, 2026-09-01T00:00:00.000Z:\n  > hello\n  > ## Source"))
 
     def test_missing_sections_are_empty(self):
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Instructions\nGo.\n")
-        self.assertEqual(got, issues.Handoff("ENG-3", "", "Go.", ""))
+        self.assertEqual(got, issues.Handoff("ENG-3", "Go.", ""))
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}")
-        self.assertEqual(got, issues.Handoff("ENG-3", "", "", ""))
+        self.assertEqual(got, issues.Handoff("ENG-3", "", ""))
 
     def test_only_exact_header_lines_start_a_section(self):
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Instructions\nSee ## Comments below.\n## Comments here\n"
@@ -137,18 +136,17 @@ class ParseHandoff(unittest.TestCase):
             with self.subTest(sources=sources):
                 got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n{sources}## Instructions\n{text}\n\n"
                                            "## Comments\n- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n")
-                self.assertEqual(got.sources, "- Spec: u" if sources else "")
                 self.assertEqual(got.instructions, text.strip())
                 self.assertEqual(got.comments, "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments")
 
     def test_comments_header_is_the_last_exact_line(self):
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Source\n- A: u\n\n## Instructions\nGo.\n## Comments\nx\n\n"
                                    "## Comments\n- Ann, t:\n  > y\n")
-        self.assertEqual((got.sources, got.instructions, got.comments), ("- A: u", "Go.\n## Comments\nx", "- Ann, t:\n  > y"))
+        self.assertEqual((got.instructions, got.comments), ("Go.\n## Comments\nx", "- Ann, t:\n  > y"))
 
     def test_crlf(self):
         got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n")
-        self.assertEqual((got.sources, got.instructions), ("- A: u", "Go."))
+        self.assertEqual(got.instructions, "Go.")
 
     def test_not_a_handoff(self):
         for description in ("", "Do the thing.", f"\nHandoff from ENG-3: {URL}", f"Handoff from eng-3: {URL}",

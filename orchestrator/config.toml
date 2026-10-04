@@ -40,6 +40,6 @@ key = "linear-api-key-engineer"
 "ae72ede7-67a6-469d-a959-8ea51ab71fb8" = "ophis/claude-autopilot"   # Autopilot
 
 # Core run keys for the orchestrator's runs, in core/config/config.toml's layout under [core], applied after
-# core/config/clients/claude.toml (drive.plan layers). pipeline.overlay() fills {{root}} with this repo's root.
+# core/config/clients/claude.toml (drive.plan layers). config.overlay() fills {{root}} with this repo's root.
 [core.roles.researcher.tasks.deep-research]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"

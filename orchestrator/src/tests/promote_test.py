@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table, team_node  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import linear  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
 
@@ -37,7 +38,7 @@ def instructions(description):
 
 class FakeLinear:
     def __init__(self):
-        self.issues, self.children, self.mutations, self.fail = {}, {}, [], {}
+        self.issues, self.children, self.mutations, self.fail, self.calls = {}, {}, [], {}, []
         self.state_ids = None
 
     def add(self, ident, project="Deep Research", state="Handoff", role="researcher", **kw):
@@ -55,12 +56,17 @@ class FakeLinear:
     def said(self, ident, minutes, user=HUMAN, body="build X"):
         self.issues[ident]["comments"].append({"body": body, "createdAt": ago(minutes), "user": user})
 
+    def writes(self):
+        """The mutations and each move's state read, in order."""
+        return [q for q, _ in self.calls if q == linear.Q_ISSUE_STATE or q.startswith("mutation")]
+
     def __call__(self, query, **v):
+        self.calls.append((query, v))
         if error := self.fail.get(query) or self.fail.get((query, v.get("i"))):
             raise SystemExit(f"linear api error: {error}")
-        if query == pipeline.Q_TEAM:
+        if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
-        if query == pipeline.Q_USER:
+        if query == linear.Q_USER:
             users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
             return {"users": {"nodes": [{"id": users[v["e"].lower()]}] if v["e"].lower() in users else []}}
         if query == promote.Q_HANDOFF:
@@ -77,6 +83,8 @@ class FakeLinear:
                               "inverseRelations": {"nodes": [{"issue": {"id": r}} for r in i["inverse"]]}}}
         if query == promote.Q_CHILD:
             return {"issues": {"nodes": [self.children[v["c"]]] if v["c"] in self.children else []}}
+        if query == linear.Q_ISSUE_STATE:
+            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         self.mutations.append((query, v))
         if query == promote.M_CREATE:
             inp = v["in"]
@@ -86,13 +94,13 @@ class FakeLinear:
         if query == promote.M_RELATE:
             self.issues[v["in"]["issueId"]]["relations"].append(v["in"]["relatedIssueId"])
             return {"issueRelationCreate": {"success": True}}
-        if query == promote.M_COMMENT:
+        if query == linear.M_COMMENT:
             self.issues[v["i"]].setdefault("posted", []).append(v["b"])
             return {"commentCreate": {"success": True}}
-        if query == promote.M_SUBSCRIBE:
+        if query == linear.M_SUBSCRIBE:
             self.issues[v["i"]].setdefault("subscribers", []).append(v["e"])
             return {"issueSubscribe": {"success": True}}
-        if query == promote.M_STATE:
+        if query == linear.M_STATE:
             self.issues[v["i"]]["state"] = next(n for n, i in STATES.items() if i == v["s"])
             return {"issueUpdate": {"success": True}}
         raise AssertionError(query)
@@ -102,8 +110,8 @@ class FakePruner:
     """Stands in for prune.Pruner; records its constructor args."""
     calls = []
 
-    def __init__(self, gql, cfg, now, dry, team=None, roles=None):
-        FakePruner.calls.append((gql, cfg, now, dry, team, roles))
+    def __init__(self, gql, now, dry, *, team, roles):
+        FakePruner.calls.append((gql, now, dry, team, roles))
 
     def run(self):
         return 0
@@ -154,8 +162,8 @@ class TestPromote(Base):
         self.assertEqual(src["relations"], [child["id"]])
         self.assertEqual(src["state"], "Done")
         self.assertEqual(src["posted"], ["Promoted to C-1."])
-        self.assertEqual([q for q, _ in self.fake.mutations],
-                         [promote.M_CREATE, promote.M_RELATE, promote.M_STATE, promote.M_COMMENT])
+        self.assertEqual(self.fake.writes(),
+                         [promote.M_CREATE, promote.M_RELATE, linear.Q_ISSUE_STATE, linear.M_STATE, linear.M_COMMENT])
         self.assertFalse(any("assigneeId" in repr(v) for q, v in self.fake.mutations if q != promote.M_CREATE))
         self.assertIn("promote DR-1 -> C-1", self.out)
 
@@ -274,8 +282,8 @@ class TestPromote(Base):
         self.assertEqual(self.fake.children, {})
         self.assertEqual((src["state"], src["assignee"], src["subscribers"], src["posted"]),
                          ("In Review", {"id": "u-researcher"}, ["me@x.com", "b@x.com"], [promote.NO_INSTRUCTIONS]))
-        self.assertEqual([q for q, _ in self.fake.mutations],
-                         [promote.M_SUBSCRIBE, promote.M_SUBSCRIBE, promote.M_STATE, promote.M_COMMENT])
+        self.assertEqual(self.fake.writes(),
+                         [linear.M_SUBSCRIBE, linear.M_SUBSCRIBE, linear.Q_ISSUE_STATE, linear.M_STATE, linear.M_COMMENT])
         self.assertIn("handoff-bounce DR-1 no instructions", self.out)
 
 
@@ -363,8 +371,8 @@ class TestScopeAndConfig(Base):
     def test_child_titles_from_tasks(self):
         self.config = self.write_config(PM_NEXT)
         self.ready(role="pm", title="DES: Title DR-1")
-        tasks = {"product-design": pipeline.Task("design", prefix="DES"), "engineering": pipeline.Task("build", prefix="BLD")}
-        with mock.patch.dict(pipeline.TASKS, tasks):
+        tasks = {"product-design": config.Task("design", prefix="DES"), "engineering": config.Task("build", prefix="BLD")}
+        with mock.patch.dict(config.TASKS, tasks):
             self.run_main()
         (child,) = self.fake.children.values()
         self.assertEqual(child["title"], "BLD: Title DR-1")
@@ -445,22 +453,61 @@ class TestFailures(Base):
 class TestPartialFailures(Base):
     def test_comment_failure_after_done_keeps_done(self):
         src = self.ready(handoff=90)
-        self.fake.fail[promote.M_COMMENT] = "comment failed"
+        self.fake.fail[linear.M_COMMENT] = "comment failed"
         self.run_main()
         self.assertEqual(src["state"], "Done")
         self.assertIn("promoted, but the comment failed", self.out)
 
     def test_failed_bounce_posts_no_comment_and_stays_in_handoff(self):
-        for name in ("M_SUBSCRIBE", "M_STATE"):
-            with self.subTest(name):
-                self.fake = FakeLinear()
-                src = self.fake.add("DR-1")
-                self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])  # no instructions, under GRACE
-                self.fake.fail[getattr(promote, name)] = "boom"
-                self.run_main()
-                self.assertEqual(src["state"], "Handoff")
-                self.assertNotIn("posted", src)
-                self.assertIn("handoff-error DR-1", self.out)
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])  # no instructions, under GRACE
+        self.fake.fail[linear.M_STATE] = "boom"
+        self.run_main()
+        self.assertEqual(src["state"], "Handoff")
+        self.assertNotIn("posted", src)
+        self.assertIn("handoff-error DR-1", self.out)
+
+    def test_subscribe_failure_noted_in_the_bounce(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+        self.fake.fail[linear.M_SUBSCRIBE] = "boom"
+        self.run_main()
+        self.assertEqual((src["state"], src["posted"]),
+                         ("In Review", [promote.NO_INSTRUCTIONS + "\n\nCould not subscribe me@x.com: SystemExit: linear api error: boom"]))
+        self.assertIn("handoff-bounce DR-1 no instructions", self.out)
+
+    def moved_after_detail(self, state):
+        """A human moves the issue to state right after promote's detail read."""
+        fake = self.fake
+
+        def gql(query, **v):
+            out = fake(query, **v)
+            if query == promote.Q_DETAIL:
+                fake.issues[v["i"]]["state"] = state
+            return out
+        gql.writes = fake.writes
+        self.fake = gql
+
+    def test_skipped_done_move_posts_no_comment(self):
+        src = self.ready()
+        self.moved_after_detail("In Review")
+        self.run_main()
+        self.assertEqual(src["state"], "In Review")
+        self.assertNotIn("posted", src)
+        self.assertEqual(self.fake.writes(), [promote.M_CREATE, promote.M_RELATE, linear.Q_ISSUE_STATE])
+        self.assertIn(f"promote DR-1: issue is {STATES['In Review']}", self.out)
+        self.assertNotIn("promote DR-1 ->", self.out)
+
+    def test_skipped_bounce_posts_no_comment(self):
+        src = self.fake.add("DR-1")
+        self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
+        self.moved_after_detail("Todo")
+        self.run_main()
+        self.assertEqual((src["state"], src["subscribers"]), ("Todo", ["me@x.com"]))
+        self.assertNotIn("posted", src)
+        self.assertEqual(self.fake.writes(), [linear.M_SUBSCRIBE, linear.Q_ISSUE_STATE])
+        self.assertIn(f"handoff-bounce DR-1: issue is {STATES['Todo']}", self.out)
+        self.assertNotIn("handoff-bounce DR-1 no instructions", self.out)
 
 
 class TestDryRun(Base):
@@ -478,11 +525,11 @@ class TestPruneHook(Base):
     def test_prune_runs_each_tick(self):
         self.run_main("--dry-run")
         self.assertEqual(len(FakePruner.calls), 1)
-        gql, cfg, now, dry, team, roles = FakePruner.calls[0]
+        gql, now, dry, team, roles = FakePruner.calls[0]
         self.assertIs(gql, self.fake)
         self.assertEqual(now, NOW)
         self.assertTrue(dry)
-        self.assertEqual(team, pipeline.Team(TEAM, "Team", dict(IDS_BY_KEY)))
+        self.assertEqual(team, linear.Team(TEAM, "Team", dict(IDS_BY_KEY)))
         self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
 
     def test_prune_error_does_not_break_promote(self):

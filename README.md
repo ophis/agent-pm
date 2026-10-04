@@ -25,7 +25,8 @@ agent-pm/
 │       ├── sessions.py    # records each run's session on its issue
 │       ├── promote.py     # Handoff to the next role
 │       ├── prune.py       # deletes finished issues' clones, archives pm and engineer ones
-│       ├── pipeline.py    # shared Linear client, config, per-task data (TASKS)
+│       ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
+│       ├── linear.py      # Linear client and lookups, shared helpers
 │       └── tests/
 ├── work/<ID>/             # a run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, clones in src/ and publish/ (gitignored)
 └── logs/                  # runner state and run output (gitignored)
@@ -98,8 +99,9 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 | `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
-| `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) and any pre-core worktrees of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
-| `pipeline.py` | Shared | Linear API client, loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
+| `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
+| `config.py` | Shared | Loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
+| `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, the comment, subscribe and state-move writes, and small helpers. |
 
 ## Using the board
 
@@ -114,13 +116,13 @@ An issue still unfinished after 4 attempts goes to In Review; a `human_members` 
 
 ### Task labels
 
-A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one by its id, through `orchestrator/config.toml`'s `[task_labels]` (`<task> = "<label id>"`), so renaming a label keeps working; with no such label the issue runs the role's default task. The task must be one of the assignee role's. If the label isn't in `[task_labels]`, its task isn't one of the assignee role's, or an issue has several task labels, no run starts and no attempt counts: the router comments why, subscribes you and moves the issue to In Review. Fix the label, then move the issue back to Todo.
+A role can have several tasks. The issue's label in the Linear `Tasks` label group (`task_label_group`) picks one by its id, through `orchestrator/config.toml`'s `[task_labels]` (`<task> = "<label id>"`), so renaming a label keeps working; with no such label the issue runs the role's default task. The task must be one of the assignee role's. If the label isn't in `[task_labels]`, its task isn't one of the assignee role's, or an issue has several task labels, no run starts and no attempt counts: the router subscribes you, moves the issue to In Review and comments why. Fix the label, then move the issue back to Todo.
 
 To upgrade a Light Research issue, remove the label, comment the claims to verify and move the issue back to Todo: the next run is `deep-research`, with the earlier report in its input.
 
 The task is recorded in `logs/runs.log`, so a resumed run keeps it whatever the labels say (none recorded: the role's default). An interrupted run whose task is no longer one of the role's goes to In Review with a comment.
 
-To add a task to a role: create `core/team/tasks/<task>.md`, add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/pipeline.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
+To add a task to a role: create `core/team/tasks/<task>.md`, add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 
@@ -154,8 +156,6 @@ Each `[roles.<role>]` in `orchestrator/config.toml` acts in Linear, through writ
 python3 orchestrator/src/router.py --now --dry-run           # what the next tick would do; changes nothing
 python3 orchestrator/src/router.py --now                     # run a tick now, outside the schedule
 python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked
-python3 orchestrator/src/router.py --claim --dry-run         # preview the next claim and the blocked lines; changes nothing
-python3 orchestrator/src/router.py --pick --role researcher  # recover, then claim the role's top Todo issue that runs its default task
 python3 orchestrator/src/router.py --brake                   # usage probe; exit 0 if a second research round may start (5-hour usage < 80%, no weekly limit full)
 python3 orchestrator/src/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux ls                                             # running sessions, agent-pm-<role>
@@ -175,7 +175,7 @@ Every run works in `work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.js
 
 ### Session records
 
-Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session as its role, `cd <work/ID> && LINEAR_KEYCHAIN_SERVICE=<key> claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
+Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <work/ID> && claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
 
 - A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, runs skip them, and the router never reads them: it still resumes from `logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.
@@ -188,7 +188,7 @@ Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issu
 Core's configuration is under Core pack.
 
 - `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role and `require_instructions`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[core]`, the overlay: core run keys for the orchestrator's runs in `core/config/config.toml`'s layout, applied after `core/config/clients/claude.toml` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
-- `orchestrator/src/pipeline.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
+- `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development
 

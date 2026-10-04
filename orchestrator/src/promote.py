@@ -8,7 +8,7 @@ human instructions, relate it, and move the source to Done.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
 
-At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees of
+At the end of every tick, orchestrator/src/prune.py's Pruner removes the clones of
 finished issues (TASK-49) and archives finished pm and engineer issues; a prune
 failure is logged and never breaks the Handoff work.
 """
@@ -19,7 +19,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pipeline import CONFIG, TASKS, linear_gql, load_config, parse_time, role_ids, runnable, team  # noqa: E402
+from config import CONFIG, TASKS, load_config, runnable  # noqa: E402
+import linear  # noqa: E402
+from linear import linear_gql, one_line, parse_time, role_ids, stamp, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -30,16 +32,13 @@ Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: {
   project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
 Q_DETAIL = """query($i: String!) { issue(id: $i) { state { id }
-  history(first: 250) { nodes { createdAt fromStateId toStateId } }
+  """ + linear.HISTORY + """
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
   inverseRelations(first: 250) { nodes { issue { id } } } } }"""
 Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
 M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
 M_RELATE = "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
-M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
-M_STATE = "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
-M_SUBSCRIBE = "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
 
 
 def child_id(source_id, target, handoff_at):
@@ -47,22 +46,11 @@ def child_id(source_id, target, handoff_at):
     return str(uuid.UUID(bytes=hashlib.sha256(key).digest()[:16], version=4))
 
 
-def one_line(s):
-    # Agent-written titles must not break out of their line and pose as the human Instructions section.
-    return " ".join(s.split())
-
-
 def child_title(prefix, src_prefix, title):
-    title = one_line(title)
+    title = one_line(title)  # agent-written: must not break out of its line and pose as the human Instructions section
     if src_prefix and title.startswith(f"{src_prefix}: "):
         title = title[len(src_prefix) + 2:]
     return f"{prefix}: {title}"
-
-
-def ok(result, name):
-    if not result[name]["success"]:
-        raise RuntimeError(f"{name} returned success: false")
-    return result[name]
 
 
 class Promoter:
@@ -77,7 +65,7 @@ class Promoter:
 
     def say(self, msg):
         self.said = True
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
+        print(f"{stamp()} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
 
     def run(self):
         self.said = False
@@ -128,8 +116,8 @@ class Promoter:
         comments = self.instructions(detail, cutoff)
         required = self.cfg["roles"].get(role, {}).get("require_instructions", True)
         if not comments and required:
-            self.comment_and_move(src, NO_INSTRUCTIONS, "in_review")
-            self.say(f"handoff-bounce {src['identifier']} no instructions")
+            if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
+                self.say(f"handoff-bounce {src['identifier']} no instructions")
             return
         cid = child_id(src["id"], nxt, first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
@@ -139,17 +127,18 @@ class Promoter:
             self.say(f"promote {src['identifier']} -> new {nxt} issue in {src['project']['name']}")
             return
         else:
-            child = found[0] = ok(self.gql(M_CREATE, **{"in": {
+            child = found[0] = linear.call(self.gql, M_CREATE, "issueCreate", **{"in": {
                 "id": cid, "teamId": self.team.id, "projectId": src["project"]["id"], "assigneeId": self.ids[nxt],
                 "stateId": self.states["todo"], "priority": src["priority"],
                 "title": child_title(TASKS[self.runs[nxt].default].prefix, TASKS[self.runs[role].default].prefix or None, src["title"]),
-                "description": self.description(src, comments, detail)}}), "issueCreate")["issue"]
+                "description": self.description(src, comments, detail)}})["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
         if child["id"] not in related and not self.dry:
-            ok(self.gql(M_RELATE, **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}}),
-               "issueRelationCreate")
-        self.move(src, "done")
+            linear.call(self.gql, M_RELATE, "issueRelationCreate",
+                        **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}})
+        if not self.move(src, "done", "promote"):
+            return
         self.say(f"promote {src['identifier']} -> {child['identifier']}")
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
@@ -176,38 +165,40 @@ class Promoter:
     def bounce_failed(self, src, error, child):
         body = f"Handoff failed: {str(error)[:300]}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
         try:
-            self.comment_and_move(src, body, "in_review")
-            self.say(f"handoff-failed {src['identifier']} moved to In Review")
+            if self.comment_and_move(src, body, "handoff-failed"):
+                self.say(f"handoff-failed {src['identifier']} moved to In Review")
         except (Exception, SystemExit) as e:
             self.say(f"handoff-error {src['identifier']}: could not move to In Review: {e}")
 
     def comment(self, src, body):
         if not self.dry:
-            ok(self.gql(M_COMMENT, i=src["id"], b=body), "commentCreate")
+            linear.comment(self.gql, src["id"], body)
 
-    def move(self, src, state):
-        if self.dry:
-            return
-        if state == "in_review":
-            for email in self.cfg.get("human_members") or []:
-                ok(self.gql(M_SUBSCRIBE, i=src["id"], e=email), "issueSubscribe")
-        ok(self.gql(M_STATE, i=src["id"], s=self.states[state]), "issueUpdate")
+    def move(self, src, state, prefix):
+        """linear.move from Handoff; True once moved (or dry)."""
+        return self.dry or self.moved(src, prefix, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"]))
 
-    def comment_and_move(self, src, body, state):
-        # Move first: if the move fails, no comment is posted, so retries don't repeat it.
-        self.move(src, state)
-        self.comment(src, body)
+    def comment_and_move(self, src, body, prefix):
+        """linear.comment_and_move from Handoff to In Review, the humans subscribed; True once moved (or dry)."""
+        return self.dry or self.moved(src, prefix, linear.comment_and_move(
+            self.gql, src["id"], body, self.states["in_review"], self.states["handoff"], self.cfg.get("human_members") or []))
+
+    def moved(self, src, prefix, left):
+        """True for a move made (left None); else logs the skip."""
+        if left is not None:
+            self.say(f"{prefix} {src['identifier']}: issue is {left}")
+        return left is None
 
 
-def run_prune(gql, cfg, now, dry, pruner=None, team=None, roles=None):
-    """Prune finished issues' worktrees and archive finished pm and engineer issues.
+def run_prune(gql, now, dry, team, roles, pruner=None):
+    """Prune finished issues' clones and archive finished pm and engineer issues.
     A prune failure, even an ImportError, is logged and never breaks promote."""
     try:
         if pruner is None:
             from prune import Pruner as pruner
-        pruner(gql, cfg, now, dry, team=team, roles=roles).run()
+        pruner(gql, now, dry, team=team, roles=roles).run()
     except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} prune-error: {e}", flush=True)
+        print(f"{stamp()} prune-error: {e}", flush=True)
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
@@ -219,7 +210,7 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     dry = "--dry-run" in argv
     promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
     promoter.run()
-    run_prune(gql, cfg, now, dry, pruner, promoter.team, promoter.roles)
+    run_prune(gql, now, dry, promoter.team, promoter.roles, pruner)
     return 0
 
 

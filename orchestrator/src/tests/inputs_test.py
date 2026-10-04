@@ -3,10 +3,11 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import inputs  # noqa: E402
 import issues  # noqa: E402
-import pipeline  # noqa: E402
+import config  # noqa: E402
+import repo  # noqa: E402
 import target  # noqa: E402
 
-DOCS = pipeline.Docs("ophis/private_docs", "main", {"deep-research": "Research/", "light-research": "Research/",
+DOCS = config.Docs("ophis/private_docs", "main", {"deep-research": "Research/", "light-research": "Research/",
                                                    "product-design": "Product Design/"})
 BASE = "https://github.com/ophis/private_docs/blob/main/"
 HUMANS = ("ann@example.com", "bob@example.com")
@@ -47,7 +48,7 @@ def note(body, at, who=AGENT):
 
 def issue(description="", *, ident="RES-4", title="Compare queues", notes=(), links=(), linked=(), project="p-1"):
     return issues.Issue("uuid-4", ident, f"https://linear.app/t/issue/{ident}", title, description,
-                        "2026-09-01T00:00:00.000Z", "s-1", project, tuple(notes), tuple(links), tuple(linked))
+                        "2026-09-01T00:00:00.000Z", project, tuple(notes), tuple(links), tuple(linked))
 
 
 def lines(*ls):
@@ -82,7 +83,7 @@ class DocPath(unittest.TestCase):
                 self.assertIsNone(inputs.doc_path(url, DOCS))
 
     def test_branch_with_slash(self):
-        docs = pipeline.Docs("ophis/private_docs", "docs/main", {})
+        docs = config.Docs("ophis/private_docs", "docs/main", {})
         self.assertEqual(inputs.doc_path("https://github.com/ophis/private_docs/blob/docs/main/a.md", docs), "a.md")
 
 
@@ -93,8 +94,8 @@ class Gather(unittest.TestCase):
         src = inputs.gather(iss, "deep-research", DOCS, run=gh)
         self.assertEqual(src.docs, (inputs.Doc(BASE + "Research/2026-08-01-RES-2-a.md", "Research/2026-08-01-RES-2-a.md", "# A\n"),))
         self.assertIsNone(src.earlier)
-        self.assertEqual(gh.calls, [(["gh", "api", endpoint("Research")], pipeline.SHORT),
-                                    (RAW + [endpoint("Research/2026-08-01-RES-2-a.md")], pipeline.SHORT)])
+        self.assertEqual(gh.calls, [(["gh", "api", endpoint("Research")], repo.SHORT),
+                                    (RAW + [endpoint("Research/2026-08-01-RES-2-a.md")], repo.SHORT)])
 
     def test_path_is_quoted_not_the_query_separator(self):
         gh = Gh({endpoint("Product%20Design/x%23y.md"): ok("t"), endpoint("Product%20Design"): listing()})
@@ -116,8 +117,8 @@ class Gather(unittest.TestCase):
         a, b, c, d = (BASE + f"Research/{n}.md" for n in "abcd")
         description = lines(f"First {a} and [b]({b}) then <{a}>.", f"`{c}`", "", "## Comments", "* Researcher, 2026-09-01T10:00:00.000Z:",
                             f"  > {d}")
-        links = (issues.Link("Session", "https://linear.app/t/issue/RES-4#comment-1"), issues.Link("Spec", c), issues.Link("x", a),
-                 issues.Link("Other", "https://github.com/other/repo/blob/main/e.md"), issues.Link("Plan", BASE + "Research/e.md"))
+        links = (issues.Link("https://linear.app/t/issue/RES-4#comment-1"), issues.Link(c), issues.Link(a),
+                 issues.Link("https://github.com/other/repo/blob/main/e.md"), issues.Link(BASE + "Research/e.md"))
         gh = Gh({endpoint(f"Research/{n}.md"): ok(n) for n in "abce"} | {endpoint("Research"): listing()})
         src = inputs.gather(issue(description, links=links), "deep-research", DOCS, run=gh)
         self.assertEqual([d.path for d in src.docs], ["Research/a.md", "Research/b.md", "Research/c.md", "Research/e.md"])
@@ -127,7 +128,7 @@ class Gather(unittest.TestCase):
     def test_fragment_and_query_links_resolve_to_the_bare_path_and_dedupe(self):
         d, e = BASE + "Research/a.md", BASE + "Research/b.md"
         description = f"Lines {d}#L10 and [b]({e}?plain=1) and <{d}> and `{BASE}Research/c.md#section`."
-        links = (issues.Link("Spec", d + "#section"), issues.Link("Plan", e), issues.Link("D", BASE + "Research/d.md?plain=1#L3"))
+        links = (issues.Link(d + "#section"), issues.Link(e), issues.Link(BASE + "Research/d.md?plain=1#L3"))
         gh = Gh({endpoint(f"Research/{n}.md"): ok(n) for n in "abcd"} | {endpoint("Research"): listing()})
         src = inputs.gather(issue(description, links=links), "deep-research", DOCS, run=gh)
         self.assertEqual([x.path for x in src.docs], ["Research/a.md", "Research/b.md", "Research/c.md", "Research/d.md"])
@@ -141,7 +142,7 @@ class Gather(unittest.TestCase):
         src = inputs.gather(issue(url, ident="PM-9"), "product-design", DOCS, run=gh)
         self.assertEqual((src.earlier.path, src.earlier.url, src.earlier.text), ("Product Design/2026-08-01-PM-1-x.md", url, "p1"))
         gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
-        src = inputs.gather(issue("", links=(issues.Link("PRD", url),), ident="ENG-7"), "engineering", DOCS, run=gh)
+        src = inputs.gather(issue("", links=(issues.Link(url),), ident="ENG-7"), "engineering", DOCS, run=gh)
         got = inputs.render(issue("D", ident="ENG-7"), "engineering", src, humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS)
         self.assertIn("## PRD: `Product Design/2026-08-01-PM-1-x.md`\n\n" + fenced("p1"), got)
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {url}\n", got)
@@ -159,8 +160,8 @@ class Gather(unittest.TestCase):
         src = inputs.gather(issue(""), "light-research", DOCS, run=gh)
         self.assertEqual(src.earlier, inputs.Doc(BASE + "Research/2026-09-05-RES-4-new.md", "Research/2026-09-05-RES-4-new.md", "# New\n"))
         self.assertEqual(src.docs, ())
-        self.assertEqual(gh.calls[0], (["gh", "api", endpoint("Research")], pipeline.SHORT))
-        self.assertEqual(gh.calls[1], (RAW + [endpoint("Research/2026-09-05-RES-4-new.md")], pipeline.SHORT))
+        self.assertEqual(gh.calls[0], (["gh", "api", endpoint("Research")], repo.SHORT))
+        self.assertEqual(gh.calls[1], (RAW + [endpoint("Research/2026-09-05-RES-4-new.md")], repo.SHORT))
 
     def test_earlier_version_is_not_also_a_linked_doc(self):
         p = "Research/2026-09-05-RES-4-new.md"
@@ -245,7 +246,7 @@ class RenderResearch(unittest.TestCase):
         iss = research_issue()
         src = inputs.Sources((inputs.Doc(BASE + "Research/2026-08-01-RES-2-queues.md", "Research/2026-08-01-RES-2-queues.md", "# Queues\n"),),
                              inputs.Doc(BASE + "Research/2026-09-01-RES-4-q.md", "Research/2026-09-01-RES-4-q.md", "# Earlier"))
-        got = inputs.render(iss, "deep-research", src, humans=HUMANS, target=target.Target("ophis", "agent-pm", mapped=True), docs=DOCS)
+        got = inputs.render(iss, "deep-research", src, humans=HUMANS, target=target.Target("ophis", "agent-pm"), docs=DOCS)
         self.assertEqual(got, lines(
             "Reference: RES-4", "Repo: ophis/agent-pm", "", RESEARCH_PRECEDENCE, "",
             "## Question", "", "Compare queues", "", f"Which queue fits?\nBackground: {BASE}Research/2026-08-01-RES-2-queues.md", "",
@@ -323,7 +324,7 @@ class RenderDesign(unittest.TestCase):
 
     def test_golden_direct_issue_with_repo(self):
         got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
-                            inputs.Sources((), None), humans=HUMANS, target=target.Target("ophis", "agent-pm", mapped=True),
+                            inputs.Sources((), None), humans=HUMANS, target=target.Target("ophis", "agent-pm"),
                             docs=DOCS)
         self.assertEqual(got, lines("Reference: PM-9", "Repo: ophis/agent-pm", "", DESIGN_PRECEDENCE, "",
                                     "## Brief", "", "Queues PRD", "", "Build a PRD for X."))

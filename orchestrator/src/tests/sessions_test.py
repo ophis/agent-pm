@@ -8,11 +8,10 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 ISSUE = "TASK-12"
 T1, T2 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00"
-CMD = f"cd /w/TASK-12 && LINEAR_KEYCHAIN_SERVICE=linear-engineer claude --resume {SID}"
-STAMP = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
+CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 
 def record(started_at=T1, cwd="/w/TASK-12"):
-    return sessions.base(sid=SID, cwd=cwd, key="linear-engineer", started_at=started_at)
+    return sessions.base(sid=SID, cwd=cwd, started_at=started_at)
 
 def comment(id, created_at, body, mine=True):
     return {"id": id, "createdAt": created_at, "body": body, "mine": mine}
@@ -62,13 +61,13 @@ class Record(unittest.TestCase):
         c = linear.only()
         self.assertEqual(c["body"], f"Run {SID} · running · {T1}\n\n```\n{CMD}\n```")
 
-    def test_record_is_sid_cwd_key_and_start(self):
-        self.assertEqual(record(), {"sid": SID, "cwd": "/w/TASK-12", "key": "linear-engineer", "started_at": T1})
+    def test_record_is_sid_cwd_and_start(self):
+        self.assertEqual(record(), {"sid": SID, "cwd": "/w/TASK-12", "started_at": T1})
 
     def test_command_quotes_the_cwd(self):
         cwd = "/Users/x/my work/it's/TASK-12"
         self.assertEqual(shlex.split(sessions.command(record(cwd=cwd))),
-                         ["cd", cwd, "&&", "LINEAR_KEYCHAIN_SERVICE=linear-engineer", "claude", "--resume", SID])
+                         ["cd", cwd, "&&", "claude", "--resume", SID])
 
     def test_recover_resume_updates_the_one_comment(self):
         linear = FakeLinear()
@@ -140,7 +139,7 @@ class Record(unittest.TestCase):
 
     def test_default_client_timeout_is_the_limit(self):
         found = {"issue": {"comments": {"nodes": []}}, "commentCreate": {"success": True}}
-        with mock.patch.object(sessions.pipeline, "linear_gql", return_value=found) as gql:
+        with mock.patch.object(sessions.linear, "linear_gql", return_value=found) as gql:
             self.assertIsNone(start(None, record()))
         self.assertEqual([c.kwargs["timeout"] for c in gql.call_args_list], [sessions.LIMIT] * 2)
         self.assertEqual(sessions.LIMIT, 10)
@@ -148,9 +147,8 @@ class Record(unittest.TestCase):
 
 class Failure(unittest.TestCase):
     def error(self, out, rest):
-        """out is one registry-error line, no newline, ending in rest."""
-        self.assertRegex(out, r"\A" + STAMP.pattern)
-        self.assertEqual(out[20:], f"registry-error {rest}")
+        """out is one unstamped registry-error line, no newline, ending in rest."""
+        self.assertEqual(out, f"registry-error {rest}")
 
     def failing(self, exc):
         def gql(query, **v):
@@ -167,7 +165,7 @@ class Failure(unittest.TestCase):
             calls.append(query)
             return {"issue": None}
         out = end(no_issue, record(), 0)
-        self.assertRegex(out, r"\A" + STAMP.pattern + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
+        self.assertRegex(out, r"\A" + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
         self.assertEqual(len(calls), 1)
 
     def test_write_raising_logs_one_line(self):

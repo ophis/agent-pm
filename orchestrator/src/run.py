@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runner: one core run for an issue the router already claimed (or resumes it), per orchestrator/config.toml.
 
-run.py --issue ID --url URL --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume [--k K]
+run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
   Outer, in the router tick: checks the run can start, bounces an engineering issue whose repo check fails, writes
   work/<ID>/input.md, then starts the inner in tmux agent-pm-<role>; any failure starts nothing. Exits 0 started or
   bounced, 1 config, input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config
@@ -18,25 +18,23 @@ import re
 import signal
 import subprocess
 import sys
-from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inputs  # noqa: E402
 import issues  # noqa: E402
-import pipeline  # noqa: E402
-import prune  # noqa: E402
+import config  # noqa: E402
 import sessions  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
-from pipeline import (CLONES, PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, atomic_write, linear_gql,  # noqa: E402
-                      load_config, project_log, repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
-from sessions import one_line  # noqa: E402
+from config import (PATH, PROJECTS, ROOT, RUNS_LOG, TASKS, UUID_RE, load_config, project_log,  # noqa: E402
+                    repo_slug, role_for, run_dir, runnable, session, sh_run, transcript)
+from linear import ISSUE_ID, append, linear_gql, one_line  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
 RUN = os.path.abspath(__file__)
-SHARED = ("issue", "url", "project", "assignee", "sid", "task", "mode", "k")
+SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
 
 
 def has_key(service):
@@ -47,42 +45,16 @@ def has_key(service):
 
 def fail(plog, issue, kind, reason, rc):
     """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {kind} {issue}: {reason}"
-    with open(plog, "a") as f:
-        f.write(line + "\n")
-    print(line, file=sys.stderr)
+    print(append(plog, f"{kind} {issue}: {reason}"), file=sys.stderr)
     return rc
-
-
-def _stamp():
-    return f"{datetime.now():%Y-%m-%d %H:%M:%S}"
 
 
 def _append(path, line):
     """Best effort: the inner's lines must not stop it (its pane may be gone)."""
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8", errors="replace") as f:
-            f.write(line + "\n")
+        append(path, line)
     except OSError:
         pass
-
-
-def log_file(path) -> drive.Sink:
-    """The terminal sink's lines, appended to path (the project log); swallows OSError."""
-    def sink(event):
-        if event.kind == "text":
-            line = event.text
-        elif event.kind == "progress":
-            line = f"Progress ({event.name}): {event.text}"
-        else:
-            return
-        try:
-            with open(path, "a", encoding="utf-8", errors="replace") as f:
-                f.write(drive.printable(line) + "\n")
-        except OSError:
-            pass
-    return sink
 
 
 def _humans(cfg):
@@ -98,36 +70,41 @@ def _context(a, cfg, role, gql, plog, issue_id, repo):
         states=cfg["states"], repos=cfg["project_repos"], team=cfg["team"], target=repo)
 
 
-def _legacy(rd):
-    """Linked worktrees pre-core runs left in rd/src, where core clones now go: real dirs whose .git is a file."""
-    src = os.path.join(rd, CLONES[0])
+class Setup(Exception):
+    """A run that cannot start: message, exit code (1 config, 2 role or task) and the project log known so far."""
+
+    def __init__(self, msg, rc, plog=None):
+        super().__init__(msg)
+        self.msg, self.rc, self.plog = msg, rc, plog
+
+
+def setup(a, root):
+    """(cfg, roles, name, role, plog) for the run's assignee and task, else Setup."""
     try:
-        names = [] if os.path.islink(src) else sorted(os.listdir(src))
-    except OSError:
-        names = []
-    paths = [os.path.join(src, n) for n in names if not n.startswith(".")]
-    return [p for p in paths if not os.path.islink(p) and not os.path.islink(os.path.join(p, ".git"))
-            and os.path.isfile(os.path.join(p, ".git"))]
+        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
+        roles = runnable(cfg, root)
+    except SystemExit as e:
+        raise Setup(str(e.code), 1)
+    name = role_for(roles, a.assignee)
+    if name is None:
+        raise Setup(f"{a.assignee!r} is not a role account", 2)
+    role, logs = roles[name], os.path.join(root, "logs")
+    if a.task not in role.tasks:
+        raise Setup(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2,
+                    project_log(role.default, logs))
+    return cfg, roles, name, role, project_log(a.task, logs)
 
 
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
     os.environ["PATH"] = PATH
     try:
-        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
-        roles = runnable(cfg, root)
-    except SystemExit as e:
-        print(f"run.py: {e.code}", file=sys.stderr)
-        return 1
-    name = role_for(roles, a.assignee)
-    if name is None:
-        print(f"run.py: {a.assignee!r} is not a role account", file=sys.stderr)
-        return 2
-    role, logs = roles[name], os.path.join(root, "logs")
-    if a.task not in role.tasks:
-        return fail(project_log(role.default, logs), a.issue, "config-error",
-                    f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2)
-    plog = project_log(a.task, logs)
+        cfg, roles, name, role, plog = setup(a, root)
+    except Setup as e:
+        if e.plog:
+            return fail(e.plog, a.issue, "config-error", e.msg, e.rc)
+        print(f"run.py: {e.msg}", file=sys.stderr)
+        return e.rc
     if a.mode == "resume":
         path = transcript(a.issue, a.sid, projects)
         if path is None or not os.path.exists(path):
@@ -141,7 +118,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     kind, repos, repo = TASKS[a.task].kind, cfg["project_repos"], None
     if kind == "build":
         try:
-            repo = target.check(issue, repos, run=run, work=pipeline.WORK)
+            repo = target.check(issue, repos, run=run, work=config.WORK)
         except Exception as e:  # a gh/git timeout or OS error
             return fail(plog, a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
@@ -151,25 +128,20 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
                 writeback.bounce(_context(a, cfg, role, gql, plog, issue.id, None), issue, repo.reason)
             except (Exception, SystemExit) as e:
                 return fail(plog, a.issue, "transient", f"bounce: {one_line(e)}", 3)
-            _append(plog, f"{_stamp()} bounce {a.issue}: {repo.reason}")
+            _append(plog, f"bounce {a.issue}: {repo.reason}")
             return 0
-    elif kind in ("research", "design"):
+    else:
         repo = target.research_repo(issue, repos)
     rd = run_dir(a.issue)
-    for path in _legacy(rd):
-        try:
-            prune.remove_linked(path, run=run)
-        except (ValueError, prune.TransientError) as e:
-            return fail(plog, a.issue, "transient", f"legacy worktree {path}: {e}", 3)
-    docs = pipeline.docs(roles, root)
+    docs = config.docs(roles, root)
     try:
         sources = inputs.gather(issue, a.task, docs, run=run)
     except Exception as e:  # gh's RuntimeError; a decode, timeout or OS error too
         return fail(plog, a.issue, "transient", f"docs: {e}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
-        atomic_write(os.path.join(rd, "input.md"),
-                     inputs.render(issue, a.task, sources, humans=_humans(cfg), target=repo, docs=docs))
+        drive.save(os.path.join(rd, "input.md"),
+                   inputs.render(issue, a.task, sources, humans=_humans(cfg), target=repo, docs=docs))
     except Exception as e:
         print(f"run.py: input.md: {one_line(e)}", file=sys.stderr)
         return 1
@@ -193,25 +165,18 @@ def inner(a, *, gql, popen, runs, root):
     signal.signal(signal.SIGHUP, stop)
     plog = None
     try:
-        cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
-        roles = runnable(cfg, root)
-        name = role_for(roles, a.assignee)
-        if name is None:
-            raise SystemExit(f"{a.assignee!r} is not a role account")
-        role, logs = roles[name], os.path.join(root, "logs")
-        if a.task not in role.tasks:
-            plog = project_log(role.default, logs)
-            raise SystemExit(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})")
-        plog = project_log(a.task, logs)
+        cfg, roles, name, role, plog = setup(a, root)
     except (Exception, SystemExit) as e:
-        print(f"run.py: {e.code if isinstance(e, SystemExit) else one_line(e)}", file=sys.stderr)
-        line = f"{_stamp()} end {a.issue} session={a.sid} exit=1"
+        plog = e.plog if isinstance(e, Setup) else None
+        print(f"run.py: {e.msg if isinstance(e, Setup) else e.code if isinstance(e, SystemExit) else one_line(e)}",
+              file=sys.stderr)
+        line = f"end {a.issue} session={a.sid} exit=1"
         for path in (runs, plog) if plog else (runs,):
             _append(path, line)
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
-    _append(plog, f"{_stamp()} launch {a.issue} mode={a.mode} session={a.sid}")
-    rec = sessions.base(sid=a.sid, cwd=rd, key=role.key, started_at=sessions.now())
+    _append(plog, f"launch {a.issue} mode={a.mode} session={a.sid}")
+    rec = sessions.base(sid=a.sid, cwd=rd, started_at=sessions.now())
     if reg := sessions.post(a.issue, rec, gql=harness):
         _append(plog, reg)
     ctx = _context(a, cfg, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)
@@ -221,10 +186,10 @@ def inner(a, *, gql, popen, runs, root):
         client = clients.get("claude", core)
         params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume")
-        launch, run = drive.plan(core, client, name, a.task, params=params, layers=pipeline.layers(root))
-        sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
-                 drive.outcome_file(os.path.join(rd, drive.OUTCOME)), log_file(plog), writeback.sink(ctx)]
-        with open(plog, "a") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
+        launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root))
+        with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
+            sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
+                     drive.outcome_file(os.path.join(rd, drive.OUTCOME)), drive.terminal(err), writeback.sink(ctx)]
             result = drive.start(launch, run, params, client=client, sinks=sinks,
                                  popen=functools.partial(popen, stderr=err))
         rc = result.returncode
@@ -232,15 +197,15 @@ def inner(a, *, gql, popen, runs, root):
         if isinstance(e, SystemExit) and isinstance(e.code, int):
             rc = e.code  # the signal handler's
         else:
-            _append(plog, f"{_stamp()} run-error {a.issue}: {one_line(e)}")
+            _append(plog, f"run-error {a.issue}: {one_line(e)}")
     finally:
-        line = f"{_stamp()} end {a.issue} session={a.sid} exit={rc}"
+        line = f"end {a.issue} session={a.sid} exit={rc}"
         _append(plog, line)
         _append(runs, line)
         if result and result.outcome:
             writeback.finish(ctx, result.outcome)
         else:
-            _append(plog, f"{_stamp()} no-outcome {a.issue}: {(result.error if result else '') or 'no result'}")
+            _append(plog, f"no-outcome {a.issue}: {(result.error if result else '') or 'no result'}")
         if reg := sessions.post(a.issue, rec, rc, gql=harness):
             _append(plog, reg)
     return 0
@@ -250,15 +215,14 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
          runs=RUNS_LOG, projects=PROJECTS, keychain=has_key, root=ROOT):
     """--inner → inner, else outer."""
     ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--issue", "--url", "--project", "--assignee", "--sid", "--task"):
+    for f in ("--issue", "--project", "--assignee", "--sid", "--task"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
-    ap.add_argument("--k", default="1")  # accepted, unused: core's resume prefix has no count
     ap.add_argument("--inner", action="store_true")
     ap.add_argument("--uuid")
     ap.add_argument("--target")
     a = ap.parse_args(argv)
-    if not re.fullmatch(r"[A-Z][A-Z0-9]*-\d+", a.issue) or not re.fullmatch(sessions.SID, a.sid):
+    if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"run.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
     if not a.inner:
