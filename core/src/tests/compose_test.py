@@ -131,6 +131,23 @@ class Resolve(Fake):
         self.config(CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"'))
         self.assertEqual(self.compose(task="long-note")[1].gate, "make gate")
 
+    def test_no_language_no_language_line(self):
+        self.write({"team/principles.md": FILES["team/principles.md"] + "\n- Write well.\n- Reports are in {{language}}.\n- Be brief.\n"})
+        prompt, run = self.compose(task="long-note")
+        self.assertEqual(run.language, "")
+        self.assertIn("- Write well.\n- Be brief.\n", prompt)
+        self.assertNotIn("Reports are in", prompt)
+
+    def test_language_renders_its_line_once_at_any_level(self):
+        self.write({"team/principles.md": FILES["team/principles.md"] + "\n- Reports are in {{language}}.\n"})
+        self.config(CONFIG.replace('effort = "high"', 'effort = "high"\nlanguage = "French"'))
+        prompt, run = self.compose(task="long-note")
+        self.assertEqual(prompt.count("Reports are in French."), 1)
+        _, run = self.compose(task="long-note", layers=[{"roles": {"writer": {"tasks": {"long-note": {"language": "German"}}}}}])
+        self.assertEqual(run.language, "German")
+        prompt, run = self.compose(task="long-note", layers=[{"language": ""}])
+        self.assertNotIn("Reports are in", prompt)
+
     def test_layers_ignore_their_own_keys(self):
         _, run = self.compose(task="long-note", layers=[{"flags": ["-x"], "description": "d"}])
         self.assertEqual(run.tier, 1)
@@ -159,6 +176,11 @@ class Validate(Fake):
         _, run = self.compose(task="long-note")
         with self.assertRaises(compose.ConfigError):
             replace(run, gate="a\nb")
+
+    def test_language_is_one_line_of_text(self):
+        self.assertIn("language", compose.RUN_KEYS)
+        for language in ("a\nb", 7):
+            self.fails("language must be one line of text", task="long-note", layers=[{"language": language}])
 
     def test_replace_is_checked(self):
         _, run = self.compose(task="long-note")
@@ -305,7 +327,34 @@ def composed(role, task=None):
     return compose.render(CORE, run, PARAMS, vehicle=Plain()), run
 
 
+LANGUAGE_RULE = "headings and fixed labels included"
+
+
 class RealCore(unittest.TestCase):
+    def test_core_config_renders_the_language_rule_once(self):
+        for role, task in ALL:
+            prompt, run = composed(role, task)
+            self.assertEqual(run.language, "Chinese")
+            self.assertEqual(prompt.count(LANGUAGE_RULE), 1, task)
+            self.assertIn("are in Chinese", prompt, task)
+
+    def test_no_language_no_language_rule(self):
+        with tempfile.TemporaryDirectory() as root:
+            for d in ("team", "output", "src"):
+                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+            with open(os.path.join(CORE, compose.CONFIG)) as f:
+                cfg = f.read()
+            self.assertIn('\nlanguage = "Chinese"\n', cfg)
+            os.makedirs(os.path.join(root, "config"))
+            with open(os.path.join(root, compose.CONFIG), "w") as f:
+                f.write(cfg.replace('\nlanguage = "Chinese"\n', "\n"))
+            for role, task in ALL:
+                run = compose.load_run(root, role, task)
+                prompt = compose.render(root, run, PARAMS, vehicle=Plain())
+                self.assertEqual(run.language, "", task)
+                self.assertNotIn(LANGUAGE_RULE, prompt, task)
+                self.assertNotIn("Chinese", prompt, task)
+
     def test_every_task_compiles_without_placeholders(self):
         for role, task in ALL:
             prompt, run = composed(role, task)

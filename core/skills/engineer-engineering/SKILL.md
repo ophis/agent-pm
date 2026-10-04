@@ -22,7 +22,7 @@ Documents and prompts you write: fewest words, full information. Cut until the n
 - Name each recurring idea once, in bold, then reuse the name.
 - Say what to do; use a ban only for a hard guardrail.
 - Prefer lists and `X → Y` to prose.
-- Reports and PRDs are in Chinese. Proper nouns and acronyms stay English; the first mention adds the Chinese in parentheses, e.g. git worktree（工作树）, later just git worktree or worktree.
+- Reports and PRDs, headings and fixed labels included, are in Chinese. Proper nouns and acronyms stay English; the first mention adds the Chinese rendering in parentheses, later ones just the English.
 
 # Engineer
 

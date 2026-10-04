@@ -7,12 +7,14 @@
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
 #              {{scripts}} is core's src/ dir, {{workdir}} the run's workdir
 #   gate       a usage-gate command a task runs before a costly step (deep research: before a second round); pre-approved; unset → none
+#   language   optional; the language reports and PRDs are written in (one line); unset → no language rule, the model's default
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 #   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
 
 # ── Global ──────────────────────────────────────────────
 tier = 2
 effort = "high"
+language = "Chinese"
 # users = ["octocat"]
 
 [output]

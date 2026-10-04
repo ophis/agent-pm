@@ -33,7 +33,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 
 ## Roles, tasks, rules
 
-- Roles, tasks, principles and templates are core's: `core/team/` (text), `core/config/config.toml` (tier, effort, `read`/`write`, `commands`, `output`), `core/config/clients/claude.toml`. A role's default task is its `default_task`.
+- Roles, tasks, principles and templates are core's: `core/team/` (text), `core/config/config.toml` (tier, effort, `read`/`write`, `commands`, `output`, `language`), `core/config/clients/claude.toml`. A role's default task is its `default_task`.
 - `pipeline.toml` adds what core must not know: `[roles.<role>]` (`account`, `key`, `next`, `require_instructions`), `[task_labels]`, `[project_repos]`, and `[core]`, the overlay: core run keys for the orchestrator's runs, layered after the client config (`pipeline.overlay()` fills `{{root}}`). Title prefixes and write-back differences per task are `pipeline.TASKS`. An invalid or inconsistent config stops router, run and promote (`pipeline.runnable`).
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py` / `pipeline.TASKS`. One rule, one place. Precedence: principles > charter > task.
 - Every task has a `## Resume` section; the shared resume text is `compose.RESUME`.

@@ -170,6 +170,7 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual(pipeline.run_config("researcher", "light-research").gate, "")
         self.assertEqual(pipeline.overlay(), {"roles": {"researcher": {"tasks": {"deep-research": {"gate": GATE}}}}})
         self.assertEqual(pipeline.layers(), [pipeline.overlay()])
+        self.assertEqual(pipeline.run_config("pm", "product-design").language, "Chinese")
 
     def test_run_config_layers(self):
         core = os.path.join(self.dir, "core")
@@ -263,6 +264,10 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         run = pipeline.run_config("researcher", "deep-research", self.root)
         self.assertEqual((run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}"))
         self.assertEqual(pipeline.run_config("pm", "product-design", self.root).gate, "")
+
+    def test_overlay_language_reaches_run_config(self):
+        self.load(PIPELINE + '[core.roles.pm]\nlanguage = "French"\n')
+        self.assertEqual(pipeline.run_config("pm", "product-design", self.root).language, "French")
 
     def test_no_core_table(self):
         self.load(PIPELINE)
