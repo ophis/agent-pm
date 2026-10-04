@@ -2,7 +2,7 @@
 
 Supplied by the delegate, not a rule set.
 
-Write one Markdown document to `Output:`, starting with frontmatter:
+Write one Markdown file to `Output:`, starting with frontmatter:
 
 ```yaml
 ---
@@ -16,8 +16,8 @@ url: <link>           # set by Output › Destination once delivered
 ---
 ```
 
-- **done** → the document follows the frontmatter; deliver it per Output › Destination, nowhere else.
-- **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or what your task also requires. Body may be empty.
+- **done** → the deliverable follows the frontmatter; deliver it per Output › Destination, nowhere else.
+- **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or what your task also requires. The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
 - `Output:` already has content → revise it, keeping what still holds.
 - Your task may add frontmatter fields.

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-from compose import ROOT, ConfigError, compose, render, resolve_run  # noqa: E402
+from compose import ROOT, RUN_KEYS, ConfigError, check, compose, render, resolve_run  # noqa: E402
 
 STATUSES = ("done", "needs_input", "failed")
 
@@ -47,20 +47,26 @@ def access(run, *, repo, out, workdir):
     return Access(dirs, list(run["commands"]))
 
 
+def override(client, run):
+    """The run with the client's own entries for it replacing the neutral ones (any RUN_KEYS); raises ConfigError."""
+    for key in RUN_KEYS:
+        if (value := client.value(run, key)) is not None:
+            run[key] = value
+    return check(run)
+
+
 def plan(root, role, task=None, *, client, input, out, workdir, repo=None, sid=None, resume=False):
     """The Launch for one run; raises ConfigError."""
     c = clients.get(client, root)
     if not c.runs:
-        run = resolve_run(root, role, task)
-        run["output"] = c.output(run)
+        run = override(c, resolve_run(root, role, task))
         return c.launch(render(root, run), run, sid=None, resume=False, access=Access([], list(run["commands"])), out=out)
     if input is None or workdir is None:
         raise ConfigError(f"client {client!r} needs --input and --workdir")
     if resume and not sid:
         raise ConfigError("--resume needs --sid")
     sid = sid or str(uuid.uuid4())
-    run = resolve_run(root, role, task)
-    run["output"] = c.output(run)
+    run = override(c, resolve_run(root, role, task))
     prompt = render(root, run, input=input, out=out, workdir=workdir, resume=resume)
     acc = access(run, repo=repo, out=out, workdir=workdir)
     launch = c.launch(prompt, run, sid=sid, resume=resume, access=acc, out=out)

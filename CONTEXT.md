@@ -39,6 +39,10 @@ The part of the delegate that starts a run through a client and checks its outpu
 An agent runtime a run executes in (Claude Code today); it turns a composed run into its own command and enforces the run's hard constraints.
 _Avoid_: runtime, backend
 
+**Deliverable**:
+The Markdown a run delivers to its destination (report, PRD, PR description); the output file's body after the frontmatter.
+_Avoid_: document, result, report
+
 **Vehicle**:
 A form a prompt is delivered in (skill, plugin agent, `claude -p` prompt); roles and tasks stay vehicle-neutral.
 

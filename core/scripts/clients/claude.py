@@ -5,7 +5,7 @@ from .base import Client, Launch
 
 
 class ClaudeClient(Client):
-    keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "output", "roles"})
+    keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
 
     def launch(self, prompt, run, *, sid, resume, access, out):
         c = self.config

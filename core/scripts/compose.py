@@ -99,6 +99,11 @@ def resolve(cfg, role, task=None):
                 break
     for k in LISTS:
         run.setdefault(k, [])
+    return check(run)
+
+
+def check(run):
+    """The run config, once its tier, effort and output are valid; raises ConfigError."""
     tier, effort = run.get("tier"), run.get("effort")
     if type(tier) is not int or not 1 <= tier <= 4:
         raise ConfigError(f"tier must be an integer 1–4, got {tier!r}")

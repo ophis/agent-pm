@@ -25,6 +25,7 @@ read = ["repo"]
 [roles.researcher.tasks.deep-research.output]
 type = "github"
 repo = "ophis/private_docs"
+# host = "github.com"       # default; set for GitHub Enterprise
 branch = "main"
 dir = "Research/"
 
@@ -35,6 +36,7 @@ read = ["repo"]
 [roles.researcher.tasks.light-research.output]
 type = "github"
 repo = "ophis/private_docs"
+# host = "github.com"       # default; set for GitHub Enterprise
 branch = "main"
 dir = "Research/"
 
@@ -48,6 +50,7 @@ templates = ["prd"]
 [roles.pm.tasks.product-design.output]
 type = "github"
 repo = "ophis/private_docs"
+# host = "github.com"       # default; set for GitHub Enterprise
 branch = "main"
 dir = "Product Design/"
 

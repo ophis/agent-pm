@@ -104,6 +104,12 @@ class Claude(Base):
         self.assertEqual(c.value({"role": "x", "task": "t"}, "allow"), ["Read"])
         self.assertIsNone(c.value({"role": "x", "task": "t"}, "nothing"))
 
+    def test_claude_tier_override_changes_the_model(self):
+        with unittest.mock.patch.object(clients, "load_config",
+                                        lambda name, root: {**clients.base.load_config(name, root), "tier": 3}):
+            argv = self.plan(client="claude").argv
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+
     def test_unknown_config_key(self):
         with self.assertRaises(compose.ConfigError) as cm:
             claude(argv=[])
@@ -165,27 +171,34 @@ class Skill(Base):
         (_, text), = launch.files.items()
         return text
 
-    def test_document_destinations_return_to_the_caller(self):
+    def test_document_tasks_return_to_the_orchestrator(self):
         for role, task in (("researcher", "light-research"), ("pm", "product-design")):
             text = self.skill_text(role, task)
-            self.assertIn("Return the document to your caller", text)
+            self.assertIn("Return the deliverable to your orchestrator", text)
             self.assertNotIn("ophis/private_docs", text)
-            self.assertIn("Output: your final reply", text)
+            self.assertIn("Output: your final reply to the orchestrator", text)
 
     def test_pull_request_stays(self):
         text = self.skill_text("engineer", "engineering")
         self.assertIn("gh pr create", text)
-        self.assertNotIn("Return the document to your caller", text)
+        self.assertNotIn("Return the deliverable to your orchestrator", text)
 
-    def test_client_output_entry_replaces_the_task_output(self):
-        run = {"role": "r", "task": "t", "output": {"type": "github", "repo": "o/d"}}
-        self.assertEqual(clients.SkillClient({}).output(run), {"type": "github", "repo": "o/d"})
-        c = clients.SkillClient({"roles": {"r": {"tasks": {"t": {"output": {"type": "caller"}}}}}})
-        self.assertEqual(c.output(run), {"type": "caller"})
+    def test_client_entries_replace_neutral_values(self):
+        run = {"role": "r", "task": "t", "tier": 2, "effort": "high", "read": [], "write": [], "commands": [],
+               "templates": [], "output": {"type": "github", "repo": "o/d"}}
+        self.assertEqual(drive.override(clients.SkillClient({}), dict(run)), run)
+        c = clients.SkillClient({"effort": "low", "roles": {"r": {"tasks": {"t": {"tier": 3, "output": {"type": "orchestrator"}}}}}})
+        got = drive.override(c, dict(run))
+        self.assertEqual((got["tier"], got["effort"], got["output"]), (3, "low", {"type": "orchestrator"}))
+
+    def test_invalid_override_is_a_config_error(self):
+        run = {"role": "r", "task": "t", "tier": 2, "effort": "high", "output": {"type": "local"}}
+        with self.assertRaises(compose.ConfigError):
+            drive.override(clients.SkillClient({"tier": 9}), run)
 
     def test_description_falls_back_to_the_task_heading(self):
         run = {"role": "r", "task": "t", "role_title": "R", "task_title": "T", "task_summary": "Do it.",
-               "output": {"type": "caller"}}
+               "output": {"type": "orchestrator"}}
         (_, text), = clients.SkillClient({}).launch("p", run, sid=None, resume=False, access=NO_ACCESS, out="o").files.items()
         self.assertIn('description: "T as R: Do it."', text)
 

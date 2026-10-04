@@ -1,3 +1,3 @@
 ## Destination
 
-`Output:` is the delivered document; set `url:` to its absolute path.
+`Output:` is the delivered file; set `url:` to its absolute path.

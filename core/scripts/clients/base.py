@@ -3,7 +3,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 
-from compose import ConfigError
+from compose import RUN_KEYS, ConfigError
 
 
 @dataclass
@@ -15,12 +15,12 @@ class Launch:
 
 
 class Client:
-    keys = frozenset()
+    keys = frozenset()   # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
     runs = True   # starts a run: needs --input and --workdir, and gets the Input/Output/Workdir tail
 
     def __init__(self, config):
-        if extra := sorted(set(config) - self.keys):
+        if extra := sorted(set(config) - self.keys - RUN_KEYS):
             raise ConfigError(f"unknown key {extra[0]!r} in {type(self).__name__}'s config")
         self.config = config
 
@@ -31,10 +31,6 @@ class Client:
             if key in layer:
                 return layer[key]
         return None
-
-    def output(self, run):
-        """The run's output destination: this client's `output` entry for it, else the task's own."""
-        return self.value(run, "output") or run["output"]
 
     def launch(self, prompt, run, *, sid, resume, access, out):
         raise NotImplementedError
