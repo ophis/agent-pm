@@ -8,6 +8,7 @@ Unattended agent pipeline on a Linear board. launchd runs `router.py`, which sta
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
+python3 -m unittest discover -s .claude/skills/tui-workers/scripts -p "*_test.py"   # tui-workers skill tests
 core/regen_skills.sh                                              # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
 python3 orchestrator/src/router.py --now --dry-run                         # one tick: plan + usage probe, changes nothing
 python3 orchestrator/src/promote.py --dry-run                              # what Handoff and prune would do
