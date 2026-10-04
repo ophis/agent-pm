@@ -1,4 +1,4 @@
-import contextlib, functools, io, json, os, re, shlex, subprocess, sys, threading, time, unittest
+import functools, os, re, shlex, subprocess, sys, threading, time, unittest
 from datetime import datetime
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,24 +47,17 @@ class FakeLinear:
         assert len(self.comments) == 1, self.comments
         return self.comments[0]
 
-def main(argv, gql):
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        rc = sessions.main(argv, gql=gql)
-    assert rc == 0, rc
-    return out.getvalue()
-
 def start(gql, rec):
-    return main(["start", ISSUE, json.dumps(rec)], gql)
+    return sessions.post(ISSUE, rec, gql=gql)
 
-def end(gql, rec, rc):
-    return main(["end", ISSUE, json.dumps(rec), str(rc)], gql)
+def end(gql, rec, rc, ended_at=T2):
+    return sessions.post(ISSUE, rec, rc, gql=gql, ended_at=ended_at)
 
 
 class Record(unittest.TestCase):
     def test_start_creates_one_running_comment(self):
         linear = FakeLinear()
-        self.assertEqual(start(linear, record()), "")
+        self.assertIsNone(start(linear, record()))
         self.assertEqual(linear.calls, ["comments", "commentCreate"])
         c = linear.only()
         self.assertEqual(c["body"], f"Run {SID} · running · {T1}\n\n```\n{CMD}\n```")
@@ -89,25 +82,32 @@ class Record(unittest.TestCase):
     def test_end_sets_status_times_and_exit(self):
         for rc, status in ((0, "done"), (3, "interrupted")):
             with self.subTest(rc=rc):
-                linear, began = FakeLinear(), sessions.now()
-                rec = record(started_at=began)
-                start(linear, rec)
-                self.assertEqual(end(linear, rec, rc), "")
-                first, rest = linear.only()["body"].split("\n", 1)
-                m = re.fullmatch(rf"Run {SID} · {status} · {re.escape(began)} → (\S+) · exit {rc}", first)
-                self.assertIsNotNone(m, first)
-                for t in (began, m[1]):
-                    self.assertIsNotNone(datetime.fromisoformat(t).utcoffset(), t)
-                self.assertEqual(rest, f"\n```\n{sessions.command(rec)}\n```")
+                linear = FakeLinear()
+                start(linear, record())
+                self.assertIsNone(end(linear, record(), rc))
+                self.assertEqual(linear.only()["body"], f"Run {SID} · {status} · {T1} → {T2} · exit {rc}\n\n```\n{CMD}\n```")
+
+    def test_end_defaults_to_now(self):
+        linear = FakeLinear()
+        with mock.patch.object(sessions, "now", return_value=T2):
+            self.assertIsNone(sessions.post(ISSUE, record(), 0, gql=linear))
+        self.assertEqual(linear.only()["body"], sessions.body(record(), 0, T2))
+
+    def test_now_is_local_iso_with_offset(self):
+        stamp = sessions.now()
+        self.assertIsNotNone(datetime.fromisoformat(stamp).utcoffset(), stamp)
+
+    def test_no_cli(self):
+        self.assertFalse(hasattr(sessions, "main") or hasattr(sessions, "USAGE"))
 
     def test_failed_start_leaves_end_to_create_the_comment(self):
         linear = FakeLinear(fail={"commentCreate": RuntimeError("down")})
         self.assertIn("registry-error", start(linear, record()))
         self.assertEqual(linear.comments, [])
         linear.fail = {}
-        self.assertEqual(end(linear, record(), 0), "")
+        self.assertIsNone(end(linear, record(), 0))
         self.assertEqual(linear.calls, ["comments", "commentCreate", "comments", "commentCreate"])
-        self.assertTrue(linear.only()["body"].startswith(f"Run {SID} · done · {T1} → "))
+        self.assertEqual(linear.only()["body"], sessions.body(record(), 0, T2))
 
     def test_updates_the_earliest_match_only(self):
         mine = f"Run {SID} · running · {T1}"
@@ -117,7 +117,7 @@ class Record(unittest.TestCase):
                    comment("a", "2026-09-30T01:00:00.000Z", mine + " a"),
                    comment("c", "2026-09-30T03:00:00.000Z", mine + " c")]
         linear = FakeLinear(*others, *matches)
-        self.assertEqual(start(linear, record(started_at=T2)), "")
+        self.assertIsNone(start(linear, record(started_at=T2)))
         self.assertEqual(linear.calls, ["comments", "commentUpdate"])
         updated = [c for c in linear.comments if c["body"] == sessions.body(record(started_at=T2))]
         self.assertEqual([c["id"] for c in updated], ["a"])
@@ -141,16 +141,16 @@ class Record(unittest.TestCase):
     def test_default_client_timeout_is_the_limit(self):
         found = {"issue": {"comments": {"nodes": []}}, "commentCreate": {"success": True}}
         with mock.patch.object(sessions.pipeline, "linear_gql", return_value=found) as gql:
-            self.assertEqual(start(None, record()), "")
+            self.assertIsNone(start(None, record()))
         self.assertEqual([c.kwargs["timeout"] for c in gql.call_args_list], [sessions.LIMIT] * 2)
         self.assertEqual(sessions.LIMIT, 10)
 
 
 class Failure(unittest.TestCase):
     def error(self, out, rest):
-        """out is one registry-error line ending in rest."""
+        """out is one registry-error line, no newline, ending in rest."""
         self.assertRegex(out, r"\A" + STAMP.pattern)
-        self.assertEqual(out[20:], f"registry-error {rest}\n")
+        self.assertEqual(out[20:], f"registry-error {rest}")
 
     def failing(self, exc):
         def gql(query, **v):
@@ -167,7 +167,7 @@ class Failure(unittest.TestCase):
             calls.append(query)
             return {"issue": None}
         out = end(no_issue, record(), 0)
-        self.assertRegex(out, r"\A" + STAMP.pattern + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\n\Z")
+        self.assertRegex(out, r"\A" + STAMP.pattern + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
         self.assertEqual(len(calls), 1)
 
     def test_write_raising_logs_one_line(self):
@@ -196,24 +196,6 @@ class Failure(unittest.TestCase):
             out = end(lambda q, **v: release.wait(30), record(), 0)
         self.assertLess(time.monotonic() - t, 5)
         self.error(out, f"{ISSUE} session={SID}: timed out after 0.1s")
-
-    def test_bad_input_logs_one_line_without_writing(self):
-        rec = json.dumps(record())
-        def gql(query, **v):
-            raise AssertionError("no write")
-        for argv, rest in (([], "? session=?: ValueError: usage: "),
-                           (["start", ISSUE], f"{ISSUE} session=?: ValueError: usage: "),
-                           (["stop", ISSUE, rec], f"{ISSUE} session=?: ValueError: usage: "),
-                           (["end", ISSUE, rec], f"{ISSUE} session=?: ValueError: usage: "),
-                           (["start", ISSUE, rec, "0"], f"{ISSUE} session=?: ValueError: usage: "),
-                           (["start", ISSUE, "{not json"], f"{ISSUE} session=?: JSONDecodeError: "),
-                           (["start", ISSUE, "[]"], f"{ISSUE} session=?: ValueError: RECORD_JSON is not an object"),
-                           (["end", ISSUE, rec, "x"], f"{ISSUE} session={SID}: ValueError: invalid literal")):
-            with self.subTest(argv=argv):
-                out = main(argv, gql)
-                self.assertRegex(out, r"\A" + STAMP.pattern + "registry-error " + re.escape(rest))
-                self.assertEqual(out.count("\n"), 1)
-                self.assertTrue(out.endswith("\n"))
 
     def test_secret_outside_the_message_does_not_leak(self):
         exc = subprocess.CalledProcessError(1, ["security", "find-generic-password", "-s", "svc", "-w"],
