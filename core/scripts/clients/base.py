@@ -1,11 +1,18 @@
 """The client interface: a Client turns a composed run into a Launch."""
 import os
+import re
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
 from compose import RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
+
+
+# A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`; a run reports it with a line
+# starting the same way, its report after the mark.
+PROGRESS = "agent-pm-progress"
+PROGRESS_LINE = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]\s*(.*)$")
 
 
 @dataclass(frozen=True)
@@ -25,9 +32,11 @@ class Launch:
 
 @dataclass(frozen=True)
 class Event:
-    """One thing a run's output says: text to show, a progress line, or its outcome (the last one counts)."""
+    """One thing a run's output says: text to show, a progress report (named by its point), or its outcome (the last
+    one counts)."""
     kind: Literal["text", "progress", "outcome"]
     text: str = ""
+    name: str = ""
     outcome: dict | None = None
 
 
@@ -35,13 +44,19 @@ class Client:
     keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
     runs = True            # True: launch() starts a run; False: export() writes files instead
-    scripts: str | None = None   # how prompts name core's scripts/ dir; None → its absolute path
-    handover = ""          # prompt text: how the run returns its outcome and reports progress (Output › Return)
 
     def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):
             raise ConfigError(f"unknown key {extra[0]!r} in {type(self).__name__}'s config")
         self.config = config
+
+    def scripts_path(self, root: str) -> str:
+        """How prompts name core's scripts/ dir: its absolute path unless the client says otherwise."""
+        return os.path.join(os.path.abspath(root), "scripts")
+
+    def handover(self) -> str:
+        """Prompt text (Output › Return): how the run returns its outcome and reports progress."""
+        return ""
 
     def value(self, run: RunConfig, key: str):
         """One of this client's own keys for the run, in config.toml's layout."""

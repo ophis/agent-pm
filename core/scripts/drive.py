@@ -77,10 +77,9 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
     run = load_run(root, role, task, layers=[client.config])
-    scripts = client.scripts or os.path.join(os.path.abspath(root), "scripts")
-    prompt = render(root, run, params, scripts=scripts, handover=client.handover)
-    launch = client.launch(prompt, run, params=params, access=access(run, params, repo=repo, scripts=scripts),
-                           schema=outcome_schema(root))
+    prompt = render(root, run, params, vehicle=client)
+    acc = access(run, params, repo=repo, scripts=client.scripts_path(root))
+    launch = client.launch(prompt, run, params=params, access=acc, schema=outcome_schema(root))
     return launch, run
 
 
@@ -89,7 +88,7 @@ def export(root: str, client: Client, role: str, task: str | None = None, *, des
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts runs; use plan()")
     run = load_run(root, role, task, layers=[client.config])
-    return client.export(render(root, run, scripts=client.scripts, handover=client.handover), run, dest=dest)
+    return client.export(render(root, run, vehicle=client), run, dest=dest)
 
 
 def write(files: dict[str, str]) -> None:
@@ -167,9 +166,9 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
             if event.kind == "outcome":
                 raw = event.outcome
             elif event.kind == "progress":
-                print(f"Progress: {event.text}", file=log, flush=True)
-                progress.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "text": event.text},
-                                          ensure_ascii=False) + "\n")
+                print(f"Progress ({event.name}): {event.text}", file=log, flush=True)
+                progress.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "name": event.name,
+                                           "text": event.text}, ensure_ascii=False) + "\n")
                 progress.flush()
             else:
                 print(event.text, file=log, flush=True)

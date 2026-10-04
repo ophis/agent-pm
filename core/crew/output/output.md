@@ -16,4 +16,4 @@ Statuses:
 - **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires. The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
 
-The input gives an earlier version → revise it, keeping what still holds. At each point your task marks **progress**, report one line per Output › Return.
+The input gives an earlier version → revise it, keeping what still holds. Each `[agent-pm-progress:<name>]` line in your task is a point to report what it says, per Output › Return.

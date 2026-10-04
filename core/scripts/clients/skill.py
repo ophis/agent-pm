@@ -6,9 +6,10 @@ import re
 
 from compose import RunConfig
 
-from .base import Client, Launch
+from .base import PROGRESS, Client, Launch
 
 TAIL = "\n---\n\nInput: $ARGUMENTS\nWorkdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n"
+SCRIPTS = "${CLAUDE_SKILL_DIR}/scripts"
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A skill runs once, inline: a task's Resume section (for interrupted runs) never applies.
 RESUME = re.compile(r"\n## Resume\n.*?(?=\n# |\Z)", re.S)
@@ -17,10 +18,14 @@ RESUME = re.compile(r"\n## Resume\n.*?(?=\n# |\Z)", re.S)
 class SkillClient(Client):
     keys = frozenset({"description", "roles"})
     runs = False
-    scripts = "${CLAUDE_SKILL_DIR}/scripts"
-    handover = ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
-                "`deliverable` after the frontmatter instead of in it; write no file for them. Report progress as its "
-                "own line starting `Progress: `.")
+
+    def scripts_path(self, root: str) -> str:
+        return SCRIPTS
+
+    def handover(self) -> str:
+        return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
+                f"`deliverable` after the frontmatter instead of in it; write no file for them. At each "
+                f"`[{PROGRESS}:<name>]` point, write a line starting with the same mark, your report after it.")
 
     def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
         name = f"{run.role}-{run.task}"
@@ -29,7 +34,7 @@ class SkillClient(Client):
         text = head + RESUME.sub("\n", prompt).rstrip() + "\n" + TAIL
         skill = os.path.join(os.path.abspath(dest), name)
         files = {os.path.join(skill, "SKILL.md"): text}
-        for script in sorted(set(re.findall(re.escape(self.scripts) + r"/([\w.-]+)", text))):
+        for script in sorted(set(re.findall(re.escape(SCRIPTS) + r"/([\w.-]+)", text))):
             with open(os.path.join(CORE_SCRIPTS, script)) as f:
                 files[os.path.join(skill, "scripts", script)] = f.read()
         return Launch([], files=files)

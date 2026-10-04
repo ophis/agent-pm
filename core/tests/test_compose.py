@@ -10,6 +10,18 @@ from dataclasses import replace
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 import compose  # noqa: E402
 
+class Plain:
+    """A vehicle with the default scripts path and no handover."""
+    def __init__(self, handover=""):
+        self._handover = handover
+
+    def scripts_path(self, root):
+        return os.path.join(os.path.abspath(root), "scripts")
+
+    def handover(self):
+        return self._handover
+
+
 CORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 
@@ -71,7 +83,7 @@ class Fake(unittest.TestCase):
 
     def compose(self, role="writer", task=None, *, layers=(), **params):
         run = compose.load_run(self.root, role, task, layers=layers)
-        return compose.render(self.root, run, replace(PARAMS, **params)), run
+        return compose.render(self.root, run, replace(PARAMS, **params), vehicle=Plain()), run
 
     def fails(self, msg, role="writer", task=None, layers=()):
         with self.assertRaises(compose.ConfigError) as cm:
@@ -213,19 +225,19 @@ class Prompt(Fake):
 
     def test_handover_closes_the_output_section(self):
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run, PARAMS, handover="Say it back.")
+        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain("Say it back."))
         body = prompt.rsplit("\n---\n", 1)[0]
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "writer", "long-note")
-        prompt = compose.render(self.root, replace(run, output={"type": "local"}))
+        prompt = compose.render(self.root, replace(run, output={"type": "local"}), vehicle=Plain())
         self.assertIn("Keep it local.", prompt)
         self.assertNotIn("Push to", prompt)
 
     def test_no_params_no_tail(self):
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run)
+        prompt = compose.render(self.root, run, vehicle=Plain())
         self.assertNotIn("Workdir: ", prompt)
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
         self.assertEqual((run.role_title, run.task_title, run.task_summary), ("Writer", "Short Note", "Write a note."))
@@ -265,7 +277,7 @@ with open(os.path.join(CORE, "config", "config.toml"), "rb") as _f:
 
 def composed(role, task=None):
     run = compose.load_run(CORE, role, task)
-    return compose.render(CORE, run, PARAMS), run
+    return compose.render(CORE, run, PARAMS, vehicle=Plain()), run
 
 
 class RealCore(unittest.TestCase):
@@ -319,8 +331,8 @@ class RealCore(unittest.TestCase):
 
     def test_github_host_defaults_and_overrides(self):
         run = compose.load_run(CORE, "researcher", "light-research")
-        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run))
-        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}))
+        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run, vehicle=Plain()))
+        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), vehicle=Plain())
         self.assertIn("gh repo clone ghe.example.com/ophis/private_docs", prompt)
         self.assertIn("https://ghe.example.com/ophis/private_docs/blob/main/", prompt)
 

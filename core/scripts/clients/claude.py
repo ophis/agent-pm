@@ -1,20 +1,22 @@
 """Claude Code: starts the run with `claude -p`, its data from config/clients/claude.toml. The outcome comes back as
-structured output checked against the schema; progress as `Progress: ` lines, both read from the stream-json output."""
+structured output checked against the schema; progress as PROGRESS lines in its replies, both read from the stream-json
+output."""
 import json
 import os
 from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams
 
-from .base import Access, Client, Event, Launch
-
-PROGRESS = "Progress: "
+from .base import PROGRESS, PROGRESS_LINE, Access, Client, Event, Launch
 
 
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
-    handover = (f"Return the outcome as your structured output when you finish. Report progress as its own line in your "
-                f"reply starting `{PROGRESS}`.")
+
+    def handover(self) -> str:
+        return (f"Return the outcome as your structured output when you finish. At each `[{PROGRESS}:<name>]` point, "
+                f"write a line in your reply starting with the same mark, your report after it, e.g. "
+                f"`[{PROGRESS}:budget] ultracode only, cap 80`.")
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access, schema: dict) -> Launch:
         c = self.config
@@ -44,10 +46,12 @@ class ClaudeClient(Client):
                 continue
             if e.get("type") == "assistant":
                 for block in e.get("message", {}).get("content", []):
-                    for text in block.get("text", "").splitlines() if block.get("type") == "text" else ():
-                        if text.startswith(PROGRESS):
-                            yield Event("progress", text[len(PROGRESS):].strip())
-                        elif text.strip():
-                            yield Event("text", text)
+                    if block.get("type") != "text":
+                        continue
+                    for line in block.get("text", "").splitlines():
+                        if m := PROGRESS_LINE.match(line):
+                            yield Event("progress", m.group(2).strip(), name=m.group(1))
+                        elif line.strip():
+                            yield Event("text", line)
             elif e.get("type") == "result" and isinstance(e.get("structured_output"), dict):
                 yield Event("outcome", outcome=e["structured_output"])

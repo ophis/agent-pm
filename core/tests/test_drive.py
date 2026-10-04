@@ -267,11 +267,12 @@ DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"
 
 class ClaudeEvents(unittest.TestCase):
     def test_text_progress_and_the_last_outcome(self):
-        lines = stream(said("Starting.\nProgress: budget 2 rounds"), result(None, 0), result(DONE),
+        lines = stream(said("Starting.\n- [agent-pm-progress:budget]  2 rounds, cap 80\nProgress: not a report\nsee [agent-pm-progress:x] mid-line"), result(None, 0), result(DONE),
                        {"type": "system", "subtype": "task_updated"})
         events = list(claude().events(["not json\n", *lines]))
-        self.assertEqual([(e.kind, e.text) for e in events if e.kind != "outcome"],
-                         [("text", "not json"), ("text", "Starting."), ("progress", "budget 2 rounds")])
+        self.assertEqual([(e.kind, e.name, e.text) for e in events if e.kind != "outcome"],
+                         [("text", "", "not json"), ("text", "", "Starting."), ("progress", "budget", "2 rounds, cap 80"),
+                          ("text", "", "Progress: not a report"), ("text", "", "see [agent-pm-progress:x] mid-line")])
         self.assertEqual([e.outcome for e in events if e.kind == "outcome"], [DONE])
 
 
@@ -327,14 +328,14 @@ class Start(Base):
             return f.read()
 
     def test_done_run_saves_outcome_deliverable_and_progress(self):
-        r, ((argv, kw),), log = self.start(stream(said("Progress: half way"), result(DONE)))
+        r, ((argv, kw),), log = self.start(stream(said("[agent-pm-progress:round] half way"), result(DONE)))
         out = os.path.join(self.work, "out.md")
         self.assertEqual((r.returncode, r.outcome.status, r.outcome.url), (0, "done", out))
         self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake"], self.work, "1"))
         self.assertEqual(self.read("out.md"), "# Doc\n")
         self.assertEqual(json.loads(self.read("outcome.json"))["url"], out)
-        self.assertEqual(json.loads(self.read("progress.jsonl"))["text"], "half way")
-        self.assertIn("Progress: half way", log)
+        self.assertEqual(json.loads(self.read("progress.jsonl")) | {"ts": ""}, {"ts": "", "name": "round", "text": "half way"})
+        self.assertIn("Progress (round): half way", log)
 
     def test_github_destination_keeps_the_runs_url_and_saves_no_deliverable(self):
         gh = {"type": "github", "repo": "o/docs", "branch": "main"}
@@ -363,8 +364,8 @@ class Start(Base):
         self.assertFalse(os.path.exists(os.path.join(self.work, "outcome.json")))
 
     def test_resume_appends_progress(self):
-        self.start(stream(said("Progress: one"), result(DONE)))
-        self.start(stream(said("Progress: two"), result(DONE)), resume=True)
+        self.start(stream(said("[agent-pm-progress:round] one"), result(DONE)))
+        self.start(stream(said("[agent-pm-progress:round] two"), result(DONE)), resume=True)
         self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["one", "two"])
 
 

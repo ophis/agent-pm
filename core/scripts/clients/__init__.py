@@ -9,7 +9,7 @@ needs data.
 """
 from compose import ConfigError
 
-from .base import Access, Client, Launch, load_config  # noqa: F401
+from .base import PROGRESS, PROGRESS_LINE, Access, Client, Event, Launch, load_config  # noqa: F401
 from .claude import ClaudeClient
 from .skill import SkillClient
 

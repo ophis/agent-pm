@@ -11,7 +11,7 @@ import tomllib
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, get_args
+from typing import Literal, Protocol, get_args
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "crew"   # principles.md, roles/, tasks/, templates/ and output/ live here
@@ -29,6 +29,12 @@ RESUME = "Resumed run after an interruption. These rules are current; they may h
 
 class ConfigError(Exception):
     pass
+
+
+class Vehicle(Protocol):
+    """What render() needs from whatever carries the prompt (a client)."""
+    def scripts_path(self, root: str) -> str: ...   # how the prompt names core's scripts/ dir
+    def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -97,14 +103,13 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
                    task_summary=_summary(task_md))
 
 
-def render(root: str, run: RunConfig, params: RunParams | None = None, *, scripts: str | None = None,
-           handover: str = "") -> str:
-    """The run's prompt: its Output section ends with the client's `handover` (how the outcome and progress come
-    back) as Output › Return, then the Workdir/Input tail when params are given."""
+def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:
+    """The run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return, then the
+    Workdir/Input tail when params are given."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
     names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title)}
-    paths = {"scripts": scripts or os.path.join(os.path.abspath(root), "scripts")}
+    paths = {"scripts": vehicle.scripts_path(root)}
     parts = [fill(_read(text, "principles.md"), names, "principles.md")]
     parts += [fill(_read(text, rel), paths, rel) for rel in _rule_files(run.role, run.task)]
     for name in run.templates:
@@ -116,7 +121,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, script
     if not os.path.isfile(os.path.join(text, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({dest})")
     parts.append(fill(_read(text, "output/output.md"), {}, "output/output.md") + "\n" + fill(_read(text, dest), run.output, dest))
-    if handover:
+    if handover := vehicle.handover():
         parts.append(f"## Return\n\n{handover.strip()}\n")
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
     if params:

@@ -88,7 +88,7 @@ Statuses:
 - **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires. The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
 
-The input gives an earlier version → revise it, keeping what still holds. At each point your task marks **progress**, report one line per Output › Return.
+The input gives an earlier version → revise it, keeping what still holds. Each `[agent-pm-progress:<name>]` line in your task is a point to report what it says, per Output › Return.
 
 ## Destination
 
@@ -101,7 +101,7 @@ Open or update the pull request for `<branch>` on `<owner>/<name>`; the delivera
 
 ## Return
 
-End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for them. Report progress as its own line starting `Progress: `.
+End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its `deliverable` after the frontmatter instead of in it; write no file for them. At each `[agent-pm-progress:<name>]` point, write a line starting with the same mark, your report after it.
 
 ---
 
