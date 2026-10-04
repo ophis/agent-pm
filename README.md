@@ -71,7 +71,7 @@ claude -p '<prompt>' \
 
 ### Core configuration
 
-- `core/team/`: `guide.md` (the prompt's opening: what each section is, and precedence), `principles.md` (rules for every run), one charter per role, one file per task, and the report and PRD templates.
+- `core/team/`: `guide.md` (the prompt's opening: what each section is, and precedence), `principles.md` (rules for every run), one charter per role, one file per task, and the report (numbered `[n]` sources) and PRD (stable `FR-<n>`, `NFR-<n>`, `P<n>` ids) templates.
 - `core/config/config.toml`: per role and task, `tier`, `effort`, extra `read`/`write` dirs, pre-approved `commands`, the `output` (the docs repo, branch and folder of the document tasks; they must share one github.com repo and branch) and `language`. `core/config/clients/claude.toml` maps tiers and efforts to models and holds the `claude` flags. See `core/CLAUDE.md`.
 
 ## Orchestrator
