@@ -33,7 +33,11 @@ The component that turns a role, a task and free-text input into a run: a compos
 The part of the delegate that assembles principles, role, task and input into a prompt and run config.
 
 **Driver**:
-The part of the delegate that starts a run in a given runtime and enforces its hard constraints.
+The part of the delegate that starts a run through a client and checks its output; the same for every client.
+
+**Client**:
+An agent runtime a run executes in (Claude Code today); it turns a composed run into its own command and enforces the run's hard constraints.
+_Avoid_: runtime, backend
 
 **Vehicle**:
 A form a prompt is delivered in (skill, plugin agent, `claude -p` prompt); roles and tasks stay vehicle-neutral.

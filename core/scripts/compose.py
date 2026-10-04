@@ -19,7 +19,7 @@ RUN_KEYS = {"tier", "effort", "read", "write", "commands", "templates", "output"
 GLOBAL_KEYS = RUN_KEYS | {"roles"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 LISTS = ("read", "write", "commands", "templates")
-EFFORTS = ("low", "medium", "high", "max")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
 RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 

@@ -1,0 +1,21 @@
+# Claude Code client data, read by ClaudeClient (scripts/clients.py); how argv is built lives there.
+flags = ["--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config"]
+
+[tiers]
+1 = "fable"
+2 = "opus"
+3 = "sonnet"
+4 = "haiku"
+
+[efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+[env]
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"   # claude -p otherwise kills a workflow after 10 idle minutes
+
+# [tasks.<task>]
+# allow = ["<rule>"]   # extra --allowedTools rules in Claude Code syntax

@@ -116,7 +116,7 @@ class Validate(Fake):
         self.fails("tier must be an integer 1–4", task="long-note")
 
     def test_bad_effort(self):
-        self.config(CONFIG.replace('effort = "medium"', 'effort = "xhigh"'))
+        self.config(CONFIG.replace('effort = "medium"', 'effort = "ultra"'))
         self.fails("effort must be one of")
 
     def test_unknown_destination(self):
@@ -249,7 +249,7 @@ class RealCore(unittest.TestCase):
         prompt, run = compose.compose(CORE, "engineer", "engineering", **PATHS)
         self.assertIn("[Engineer rules](#engineer) > [Engineering rules](#engineering)", prompt)
         self.assertIn("gh pr create", prompt)
-        self.assertEqual((run["effort"], run["write"], run["output"]), ("max", ["repo"], {"type": "pull-request"}))
+        self.assertEqual((run["effort"], run["write"], run["output"]), ("xhigh", ["repo"], {"type": "pull-request"}))
 
     def test_researcher_defaults_to_deep_research(self):
         _, run = compose.compose(CORE, "researcher", **PATHS)
