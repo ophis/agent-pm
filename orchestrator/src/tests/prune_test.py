@@ -2,6 +2,7 @@ import ast, io, os, shutil, sys, tempfile, unittest
 from contextlib import redirect_stdout
 from datetime import timedelta
 from functools import partial
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -356,7 +357,7 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(msgs(out), [f"dry-run: prune-plan TASK-7/{a}: close the tui session",
                                      f"dry-run: prune-plan TASK-7/{b}: close the tui session"])
         self.assertEqual(tmux.calls, [])
-        self.assertEqual(open(path).read().count("\n"), 3)
+        self.assertEqual(Path(path).read_text().count("\n"), 3)
 
     def test_kill_failure_counted_and_kept_recorded(self):
         a, b = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
@@ -366,7 +367,7 @@ class PruneTest(unittest.TestCase):
         lines = msgs(out)
         self.assertTrue(lines[0].startswith(f"prune-error TASK-7/{a}: "))
         self.assertEqual(lines[1], f"prune-closed TASK-7/{b}: tui session")
-        self.assertEqual(open(path).read(), a + "\n")
+        self.assertEqual(Path(path).read_text(), a + "\n")
 
     def test_bad_record_lines_skipped_and_unreadable_record_counted(self):
         self.record("TASK-7", "evil name")
