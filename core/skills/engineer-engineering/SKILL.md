@@ -50,10 +50,10 @@ Build the PRD with `autopilot:build`, then open a pull request.
 ## Steps
 
 1. **Read** the input and the PRD. The user's requirements outrank the PRD.
-2. **Repo.** `<branch>` is the input's `Branch:`, else `<Reference>-<slug>`: the id the input gives (none → `build`), then the PRD title's lowercase ASCII words joined by `-`, ≤ 40 characters. Run exactly `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo.py checkout <repo> --branch <branch> --dir <Workdir>/src`; its JSON gives `<host>`, `<owner>/<name>`, `<default>` and `<worktree>`. Inspect only `<worktree>` and the workdir.
+2. **Repo.** `<branch>` is the input's `Branch:`, else `<Reference>-<slug>`: the id the input gives (none → `build`), then the PRD title's lowercase ASCII words joined by `-`, ≤ 40 characters. Run exactly `python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py checkout <repo> --branch <branch> --dir <Workdir>/src`; its JSON gives `<host>`, `<owner>/<name>`, `<default>` and `<worktree>`. Inspect only `<worktree>` and the workdir.
    - No `Repo:`, or exit 2 → `needs_input`, a question quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
-3. **Status.** Run exactly `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo.py status <repo> --branch <branch> --dir <Workdir>/src`: `pr`, `plan_docs` (path, phase) and the PR's comments and reviews since the latest plan doc commit, the gh user's under `user` (the user's requirements too) and everyone else's under `others` (review input).
+3. **Status.** Run exactly `python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py status <repo> --branch <branch> --dir <Workdir>/src`: `pr`, `plan_docs` (path, phase) and the PR's comments and reviews since the latest plan doc commit, the user's under `user` (requirements too) and everyone else's under `others` (review input).
 4. **Which build**, from the plan docs and the user's requirements:
    - A plan doc before S9 → continue it (`autopilot:build` resumes from it), first updating its spec and plan to the user's requirements.
    - Else a finished build and a user requirement → a new build, new plan doc. Review input alone never starts one.

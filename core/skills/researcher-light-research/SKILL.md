@@ -31,7 +31,7 @@ You answer research questions with Markdown reports.
 
 - **Type**: answering needs a repo's code → **local**; that plus the web → **mixed**; else **web**. Judge by need alone.
 - **Target** (local, mixed): one repo, the input's `Repo:` line (`<owner>/<name>`, `<host>/<owner>/<name>` or its URL). None, or the question needs several repos → too vague.
-- **Prepare** (local, mixed): in the main session, before any agent or workflow, run exactly `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo.py prepare <repo> --dir <Workdir>/src`, nothing around it. Read code only in its JSON's `worktree`.
+- **Prepare** (local, mixed): in the main session, before any agent or workflow, run exactly `python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare <repo> --dir <Workdir>/src`, nothing around it. Read code only in its JSON's `worktree`.
   - Exit 2 → too vague; a question quotes its error.
   - Exit 1 → keep any web part, list the local part under 缺口.
 - The worktree is read-only.

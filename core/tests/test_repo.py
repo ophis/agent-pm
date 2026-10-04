@@ -185,6 +185,24 @@ class Status(Base):
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
 
+    def test_configured_users_replace_the_gh_login(self):
+        comments = [[{"created_at": "2026-10-03T00:00:00Z", "user": {"login": "me"}, "body": "from the bot"},
+                     {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "Alice"}, "body": "do Y"}]]
+        run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
+                    (["gh", "pr", "list"], ok(json.dumps([{"number": 7, "url": "u7", "state": "OPEN",
+                                                           "isCrossRepository": False, "author": {"login": "me"}}]))),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                    (lambda a: "--paginate" in a, ok("[[]]"))])
+        config = os.path.join(self.dir, "config.toml")
+        with open(config, "w") as f:
+            f.write('users = ["alice"]\n')
+        out, err = io.StringIO(), io.StringIO()
+        code = repo.main(["status", "o/n", "--branch", "b", "--dir", self.dir], run=run, out=out, err=err, config=config)
+        r = json.loads(out.getvalue())
+        self.assertEqual((code, r["pr"]["number"]), (0, 7))
+        self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
+        self.assertEqual([e["body"] for e in r["others"]], ["from the bot"])
+
     def test_other_branches_plan_docs_and_no_pr(self):
         self.plan_doc(branch="other")
         run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),

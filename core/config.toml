@@ -7,10 +7,12 @@
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
 #              {{scripts}} is core's scripts/ dir
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
+#   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
 
 # ── Global ──────────────────────────────────────────────
 tier = 2
 effort = "high"
+# users = ["octocat"]
 
 [output]
 type = "local"

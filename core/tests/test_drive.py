@@ -160,21 +160,27 @@ class Skill(Base):
         skills = os.path.join(self.tmp.name, "skills")
         launch = drive.plan(CORE, "researcher", "light-research", client="skill", input=None, out=skills, workdir=None)
         self.assertEqual(launch.argv, [])
-        (path, text), = launch.files.items()
-        self.assertEqual(path, os.path.join(skills, "researcher-light-research", "SKILL.md"))
+        skill = os.path.join(skills, "researcher-light-research")
+        self.assertEqual(sorted(launch.files), [os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py")])
+        text = launch.files[os.path.join(skill, "SKILL.md")]
+        with open(os.path.join(CORE, "scripts", "repo.py")) as f:
+            self.assertEqual(launch.files[os.path.join(skill, "scripts", "repo.py")], f.read())
         head, body = text.split("\n---\n", 1)
         self.assertEqual(head.splitlines()[:2], ["---", "name: researcher-light-research"])
         self.assertIn('description: "Quick research on a question', head)
         self.assertTrue(body.lstrip().startswith("# Principles"))
         self.assertIn("Input: $ARGUMENTS", body)
-        self.assertIn("`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/repo.py prepare ", body)
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare ", body)
         self.assertNotIn(self.tmp.name, body)
         self.assertNotIn(CORE, body)
 
     def skill_text(self, role, task):
         launch = drive.plan(CORE, role, task, client="skill", input=None, out=self.tmp.name, workdir=None)
-        (_, text), = launch.files.items()
-        return text
+        return launch.files[os.path.join(self.tmp.name, f"{role}-{task}", "SKILL.md")]
+
+    def test_skills_without_scripts_get_only_skill_md(self):
+        launch = drive.plan(CORE, "pm", "product-design", client="skill", input=None, out=self.tmp.name, workdir=None)
+        self.assertEqual(list(launch.files), [os.path.join(self.tmp.name, "pm-product-design", "SKILL.md")])
 
     def test_document_tasks_return_to_the_orchestrator(self):
         for role, task in (("researcher", "light-research"), ("pm", "product-design")):
@@ -217,10 +223,7 @@ class Skill(Base):
     def test_every_task_becomes_a_skill(self):
         for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "engineering"),
                            ("dummy-tester", "echo")):
-            launch = drive.plan(CORE, role, task, client="skill", input=None, out=self.tmp.name, workdir=None)
-            (path, text), = launch.files.items()
-            self.assertTrue(path.endswith(f"{role}-{task}/SKILL.md"))
-            self.assertNotIn("{{", text)
+            self.assertNotIn("{{", self.skill_text(role, task))
 
     def test_main_writes_the_file_and_runs_nothing(self):
         skills = os.path.join(self.tmp.name, "skills")

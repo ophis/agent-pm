@@ -1,11 +1,15 @@
-"""Agent Skill: writes the composed role + task as <out>/<role>-<task>/SKILL.md instead of starting a run."""
+"""Agent Skill: writes the composed role + task as <out>/<role>-<task>/SKILL.md, plus a copy of each core script it runs
+under scripts/, instead of starting a run."""
 import json
 import os
+import re
 
 from .base import Client, Launch
 
 TAIL = "\n---\n\nInput: $ARGUMENTS\nOutput: {output}\nWorkdir: a new temp dir (`mktemp -d`), made once per invocation\n"
 TO_FILE = "the path the input names, else `./{name}-<date +%Y%m%d-%H%M>.md` in the current directory"
+SCRIPTS = "${CLAUDE_SKILL_DIR}/scripts"
+CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TO_ORCHESTRATOR = "your final reply to the orchestrator: the frontmatter, then the deliverable; no file"
 
 
@@ -14,7 +18,7 @@ class SkillClient(Client):
     runs = False
 
     def scripts(self, root, run, out):
-        return "${CLAUDE_PLUGIN_ROOT}/scripts"   # the skills ship in core's plugin
+        return SCRIPTS
 
     def launch(self, prompt, run, *, sid, resume, access, out):
         name = f"{run['role']}-{run['task']}"
@@ -22,4 +26,9 @@ class SkillClient(Client):
         head = f"---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n"
         dest = TO_ORCHESTRATOR if run["output"]["type"] == "orchestrator" else TO_FILE.format(name=name)
         text = head + prompt.rstrip() + "\n" + TAIL.format(output=dest)
-        return Launch([], files={os.path.join(os.path.abspath(out), name, "SKILL.md"): text})
+        skill = os.path.join(os.path.abspath(out), name)
+        files = {os.path.join(skill, "SKILL.md"): text}
+        for script in sorted(set(re.findall(re.escape(SCRIPTS) + r"/([\w.-]+)", text))):
+            with open(os.path.join(CORE_SCRIPTS, script)) as f:
+                files[os.path.join(skill, "scripts", script)] = f.read()
+        return Launch([], files=files)

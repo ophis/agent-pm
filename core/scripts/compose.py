@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "delegate-core"   # roles/, tasks/, templates/ and output/ live here
 
 RUN_KEYS = {"tier", "effort", "read", "write", "commands", "templates", "output"}
-GLOBAL_KEYS = RUN_KEYS | {"roles"}
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 LISTS = ("read", "write", "commands", "templates")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
