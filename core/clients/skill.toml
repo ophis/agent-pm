@@ -31,7 +31,7 @@ description = "Build a PRD into a pull request on its target repo with autopilot
 
 # ── Dummy Tester ───────────────────────────────────────
 [roles.dummy-tester.tasks.echo]
-description = "Return the input unchanged. Use only to check that the delegate pipeline works end to end."
+description = "Return the input unchanged. Use only to check that a role, a task and their output work end to end."
 
 [roles.dummy-tester.tasks.echo.output]
 type = "orchestrator"

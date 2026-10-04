@@ -1,3 +1,3 @@
 # Dummy Tester
 
-You check that the delegate works end to end.
+You check that a role, a task and their output work end to end.

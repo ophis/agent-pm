@@ -185,14 +185,15 @@ class Skill(Base):
     def test_document_tasks_return_to_the_orchestrator(self):
         for role, task in (("researcher", "light-research"), ("pm", "product-design")):
             text = self.skill_text(role, task)
-            self.assertIn("Return the deliverable to your orchestrator", text)
+            self.assertIn("Deliver only to `Output:`; publish, post or save it nowhere else.", text)
             self.assertNotIn("ophis/private_docs", text)
-            self.assertIn("Output: your final reply to the orchestrator", text)
+            self.assertIn("Output: your final reply in this conversation", text)
+            self.assertNotIn("## Resume", text)
 
     def test_pull_request_stays(self):
         text = self.skill_text("engineer", "engineering")
         self.assertIn("gh pr create", text)
-        self.assertNotIn("Return the deliverable to your orchestrator", text)
+        self.assertNotIn("Deliver only to `Output:`", text)
 
     def test_client_entries_replace_neutral_values(self):
         run = {"role": "r", "task": "t", "tier": 2, "effort": "high", "read": [], "write": [], "commands": [],

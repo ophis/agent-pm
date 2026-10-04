@@ -1,3 +1,3 @@
 ## Destination
 
-Return the deliverable to your orchestrator; publish, post or save it nowhere. `url:` stays empty.
+Deliver only to `Output:`; publish, post or save it nowhere else. `url:` stays empty.
