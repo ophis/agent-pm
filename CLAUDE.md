@@ -5,8 +5,8 @@ Unattended agent pipeline on a Linear board. launchd runs `router.py`, which sta
 ## Commands
 
 ```bash
-python3 -m unittest discover -s scripts/tests                     # orchestrator tests; no network, Keychain or Claude
-python3 -m unittest discover -s scripts/tests -k attempt          # tests whose name matches
+python3 -m unittest discover -s scripts/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
+python3 -m unittest discover -s scripts/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
 core/regen_skills.sh                                              # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
 python3 scripts/router.py --now --dry-run                         # one tick: plan + usage probe, changes nothing
@@ -41,7 +41,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 ## Gotchas
 
 - Runs get `--setting-sources user --strict-mcp-config` (`core/config/clients/claude.toml`), so this file and project settings never load in them. A run reaches only `work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
-- `test_inputs.py` and `test_writeback.py` pin the input text and the Linear calls; `test_run.py` pins the tmux argv.
+- `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `run_test.py` pins the tmux argv.
 - Each pipeline task (deep-research, light-research, product-design, engineering) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks). Without it write-back posts no start comment, and engineering's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.

@@ -158,7 +158,7 @@ Moving a running pipeline from the pre-core runner to core runs. No session cros
 2. Wait until `tmux ls` shows no `agent-pm-*`.
 3. Every In Progress issue assigned to a role account: comment `Restarting under the core runner; the earlier session is not resumed.` and move it to Todo.
 4. Merge, then `git pull --ff-only` in `~/playground/agent-pm` (the plists' path; plists unchanged). The new-shape `pipeline.toml` ships in the merge.
-5. `python3 -m unittest discover -s scripts/tests`, `python3 scripts/router.py --now --dry-run`, `python3 scripts/promote.py --dry-run`.
+5. `python3 -m unittest discover -s scripts/tests -p "*_test.py"`, `python3 scripts/router.py --now --dry-run`, `python3 scripts/promote.py --dry-run`.
 6. `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.router.plist`; watch the first run: `tmux attach -t agent-pm-<role>`, `logs/projects/<task>.log`.
 
 In flight:
@@ -173,7 +173,7 @@ Rollback: revert the merge and drain the same way.
 ## Development
 
 ```bash
-python3 -m unittest discover -s scripts/tests                  # no network, Keychain or Claude needed
+python3 -m unittest discover -s scripts/tests -p "*_test.py"   # no network, Keychain or Claude needed
 python3 -m unittest discover -s core/src/tests -p "*_test.py"  # core
 core/regen_skills.sh                                           # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
 ```

@@ -8,7 +8,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
 import pipeline, promote, prune  # noqa: E402
-import test_promote as tp  # noqa: E402
+import promote_test as tp  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
