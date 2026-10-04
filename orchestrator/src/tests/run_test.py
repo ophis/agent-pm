@@ -393,8 +393,8 @@ class Inner(Base):
         return self.main(["--inner", "--uuid", uuid, *(["--target", target] if target else []),
                           *forwarded(assignee, task, mode)])
 
-    def rec(self, key=KEY):
-        return sessions.base(sid=SID, cwd=self.rd, key=key, started_at=NOW)
+    def rec(self):
+        return sessions.base(sid=SID, cwd=self.rd, started_at=NOW)
 
     def harness(self, rc):
         """The session start and end posts: harness account, bounded by sessions.LIMIT."""

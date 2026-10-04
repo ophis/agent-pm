@@ -34,14 +34,13 @@ def is_comment(comment):
     return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {SID} · ", comment["body"]) is not None
 
 
-def base(*, sid, cwd, key, started_at):
-    """The record. key is the role's Keychain service name, never a secret."""
-    return {"sid": sid, "cwd": cwd, "key": key, "started_at": started_at}
+def base(*, sid, cwd, started_at):
+    return {"sid": sid, "cwd": cwd, "started_at": started_at}
 
 
 def command(rec):
     q = shlex.quote
-    return f"cd {q(rec['cwd'])} && LINEAR_KEYCHAIN_SERVICE={q(rec['key'])} claude --resume {q(rec['sid'])}"
+    return f"cd {q(rec['cwd'])} && claude --resume {q(rec['sid'])}"
 
 
 def prefix(sid):

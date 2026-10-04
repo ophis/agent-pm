@@ -193,7 +193,7 @@ def inner(a, *, gql, popen, runs, root):
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
     _append(plog, f"{_stamp()} launch {a.issue} mode={a.mode} session={a.sid}")
-    rec = sessions.base(sid=a.sid, cwd=rd, key=role.key, started_at=sessions.now())
+    rec = sessions.base(sid=a.sid, cwd=rd, started_at=sessions.now())
     if reg := sessions.post(a.issue, rec, gql=harness):
         _append(plog, reg)
     ctx = _context(a, cfg, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)

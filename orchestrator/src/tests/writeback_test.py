@@ -577,7 +577,7 @@ HANDOFF = ("Handoff from PRD-3: https://linear.app/t/issue/PRD-3\n\n## Source\n-
 
 def issue(description):
     return issues.Issue(UUID, ID, f"https://linear.app/t/issue/{ID}", "ENG: Session registry", description,
-                        "2026-09-01T00:00:00.000Z", STATES["in_progress"], None, (), (), ())
+                        "2026-09-01T00:00:00.000Z", None, (), (), ())
 
 
 class Bounce(Base):

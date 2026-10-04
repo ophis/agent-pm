@@ -173,7 +173,7 @@ Every run works in `work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.js
 
 ### Session records
 
-Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session as its role, `cd <work/ID> && LINEAR_KEYCHAIN_SERVICE=<key> claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
+Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <work/ID> && claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
 
 - A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, runs skip them, and the router never reads them: it still resumes from `logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.

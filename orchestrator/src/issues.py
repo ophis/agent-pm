@@ -9,9 +9,9 @@ import pipeline  # noqa: E402
 import sessions  # noqa: E402
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
-  state { id } project { id }
+  project { id }
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
-  attachments(first: 50) { nodes { title url } }
+  attachments(first: 50) { nodes { url } }
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
@@ -31,7 +31,6 @@ class Note:
 @dataclass(frozen=True)
 class Link:
     """An attachment."""
-    title: str | None
     url: str
 
 
@@ -47,7 +46,6 @@ class Linked:
 class Handoff:
     """A Handoff description's section bodies, stripped."""
     source: str
-    sources: str
     instructions: str
     comments: str
 
@@ -60,7 +58,6 @@ class Issue:
     title: str
     description: str
     created_at: str
-    state_id: str
     project_id: str | None
     notes: tuple[Note, ...]
     links: tuple[Link, ...]
@@ -87,9 +84,9 @@ def read_issue(gql, ident) -> Issue:
         linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
     return Issue(
         id=node["id"], identifier=node["identifier"], url=node["url"], title=node["title"],
-        description=node["description"] or "", created_at=node["createdAt"], state_id=node["state"]["id"],
+        description=node["description"] or "", created_at=node["createdAt"],
         project_id=(node["project"] or {}).get("id"), notes=tuple(notes),
-        links=tuple(Link(a["title"], a["url"]) for a in node["attachments"]["nodes"]), linked=tuple(linked.values()))
+        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]), linked=tuple(linked.values()))
 
 
 def parse_handoff(description) -> Handoff | None:
@@ -120,7 +117,7 @@ def parse_handoff(description) -> Handoff | None:
             return ""
         end = min((s for s in starts.values() if s > starts[header]), default=len(lines))
         return "\n".join(lines[starts[header] + 1:end]).strip()
-    return Handoff(m.group(1), body(source), body(instructions), body(comments))
+    return Handoff(m.group(1), body(instructions), body(comments))
 
 
 def is_user(note, humans) -> bool:
