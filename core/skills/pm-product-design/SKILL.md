@@ -10,7 +10,7 @@ You are the PM role doing the Product Design task. The sections below:
 - **Principles**: rules for every role.
 - **[PM](#pm)**: your role charter.
 - **[Product Design](#product-design)**: your task; follow its steps in order.
-- **Template**, when present: the format of the document your task writes.
+- **Template**, when present: the format of the document your task writes. Its headings are fixed and the text under each says what goes there; drop a heading only where it says `Optional; omit when …` and that holds.
 - **Output**: what to return, where to deliver it and how to report progress.
 - After the final `---`: the Input and your Workdir.
 
@@ -68,7 +68,7 @@ Turn the input into a reviewed PRD.
    - Settle each in the PRD, inferences under Assumptions; what only the user can decide goes under Open questions.
 6. **Write** the PRD:
    - The input gives a PRD → revise it for the user's later words, keeping earlier decisions they didn't change.
-   - Else follow `templates/prd.md`, keeping every heading but inapplicable optional ones; title `PRD: [Reference] [Product name]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `PRD: [Product name]`. Choose a short product name; the outcome's `title` is that name alone, unchanged on revision.
+   - Else follow `templates/prd.md`; title `PRD: [Reference] [Product name]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `PRD: [Product name]`. Choose a short product name; the outcome's `title` is that name alone, unchanged on revision.
 7. **Review.** Spawn one fresh subagent with the PRD's full text, the brief and the user's later words, to flag missing, contradictory or untestable requirements, scope beyond what the user asked for, and over-engineering, asking no more rigor than the brief does. Fix the findings that hold up, once.
 8. **Finish.** `status: done`; `summary` 3–5 lines.
 
@@ -81,7 +81,7 @@ Turn the input into a reviewed PRD.
 # PRD: [Reference] [Product name]
 
 ## Problem and goals
-What problem, for whom; measurable goals.
+What problem, for whom, and its evidence (a report finding, a source or the user's words); the goals.
 
 ## Non-goals
 What it explicitly won't do.
@@ -96,22 +96,28 @@ The main flow from start to finish: what the user sees and does at each step.
 Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs, which one is chosen and why.
 
 ## Requirements
+Ids (`FR-<n>`, `NFR-<n>`, `P<n>`) stay as written, in ASCII, and are never renumbered on revision.
 ### Functional requirements
-Numbered, each verifiable.
+One per line: `FR-<n>`: the requirement. `Check:` an observable pass condition (an input → an output or state).
 ### Non-functional requirements
-Performance, reliability, security, cost, etc.
+Optional; omit when none. One per line: `NFR-<n>`: a constraint this product actually has, with its threshold or check.
 
 ## Success metrics
-How to tell it worked.
+How and when each goal is measured.
 
 ## Scope and phased delivery
-What each phase delivers.
+One `### P<n>: <name>` per phase, in delivery order, each shippable alone: the requirement ids it delivers and its exit check. One phase → `P1` only.
 
 ## Assumptions, open questions and risks
-Assumptions first state whether research and a self-grill were needed, one sentence each. What the user must decide goes under Open questions, each with a suggested answer ready to adopt.
+### Assumptions
+Inferences the PRD rests on; one resting on research cites the finding and its confidence.
+### Open questions
+What the user must decide, each with a suggested answer; until the user answers, the suggested answer holds.
+### Risks
+Unknowns, and the low-confidence or single-source findings the PRD relies on.
 
 ## Done
-Optional; omit when the product has nothing built yet. Grouped by original section (e.g. `### Requirements`), naming where each is implemented (file or commit).
+Optional; omit when the product has nothing built yet. Under `###` copies of the original headings, by id, naming where each is implemented (file or commit).
 ```
 
 # Output
