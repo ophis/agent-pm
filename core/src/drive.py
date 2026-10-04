@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Driver: composes a run, has its client (src/clients/) build the command, starts it, then checks and saves the
-outcome the client reads back.
+"""Driver: composes a run, has its client (src/clients/) build the command, starts it, tails the channel the run
+reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the outcome.
 
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--dry-run]
@@ -12,15 +12,19 @@ Exits 0 when the run returns a valid outcome (or the files are written), 1 when 
 3 when the client fails.
 """
 import argparse
+import errno
 import json
 import os
+import queue
 import subprocess
 import posixpath
 import re
+import stat
 import sys
 import tempfile
+import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
@@ -29,12 +33,15 @@ from urllib.parse import unquote, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render  # noqa: E402
+from compose import (ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render,  # noqa: E402
+                     report_command)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
 SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
 OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
+NAME = re.compile(r"[\w-]+")
+POLL = 0.5   # seconds between reads of the channel while stdout is quiet
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
 
 
@@ -68,15 +75,16 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str) -> Access:
-    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled, the gate (used verbatim) pre-approved too.
-    Edit limits are left to the client's permission mode (auto)."""
+    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled, then the report command and the gate (used
+    verbatim) pre-approved too. Edit limits are left to the client's permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
     dirs = []
     for p in (bind(e, repo) for e in run.read + run.write):
         if p and p not in dirs:
             dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
-    return Access(dirs, [fill(c, values, "commands") for c in run.commands] + ([run.gate] if run.gate else []))
+    commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params)} *"]
+    return Access(dirs, commands + ([run.gate] if run.gate else []))
 
 
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
@@ -88,7 +96,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     run = load_run(root, role, task, layers=[client.config, *layers])
     prompt = render(root, run, params, vehicle=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root))
-    launch = client.launch(prompt, run, params=params, access=acc, schema=outcome_schema(root))
+    launch = client.launch(prompt, run, params=params, access=acc)
     return launch, run
 
 
@@ -130,9 +138,8 @@ def printable(text: str) -> str:
 
 
 def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
-    """The outcome a run returned, once it holds; raises InvalidOutcome. Shape and lengths are the schema's
-    (output/outcome.schema.json), which the client enforces; this checks what the schema can't. Its text stays
-    untrusted."""
+    """The outcome a run returned, once it holds; raises InvalidOutcome. Checks the schema
+    (output/outcome.schema.json) and what it can't. Its text stays untrusted."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
@@ -149,8 +156,44 @@ def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
         raise InvalidOutcome("needs_input must carry 1–4 questions")
     if status == "done" and run.output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
         raise InvalidOutcome(f"done with a {run.output['type']} destination must carry the deliverable")
-    return Outcome(status, title.strip(), summary, [str(q) for q in questions] if status == "needs_input" else [],
-                   _url(data.get("url") or "", run), [_file(p, params.workdir) for p in files], deliverable)
+    outcome = Outcome(status, title.strip(), summary, [str(q) for q in questions] if status == "needs_input" else [],
+                      _url(data.get("url") or "", run), [_file(p, params.workdir) for p in files], deliverable)
+    _conform(data, outcome_schema(ROOT), "outcome")
+    return outcome
+
+
+def _conform(value, schema: Mapping, where: str) -> None:
+    """`value` against the subset of JSON Schema output/outcome.schema.json uses."""
+    kind = schema.get("type")
+    if kind == "object":
+        if not isinstance(value, dict):
+            raise InvalidOutcome(f"{where} must be an object")
+        props = schema.get("properties", {})
+        if missing := [k for k in schema.get("required", ()) if k not in value]:
+            raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
+        if schema.get("additionalProperties") is False and (extra := sorted(set(value) - set(props))):
+            raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
+        for k, v in value.items():
+            if k in props:
+                _conform(v, props[k], k)
+    elif kind == "string":
+        if not isinstance(value, str):
+            raise InvalidOutcome(f"{where} must be text")
+        if len(value) < schema.get("minLength", 0):
+            raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
+        if len(value) > schema.get("maxLength", len(value)):
+            raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            raise InvalidOutcome(f"{where} must match {schema['pattern']}")
+    elif kind == "array":
+        if not isinstance(value, list):
+            raise InvalidOutcome(f"{where} must be a list")
+        if len(value) > schema.get("maxItems", len(value)):
+            raise InvalidOutcome(f"{where} has more than {schema['maxItems']} items")
+        for i, v in enumerate(value):
+            _conform(v, schema.get("items", {}), f"{where}[{i}]")
+    if "enum" in schema and value not in schema["enum"]:
+        raise InvalidOutcome(f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}")
 
 
 def _url(url: str, run: RunConfig) -> str:
@@ -223,10 +266,58 @@ def default_sinks(params: RunParams) -> list[Sink]:
             outcome_file(os.path.join(workdir, OUTCOME))]
 
 
+def report_event(line: str) -> Event | None:
+    """A channel line as its Event; None unless it is an outcome object or a progress report named by a word, its
+    text one line."""
+    try:
+        data = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("kind") == "outcome" and isinstance(data.get("outcome"), dict):
+        return Event("outcome", outcome=data["outcome"])
+    name, text = data.get("name"), data.get("text")
+    if (data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str)
+            and text.strip() and len(text.splitlines()) == 1):
+        return Event("progress", text.strip(), name=name)
+    return None
+
+
+class Tail:
+    """The reports appended to a channel since this was made; a symlink at the path is never read."""
+    def __init__(self, path: str):
+        self.path, self.rest = path, b""
+        try:
+            st = os.lstat(path)
+            self.pos = st.st_size if stat.S_ISREG(st.st_mode) else 0
+        except FileNotFoundError:
+            self.pos = 0
+
+    def __call__(self) -> Iterator[Event]:
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno in (errno.ENOENT, errno.ELOOP):
+                return
+            raise
+        with os.fdopen(fd, "rb") as f:
+            if os.fstat(f.fileno()).st_size < self.pos:   # replaced or emptied: read it anew
+                self.pos, self.rest = 0, b""
+            f.seek(self.pos)
+            data = f.read()
+        self.pos += len(data)
+        *lines, self.rest = (self.rest + data).split(b"\n")
+        for line in lines:
+            if event := report_event(line.decode("utf-8", "replace")):
+                yield event
+
+
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, sinks: Sequence[Sink] | None = None,
           popen=subprocess.Popen) -> Result:
-    """Starts the run and waits, handing its events to `sinks` (default_sinks() when None); then checks the client's
-    last outcome, saves the deliverable to params.out where the destination says so, and hands the outcome on too.
+    """Starts the run and waits, handing `sinks` (default_sinks() when None) its stdout's text and the progress it
+    reports to the channel as they come; then checks the last outcome it reported, saves the deliverable to params.out
+    where the destination says so, and hands the outcome on too. Only reports made after this call began count.
     A done or failed new run whose task marks `start` but never reported it gets a stderr line and a `missing`
     event first."""
     write(launch.files)
@@ -237,23 +328,54 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     out = Path(params.out).absolute()
     if not out.is_dir():
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this run's
-    raw, seen = None, set()
+    append_line(params.channel, "")   # created before launch, so the run's report command finds it
+    tail, raw, seen = Tail(params.channel), None, set()
+
+    def hand(event: Event) -> None:
+        nonlocal raw
+        if event.kind == "outcome":
+            raw = event.outcome
+            return
+        if event.kind == "progress":
+            seen.add(event.name)
+        for sink in sinks:
+            sink(event)
+
     proc = popen(launch.argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env},
                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
+    stdout = queue.Queue()
+
+    def pump() -> None:
+        try:
+            for event in client.events(proc.stdout):
+                stdout.put(event)
+        except BaseException as e:
+            stdout.put(e)
+        else:
+            stdout.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
     try:
-        for event in client.events(proc.stdout):
-            if event.kind == "outcome":
-                raw = event.outcome
-                continue
-            if event.kind == "progress":
-                seen.add(event.name)
-            for sink in sinks:
-                sink(event)
+        while True:
+            try:
+                item = stdout.get(timeout=POLL)
+            except queue.Empty:
+                item = False
+            if isinstance(item, BaseException):
+                raise item
+            for event in tail():   # first: a report made before a stdout line comes before it
+                hand(event)
+            if item is None:
+                break
+            if item:
+                hand(item)
     except BaseException:
         proc.kill()
         proc.wait()
         raise
     rc = proc.wait()
+    for event in tail():
+        hand(event)
     if rc != 0:
         return Result(rc, None, f"the client exited {rc}")
     if raw is None:

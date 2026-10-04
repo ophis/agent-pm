@@ -7,6 +7,7 @@ task text get {{scripts}} (this dir, or the client's path to it) and {{gate}}; a
 import json
 import os
 import re
+import shlex
 import tomllib
 import uuid
 from collections.abc import Mapping, Sequence
@@ -28,6 +29,7 @@ PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name
 # A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
+CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the run's progress and outcome, drive.start tails it
 RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 
 
@@ -38,7 +40,8 @@ class ConfigError(Exception):
 class Vehicle(Protocol):
     """What render() needs from whatever carries the prompt (a client)."""
     def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
-    def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return)
+    def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return);
+                                                    # {{report}}: report_command()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -88,6 +91,10 @@ class RunParams:
         if not self.sid:
             object.__setattr__(self, "sid", str(uuid.uuid4()))
 
+    @property
+    def channel(self) -> str:
+        return os.path.join(os.path.abspath(self.workdir), CHANNEL)
+
 
 def lookup(layer: Mapping, role: str, task: str, key: str):
     """`key` in one config layer: roles.<role>.tasks.<task> > roles.<role> > the top; None if unset."""
@@ -115,8 +122,8 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:
-    """The run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return, then the
-    Workdir/Input tail when params are given."""
+    """The run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return
+    ({{report}} filled when params are given), then the Workdir/Input tail when params are given."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
     names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title), "language": run.language}
@@ -136,7 +143,8 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(_read(output, dest), run.output, dest))
     if handover := vehicle.handover():
-        parts.append(f"## Return\n\n{handover.strip()}\n")
+        report = {"report": report_command(paths["scripts"], params)} if params else {}
+        parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
     if params:
         tail = f"Workdir: {os.path.abspath(params.workdir)}"
@@ -146,6 +154,11 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
             tail = f"{tail}\nInput:\n\n{params.input.strip()}"
         prompt += f"\n---\n\n{tail}\n"
     return prompt
+
+
+def report_command(scripts: str, params: RunParams) -> str:
+    """The shell command a run reports its progress and outcome with, up to its subcommand."""
+    return f"python3 {shlex.quote(os.path.join(scripts, 'report.py'))} --to {shlex.quote(params.channel)}"
 
 
 def outcome_schema(root: str) -> dict:

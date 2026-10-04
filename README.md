@@ -33,7 +33,7 @@ agent-pm/
 
 ## Core pack
 
-`core/` turns a role, a task and an input into one agent run, and knows nothing of Linear. `src/compose.py` builds the prompt from `team/` (guide, principles, the role's charter, the task, its templates) and `output/` (what to return and where to deliver it); `src/drive.py` starts the run through a client (`src/clients/`), turns its output into events for sinks (terminal, `progress.jsonl`, `outcome.json`, and whatever the caller adds) and checks the outcome. `core/regen_skills.sh` also exports each role/task as a skill in `core/skills/`.
+`core/` turns a role, a task and an input into one agent run, and knows nothing of Linear. `src/compose.py` builds the prompt from `team/` (guide, principles, the role's charter, the task, its templates) and `output/` (what to return and where to deliver it); `src/drive.py` starts the run through a client (`src/clients/`), turns its output and what it reports through `src/report.py` into events for sinks (terminal, `progress.jsonl`, `outcome.json`, and whatever the caller adds) and checks the outcome. `core/regen_skills.sh` also exports each role/task as a skill in `core/skills/`.
 
 ### Roles
 
@@ -64,11 +64,11 @@ claude -p '<prompt>' \
   --model opus --effort high \
   --permission-mode auto --setting-sources user --strict-mcp-config \
   --output-format stream-json --verbose \
-  --json-schema '<core/output/outcome.schema.json>' \
-  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py prepare --dir /Users/francis/playground/agent-pm/work/TASK-142/src *)'
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py prepare --dir /Users/francis/playground/agent-pm/work/TASK-142/src *)' \
+    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm/work/TASK-142/.report.jsonl *)'
 ```
 
-`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands`, and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
+`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
 
 ### Core configuration
 

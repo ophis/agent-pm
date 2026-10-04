@@ -295,6 +295,14 @@ class Prompt(Fake):
         body = prompt.rsplit("\n---\n", 1)[0]
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
+    def test_handover_gets_the_report_command(self):
+        run = compose.load_run(self.root, "writer", "short-note")
+        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain("Run `{{report}} outcome <file>`."))
+        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/.report.jsonl outcome <file>`.", prompt)
+        spaced = replace(PARAMS, workdir="/my w")
+        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
+        self.assertEqual(spaced.channel, "/my w/.report.jsonl")
+
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "writer", "long-note")
         prompt = compose.render(self.root, replace(run, output={"type": "local"}), vehicle=Plain())

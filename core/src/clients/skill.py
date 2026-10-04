@@ -6,13 +6,15 @@ import re
 
 from compose import RunConfig
 
-from .base import REPORT, Client, Launch
+from .base import PROGRESS, Client, Launch
 
 TAIL = "\n---\n\nInput: $ARGUMENTS\nWorkdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n"
 SCRIPTS = "${CLAUDE_SKILL_DIR}/scripts"
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A skill runs once, inline: a task's Resume section (for interrupted runs) never applies.
 RESUME = re.compile(r"\n## Resume\n.*?(?=\n# |\Z)", re.S)
+REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
+          "containing only that line: the mark, then your report")
 
 
 class SkillClient(Client):
