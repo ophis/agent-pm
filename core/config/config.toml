@@ -2,7 +2,8 @@
 #   tier       model tier 1–4 (1 = strongest); each client config (config/clients/<name>.toml) maps it to a model
 #   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
 #   templates  files under templates/ inlined into the prompt
-#   read       extra dirs the run reads; `repo` is the target repo's worktree. Read-only by the prompt only: no deny rules
+#   read       extra dirs the run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/ dir.
+#              Read-only by the prompt only: no deny rules
 #   write      extra dirs the run writes; the workdir is always reachable
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
 #              {{scripts}} is core's src/ dir, {{workdir}} the run's workdir
@@ -26,6 +27,7 @@ default_task = "deep-research"
 
 [roles.researcher.tasks.deep-research]
 templates = ["research-report"]
+read = ["{{methods}}"]
 commands = ["python3 {{scripts}}/repo.py prepare --dir {{workdir}}/src *"]
 
 [roles.researcher.tasks.deep-research.output]

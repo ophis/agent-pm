@@ -5,7 +5,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
-from compose import PROGRESS, RUN_KEYS, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
+from compose import PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,10 @@ class Client:
     def scripts_path(self, root: str) -> str:
         """How prompts name core's src/ dir: its absolute path unless the client says otherwise."""
         return os.path.join(os.path.abspath(root), "src")
+
+    def methods_path(self, root: str) -> str:
+        """How prompts name core's team/methods/ dir: its absolute path unless the client says otherwise."""
+        return os.path.join(os.path.abspath(root), TEXT, "methods")
 
     def handover(self) -> str:
         """Prompt text (Output › Return): how the run returns its outcome and reports progress; `{{report}}` is

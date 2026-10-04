@@ -107,6 +107,12 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--allowedTools"):][-1], f"Bash({gate})")
         self.assertIn(f"the gate is `{gate}`", argv[2])
 
+    def test_deep_research_adds_the_methods_dir_light_research_none(self):
+        argv = self.plan("researcher", "deep-research", client="claude", repo=self.repo).argv
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"],
+                         [os.path.join(CORE, "team", "methods")])
+        self.assertNotIn("--add-dir", self.plan(client="claude", repo=self.repo).argv)
+
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
         self.assertEqual(argv[3:5], ["--resume", SID])
@@ -171,16 +177,27 @@ class Generic(Base):
 
     def test_access_appends_the_gate_after_the_filled_commands(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s")
+        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s",
+                           methods="/m")
         report = f"python3 /s/report.py --to {self.work}/.report.jsonl *"
         self.assertEqual(acc.commands, ["/s/x *", report, gate])
-        self.assertEqual(drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s").commands, ["x", report])
+        acc = drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s", methods="/m")
+        self.assertEqual(acc.commands, ["x", report])
 
     def test_repo_entry_binds_to_the_repo_arg(self):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
-                           repo=self.repo, scripts="/s")
+                           repo=self.repo, scripts="/s", methods="/m")
         self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[
             f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"]))
+
+    def test_methods_fills_read_and_write_entries_and_nothing_else_does(self):
+        acc = drive.access(run(read=["{{methods}}"], write=["{{methods}}/out"]), self.params(), repo=None, scripts="/s",
+                           methods="/m")
+        self.assertEqual(acc.dirs, ["/m", "/m/out"])
+        for key in ("read", "write"):
+            with self.subTest(key), self.assertRaises(compose.ConfigError) as cm:
+                drive.access(run(**{key: ["{{nope}}"]}), self.params(), repo=None, scripts="/s", methods="/m")
+            self.assertIn("{{nope}}", str(cm.exception))
 
     def test_the_run_never_needs_the_out_dir(self):
         self.plan(out=os.path.join(self.tmp.name, "elsewhere", "out.md"))
@@ -239,6 +256,21 @@ class Skill(Base):
         r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
         self.assertEqual(list(clients.SkillClient({}).export("No scripts.", r, dest="o").files),
                          [os.path.join(os.path.abspath("o"), "r-t", "SKILL.md")])
+
+    def test_a_skill_naming_methods_gets_a_copy_of_core_methods(self):
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        skill = os.path.join(os.path.abspath("o"), "r-t")
+        files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/x.md`.", r, dest="o").files
+        src = os.path.join(CORE, "team", "methods")
+        expected = {}
+        for d, _, names in os.walk(src):
+            for name in names:
+                with open(os.path.join(d, name)) as f:
+                    expected[os.path.join(skill, "methods", os.path.relpath(os.path.join(d, name), src))] = f.read()
+        self.assertIn(os.path.join(skill, "methods", "deep-research.md"), expected)
+        self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")}, expected)
+        self.assertEqual(list(clients.SkillClient({}).export("No methods.", r, dest="o").files),
+                         [os.path.join(skill, "SKILL.md")])
 
     def test_product_design_skill_gets_repo_py(self):
         skill = os.path.join(self.tmp.name, "pm-product-design")

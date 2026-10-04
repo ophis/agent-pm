@@ -11,12 +11,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import compose  # noqa: E402
 
 class Plain:
-    """A vehicle with the default scripts path and no handover."""
-    def __init__(self, handover=""):
+    """A vehicle with the default scripts and methods paths (or `methods`) and no handover."""
+    def __init__(self, handover="", methods=None):
         self._handover = handover
+        self._methods = methods
 
     def scripts_path(self, root):
         return os.path.join(os.path.abspath(root), "src")
+
+    def methods_path(self, root):
+        return self._methods or os.path.join(os.path.abspath(root), "team", "methods")
 
     def handover(self):
         return self._handover
@@ -303,6 +307,14 @@ class Prompt(Fake):
         self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
         self.assertEqual(spaced.channel, "/my w/.report.jsonl")
 
+    def test_role_and_task_text_name_the_vehicles_methods_path(self):
+        self.write({"team/roles/writer.md": "# Writer\n\nKnow `{{methods}}`.\n",
+                    "team/tasks/short-note.md": "# Short Note\n\nFollow `{{methods}}/note.md`.\n"})
+        run = compose.load_run(self.root, "writer", "short-note")
+        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain(methods="/m"))
+        self.assertIn("Know `/m`.", prompt)
+        self.assertIn("Follow `/m/note.md`.", prompt)
+
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "writer", "long-note")
         prompt = compose.render(self.root, replace(run, output={"type": "local"}), vehicle=Plain())
@@ -428,7 +440,7 @@ class RealCore(unittest.TestCase):
         self.assertIn("# Template: `templates/research-report.md`", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
+        self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
 
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:

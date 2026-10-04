@@ -2,7 +2,8 @@
 prompt. A module for the driver (drive.py); needs Python 3.11+.
 
 Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); role and
-task text get {{scripts}} (this dir, or the client's path to it) and {{gate}}; a destination gets its output values.
+task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and {{gate}}; a
+destination gets its output values.
 """
 import json
 import os
@@ -40,6 +41,7 @@ class ConfigError(Exception):
 class Vehicle(Protocol):
     """What render() needs from whatever carries the prompt (a client)."""
     def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
+    def methods_path(self, root: str) -> str: ...   # how the prompt names core's team/methods/ dir
     def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return);
                                                     # {{report}}: report_command()
 
@@ -127,7 +129,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
     names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title), "language": run.language}
-    paths = {"scripts": vehicle.scripts_path(root), "gate": run.gate or "none"}
+    paths = {"scripts": vehicle.scripts_path(root), "methods": vehicle.methods_path(root), "gate": run.gate or "none"}
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
