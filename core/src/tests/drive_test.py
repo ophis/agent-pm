@@ -107,6 +107,22 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--allowedTools"):][-1], f"Bash({gate})")
         self.assertIn(f"the gate is `{gate}`", argv[2])
 
+    def test_deep_research_adds_the_methods_dir_light_research_none(self):
+        argv = self.plan("researcher", "deep-research", client="claude", repo=self.repo).argv
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"],
+                         [os.path.join(CORE, "team", "methods")])
+        self.assertNotIn("--add-dir", self.plan(client="claude", repo=self.repo).argv)
+
+    def test_deep_research_names_core_method_files_for_claude_and_by_default(self):
+        prompts = [self.plan("researcher", "deep-research", client="claude").argv[2]]
+        self.plan("researcher", "deep-research")
+        prompts.append(Recorder.seen[-1]["prompt"])
+        for name in ("deep-research", "ultracode"):
+            path = os.path.join(CORE, "team", "methods", f"{name}.md")
+            self.assertTrue(os.path.isfile(path), path)
+            for prompt in prompts:
+                self.assertIn(f"`{path}`", prompt)
+
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
         self.assertEqual(argv[3:5], ["--resume", SID])
@@ -171,16 +187,27 @@ class Generic(Base):
 
     def test_access_appends_the_gate_after_the_filled_commands(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s")
+        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s",
+                           methods="/m")
         report = f"python3 /s/report.py --to {self.work}/.report.jsonl *"
         self.assertEqual(acc.commands, ["/s/x *", report, gate])
-        self.assertEqual(drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s").commands, ["x", report])
+        acc = drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s", methods="/m")
+        self.assertEqual(acc.commands, ["x", report])
 
     def test_repo_entry_binds_to_the_repo_arg(self):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
-                           repo=self.repo, scripts="/s")
+                           repo=self.repo, scripts="/s", methods="/m")
         self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[
             f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"]))
+
+    def test_methods_fills_read_and_write_entries_and_nothing_else_does(self):
+        acc = drive.access(run(read=["{{methods}}"], write=["{{methods}}/out"]), self.params(), repo=None, scripts="/s",
+                           methods="/m")
+        self.assertEqual(acc.dirs, ["/m", "/m/out"])
+        for key in ("read", "write"):
+            with self.subTest(key), self.assertRaises(compose.ConfigError) as cm:
+                drive.access(run(**{key: ["{{nope}}"]}), self.params(), repo=None, scripts="/s", methods="/m")
+            self.assertIn("{{nope}}", str(cm.exception))
 
     def test_the_run_never_needs_the_out_dir(self):
         self.plan(out=os.path.join(self.tmp.name, "elsewhere", "out.md"))
@@ -208,6 +235,18 @@ class Generic(Base):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
             drive.export(CORE, claude(), "dummy-tester", dest=self.tmp.name)
+
+
+def methods_copy(skill):
+    """A skill's expected copy of core's team/methods/ (path in the skill → text), dotfiles and dot dirs skipped."""
+    src = os.path.join(CORE, "team", "methods")
+    copy = {}
+    for d, dirs, names in os.walk(src):
+        dirs[:] = [n for n in dirs if not n.startswith(".")]
+        for name in (n for n in names if not n.startswith(".")):
+            with open(os.path.join(d, name)) as f:
+                copy[os.path.join(skill, "methods", os.path.relpath(os.path.join(d, name), src))] = f.read()
+    return copy
 
 
 class Skill(Base):
@@ -239,6 +278,42 @@ class Skill(Base):
         r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
         self.assertEqual(list(clients.SkillClient({}).export("No scripts.", r, dest="o").files),
                          [os.path.join(os.path.abspath("o"), "r-t", "SKILL.md")])
+
+    def test_a_skill_naming_methods_gets_a_copy_of_core_methods(self):
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        skill = os.path.join(os.path.abspath("o"), "r-t")
+        files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/x.md`.", r, dest="o").files
+        expected = methods_copy(skill)
+        self.assertIn(os.path.join(skill, "methods", "deep-research.md"), expected)
+        self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")}, expected)
+        self.assertEqual(list(clients.SkillClient({}).export("No methods.", r, dest="o").files),
+                         [os.path.join(skill, "SKILL.md")])
+
+    def test_the_methods_copy_keeps_subdirs_and_skips_dotfiles(self):
+        src = os.path.join(self.tmp.name, "methods")
+        for rel, data in (("a.md", b"a"), ("sub/b.md", b"b"), (".DS_Store", b"\x00\xff"), (".hidden/c.md", b"c"),
+                          ("sub/.x", b"x")):
+            os.makedirs(os.path.dirname(os.path.join(src, rel)), exist_ok=True)
+            with open(os.path.join(src, rel), "wb") as f:
+                f.write(data)
+        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
+        skill = os.path.join(os.path.abspath("o"), "r-t")
+        with unittest.mock.patch.object(sys.modules["clients.skill"], "CORE_METHODS", src):
+            files = clients.SkillClient({}).export("Follow `${CLAUDE_SKILL_DIR}/methods/a.md`.", r, dest="o").files
+        methods = os.path.join(skill, "methods")
+        self.assertEqual({p: t for p, t in files.items() if p != os.path.join(skill, "SKILL.md")},
+                         {os.path.join(methods, "a.md"): "a", os.path.join(methods, "sub", "b.md"): "b"})
+
+    def test_deep_research_skill_names_and_carries_the_methods(self):
+        skill = os.path.join(self.tmp.name, "researcher-deep-research")
+        files = self.export("researcher", "deep-research").files
+        expected = methods_copy(skill)
+        for name in ("deep-research", "ultracode"):
+            self.assertIn(f"`${{CLAUDE_SKILL_DIR}}/methods/{name}.md`", files[os.path.join(skill, "SKILL.md")])
+            self.assertIn(os.path.join(skill, "methods", f"{name}.md"), expected)
+        self.assertEqual(sorted(files),
+                         sorted([os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py"), *expected]))
+        self.assertEqual({p: files[p] for p in expected}, expected)
 
     def test_product_design_skill_gets_repo_py(self):
         skill = os.path.join(self.tmp.name, "pm-product-design")

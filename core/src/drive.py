@@ -74,14 +74,17 @@ def bind(entry: str, repo: str | None) -> str | None:
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str) -> Access:
-    """The run's Access, `{{scripts}}` and `{{workdir}}` in commands filled, then the report command and the gate (used
-    verbatim) pre-approved too. Edit limits are left to the client's permission mode (auto)."""
+def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str) -> Access:
+    """The run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands filled,
+    then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
+    permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
     dirs = []
-    for p in (bind(e, repo) for e in run.read + run.write):
-        if p and p not in dirs:
-            dirs.append(p)
+    for key, entries in (("read", run.read), ("write", run.write)):
+        for entry in entries:
+            p = bind(fill(entry, {"methods": methods}, key), repo)
+            if p and p not in dirs:
+                dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
     commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params)} *"]
     return Access(dirs, commands + ([run.gate] if run.gate else []))
@@ -95,7 +98,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
     run = load_run(root, role, task, layers=[client.config, *layers])
     prompt = render(root, run, params, vehicle=client)
-    acc = access(run, params, repo=repo, scripts=client.scripts_path(root))
+    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root))
     launch = client.launch(prompt, run, params=params, access=acc)
     return launch, run
 
@@ -111,7 +114,7 @@ def export(root: str, client: Client, role: str, task: str | None = None, *, des
 def write(files: dict[str, str]) -> None:
     for path, text in files.items():
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
 
 

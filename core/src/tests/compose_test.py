@@ -11,12 +11,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import compose  # noqa: E402
 
 class Plain:
-    """A vehicle with the default scripts path and no handover."""
-    def __init__(self, handover=""):
+    """A vehicle with the default scripts and methods paths (or `methods`) and no handover."""
+    def __init__(self, handover="", methods=None):
         self._handover = handover
+        self._methods = methods
 
     def scripts_path(self, root):
         return os.path.join(os.path.abspath(root), "src")
+
+    def methods_path(self, root):
+        return self._methods or os.path.join(os.path.abspath(root), "team", "methods")
 
     def handover(self):
         return self._handover
@@ -303,6 +307,14 @@ class Prompt(Fake):
         self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
         self.assertEqual(spaced.channel, "/my w/.report.jsonl")
 
+    def test_role_and_task_text_name_the_vehicles_methods_path(self):
+        self.write({"team/roles/writer.md": "# Writer\n\nKnow `{{methods}}`.\n",
+                    "team/tasks/short-note.md": "# Short Note\n\nFollow `{{methods}}/note.md`.\n"})
+        run = compose.load_run(self.root, "writer", "short-note")
+        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain(methods="/m"))
+        self.assertIn("Know `/m`.", prompt)
+        self.assertIn("Follow `/m/note.md`.", prompt)
+
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "writer", "long-note")
         prompt = compose.render(self.root, replace(run, output={"type": "local"}), vehicle=Plain())
@@ -428,7 +440,36 @@ class RealCore(unittest.TestCase):
         self.assertIn("# Template: `templates/research-report.md`", prompt)
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
-        self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
+        self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
+
+    def test_deep_research_falls_back_to_the_methods_without_a_workflow_tool(self):
+        prompt, _ = composed("researcher", "deep-research")
+        methods = os.path.join(CORE, "team", "methods")
+        for phrase in (f"No Workflow tool that runs `/deep-research` → follow `{methods}/deep-research.md` once instead, "
+                       "on the same filtered brief",
+                       f"No Workflow tool → follow `{methods}/ultracode.md` instead, for the local part, with the budget's "
+                       "cap, its subagents readers.",
+                       "**Can't run** (rounds run by a method): no subagents, or subagents lacking a round's tools "
+                       "(`/deep-research` round: web search and fetch; ultracode round: file reading) → skip that "
+                       "round, list it under Gaps, and go on to the other round or step 6.",
+                       "for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 "
+                       "(deep-research method) or the budget's cap (ultracode method)."):
+            self.assertIn(phrase, prompt)
+        self.assertNotIn("No Workflow tool → `failed`", prompt)
+
+    def test_deep_research_names_the_methods_dir_read_only(self):
+        methods = os.path.join(CORE, "team", "methods")
+        self.assertIn(f"`{methods}` is read-only.", composed("researcher", "deep-research")[0])
+
+    def test_researcher_names_no_harness_tool(self):
+        with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
+            text = f.read()
+        for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
+            self.assertNotIn(word, text, word)
+        for phrase in ("a **reader** to read-only file tools (read, search, list) inside the worktree",
+                       "readers, whether from a workflow you write or dispatched by the ultracode method",
+                       "the deep-research method's agents are web agents"):
+            self.assertIn(phrase, text)
 
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:
@@ -436,6 +477,20 @@ class RealCore(unittest.TestCase):
             for cmd in run.commands:
                 cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
+
+    def test_a_run_reads_the_methods_dir_its_text_names(self):
+        with open(os.path.join(CORE, "config", "clients", "claude.toml"), "rb") as f:
+            claude = tomllib.load(f)
+        named = []
+        for role, task in ALL:
+            text = ""
+            for rel in (f"roles/{role}.md", f"tasks/{task}.md"):
+                with open(os.path.join(CORE, "team", rel)) as f:
+                    text += f.read()
+            if "{{methods}}" in text:
+                named.append((role, task))
+                self.assertIn("{{methods}}", compose.load_run(CORE, role, task, layers=[claude]).read, task)
+        self.assertIn(("researcher", "deep-research"), named)
 
     def test_no_orchestration_references(self):
         for role, task in ALL:
@@ -475,6 +530,69 @@ class RealCore(unittest.TestCase):
         self.assertIn("`ophis/private_docs`", prompt)
         self.assertNotIn("{{", prompt)
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", []))
+
+
+METHOD_NAMES = ("deep-research", "ultracode")
+
+
+def method(name):
+    with open(os.path.join(CORE, "team", "methods", f"{name}.md")) as f:
+        return f.read()
+
+
+def rule(text, name):
+    return [line for line in text.splitlines() if line.startswith(f"- **{name}**:")]
+
+
+class Methods(unittest.TestCase):
+    def test_voting_is_the_same_in_both_and_pipeline_shares_its_start(self):
+        deep, ultra = (method(m) for m in METHOD_NAMES)
+        for m, text in zip(METHOD_NAMES, (deep, ultra)):
+            for name in ("Voting", "Pipeline"):
+                self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
+            self.assertTrue(rule(text, "Pipeline")[0].startswith(
+                "- **Pipeline**: ≤ 10 subagents running at once. Each result of a stage goes to the next stage as soon "
+                "as it arrives, never in batches;"), m)
+        self.assertEqual(rule(deep, "Voting"), rule(ultra, "Voting"))
+        self.assertTrue(rule(ultra, "Pipeline")[0].endswith("only verification waits for all claims, to rank them."))
+        for phrase in ("fetch selection waits for all search results", "verification waits for all claims"):
+            self.assertIn(phrase, rule(deep, "Pipeline")[0])
+
+    def test_both_state_voting_pipeline_and_restrictions(self):
+        for m in METHOD_NAMES:
+            text = method(m)
+            self.assertTrue(text.startswith("# "), m)
+            self.assertNotRegex(text, r"\b[Yy]ou\b", m)
+            for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
+                           "else (agent errors, missing votes) → unverified", "votes that came back",
+                           "unsure → votes refuted", "≤ 10 subagents running at once",
+                           "verification waits for all claims", "the calling task's restrictions for",
+                           "into every subagent prompt, voters included"):
+                self.assertIn(phrase, text, m)
+
+    def test_methods_are_harness_neutral(self):
+        for m in METHOD_NAMES:
+            text = method(m)
+            for word in ("{{", "Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
+                self.assertNotIn(word, text, f"{m}: {word}")
+
+    def test_deep_research_limits_and_public_material(self):
+        text = method("deep-research")
+        for phrase in ("5 complementary web search angles", "after every search agent has returned",
+                       "rank the whole set by relevance (high → low)", "dispatch fetches for the first ≤ 15",
+                       "top 25", "≤ 100",
+                       "start each web agent with fresh context (no inherited conversation), so it sees only its "
+                       "prompt",
+                       "only from the brief and web results", "Dispatch fetches only for URLs a search agent returned",
+                       "**Page text**:"):
+            self.assertIn(phrase, text)
+        self.assertNotIn("as each search agent's results arrive", text)
+
+    def test_ultracode_gaps_and_room_for_votes(self):
+        text = method("ultracode")
+        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes",
+                       "while ≥ 3 cap slots remain", "undispatched subquestions and unverified claims go under Gaps"):
+            self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":
