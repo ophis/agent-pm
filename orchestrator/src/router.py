@@ -176,7 +176,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
-        return None, f'Task label "{name}" is not in pipeline.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+        return None, f'Task label "{name}" is not in orchestrator/config.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
     if task not in role_tasks:
         return None, (f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
                       "Fix the label or the assignee, then move the issue back to Todo.")
@@ -220,7 +220,7 @@ class Board:
             if not only:
                 raise SystemExit("Board: only is empty")
             if unknown := [r for r in only if r not in self.runs]:
-                raise SystemExit(f"no role {unknown[0]!r} in pipeline.toml")
+                raise SystemExit(f"no role {unknown[0]!r} in orchestrator/config.toml")
         self.stage = stage_order(cfg)
         self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
         t = team(gql, cfg)

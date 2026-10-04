@@ -21,14 +21,14 @@ OTHER = "00000000-0000-4000-8000-000000000023"
 
 
 class ConfigFile:
-    """setUp and load for TestCases that write a pipeline.toml into self.dir."""
+    """setUp and load for TestCases that write a orchestrator/config.toml into self.dir."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
 
     def load(self, text):
-        path = os.path.join(self.dir, "pipeline.toml")
+        path = os.path.join(self.dir, "config.toml")
         with open(path, "w") as f:
             f.write(text)
         return pipeline.load_config(path)
@@ -85,7 +85,7 @@ class Config(ConfigFile, unittest.TestCase):
             with self.subTest(message, text=text):
                 with self.assertRaises(SystemExit) as cm:
                     self.load(text)
-                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
+                self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
         cfg = self.load(BASE)
         self.assertEqual((cfg["harness_key"], cfg["task_label_group"]), ("linear-api-key", TASK_GROUP))
         self.assertEqual(cfg["roles"]["pm"], {"account": "pm@agents.test", "key": "linear-api-key-pm", "next": "engineer"})
@@ -102,11 +102,11 @@ PIPELINE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engi
 RESEARCHER = pipeline.Role("researcher@agents.test", "linear-api-key-researcher", ("deep-research", "light-research"))
 PM = pipeline.Role("pm@agents.test", "linear-api-key-pm", ("product-design",))
 ENGINEER = pipeline.Role("engineer@agents.test", "linear-api-key-engineer", ("engineering",))
-GATE = f"python3 {shlex.quote(pipeline.ROOT)}/scripts/router.py --brake"
+GATE = f"python3 {shlex.quote(pipeline.ROOT)}/orchestrator/src/router.py --brake"
 
 
 class Runnable(ConfigFile, unittest.TestCase):
-    """runnable() over the repo's core config and pipeline.toml's [core]."""
+    """runnable() over the repo's core config and orchestrator/config.toml's [core]."""
     def runs(self, text=PIPELINE):
         return pipeline.runnable(self.load(text))
 
@@ -122,24 +122,24 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual((RESEARCHER.default, PM.default), ("deep-research", "product-design"))
         self.assertEqual(list(self.runs(HEADER + role("engineer") + role("researcher"))), ["engineer", "researcher"])
 
-    def test_core_roles_outside_pipeline_toml_ignored(self):
+    def test_core_roles_outside_the_config_ignored(self):
         self.assertEqual(self.runs(HEADER + role("researcher")), {"researcher": RESEARCHER})
 
     def test_role_not_in_core(self):
-        self.fails("pipeline.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
+        self.fails("orchestrator/config.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
 
     def test_task_without_tasks_entry(self):
-        self.fails("pipeline.toml: dummy-tester's task 'echo' has no entry in pipeline.TASKS", PIPELINE + role("dummy-tester"))
+        self.fails("orchestrator/config.toml: dummy-tester's task 'echo' has no entry in pipeline.TASKS", PIPELINE + role("dummy-tester"))
 
     def test_next(self):
-        self.fails("pipeline.toml: next of 'researcher' names undefined role 'pm'", HEADER + role("researcher", 'next = "pm"'))
-        self.fails("pipeline.toml: next of 'pm' is role 'researcher', whose default task 'deep-research' has no prefix",
+        self.fails("orchestrator/config.toml: next of 'researcher' names undefined role 'pm'", HEADER + role("researcher", 'next = "pm"'))
+        self.fails("orchestrator/config.toml: next of 'pm' is role 'researcher', whose default task 'deep-research' has no prefix",
                    HEADER + role("researcher") + role("pm", 'next = "researcher"'))
 
     def test_keys(self):
-        self.fails("pipeline.toml: [roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
+        self.fails("orchestrator/config.toml: [roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
                    PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"))
-        self.fails("pipeline.toml: [roles.engineer] key 'linear-api-key' is harness_key",
+        self.fails("orchestrator/config.toml: [roles.engineer] key 'linear-api-key' is harness_key",
                    PIPELINE.replace("linear-api-key-engineer", "linear-api-key"))
 
     def test_task_labels_keys(self):
@@ -147,7 +147,7 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
         for task, text in (("echo", PIPELINE), ("ghost", PIPELINE), ("product-design", HEADER + role("researcher"))):
             with self.subTest(task):
-                self.fails(f"pipeline.toml: task_labels.{task} is not a task of a role in pipeline.toml",
+                self.fails(f"orchestrator/config.toml: task_labels.{task} is not a task of a role in orchestrator/config.toml",
                            text + f'[task_labels]\n{task} = "{LABEL1}"\n')
 
     def test_role_for(self):
@@ -163,7 +163,7 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual(pipeline.role_ids(gql, runs), {f"u-{a}": r for r, a in ACCOUNTS.items()})
         with self.assertRaises(SystemExit) as cm:
             pipeline.role_ids(lambda q, **v: {"users": {"nodes": []}}, {"engineer": runs["engineer"]})
-        self.assertEqual(cm.exception.code, "pipeline.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear")
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear")
 
     def test_run_config(self):
         self.assertEqual(pipeline.run_config("researcher", "deep-research").gate, GATE)
@@ -226,11 +226,13 @@ DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-de
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
-    """A repo root with its own pipeline.toml (load() writes it) and core/config/config.toml; core's text and client
+    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config/config.toml; core's text and client
     configs are the real ones."""
     def setUp(self):
         super().setUp()
-        self.dir = self.root = os.path.join(self.dir, "my root")
+        self.root = os.path.join(self.dir, "my root")
+        self.dir = os.path.join(self.root, "orchestrator")
+        os.makedirs(self.dir)
         os.makedirs(os.path.join(self.root, "core", "config"))
         for rel in ("team", "output", os.path.join("config", "clients")):
             os.symlink(os.path.join(pipeline.CORE, rel), os.path.join(self.root, "core", rel))
@@ -284,7 +286,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
                 self.load(PIPELINE + text)
                 with self.assertRaises(SystemExit) as cm:
                     pipeline.overlay(self.root)
-                self.assertEqual(cm.exception.code, "pipeline.toml [core]: unknown key " + message)
+                self.assertEqual(cm.exception.code, "orchestrator/config.toml [core]: unknown key " + message)
 
     def test_core_errors(self):
         self.core(CORE_TOML.replace("[roles.engineer.tasks.engineering]\n", "[roles.engineer.tasks.engineering]\ntier = 9\n"))
@@ -316,7 +318,7 @@ P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51a
 
 
 class RealConfig(unittest.TestCase):
-    """The repo's pipeline.toml, core config and TASKS together."""
+    """The repo's orchestrator/config.toml, core config and TASKS together."""
     def test_real_config(self):
         cfg = pipeline.load_config()
         runs = pipeline.runnable(cfg)
@@ -330,7 +332,7 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
         self.assertNotIn("docs", cfg)
         self.assertEqual(cfg["core"], {"roles": {"researcher": {"tasks": {"deep-research": {
-            "gate": "python3 {{root}}/scripts/router.py --brake"}}}}})
+            "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
         self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
         self.assertEqual(pipeline.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
@@ -356,14 +358,14 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
                 with self.assertRaises(SystemExit) as cm:
                     self.load(BASE + f'[project_repos]\n"{key}" = {json.dumps(value)}\n')
                 msg = str(cm.exception.code)
-                self.assertTrue(msg.startswith(f"pipeline.toml: project_repos.{key} "), msg)
+                self.assertTrue(msg.startswith(f"orchestrator/config.toml: project_repos.{key} "), msg)
                 self.assertIn(repr(value), msg)
 
     def test_not_a_table_rejected(self):
         body = BASE[BASE.index("[roles"):]
         with self.assertRaises(SystemExit) as cm:
             self.load(HEADER + 'project_repos = "x"\n' + body)
-        self.assertTrue(str(cm.exception.code).startswith("pipeline.toml: project_repos"), cm.exception.code)
+        self.assertTrue(str(cm.exception.code).startswith("orchestrator/config.toml: project_repos"), cm.exception.code)
 
 
 class RepoSlug(unittest.TestCase):
@@ -402,7 +404,7 @@ class TeamCheck(unittest.TestCase):
             with self.subTest(message):
                 with self.assertRaises(SystemExit) as cm:
                     pipeline.team(self.gql(nodes), self.cfg())
-                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
+                self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
 
 
 class TaskGroupCheck(unittest.TestCase):
@@ -448,7 +450,7 @@ class TaskGroupCheck(unittest.TestCase):
             with self.subTest(message):
                 with self.assertRaises(SystemExit) as cm:
                     pipeline.task_group(gql, self.cfg(labels))
-                self.assertEqual(str(cm.exception.code), "pipeline.toml: " + message)
+                self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
                 self.assertEqual(len(gql.calls), 1)
 
 
@@ -499,7 +501,7 @@ class LinearGql(unittest.TestCase):
                 self.assertEqual(urlopen.call_args.kwargs["timeout"], want)
                 self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {"i": "TASK-1"})
 
-    def test_harness_service_reads_pipeline_toml(self):
+    def test_harness_service_reads_the_config(self):
         pipeline.harness_service.cache_clear()
         self.addCleanup(pipeline.harness_service.cache_clear)
         self.assertEqual(pipeline.harness_service(), "linear-api-key")

@@ -117,7 +117,7 @@ class Base(unittest.TestCase):
         self.fake = FakeLinear()
 
     def write_config(self, text):
-        path = os.path.join(self.tmp.name, "pipeline.toml")
+        path = os.path.join(self.tmp.name, "config.toml")
         with open(path, "w") as f:
             f.write(text)
         return path

@@ -146,7 +146,7 @@ class Base(unittest.TestCase):
         return text
 
     def write_config(self, text):
-        path = os.path.join(self.tmp.name, "cfg", "pipeline.toml")
+        path = os.path.join(self.tmp.name, "cfg", "config.toml")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(text)
@@ -642,7 +642,7 @@ class Claim(Base):
     def test_pick_unknown_role_exits(self):
         with self.assertRaises(SystemExit) as cm:
             self.run_main(FakeLinear([]), "--pick", "--role", "ghost")
-        self.assertEqual(cm.exception.code, "no role 'ghost' in pipeline.toml")
+        self.assertEqual(cm.exception.code, "no role 'ghost' in orchestrator/config.toml")
 
     def test_board_needs_a_role(self):
         fake = FakeLinear([])
@@ -807,7 +807,7 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         sid = launch[launch.index("--sid") + 1]
         self.assertEqual(launch[:2], [sys.executable, router.RUN])
-        self.assertEqual(router.RUN, os.path.join(pipeline.ROOT, "scripts", "run.py"))
+        self.assertEqual(router.RUN, os.path.join(pipeline.ROOT, "orchestrator", "src", "run.py"))
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--url", "https://linear.app/x/TASK-1", "--project", IDS[DR],
                                       "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
         self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(pipeline.transcript('TASK-1', sid, self.tdir))}"
@@ -1024,7 +1024,7 @@ class TaskLabels(Base):
         role_tasks = ["deep-research", "light-research"]
         label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "product-design"}
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in pipeline.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in orchestrator/config.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (([], ("deep-research", None)),
                  (outside, ("deep-research", None)),
                  ([label("Light Research", LIGHT)], ("light-research", None)),
@@ -1126,7 +1126,7 @@ class TaskLabels(Base):
         fake.group = {"isGroup": False}
         with self.assertRaises(SystemExit) as cm:
             self.tick(fake)
-        self.assertEqual(cm.exception.code, f"pipeline.toml: task_label_group {TASK_GROUP} is not a label group")
+        self.assertEqual(cm.exception.code, f"orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group")
         self.assertEqual((fake.queries, fake.mutations), ([(pipeline.Q_TEAM, {"t": TEAM}), (pipeline.Q_TASK_GROUP, {"i": TASK_GROUP})], []))
         self.assertEqual([c[0] for c in self.sh.calls], ["tmux"] * 3)
 

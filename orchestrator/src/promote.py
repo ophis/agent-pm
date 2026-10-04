@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Promote issues in Handoff to the next role.
 
-For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in pipeline.toml has a next:
+For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in orchestrator/config.toml has a next:
 create that role's issue in the same project, assigned to its account, in Todo with the source links and the
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).
 
-At the end of every tick, scripts/prune.py's Pruner removes the worktrees of
+At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees of
 finished issues (TASK-49) and archives finished pm and engineer issues; a prune
 failure is logged and never breaks the Handoff work.
 """
