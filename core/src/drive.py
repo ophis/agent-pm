@@ -127,8 +127,12 @@ def save(path: str | Path, text: str) -> None:
 
 
 def append_line(path: str | Path, text: str) -> None:
-    """Appends to `path`, refusing a symlink."""
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644), "a") as f:
+    """Appends to `path`, refusing a symlink or anything but a regular file (a FIFO would block)."""
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(errno.EINVAL, "not a regular file", str(path))
+    with os.fdopen(fd, "a") as f:
         f.write(text)
 
 
@@ -267,8 +271,8 @@ def default_sinks(params: RunParams) -> list[Sink]:
 
 
 def report_event(line: str) -> Event | None:
-    """A channel line as its Event; None unless it is an outcome object or a progress report named by a word, its
-    text one line."""
+    """A channel line as its Event; None unless it is an outcome object or a progress report named by a word with
+    text, its lines joined into one."""
     try:
         data = json.loads(line)
     except ValueError:
@@ -278,9 +282,9 @@ def report_event(line: str) -> Event | None:
     if data.get("kind") == "outcome" and isinstance(data.get("outcome"), dict):
         return Event("outcome", outcome=data["outcome"])
     name, text = data.get("name"), data.get("text")
-    if (data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str)
-            and text.strip() and len(text.splitlines()) == 1):
-        return Event("progress", text.strip(), name=name)
+    if data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str):
+        if text := " ".join(text.split()):
+            return Event("progress", text, name=name)
     return None
 
 
@@ -296,11 +300,14 @@ class Tail:
 
     def __call__(self) -> Iterator[Event]:
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError as e:
             if e.errno in (errno.ENOENT, errno.ELOOP):
                 return
             raise
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return
         with os.fdopen(fd, "rb") as f:
             if os.fstat(f.fileno()).st_size < self.pos:   # replaced or emptied: read it anew
                 self.pos, self.rest = 0, b""
