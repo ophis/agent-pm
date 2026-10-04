@@ -19,14 +19,15 @@ agent-pm/
 │   ├── *.plist            # launchd schedules for router and promote
 │   └── src/
 │       ├── router.py      # picks and starts the next run
-│       ├── run.py         # starts one core run, then writes its result back
+│       ├── run.py         # starts one core run, then writes its result back; `--tui` claims an issue and runs it attended
 │       ├── issues.py      # reads a Linear issue
 │       ├── target.py      # target repo of an issue; engineering pre-check
 │       ├── inputs.py      # builds a run's input text from the issue and its linked docs
 │       ├── writeback.py   # start, progress and finish of a run → Linear
 │       ├── sessions.py    # records each run's session on its issue
 │       ├── promote.py     # Handoff to the next role
-│       ├── prune.py       # deletes finished issues' clones, archives pm and engineer ones
+│       ├── prune.py       # deletes finished issues' clones, archives pm and engineer ones, closes their TUI sessions
+│       ├── attended.py    # where an attended run's TUI pane goes; the record of its TUI sessions (logs/tui/<ID>)
 │       ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
 │       ├── linear.py      # Linear client and lookups, shared helpers
 │       └── tests/
@@ -73,7 +74,7 @@ claude -p '<prompt>' \
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
 
-`--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); `core/config/config.toml`'s header says what replaces that split. The run is done once its outcome arrives; the session stays open.
+`--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); `--split right|below` picks the side and `--beside <tmux session>` the pane to split (tui only); `core/config/config.toml`'s header says what replaces that split. The run is done once its outcome arrives; the session stays open.
 
 The `Stop` hook reports each turn end (`report.py … stop`). The first turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. There is no wait timeout: a dialog nobody answers waits in the pane.
 
@@ -135,12 +136,12 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 
 | Script | Runs | Does |
 |---|---|---|
-| `router.py` | Every 30 minutes, all day | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role below its `max_runs` live sessions: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role is full, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
-| `run.py` | Called by the router | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. |
+| `router.py` | Every 30 minutes, all day; by hand with `--tui` | Decides what runs next. Recovers dead In Progress runs (resumes them or returns them to Todo), then starts at most one run per tick for a role below its `max_runs` live sessions: resumes an interrupted run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role is full, while 5-hour usage is at 90% or more, or when a weekly limit is full. `--tui` runs the tick's run attended (see Attended runs). |
+| `run.py` | Called by the router; by hand with `--issue ID --tui` | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `work/<ID>/`. For `engineering` it first checks the target repo and branch; a new run whose repo check fails is bounced (comment, In Review) without a run. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `logs/projects/<task>.log` and `logs/runs.log`, then hands the outcome to `writeback.py`. `--issue ID --tui` claims the issue, then runs it attended (see Attended runs). |
 | `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed run repeats none. A run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
-| `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones. |
+| `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones; closes their attended runs' TUI sessions. |
 | `config.py` | Shared | Loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
 | `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, the comment, subscribe and state-move writes, and small helpers. |
 
@@ -198,6 +199,7 @@ python3 orchestrator/src/router.py --now --dry-run           # what the next tic
 python3 orchestrator/src/router.py --now                     # run a tick now, outside the schedule
 python3 orchestrator/src/router.py --now --issue TASK-12     # start a specific Todo issue, unless it is blocked or its role is full
 python3 orchestrator/src/router.py --brake                   # usage probe; exit 0 if a second research round may start (5-hour usage < 80%, no weekly limit full)
+python3 orchestrator/src/run.py --issue TASK-12 --tui        # run a ready Todo issue attended (see Attended runs)
 python3 orchestrator/src/promote.py --now                    # handle Handoff now, skipping the 10-minute wait
 tmux ls                                             # running sessions, agent-pm-<role>-<ID>
 tmux attach -t '=agent-pm-<role>-<ID>'              # watch one run; = matches the exact name
@@ -211,8 +213,26 @@ To open a run's session, copy the command from the code block of its issue's `Ru
 | `logs/projects/<task>.log` | Each run's output, progress, errors and write-back steps |
 | `logs/promote.log` | Handoff and prune actions |
 | `logs/runs.log` | Run start/resume/end; the router needs it to resume, so keep it |
+| `logs/tui/<ID>` | An issue's attended runs' TUI session names, one per line; `prune.py` and the next run read it |
 
 Every run works in `work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving the repo or `work/` breaks resuming in-progress runs and the installed plists.
+
+### Attended runs
+
+Watch a run in a TUI pane and step in. Same claim, input, write-back, session comment and `runs.log` lines as an unattended run; started only by hand (launchd never passes `--tui`).
+
+```bash
+python3 orchestrator/src/run.py --issue TASK-12 --tui [--split right|below] [--beside <session>]
+python3 orchestrator/src/router.py --now --tui [--split right|below] [--beside <session>]   # not with --issue or --brake
+```
+
+- `run.py --issue … --tui` claims that ready Todo issue like `router.py --now --issue`, but with no hours, `max_runs` or usage gate.
+- `router.py --now --tui` is a normal tick (readiness, `max_runs`, usage gate, at most one run, resume too) started attended.
+- Sessions, with their attach commands printed to stderr: the driver `agent-pm-<role>-<ID>` holds the issue's lock and a `max_runs` slot only while the driver runs; the TUI `<role>-<task>-<sid[:8]>` holds neither.
+- Inside tmux, the TUI pane opens beside your pane and your shell stays free. In a plain terminal, it becomes the driver session's client: `Ctrl-b d` detaches, and the run goes on. No tmux and no TTY → pass `--beside`.
+- Stack runs: first `--split right`, next `--beside <first TUI session> --split below`.
+- `Ctrl-C` in the driver session ends the run like a kill; Recover resumes it.
+- After the outcome or a give-up the TUI session stays open, and nothing done in it is written back. The issue's next run (Recover's resume too) closes it; `prune.py` closes it 24 hours after Done or Canceled. `logs/tui/<ID>` records it.
 
 ### Session records
 

@@ -42,6 +42,9 @@ _Avoid_: runtime, backend
 **Runner**:
 How the driver hosts a client's command and when the run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives, the session left open).
 
+**Attended run**:
+A run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input, write-back and lock as an unattended run. Its TUI session outlives it and is closed by the issue's next run or by prune.
+
 **Destination**:
 Where a run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.
 
