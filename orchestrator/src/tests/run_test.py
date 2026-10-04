@@ -140,8 +140,14 @@ def said(text):
     return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}) + "\n"
 
 
-def result(outcome):
-    return json.dumps({"type": "result", "subtype": "success", "structured_output": outcome}) + "\n"
+def reported(rd, *lines):
+    """Appends to the run's report channel, as core's report.py does."""
+    with open(os.path.join(rd, ".report.jsonl"), "a") as f:
+        f.writelines(json.dumps(line) + "\n" for line in lines)
+
+
+def outcome(data):
+    return {"kind": "outcome", "outcome": data}
 
 
 def args(assignee=ENGINEER, task="engineering", mode="new", k=None):
@@ -426,7 +432,11 @@ class Inner(Base):
         return line
 
     def test_engineering_run(self):
-        self.lines = [said("[agent-pm-progress:start] first build, phase 1"), said("Working on it"), result(DONE)]
+        def lines():
+            reported(self.rd, {"kind": "progress", "name": "start", "text": "first build, phase 1"})
+            yield said("Working on it")
+            reported(self.rd, outcome(DONE))
+        self.lines = lines()
         self.claude_stderr = b"claude: warning\n"
         self.assertEqual(self.inner(), 0)
         self.assertEqual(self.plog(), [
@@ -466,7 +476,10 @@ class Inner(Base):
         self.assertEqual(self.gql.calls, self.harness(0))
 
     def test_nonzero_exit(self):
-        self.lines, self.rc = [result(DONE)], 1
+        def lines():
+            reported(self.rd, outcome(DONE))
+            yield from ()
+        self.lines, self.rc = lines(), 1
         self.assertEqual(self.inner(), 0)
         self.assertEqual(self.plog()[-2:], ["<ts> end TASK-7 session=" + SID + " exit=1",
                                             "<ts> no-outcome TASK-7: the client exited 1"])

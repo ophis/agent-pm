@@ -1,17 +1,11 @@
 """The client interface: a Client turns a composed run into a Launch."""
 import os
-import re
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
-from compose import PROGRESS, RUN_KEYS, ConfigError, RunConfig, RunParams, lookup
-
-# A run reports a progress point with a line starting with the task's mark, its report after it.
-REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
-          "containing only that line: the mark, then your report")
-PROGRESS_LINE = re.compile(rf"^\s*(?:[-*]\s+)?[`*]*\[{PROGRESS}:([\w-]+)\][`*]*\s*(.*?)[`*]*\s*$")   # `quoted` or **bold** too
+from compose import PROGRESS, RUN_KEYS, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -31,8 +25,9 @@ class Launch:
 
 @dataclass(frozen=True)
 class Event:
-    """One thing a run's output says: text to show, a progress report (named by its point), or its outcome (the last
-    one counts); or, from the driver, a progress point the run never reported (`missing`, named by it)."""
+    """One thing a run says: text to show (its stdout), a progress report (named by its point) or its outcome (the
+    last one counts), both through report.py; or, from the driver, a progress point the run never reported
+    (`missing`, named by it)."""
     kind: Literal["text", "progress", "outcome", "missing"]
     text: str = ""
     name: str = ""
@@ -54,19 +49,20 @@ class Client:
         return os.path.join(os.path.abspath(root), "src")
 
     def handover(self) -> str:
-        """Prompt text (Output › Return): how the run returns its outcome and reports progress."""
+        """Prompt text (Output › Return): how the run returns its outcome and reports progress; `{{report}}` is
+        filled with the report command (compose.report_command)."""
         return ""
 
     def value(self, run: RunConfig, key: str):
         """One of this client's own keys for the run, in config.toml's layout."""
         return lookup(self.config, run.role, run.task, key)
 
-    def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access, schema: dict) -> Launch:
-        """The command for a run; `schema` is the outcome's JSON Schema."""
+    def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access) -> Launch:
+        """The command for a run."""
         raise NotImplementedError
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:
-        """The run's stdout as Events; a client that can't return an outcome yields only text."""
+        """The run's stdout as text Events."""
         for line in lines:
             yield Event("text", line.rstrip("\n"))
 

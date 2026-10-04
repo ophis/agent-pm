@@ -15,7 +15,7 @@ Commit the regenerated `core/skills/` with the change that caused it.
 ## Rules
 
 - `team/` and `output/` say what a run does and what it reports, client-neutrally. How a client starts a run and how the run's outcome and progress come back live in that client's class.
-- A task marks where a run reports progress with a line `[agent-pm-progress:<name>] what to report`, under its own **Report progress** item (a step, or a bullet under the parent it belongs to), never inside another item; how the run reports it is the client's `handover()` (Claude and skill: before the next tool call, a text message holding only that line, the report after the mark). A done or failed run whose task marks `start` but never reported it gets a `missing` event (`drive.start`).
+- A task marks where a run reports progress with a line `[agent-pm-progress:<name>] what to report`, under its own **Report progress** item (a step, or a bullet under the parent it belongs to), never inside another item; how the run reports it is the client's `handover()` (Claude: `report.py progress <name> <report>`; skill: before the next tool call, a text message holding only that line, the report after the mark). A done or failed run whose task marks `start` but never reported it gets a `missing` event (`drive.start`).
 - Config is layered (`compose.load_run`): `config/config.toml` is client-neutral and valid on its own; `config/clients/<name>.toml` has the same layout and its run keys replace the neutral ones.
 - `src/repo.py` is stdlib-only and imports nothing from `src/`: the skill client copies it into each skill.
 
@@ -30,7 +30,7 @@ Commit the regenerated `core/skills/` with the change that caused it.
    - Map `run.tier` and `run.effort` through its config; a value with no mapping is a `ConfigError`.
    - Turn `access.dirs` and `access.commands` into its own permission flags; whatever it can't enforce stays a prompt request (`docs/adr/0003`).
    - New session vs resume from `params.sid` and `params.resume`; `cwd` = `params.workdir`.
-3. **Outcome and progress** (`docs/adr/0006`): override `handover()`, the Output › Return text telling the run how to return them, and implement `events(lines)` yielding `Event("text")`, `Event("progress")` and `Event("outcome", outcome=…)` from the run's stdout. Feed `launch()`'s `schema` (the outcome's JSON Schema) to the client's native structured output when it has one; else `handover` asks for a final fenced JSON block and `events()` extracts it. The driver validates and saves the outcome; a client without `events()` returns none.
+3. **Outcome and progress** (`docs/adr/0006`): override `handover()`, the Output › Return text telling the run to report both with `{{report}}` (filled with `compose.report_command`: `src/report.py --to <workdir>/.report.jsonl`, pre-approved for every run): `progress <name> <text>`, and `outcome --status … --title … --summary …` as its last action. `drive.start` creates that channel before launch, tails it during the run (only lines appended after it began) and once more after exit, keeps the last outcome and validates it (`drive.validate`, the only check). `events(lines)` turns the run's stdout into `Event("text")`.
 4. **Register** it in `REGISTRY` (`src/clients/__init__.py`); add `config/clients/<name>.toml` when `needs_config`.
 5. **Test** in `src/tests/drive_test.py`: its argv for a role/task, resume, an unmapped tier, its events from a sample of its output.
 

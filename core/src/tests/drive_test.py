@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 import unittest
 import unittest.mock
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
+import report  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SID = "11111111-2222-3333-4444-555555555555"
@@ -30,8 +32,8 @@ class Recorder(clients.Client):
     needs_config = False
     seen = []
 
-    def launch(self, prompt, run, *, params, access, schema):
-        Recorder.seen.append(dict(prompt=prompt, run=run, params=params, access=access, schema=schema))
+    def launch(self, prompt, run, *, params, access):
+        Recorder.seen.append(dict(prompt=prompt, run=run, params=params, access=access))
         return clients.Launch(["fake", params.sid], {"FAKE": "1"}, cwd=os.path.abspath(params.workdir))
 
 
@@ -59,6 +61,9 @@ class Base(unittest.TestCase):
         return drive.plan(CORE, clients.get(client, CORE), role, task, params=self.params(**params), repo=repo,
                           layers=layers)[0]
 
+    def report(self):
+        return f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl"
+
 
 class Claude(Base):
     def test_no_deny_rules(self):
@@ -72,9 +77,12 @@ class Claude(Base):
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
-            "--output-format", "stream-json", "--verbose", "--json-schema", json.dumps(compose.outcome_schema(CORE)),
-            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)"])
-        self.assertIn("## Return\n\nReturn the outcome as your structured output", launch.argv[2])
+            "--output-format", "stream-json", "--verbose",
+            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)",
+            f"Bash({self.report()} *)"])
+        self.assertIn(f"## Return\n\nReport through `{self.report()}`", launch.argv[2])
+        self.assertIn(f"`{self.report()} progress start <what that line asks you to report>`", launch.argv[2])
+        self.assertIn(f"`{self.report()} outcome --status <done|needs_input|failed> --title", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
@@ -82,12 +90,14 @@ class Claude(Base):
         argv = self.plan("engineer", "engineering", client="claude").argv
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
-            f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")])
+            f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")]
+            + [f"Bash({self.report()} *)"])
 
     def test_product_design_argv_has_the_prepare_rule(self):
         argv = self.plan("pm", "product-design", client="claude").argv
         self.assertEqual(argv[argv.index("--allowedTools"):], [
-            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)"])
+            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)",
+            f"Bash({self.report()} *)"])
         self.assertIn(f"`python3 {CORE}/src/repo.py prepare --dir <Workdir>/src <repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
@@ -105,11 +115,11 @@ class Claude(Base):
     def test_commands_and_task_rules_become_allowed_tools(self):
         c = claude(roles={"r": {"tasks": {"t": {"allow": ["WebFetch"]}}}})
         access = drive.Access(dirs=[], commands=["make test"])
-        argv = c.launch("p", run(), params=PARAMS, access=access, schema={}).argv
+        argv = c.launch("p", run(), params=PARAMS, access=access).argv
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools", "Bash(make test)", "WebFetch"])
 
     def test_no_rule_groups_when_empty(self):
-        argv = claude().launch("p", run(), params=PARAMS, access=NO_ACCESS, schema={}).argv
+        argv = claude().launch("p", run(), params=PARAMS, access=NO_ACCESS).argv
         for flag in ("--add-dir", "--disallowedTools", "--allowedTools"):
             self.assertNotIn(flag, argv)
 
@@ -119,7 +129,7 @@ class Claude(Base):
 
     def test_unmapped_tier(self):
         with self.assertRaises(compose.ConfigError) as cm:
-            claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS, schema={})
+            claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS)
         self.assertIn("no model for tier 2", str(cm.exception))
 
     def test_role_value_applies_to_its_tasks_and_task_value_wins(self):
@@ -145,7 +155,8 @@ class Generic(Base):
     def test_driver_hands_the_client_neutral_access(self):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
-        self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[f"python3 {CORE}/src/repo.py prepare --dir {self.work}/src *"]))
+        self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[
+            f"python3 {CORE}/src/repo.py prepare --dir {self.work}/src *", f"{self.report()} *"]))
         self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Guide"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
@@ -161,13 +172,15 @@ class Generic(Base):
     def test_access_appends_the_gate_after_the_filled_commands(self):
         gate = "python3 /u/usage.py {{workdir}} *"
         acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s")
-        self.assertEqual(acc.commands, ["/s/x *", gate])
-        self.assertEqual(drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s").commands, ["x"])
+        report = f"python3 /s/report.py --to {self.work}/.report.jsonl *"
+        self.assertEqual(acc.commands, ["/s/x *", report, gate])
+        self.assertEqual(drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s").commands, ["x", report])
 
     def test_repo_entry_binds_to_the_repo_arg(self):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
                            repo=self.repo, scripts="/s")
-        self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[f"/s/x --dir {self.work}/src *"]))
+        self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[
+            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"]))
 
     def test_the_run_never_needs_the_out_dir(self):
         self.plan(out=os.path.join(self.tmp.name, "elsewhere", "out.md"))
@@ -294,12 +307,25 @@ def stream(*events):
     return [json.dumps(e) + "\n" for e in events]
 
 
-def result(outcome, turns=3):
-    return {"type": "result", "subtype": "success", "num_turns": turns, "structured_output": outcome}
-
-
 def said(text):
-    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+    return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}) + "\n"
+
+
+def progress(name, text):
+    return {"kind": "progress", "name": name, "text": text}
+
+
+def outcome(data):
+    return {"kind": "outcome", "outcome": data}
+
+
+def feed(channel, items):
+    """The run's stdout: each str a line of it; each dict appended to the channel first, as report.py does."""
+    for item in items:
+        if isinstance(item, dict):
+            drive.append_line(channel, json.dumps(item, ensure_ascii=False) + "\n")
+        else:
+            yield item
 
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
@@ -307,42 +333,36 @@ DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"
 
 class ClaudeEvents(unittest.TestCase):
     def kinds(self, *lines):
-        return [(e.kind, e.name, e.text) for e in claude().events(lines) if e.kind != "outcome"]
+        return [(e.kind, e.text) for e in claude().events(lines)]
 
-    def outcomes(self, *lines):
-        return [e.outcome for e in claude().events(lines) if e.kind == "outcome"]
-
-    def test_text_and_progress_lines(self):
-        lines = stream(said("Starting.\n- [agent-pm-progress:start]  2 rounds, cap 80\n\n"
-                            "* `[agent-pm-progress:round_1]` one\n**[agent-pm-progress:x-y]** \n"
-                            "Progress: not a report\nsee [agent-pm-progress:x] mid-line"))
+    def test_assistant_text_lines_are_text(self):
+        lines = [said("Starting.\n[agent-pm-progress:start] 2 rounds\n\n  \nDone.")]
         self.assertEqual(self.kinds("not json\n", *lines), [
-            ("text", "", "not json"), ("text", "", "Starting."), ("progress", "start", "2 rounds, cap 80"),
-            ("progress", "round_1", "one"), ("progress", "x-y", ""), ("text", "", "Progress: not a report"),
-            ("text", "", "see [agent-pm-progress:x] mid-line")])
+            ("text", "not json"), ("text", "Starting."), ("text", "[agent-pm-progress:start] 2 rounds"), ("text", "Done.")])
 
-    def test_every_structured_result_is_an_outcome_the_driver_keeps_the_last(self):
-        lines = stream(result(None, 0), result(DONE), {"type": "system", "subtype": "task_updated"})
-        self.assertEqual(self.outcomes(*lines), [DONE])
-
-    def test_odd_json_is_skipped(self):
+    def test_results_and_odd_json_are_skipped(self):
         lines = ["null\n", "3\n", "[]\n", '"text"\n', *stream(
             {"type": "assistant"}, {"type": "assistant", "message": {"content": "x"}},
             {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash"}, {"type": "thinking"}, 7]}},
-            result("a string"), result(["a", "list"]))]
-        self.assertEqual((self.kinds(*lines), self.outcomes(*lines)), ([], []))
+            {"type": "result", "subtype": "success", "result": "bye", "structured_output": DONE})]
+        self.assertEqual(self.kinds(*lines), [])
 
 
 class Handover(unittest.TestCase):
     def test_each_client_names_the_progress_mark(self):
         for c in (claude(), clients.SkillClient({})):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
-        self.assertIn("structured output", claude().handover())
-        for c in (claude(), clients.SkillClient({})):
-            self.assertIn("before calling the next tool, send a text message containing only that line",
-                          c.handover(), type(c).__name__)
+        self.assertIn("before calling the next tool, send a text message containing only that line",
+                      clients.SkillClient({}).handover())
         self.assertNotIn("ultracode", claude().handover())
         self.assertNotIn("progress:budget", claude().handover())
+
+    def test_claude_reports_through_the_report_command_outcome_last(self):
+        text = claude().handover()
+        self.assertIn("{{report}} progress <name>", text)
+        self.assertIn("{{report}} outcome --status", text)
+        self.assertIn("last action", text)
+        self.assertNotIn("structured output", text)
 
     def test_the_base_client_returns_no_outcome(self):
         self.assertEqual(clients.Client({}).handover(), "")
@@ -355,6 +375,65 @@ class Schema(unittest.TestCase):
         self.assertEqual(tuple(schema["properties"]["status"]["enum"]), drive.STATUSES)
         self.assertEqual(set(schema["properties"]), {f.name for f in dataclasses.fields(drive.Outcome)})
         self.assertEqual(schema["properties"]["questions"]["maxItems"], 4)
+
+
+class Report(Base):
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.work)
+        self.channel = os.path.join(self.work, ".report.jsonl")
+
+    def report(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = report.main(["--to", self.channel, *argv])
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue() + err.getvalue()
+
+    def lines(self):
+        if not os.path.exists(self.channel):
+            return []
+        with open(self.channel) as f:
+            return [json.loads(line) for line in f]
+
+    def test_progress_appends_one_line(self):
+        self.assertEqual(self.report("progress", "round-1", "2", "rounds,", "cap 80"), (0, "report.py: progress reported\n"))
+        self.assertEqual(self.report("progress", "start", "-x go")[0], 0)
+        self.assertEqual(self.lines(), [progress("round-1", "2 rounds, cap 80"), progress("start", "-x go")])
+
+    def test_outcome_from_arguments_the_deliverable_from_its_file(self):
+        doc = os.path.join(self.work, "doc.md")
+        with open(doc, "w") as f:
+            f.write("# Doc\n")
+        code, out = self.report("outcome", "--status", "done", "--title", "T", "--summary", "S", "--deliverable", doc)
+        self.assertEqual((code, self.lines()), (0, [outcome(DONE)]))
+        self.assertIn("outcome reported", out)
+
+    def test_repeatable_questions_and_files(self):
+        self.assertEqual(self.report("outcome", "--status", "needs_input", "--title", "T", "--summary", "- a\n- b",
+                                     "--question", "Which repo?", "--question", "- Why?", "--file", "a.md",
+                                     "--file", "b.md", "--url", "https://x")[0], 0)
+        self.assertEqual(self.lines(), [outcome({"status": "needs_input", "title": "T", "summary": "- a\n- b",
+                                                 "questions": ["Which repo?", "- Why?"], "url": "https://x",
+                                                 "files": ["a.md", "b.md"]})])
+
+    def test_bad_arguments_append_nothing(self):
+        base = ["outcome", "--title", "T", "--summary", "S"]
+        for argv in (base + ["--status", "maybe"], ["outcome", "--status", "done"], ["note", "x"], [],
+                     base + ["--status", "done", "--deliverable", os.path.join(self.work, "no.md")]):
+            self.assertNotEqual(self.report(*argv)[0], 0, argv)
+        self.assertEqual(self.lines(), [])
+
+    def test_a_symlinked_channel_is_refused(self):
+        target = os.path.join(self.tmp.name, "zshrc")
+        with open(target, "w") as f:
+            f.write("mine")
+        os.symlink(target, self.channel)
+        self.assertEqual(self.report("progress", "x", "y")[0], 1)
+        with open(target) as f:
+            self.assertEqual(f.read(), "mine")
 
 
 class Validate(Base):
@@ -382,6 +461,14 @@ class Validate(Base):
         self.fails({**DONE, "summary": 3}, "must be text")
         self.fails({**DONE, "deliverable": ["x"]}, "must be text")
         self.fails({**DONE, "files": "x.md"}, "must be lists")
+
+    def test_the_schema_holds(self):
+        self.fails({**DONE, "extra": 1}, "unknown field 'extra'")
+        self.fails({**DONE, "title": "x" * 201}, "title is longer than 200")
+        self.fails({**DONE, "summary": "x" * 4001}, "summary is longer than 4000")
+        self.fails({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text")
+        self.fails({**DONE, "files": None}, "files must be a list")
+        self.fails({**DONE, "url": None}, "url must be text")
 
     def test_title(self):
         for title in ("", "  ", "a\nb", "a\x1b[2Jb", 5):
@@ -433,16 +520,17 @@ class Validate(Base):
 
 
 class Start(Base):
-    def start(self, lines, rc=0, output=None, sinks=None, progress=(), **params):
+    def start(self, items, rc=0, output=None, sinks=None, progress=(), **params):
+        """Runs `items` through drive.start: str lines on stdout, dicts (or callables) on the channel."""
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
         calls, log = [], io.StringIO()
+        p = self.params(**params)
 
         def popen(argv, **kw):
             calls.append((argv, kw))
-            self.proc = FakeProc(lines, rc)
+            self.proc = FakeProc(feed(p.channel, items), rc)
             return self.proc
 
-        p = self.params(**params)
         r = drive.start(launch, run(output=output or {"type": "local"}, progress=list(progress)), p, client=claude(), popen=popen,
                         sinks=sinks if sinks is not None else [drive.terminal(log), *drive.default_sinks(p)[1:]])
         return r, calls, log.getvalue()
@@ -455,36 +543,107 @@ class Start(Base):
         return os.path.lexists(os.path.join(self.work, name))
 
     def test_done_run_saves_outcome_deliverable_and_progress(self):
-        r, ((argv, kw),), log = self.start(stream(said("[agent-pm-progress:round] half way"), result(DONE)))
+        r, ((argv, kw),), log = self.start([progress("round", "half way"), said("hi"), outcome(DONE)])
         out = os.path.join(self.work, "out.md")
         self.assertEqual((r.returncode, r.outcome.status, r.outcome.url), (0, "done", out))
         self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake"], self.work, "1"))
         self.assertEqual(self.read("out.md"), "# Doc\n")
         self.assertEqual(json.loads(self.read("outcome.json"))["url"], out)
         self.assertEqual(json.loads(self.read("progress.jsonl")) | {"ts": ""}, {"ts": "", "name": "round", "text": "half way"})
-        self.assertIn("Progress (round): half way", log)
+        self.assertEqual(log, "Progress (round): half way\nhi\n")
+
+    def test_progress_arrives_while_stdout_is_quiet(self):
+        got = threading.Event()
+
+        def quiet():
+            drive.append_line(os.path.join(self.work, ".report.jsonl"), json.dumps(progress("start", "go")) + "\n")
+            self.assertTrue(got.wait(5), "no progress event while stdout was quiet")
+            yield said("after")
+
+        seen = []
+
+        def sink(event):
+            seen.append(event.kind)
+            if event.kind == "progress":
+                got.set()
+
+        launch = drive.Launch(["fake"], cwd=self.work)
+        with unittest.mock.patch.object(drive, "POLL", 0.01):
+            drive.start(launch, run(), self.params(), client=claude(), sinks=[sink],
+                        popen=lambda argv, **kw: FakeProc(quiet()))
+        self.assertEqual(seen, ["progress", "text"])
+
+    def test_the_channel_exists_before_launch(self):
+        def items():
+            self.assertTrue(os.path.isfile(os.path.join(self.work, ".report.jsonl")))
+            yield said("x")
+        self.start(items())
+
+    def test_only_lines_appended_after_start_count(self):
+        os.makedirs(self.work)
+        with open(os.path.join(self.work, ".report.jsonl"), "w") as f:
+            f.write(json.dumps(progress("start", "old")) + "\n" + json.dumps(outcome(DONE)) + "\n")
+        seen = []
+        r, _, _ = self.start([said("resumed")], sinks=[seen.append], resume=True)
+        self.assertEqual((r.error, [e.kind for e in seen]), ("the run returned no outcome", ["text"]))
+        r, _, _ = self.start([outcome({**DONE, "title": "new"})], resume=True)
+        self.assertEqual(r.outcome.title, "new")
+
+    def test_the_last_outcome_counts(self):
+        r, _, _ = self.start([outcome({**DONE, "title": "first"}), said("fixing"), outcome({**DONE, "title": "real"})])
+        self.assertEqual(r.outcome.title, "real")
+
+    def test_malformed_channel_lines_are_skipped(self):
+        seen = []
+        bad = [{"kind": "progress", "name": "a b", "text": "x"}, {"kind": "progress", "name": "x", "text": "a\nb"},
+               {"kind": "progress", "name": "x", "text": " "}, {"kind": "outcome", "outcome": "done"}, {"kind": "x"}]
+        r, _, _ = self.start([*bad, progress("ok", "yes")], sinks=[seen.append])
+        self.assertEqual([(e.kind, e.name) for e in seen], [("progress", "ok")])
+        self.assertIsNone(r.outcome)
+
+    def test_garbage_and_partial_lines(self):
+        def items():
+            with open(os.path.join(self.work, ".report.jsonl"), "a") as f:
+                f.write("not json\n[]\n" + json.dumps(progress("a", "1"))[:10])
+            yield said("x")
+            with open(os.path.join(self.work, ".report.jsonl"), "a") as f:
+                f.write(json.dumps(progress("a", "1"))[10:] + "\n")
+        seen = []
+        self.start(items(), sinks=[seen.append])
+        self.assertEqual(sorted((e.kind, e.text) for e in seen), [("progress", "1"), ("text", "x")])
+
+    def test_a_symlinked_channel_is_not_read(self):
+        os.makedirs(self.work)
+        target = os.path.join(self.tmp.name, "lines")
+        with open(target, "w") as f:
+            f.write(json.dumps(outcome(DONE)) + "\n")
+
+        def items():
+            os.remove(os.path.join(self.work, ".report.jsonl"))
+            os.symlink(target, os.path.join(self.work, ".report.jsonl"))
+            with open(target, "a") as f:
+                f.write(json.dumps(outcome(DONE)) + "\n")
+            yield said("x")
+        r, _, _ = self.start(items())
+        self.assertEqual(r.error, "the run returned no outcome")
 
     def test_orchestrator_destination_saves_the_deliverable_with_no_url(self):
-        r, _, _ = self.start(stream(result(DONE)), output={"type": "orchestrator"})
+        r, _, _ = self.start([outcome(DONE)], output={"type": "orchestrator"})
         self.assertEqual((r.outcome.url, self.read("out.md")), ("", "# Doc\n"))
 
     def test_github_destination_keeps_the_runs_url_and_saves_no_deliverable(self):
         gh = {"type": "github", "repo": "o/docs", "branch": "main"}
         url = "https://github.com/o/docs/blob/main/x.md"
-        r, _, _ = self.start(stream(result({**DONE, "url": url})), output=gh)
+        r, _, _ = self.start([outcome({**DONE, "url": url})], output=gh)
         self.assertEqual(r.outcome.url, url)
         self.assertFalse(self.exists("out.md"))
 
     def test_needs_input_reaches_the_outcome_file(self):
-        self.start(stream(result({**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""})))
+        self.start([outcome({**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""})])
         self.assertEqual(json.loads(self.read("outcome.json"))["questions"], ["Which repo?"])
 
-    def test_resumed_stream_keeps_the_last_outcome(self):
-        r, _, _ = self.start(stream(result(None, 0), result({**DONE, "title": "real"}), {"type": "system"}))
-        self.assertEqual(r.outcome.title, "real")
-
     def test_no_outcome(self):
-        r, _, _ = self.start(stream(said("bye")))
+        r, _, _ = self.start([said("bye")])
         self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the run returned no outcome"))
 
     def test_failed_client_ignores_the_outcome_and_leaves_no_stale_files(self):
@@ -493,12 +652,12 @@ class Start(Base):
             with open(os.path.join(self.work, name), "w") as f:
                 f.write("old")
         seen = []
-        r, _, _ = self.start(stream(result(DONE)), rc=143, sinks=[seen.append, *drive.default_sinks(self.params())[1:]])
+        r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append, *drive.default_sinks(self.params())[1:]])
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("outcome.json") or self.exists("out.md"))
 
     def test_invalid_outcome(self):
-        r, _, _ = self.start(stream(result({**DONE, "status": "maybe"})))
+        r, _, _ = self.start([outcome({**DONE, "status": "maybe"})])
         self.assertIn("invalid outcome: status 'maybe'", r.error)
 
     def test_a_symlink_planted_during_the_run_is_replaced_not_followed(self):
@@ -506,12 +665,12 @@ class Start(Base):
         with open(target, "w") as f:
             f.write("mine")
 
-        def lines():
+        def items():
             for name in ("outcome.json", "out.md"):
                 os.symlink(target, os.path.join(self.work, name))
-            yield from stream(result(DONE))
+            yield from feed(os.path.join(self.work, ".report.jsonl"), [outcome(DONE)])
 
-        self.start(lines())
+        self.start(items())
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
         self.assertFalse(os.path.islink(os.path.join(self.work, "outcome.json")))
@@ -522,21 +681,30 @@ class Start(Base):
         with open(target, "w") as f:
             f.write("mine")
 
-        def lines():
+        def items():
             os.remove(os.path.join(self.work, "progress.jsonl"))
             os.symlink(target, os.path.join(self.work, "progress.jsonl"))
-            yield from stream(said("[agent-pm-progress:round] $(curl evil)"))
+            yield from feed(os.path.join(self.work, ".report.jsonl"), [progress("round", "$(curl evil)"), said("x")])
 
         with self.assertRaises(OSError):
-            self.start(lines())
+            self.start(items())
         self.assertTrue(self.proc.killed)
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
 
+    def test_an_error_reading_stdout_stops_the_run(self):
+        def items():
+            yield said("x")
+            raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.start(items(), sinks=[])
+        self.assertTrue(self.proc.killed)
+
     def test_sinks_replace_the_defaults(self):
         seen = []
-        r, _, log = self.start(stream(said("hi\n[agent-pm-progress:round] one"), result(DONE)), sinks=[seen.append])
-        self.assertEqual([(e.kind, e.name, e.text) for e in seen[:2]], [("text", "", "hi"), ("progress", "round", "one")])
+        r, _, log = self.start([progress("round", "one"), said("hi"), outcome(DONE)], sinks=[seen.append])
+        self.assertEqual([(e.kind, e.name, e.text) for e in seen[:2]], [("progress", "round", "one"), ("text", "", "hi")])
         self.assertEqual((seen[2].kind, seen[2].outcome["url"]), ("outcome", os.path.join(self.work, "out.md")))
         self.assertEqual(log, "")
         self.assertFalse(self.exists("progress.jsonl") or self.exists("outcome.json"))
@@ -544,49 +712,48 @@ class Start(Base):
 
     def test_every_sink_gets_every_event(self):
         a, b = [], []
-        self.start(stream(said("hi"), result(DONE)), sinks=[a.append, b.append])
+        self.start([said("hi"), outcome(DONE)], sinks=[a.append, b.append])
         self.assertEqual([e.kind for e in a], ["text", "outcome"])
         self.assertEqual(a, b)
 
     def test_an_invalid_outcome_reaches_no_sink(self):
         seen = []
-        self.start(stream(result({**DONE, "status": "maybe"})), sinks=[seen.append])
+        self.start([outcome({**DONE, "status": "maybe"})], sinks=[seen.append])
         self.assertEqual(seen, [])
 
     def test_resume_appends_progress_a_new_run_resets_it(self):
-        self.start(stream(said("[agent-pm-progress:round] one"), result(DONE)))
-        self.start(stream(said("[agent-pm-progress:round] 二"), result(DONE)), resume=True)
+        self.start([progress("round", "one"), outcome(DONE)])
+        self.start([progress("round", "二"), outcome(DONE)], resume=True)
         self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["one", "二"])
         self.assertIn("二", self.read("progress.jsonl"))
-        self.start(stream(said("[agent-pm-progress:round] three"), result(DONE)))
+        self.start([progress("round", "three"), outcome(DONE)])
         self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["three"])
-
 
     FAILED = {**DONE, "status": "failed", "deliverable": ""}
     NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
 
-    def missing(self, *events, progress=("start", "round"), **params):
+    def missing(self, *items, progress=("start", "round"), **params):
         seen, err = [], io.StringIO()
         with redirect_stderr(err):
-            r, _, _ = self.start(stream(*events), sinks=[seen.append], progress=progress, **params)
+            r, _, _ = self.start(list(items), sinks=[seen.append], progress=progress, **params)
         return r, [e.name for e in seen if e.kind == "missing"], err.getvalue(), [e.kind for e in seen]
 
     def test_done_or_failed_without_start_reports_it_missing(self):
-        for outcome in (DONE, self.FAILED):
-            r, missing, err, kinds = self.missing(said("[agent-pm-progress:round] one"), result(outcome))
-            self.assertEqual((r.outcome.status, missing), (outcome["status"], ["start"]))
+        for o in (DONE, self.FAILED):
+            r, missing, err, kinds = self.missing(progress("round", "one"), outcome(o))
+            self.assertEqual((r.outcome.status, missing), (o["status"], ["start"]))
             self.assertEqual(err, "drive.py: missing progress mark: start\n")
             self.assertEqual(kinds, ["progress", "missing", "outcome"])
 
     def test_no_report_when_start_was_seen_needs_input_resumed_or_not_expected(self):
-        for events, progress, params in (
-                ((said("[agent-pm-progress:start] go"), result(DONE)), ("start", "round"), {}),
-                ((result(self.NEEDS),), ("start",), {}),
-                ((result(DONE),), ("start",), {"resume": True}),
-                ((result(DONE),), ("round",), {}),
-                ((result(DONE),), (), {})):
-            _, missing, err, _ = self.missing(*events, progress=progress, **params)
-            self.assertEqual((missing, err), ([], ""), (progress, params))
+        for items, marks, params in (
+                ((progress("start", "go"), outcome(DONE)), ("start", "round"), {}),
+                ((outcome(self.NEEDS),), ("start",), {}),
+                ((outcome(DONE),), ("start",), {"resume": True}),
+                ((outcome(DONE),), ("round",), {}),
+                ((outcome(DONE),), (), {})):
+            _, missing, err, _ = self.missing(*items, progress=marks, **params)
+            self.assertEqual((missing, err), ([], ""), (marks, params))
 
     def test_no_outcome_reports_nothing(self):
         _, missing, err, _ = self.missing(said("bye"))
@@ -610,7 +777,7 @@ class Main(Base):
 
         def popen(argv, **kw):
             calls.append((argv, kw))
-            return FakeProc(list(lines), rc)
+            return FakeProc(feed(os.path.join(self.work, ".report.jsonl"), lines), rc)
 
         out, err = io.StringIO(), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
@@ -626,7 +793,7 @@ class Main(Base):
         self.assertEqual((data["argv"][0], data["cwd"]), ("claude", self.work))
 
     def test_done_run_exits_0_and_reports_session(self):
-        code, _, err, calls = self.run_main("--sid", SID, lines=stream(result(DONE)))
+        code, _, err, calls = self.run_main("--sid", SID, lines=[outcome(DONE)])
         self.assertEqual(code, 0)
         self.assertIn(f"session {SID}", err)
         self.assertIn("status done", err)
@@ -640,7 +807,7 @@ class Main(Base):
         self.assertIn("no outcome", err)
 
     def test_client_failure_exits_3(self):
-        self.assertEqual(self.run_main(lines=stream(result(DONE)), rc=1)[0], 3)
+        self.assertEqual(self.run_main(lines=[outcome(DONE)], rc=1)[0], 3)
 
     def test_config_error_exits_2(self):
         code, _, err, calls = self.run_main("--task", "essay")
@@ -648,7 +815,7 @@ class Main(Base):
         self.assertIn("drive.py:", err)
 
     def test_resume_end_to_end(self):
-        code, _, _, ((argv, _),) = self.run_main("--sid", SID, "--resume", lines=stream(result(DONE)))
+        code, _, _, ((argv, _),) = self.run_main("--sid", SID, "--resume", lines=[outcome(DONE)])
         self.assertEqual((code, argv[3:5]), (0, ["--resume", SID]))
         self.assertTrue(argv[2].startswith("Resumed run"))
         self.assertEqual(self.run_main("--resume")[0], 2)
