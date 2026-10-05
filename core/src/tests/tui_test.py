@@ -495,6 +495,29 @@ class Iterm(unittest.TestCase):
                                       ["tmux", "list-clients", "-t", "=own", "-F", CLIENTS],
                                       osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys002", "/dev/ttys001")])
 
+    def test_detached_own_session_falls_back_to_iterm_session_id(self):
+        fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": (0, ""), "osascript": (0, "\n")})
+        self.assertIsNone(self.show(fake, self.INSIDE))
+        self.assertEqual(fake.calls[-1], osa("right", "id", "s", "ABC"))
+
+    def test_anchor(self):
+        own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
+        cases = [({"ITERM_SESSION_ID": "w0t0p0:ABC"}, {}, None, ("id", ["ABC"])),
+                 (self.INSIDE, {**own, "list-clients": (0, "5 /dev/ttys004\n")}, None, ("tty", ["/dev/ttys004"])),
+                 (self.INSIDE, own, None, ("id", ["ABC"])),
+                 ({}, {"list-clients": (0, "5 /dev/ttys004\n")}, "b", ("tty", ["/dev/ttys004"]))]
+        for env, results, beside, want in cases:
+            with self.subTest(env=env, beside=beside), environ(**env):
+                self.assertEqual(tui.anchor(beside, proc=Tmux(results=results)), want)
+        no_iterm = {k: v for k, v in self.INSIDE.items() if k != "ITERM_SESSION_ID"}
+        cases = [({}, {}, None, "no anchor pane"),
+                 ({"ITERM_SESSION_ID": "w0t0p0"}, {}, None, "no anchor pane"),
+                 (no_iterm, own, None, "no anchor pane: no terminal shows tmux session own"),
+                 (self.INSIDE, {"list-clients": (0, "")}, "b", "^no terminal shows tmux session b$")]
+        for env, results, beside, msg in cases:
+            with self.subTest(env=env, beside=beside), environ(**env), self.assertRaisesRegex(tui.TuiError, msg):
+                tui.anchor(beside, proc=Tmux(results=results))
+
     def test_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n")})
         with environ(**self.INSIDE):

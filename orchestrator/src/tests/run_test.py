@@ -426,19 +426,21 @@ class Outer(Base):
 
 
 class Attended(Base):
-    """The outer with the tui runner; attended.layout sees a fake tmux and stdin, and no $TMUX."""
+    """The outer with the tui runner; attended.layout sees a fake tmux, and no $TMUX or $ITERM_SESSION_ID."""
     def setUp(self):
         super().setUp()
-        os.environ.pop("TMUX", None)  # Base's patch.dict restores it
+        for k in ("TMUX", "ITERM_SESSION_ID"):  # Base's patch.dict restores them
+            os.environ.pop(k, None)
 
-    def tui(self, *extra, tty=False, live=()):
+    def tui(self, *extra, live=()):
         self.tmux = Tmux(live)
-        place = functools.partial(LAYOUT, proc=self.tmux, isatty=lambda fd: tty)
+        place = functools.partial(LAYOUT, proc=self.tmux)
         with mock.patch.object(attended, "layout", place):
             return self.main(args() + ["--runner", "tui", *extra])
 
-    def driver(self, *tail, detach=True):
-        return [(["tmux", "new-session", *(["-d"] if detach else []), "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
+    def driver(self, *tail, iterm=""):
+        return [(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
+                  "agent-pm-engineer-TASK-7", "-c", self.rd,
                   sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), *tail],
                  {"check": True})]
 
@@ -448,19 +450,21 @@ class Attended(Base):
         self.assertEqual(self.err, ATTACH)
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
-    def test_a_terminal_becomes_the_drivers_client(self):
-        self.assertEqual(self.tui(tty=True), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=right", detach=False))
+    def test_an_iterm2_pane_gets_the_tui_and_a_detached_driver(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.assertEqual(self.tui(), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=right", iterm="w0t0p0:ABC"))
         self.assertEqual(self.err, ATTACH)
 
     def test_attach_lines_come_before_the_driver_session(self):
         printed = []
         self.sh = lambda argv, **kw: printed.append(sys.stderr.getvalue())
-        self.assertEqual(self.tui(tty=True), 0)
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.assertEqual(self.tui(), 0)
         self.assertEqual(printed, [ATTACH])
 
     def test_no_place_for_the_pane_starts_nothing(self):
-        cases = [((), "no pane to show the TUI beside: run from tmux or a terminal, or pass --beside SESSION"),
+        cases = [((), "no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION"),
                  (("--split", "left"), "split must be one of right, below"),
                  (("--beside", "gone"), "no tmux session gone")]
         for extra, msg in cases:
@@ -491,10 +495,10 @@ class AttendedEntry(Base):
         self.todo = todo_issue(ID, "Todo", "engineer")
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
-        self.tmux, self.tty = Tmux(live=["dev"]), False
-        os.environ.pop("TMUX", None)  # Base's patch.dict restores it
-        place = lambda split, beside: LAYOUT(split, beside, proc=self.tmux, isatty=lambda fd: self.tty)  # noqa: E731
-        p = mock.patch.object(attended, "layout", place)
+        self.tmux = Tmux(live=["dev"])
+        for k in ("TMUX", "ITERM_SESSION_ID"):  # Base's patch.dict restores them
+            os.environ.pop(k, None)
+        p = mock.patch.object(attended, "layout", functools.partial(LAYOUT, proc=self.tmux))
         p.start()
         self.addCleanup(p.stop)
 
@@ -511,11 +515,12 @@ class AttendedEntry(Base):
         return [TS.sub("", line) for line in self.err.splitlines()]
 
     def test_claims_then_starts_the_run_attended(self):
-        cases = [(("--split", "below", "--beside", "dev"), False, True, ["--runner=tui", "--split=below", "--beside=dev"]),
-                 ((), True, False, ["--runner=tui", "--split=right"])]
-        for extra, tty, detach, tail in cases:
+        cases = [(("--split", "below", "--beside", "dev"), "", ["--runner=tui", "--split=below", "--beside=dev"]),
+                 ((), "w0t0p0:ABC", ["--runner=tui", "--split=right"])]
+        for extra, iterm, tail in cases:
             with self.subTest(extra=extra):
-                self.todo["state"], self.tty, self.sh_calls, self.gql.mutations = "Todo", tty, [], []
+                os.environ["ITERM_SESSION_ID"] = iterm
+                self.todo["state"], self.sh_calls, self.gql.mutations = "Todo", [], []
                 self.tmux_sessions = [TUI_NAME, "agent-pm-engineer-TASK-70", "agent-pm-engineer-TASK-8"]
                 if os.path.exists(self.runs):
                     os.remove(self.runs)
@@ -528,7 +533,8 @@ class AttendedEntry(Base):
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
                 self.assertEqual(self.sh_calls, [
                     (LIST, {"capture_output": True, "text": True}),
-                    (["tmux", "new-session", *(["-d"] if detach else []), "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
+                    (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
+                      "agent-pm-engineer-TASK-7", "-c", self.rd,
                       sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(sid=sid),
                       *tail], {"check": True})])
                 self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=engineering",
@@ -560,7 +566,7 @@ class AttendedEntry(Base):
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
     def test_no_place_for_the_pane_before_any_linear_call(self):
-        cases = [((), "no pane to show the TUI beside: run from tmux or a terminal, or pass --beside SESSION"),
+        cases = [((), "no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION"),
                  (("--split", "left"), "split must be one of right, below"),
                  (("--beside", "gone"), "no tmux session gone")]
         for extra, msg in cases:

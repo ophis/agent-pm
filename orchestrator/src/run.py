@@ -8,8 +8,7 @@ run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --
   then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
   input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
   failure is also logged to the task's project log. --runner tui (--split and --beside need it): attended.layout places
-  the TUI pane first (exit 2 when it can't), the sessions' attach commands go to stderr, and from a plain terminal the
-  driver session starts attached.
+  the TUI pane first (exit 2 when it can't), and the sessions' attach commands go to stderr.
 run.py --issue ID --tui [--split right|below] [--beside SESSION]
   Attended entry, by hand: claims the issue (router.Board.take, without the tick's hours, max_runs or usage gate), logs
   its start line, then runs the outer with --runner tui. Exits 2 bad arguments or no place for the TUI pane, 1 config
@@ -115,10 +114,10 @@ def setup(a, root):
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """In the router tick: check, bounce or prepare the agent run, then start the inner in tmux."""
     os.environ["PATH"] = PATH
-    layout, attach = None, False
+    layout = None
     if a.runner == "tui":
         try:
-            layout, attach = attended.layout(a.split, a.beside)
+            layout = attended.layout(a.split, a.beside)
         except attended.Bad as e:
             print(f"run.py: {e}", file=sys.stderr)
             return 2
@@ -169,14 +168,15 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     except Exception as e:
         print(f"run.py: input.md: {one_line(e)}", file=sys.stderr)
         return 1
-    attended_argv = []
+    attended_argv, iterm = [], []
     if layout:
+        iterm = ["-e", f"ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID', '')}"]  # tmux's own may be stale
         attended_argv = ["--runner=tui", f"--split={layout.split}",
                          *([f"--beside={layout.beside}"] if layout.beside is not None else [])]
         print(f"run.py: driver: tmux attach -t '={session(name, a.issue)}'", file=sys.stderr)
         print(f"run.py: tui: tmux attach -t '={drive.tui_session(name, a.task, a.sid)}'", file=sys.stderr)
     try:
-        sh(["tmux", "new-session", *([] if attach else ["-d"]), "-s", session(name, a.issue), "-c", rd, sys.executable, RUN,
+        sh(["tmux", "new-session", "-d", *iterm, "-s", session(name, a.issue), "-c", rd, sys.executable, RUN,
             "--inner", "--uuid", issue.id, *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
             *(f"--{k}={getattr(a, k)}" for k in SHARED), *attended_argv], check=True)
     except subprocess.CalledProcessError as e:

@@ -131,7 +131,8 @@ def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, 
         if i == 4 or not LOCK.search(res.stderr or ""):
             break
         time.sleep(0.5 * 2**i)
-    raise RuntimeError(f"git {' '.join(args)[:100]}: {err_text(res)}")
+    shown = " ".join(a if len(a) <= 40 else a[:37] + "..." for a in args)
+    raise RuntimeError(f"git {shown[:200]}: {err_text(res)}")
 
 
 def gh_json(run: Runner, argv: list[str]):

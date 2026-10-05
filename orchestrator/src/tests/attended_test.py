@@ -9,12 +9,13 @@ import tui  # noqa: E402
 ID = "TASK-12"
 A, B = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
 PANE = {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
+ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC"}
 
 
 class Tmux:
     """Fake tmux: live names answer status (RUNNING) and kill; fail names make kill-session fail."""
-    def __init__(self, live=(), fail=(), own="mine"):
-        self.live, self.fail, self.own, self.calls = set(live), set(fail), own, []
+    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004\n"):
+        self.live, self.fail, self.own, self.clients, self.calls = set(live), set(fail), own, clients, []
 
     def __call__(self, argv, **kw):
         args = argv[1:]
@@ -22,6 +23,8 @@ class Tmux:
         out, rc = "", 0
         if args[0] == "display-message" and args[-1] == "#{session_name}":
             out = self.own + "\n"
+        elif args[0] == "list-clients":
+            out = self.clients
         elif args[0] == "display-message":
             name = args[3][1:-1]  # =name:
             out = "0  \n" if name in self.live else "\n"
@@ -38,14 +41,14 @@ class Tmux:
 
 
 class LayoutTest(unittest.TestCase):
-    def call(self, split=None, beside=None, *, tmux=None, environ=None, tty=False):
+    def call(self, split=None, beside=None, *, tmux=None, environ=None):
         tmux = tmux or Tmux()
         with mock.patch.dict(os.environ, environ or {}, clear=True):
-            return attended.layout(split, beside, proc=tmux, isatty=lambda fd: tty)
+            return attended.layout(split, beside, proc=tmux)
 
     def test_bad_split(self):
         with self.assertRaisesRegex(attended.Bad, "split must be one of right, below"):
-            self.call("left", tty=True)
+            self.call("left", environ=ITERM)
 
     def test_bad_beside_name(self):
         tmux = Tmux()
@@ -59,24 +62,34 @@ class LayoutTest(unittest.TestCase):
 
     def test_beside_given(self):
         got = self.call("below", "dev", tmux=Tmux(live=["dev"]))
-        self.assertEqual(got, (drive.Layout("below", "dev"), False))
+        self.assertEqual(got, drive.Layout("below", "dev"))
 
     def test_inside_tmux(self):
         got = self.call(environ=PANE, tmux=Tmux(own="mine"))
-        self.assertEqual(got, (drive.Layout("right", "mine"), False))
+        self.assertEqual(got, drive.Layout("right", "mine"))
+
+    def test_inside_tmux_unshown_falls_back_to_iterm(self):
+        got = self.call(environ={**PANE, **ITERM}, tmux=Tmux(own="mine", clients=""))
+        self.assertEqual(got, drive.Layout("right", None))
+
+    def test_inside_tmux_unshown_no_iterm(self):
+        with self.assertRaisesRegex(attended.Bad, "^no pane to show the TUI beside"):
+            self.call(environ=PANE, tmux=Tmux(own="mine", clients=""))
 
     def test_inside_tmux_bad_pane(self):
         with self.assertRaises(attended.Bad):
             self.call(environ={"TMUX": "x", "TMUX_PANE": "junk"})
 
-    def test_terminal(self):
+    def test_iterm_pane(self):
         tmux = Tmux()
-        self.assertEqual(self.call("below", tty=True, tmux=tmux), (drive.Layout("below", None), True))
+        self.assertEqual(self.call("below", environ=ITERM, tmux=tmux), drive.Layout("below", None))
         self.assertEqual(tmux.calls, [])
 
     def test_no_pane(self):
-        with self.assertRaisesRegex(attended.Bad, "run from tmux or a terminal, or pass --beside SESSION"):
-            self.call()
+        for environ in ({}, {"ITERM_SESSION_ID": "w0t0p0"}):
+            with self.subTest(environ=environ), self.assertRaisesRegex(
+                    attended.Bad, r"^no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION$"):
+                self.call(environ=environ)
 
 
 class RecordTest(unittest.TestCase):

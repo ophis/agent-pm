@@ -193,13 +193,13 @@ def show(session: str, template: str | None = None, *, split: str = "right", bes
 
 def iterm(session: str, *, split: str = "right", beside: str | None = None, proc=subprocess.run) -> str | None:
     """Split an iTerm2 pane right or below, attached to the session: the pane showing tmux session `beside`, else
-    the caller's (inside tmux: the one showing its own session; outside: $ITERM_SESSION_ID's). None or the failure."""
+    the caller's (anchor()). None or the failure."""
     _layout(split, beside)
     tmux = shutil.which("tmux")
     if tmux is None:
         return "tmux not found"
     try:
-        kind, anchors = _anchor(beside, proc)
+        kind, anchors = anchor(beside, proc=proc)
     except TuiError as e:
         return str(e)
     try:
@@ -299,22 +299,28 @@ def own_session(*, proc=subprocess.run) -> str | None:
     return name
 
 
-def _anchor(beside: str | None, proc) -> tuple[str, list[str]]:
-    """("tty", the ttys of the clients showing a tmux session, most recently active first), or ("id", [unique id])."""
-    if beside is None:
+def anchor(beside: str | None = None, *, proc=subprocess.run) -> tuple[str, list[str]]:
+    """The pane the show splits: ("tty", the ttys of the clients showing tmux session `beside`, else the caller's own,
+    most recently active first), or ("id", [$ITERM_SESSION_ID's unique id]) outside tmux or when no client shows the
+    caller's own session. Raises TuiError when there is none."""
+    own = beside is None
+    if own:
         beside = own_session(proc=proc)
+    detached = None
     if beside is not None:
         out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", "#{client_activity} #{client_tty}"],
                        proc).stdout
         clients = [(int(at), tty) for at, _, tty in (line.partition(" ") for line in out.splitlines())
                    if at.isdigit() and tty]
         ttys = [tty for _, tty in sorted(clients, key=lambda c: c[0], reverse=True)]
-        if not ttys:
-            raise TuiError(f"no terminal shows tmux session {beside}")
-        return "tty", ttys
+        if ttys:
+            return "tty", ttys
+        detached = f"no terminal shows tmux session {beside}"
+        if not own:
+            raise TuiError(detached)
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique:
-        raise TuiError("no anchor pane: not in tmux or iTerm2 ($ITERM_SESSION_ID)")
+        raise TuiError(f"no anchor pane: {detached or 'not in tmux'}, no iTerm2 pane ($ITERM_SESSION_ID)")
     return "id", [unique]
 
 
