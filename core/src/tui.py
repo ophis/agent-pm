@@ -216,10 +216,12 @@ def main(argv: list[str] | None = None) -> int:
                                  "type into it, read it, show it. The show: --show T, else $TUI_SHOW, else an iTerm2 "
                                  "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    start_p = sub.add_parser("start", help="run a command in a new detached session, then show it")
+    start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
+                             usage="%(prog)s [-h] [--show T] [--split {" + ",".join(SPLITS) + "}] [--beside S] "
+                                   "session -- cmd [args...]",
+                             description="Everything after the first -- is the command, passed through verbatim.")
     _show_options(start_p)
     start_p.add_argument("session", type=_session_arg)
-    start_p.add_argument("command", nargs=argparse.REMAINDER, help="[--] cmd [args...]")
     p = sub.add_parser("send", help="type text into the session, then Enter")
     p.add_argument("session", type=_session_arg)
     p.add_argument("text")
@@ -229,18 +231,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("show", help="show a running session")
     _show_options(p)
     p.add_argument("session", type=_session_arg)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    command = None
+    if argv[:1] == ["start"] and "--" in argv:   # argparse < 3.13 drops a later -- from a nargs list
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
     a = ap.parse_args(argv)
-    if a.cmd == "start":
-        command = a.command
-        if command[:1] and command[0].startswith("-"):   # REMAINDER also took the options after the session
-            if "--" not in command:
-                start_p.error("options after the session need -- before the command")
-            late = argparse.ArgumentParser(prog=start_p.prog, add_help=False)
-            _show_options(late)
-            late.parse_args(command[:command.index("--")], namespace=a)
-            command = command[command.index("--") + 1:]
-        if not command:
-            start_p.error("no command")
+    if a.cmd == "start" and not command:
+        start_p.error("a command must follow --")
     try:
         if a.cmd == "start":
             start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), template=a.show,
