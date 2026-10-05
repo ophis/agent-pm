@@ -334,7 +334,9 @@ class RealConfig(unittest.TestCase):
             "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
         self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
-        self.assertEqual(cfg["local_clones"], {})
+        home = os.path.expanduser("~/playground")
+        self.assertEqual(cfg["local_clones"], {"ophis/agent-pm": os.path.realpath(f"{home}/agent-pm"),
+                                               "ophis/claude-autopilot": os.path.realpath(f"{home}/claude-autopilot")})
         self.assertEqual(config.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
         self.assertEqual({t: (x.kind, x.prefix) for t, x in config.TASKS.items()},
