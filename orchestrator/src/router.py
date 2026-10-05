@@ -2,12 +2,12 @@
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
 (no mode)           One tick (launchd): hours, live sessions vs max_runs (all roles full -> skip), prune, Recover, plan over
-                    roles not full, usage gate, resume or claim, launch; at most one run per tick.
+                    roles not full, usage gate, resume or claim, launch; at most one agent run per tick.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
   --tui [--split right|below] [--beside SESSION]
-                    Hand-run, not with --issue: the tick's run is attended (run.py --runner tui, with the given --split
+                    Hand-run, not with --issue: the tick's agent run is attended (run.py --runner tui, with the given --split
                     and --beside); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
 Needs Python 3.11+.
@@ -38,7 +38,7 @@ BRAKE_5H = 0.8
 PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
          "--setting-sources", "user", "--strict-mcp-config"]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
-INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
+INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake"
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
@@ -53,7 +53,7 @@ Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
 def start_line(ident, sid, task, tdir):
-    """The runs.log line of a new run."""
+    """The runs.log line of a new agent run."""
     return f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
 
 
@@ -214,7 +214,7 @@ def gate(lines, max_5h=MAX_5H):
 
 
 def probe(sh, max_5h=MAX_5H):
-    """(ok, summary) of a fresh usage probe against max_5h. Its cwd is WORK only, not a run cwd: runs work in work/<ID>/."""
+    """(ok, summary) of a fresh usage probe against max_5h. Its cwd is WORK only, not an agent run's cwd: agent runs work in work/<ID>/."""
     os.makedirs(WORK, exist_ok=True)
     out = sh(PROBE, cwd=WORK, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     return gate(out.stdout.splitlines(), max_5h)
@@ -323,7 +323,7 @@ class Board:
                 task = logged_task(self.entries, sid) or run.default
                 if task not in run.tasks:
                     log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
-                    self.comment_and_move(issue, f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks '
+                    self.comment_and_move(issue, f'The interrupted agent run\'s task "{task}" is not one of {role}\'s tasks '
                                                  f'({", ".join(run.tasks)}); needs a look.', "in_review", "in_progress",
                                           "recover:")
                 else:

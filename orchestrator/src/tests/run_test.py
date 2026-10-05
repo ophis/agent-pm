@@ -163,7 +163,7 @@ def said(text):
 
 
 def reported(rd, *lines):
-    """Appends to the run's report channel, as core's report.py does."""
+    """Appends to the agent run's report channel, as core's report.py does."""
     with open(os.path.join(rd, ".report.jsonl"), "a") as f:
         f.writelines(json.dumps(line) + "\n" for line in lines)
 
@@ -575,7 +575,7 @@ class AttendedEntry(Base):
             with self.subTest(role=role):
                 self.sh_calls, self.tmux_sessions = [], [f"agent-pm-{role}-{ID}"]
                 self.assertEqual(self.entry("--beside", "dev"), 1)
-                self.assertEqual(self.err, f"run.py: {ID} has a live run: tmux attach -t '=agent-pm-{role}-{ID}'\n")
+                self.assertEqual(self.err, f"run.py: {ID} has a live agent run: tmux attach -t '=agent-pm-{role}-{ID}'\n")
                 self.assertEqual(self.sh_calls, [(LIST, {"capture_output": True, "text": True})])
         self.assertEqual((self.gql.queries, os.path.exists(self.runs)), ([], False))
 
@@ -673,7 +673,7 @@ class Inner(Base):
         self.lines = [said("Working on it")]
         self.assertEqual(self.inner(), 0)
         self.assertEqual(self.plog()[-2:], ["<ts> end TASK-7 session=" + SID + " exit=0",
-                                            "<ts> no-outcome TASK-7: the run returned no outcome"])
+                                            "<ts> no-outcome TASK-7: the agent run returned no outcome"])
         self.assertEqual(self.gql.calls, self.harness(0))
 
     def test_nonzero_exit(self):

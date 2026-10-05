@@ -10,4 +10,4 @@ Prepare the input's repo and nothing else.
 
 ## Resume
 
-The prompt starts "Resumed run" → redo steps 1–3; prepare reuses the checkout.
+The prompt starts "Resumed agent run" → redo steps 1–3; prepare reuses the checkout.

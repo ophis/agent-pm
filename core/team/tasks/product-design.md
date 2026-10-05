@@ -25,7 +25,7 @@ Turn the input into a reviewed PRD.
 
 ## Resume
 
-The prompt starts "Resumed run" → re-read the input (it may have changed); use this session's history and do only what's left:
+The prompt starts "Resumed agent run" → re-read the input (it may have changed); use this session's history and do only what's left:
 - `needs_input` written this session → stop.
 - Grilling subagent answered this session → use its answers; never spawn it again.
 - PRD written this session → continue it, never rewrite it; then whatever is missing of the review and step 8.

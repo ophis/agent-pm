@@ -1,5 +1,5 @@
-"""Write-back: a core run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the pre-run engineering bounce. Per-task differences are config.TASKS data."""
+"""Write-back: a core agent run's start and progress marks and its outcome, posted to its Linear issue as the role account,
+and the engineering bounce before an agent run. Per-task differences are config.TASKS data."""
 import fcntl
 import hashlib
 import json
@@ -27,14 +27,14 @@ MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
-# Opens a file the run could replace. O_NONBLOCK: a FIFO planted there would block a plain open forever; regular-file
+# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain open forever; regular-file
 # reads ignore it.
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 @dataclass(frozen=True)
 class Context:
-    """What write-back needs of a run."""
+    """What write-back needs of an agent run."""
     ident: str
     issue_id: str
     task: str
@@ -48,7 +48,7 @@ class Context:
     states: dict[str, str]            # logical → state id
     repos: dict[str, str]             # project_repos
     team: str                         # cfg team id (bounce's SRC check)
-    target: tuple[str, str] | None    # engineering (owner, name) given to the run (finish's URL check); else None
+    target: tuple[str, str] | None    # engineering (owner, name) given to the agent run (finish's URL check); else None
 
 
 def say(lead, text):
@@ -111,7 +111,7 @@ def _step(ctx, step, call):
 
 def sink(ctx) -> drive.Sink:
     """Phases 1 and 2: the `start` mark as the task's start comment, once per sid; any other mark as
-    `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the run."""
+    `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the agent run."""
     def handle(event):
         try:
             if event.kind != "progress":
@@ -130,7 +130,7 @@ def sink(ctx) -> drive.Sink:
 
 
 def _read_file(path, workdir):
-    """An outcome file's bytes, re-checked on the open fd: a process the run left behind could swap it after
+    """An outcome file's bytes, re-checked on the open fd: a process the agent run left behind could swap it after
     drive.validate."""
     fd = os.open(path, NO_FOLLOW)
     with os.fdopen(fd, "rb") as f:
@@ -235,7 +235,7 @@ def _finish(ctx, o):
 
 
 def bounce(ctx, issue: Issue, reason: str) -> None:
-    """The pre-run engineering bounce: a Handoff issue whose source is in ctx.team goes back to that source (unarchived,
+    """The engineering bounce before an agent run: a Handoff issue whose source is in ctx.team goes back to that source (unarchived,
     In Review) and this issue is Canceled; else a `Question:` and In Review. A move happens only from the expected state
     (this issue In Progress, the source Done), else is logged. Raises on any failure but unarchive's and subscribe's
     (noted in the comment), and on a signal SystemExit."""

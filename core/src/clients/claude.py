@@ -1,5 +1,5 @@
-"""Claude Code: starts the run with `claude -p`, its data from config/clients/claude.toml. The run reports progress
-and its outcome with the driver's report command; its stream-json output gives only the text to show."""
+"""Claude Code: starts the agent run with `claude -p`, its data from config/clients/claude.toml. The run reports
+progress and its outcome with the driver's report command; its stream-json output gives only the text to show."""
 import json
 import os
 from collections.abc import Iterable, Iterator

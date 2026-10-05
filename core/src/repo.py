@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Target repos for runs, checked out into DIR/<name>; a checkout of the same repo there is reused.
+"""Target repos for agent runs, checked out into DIR/<name>; a checkout of the same repo there is reused.
 
 repo.py prepare --dir DIR REPO             read-only, blobless (full history), detached at the default branch; prints
                                            {"repo", "host", "commit", "worktree", "permalink_base"}

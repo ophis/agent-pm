@@ -1,6 +1,6 @@
-"""Attended runs: where the TUI pane goes, and the harness-only record of a run's TUI sessions.
+"""Attended runs: where the TUI pane goes, and the harness-only record of an agent run's TUI sessions.
 
-The record, logs/tui/<ID>, holds one TUI session name per line. Runs never write logs/; the inner driver does.
+The record, logs/tui/<ID>, holds one TUI session name per line. Agent runs never write logs/; the inner driver does.
 """
 import os
 import re

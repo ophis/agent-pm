@@ -1,4 +1,4 @@
-"""Clients: one class per agent client, turning a composed run into the command that starts it.
+"""Clients: one class per agent client, turning a composed agent run into the command that starts it.
 
 A client gets the prompt and the run config and returns a Launch: a run client (runs = True) a command to start, from
 launch() with the RunParams and neutral Access (extra dirs, commands to pre-approve); an export client the files to

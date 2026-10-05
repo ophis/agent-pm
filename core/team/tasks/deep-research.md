@@ -24,7 +24,7 @@ Run research workflows, then write a verified report. These steps, not the workf
 
 ## Resume
 
-The prompt starts "Resumed run" → re-read the input (it may have changed) and reuse everything this session produced. This overrides steps 5–6: run only what's missing.
+The prompt starts "Resumed agent run" → re-read the input (it may have changed) and reuse everything this session produced. This overrides steps 5–6: run only what's missing.
 
 **Web.** Never call the Workflow again (except 3a), write or run no other workflow, and skip `resumeFromRunId` (it re-runs nearly everything).
 

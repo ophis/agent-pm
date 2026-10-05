@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Runner: one core run, per orchestrator/config.toml, of an issue claimed by the router or the attended entry (or a run
-the router resumes).
+"""Runner: one core agent run, per orchestrator/config.toml, of an issue claimed by the router or the attended entry (or
+one the router resumes).
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--beside SESSION]
-  Outer: checks the run can start, bounces an engineering issue whose repo check fails, writes work/<ID>/input.md,
+  Outer: checks the agent run can start, bounces an engineering issue whose repo check fails, writes work/<ID>/input.md,
   then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
   input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
   failure is also logged to the task's project log. --runner tui (--split and --beside need it): attended.layout places
@@ -13,10 +13,10 @@ run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --
 run.py --issue ID --tui [--split right|below] [--beside SESSION]
   Attended entry, by hand: claims the issue (router.Board.take, without the tick's hours, max_runs or usage gate), logs
   its start line, then runs the outer with --runner tui. Exits 2 bad arguments or no place for the TUI pane, 1 config
-  error, a live run of the issue or nothing claimed, else the outer's code.
+  error, a live agent run of the issue or nothing claimed, else the outer's code.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] <the same arguments>
-  Inner, in that tmux session: attended.close and, for tui, attended.record, the session comments, core's run with the
-  orchestrator's sinks, the end lines in the project log and runs.log, then write-back as the role account.
+  Inner, in that tmux session: attended.close and, for tui, attended.record, the session comments, core's agent run with
+  the orchestrator's sinks, the end lines in the project log and runs.log, then write-back as the role account.
 Needs Python 3.11+.
 """
 import argparse
@@ -56,7 +56,7 @@ def has_key(service):
 
 
 def fail(plog, issue, kind, reason, rc):
-    """A run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
+    """An agent run that does not start: one `<kind>` line in the project log and on stderr; returns the exit code."""
     print(append(plog, f"{kind} {issue}: {reason}"), file=sys.stderr)
     return rc
 
@@ -75,7 +75,7 @@ def _humans(cfg):
 
 
 def _context(a, cfg, role, gql, plog, issue_id, repo):
-    """The run's write-back Context, acting as the role account."""
+    """The agent run's write-back Context, acting as the role account."""
     return writeback.Context(
         ident=a.issue, issue_id=issue_id, task=a.task, sid=a.sid, resume=a.mode == "resume", project=a.project,
         workdir=run_dir(a.issue), plog=plog, gql=functools.partial(gql, service=role.key), humans=_humans(cfg),
@@ -83,7 +83,7 @@ def _context(a, cfg, role, gql, plog, issue_id, repo):
 
 
 class Setup(Exception):
-    """A run that cannot start: message, exit code (1 config, 2 role or task) and the project log known so far."""
+    """An agent run that cannot start: message, exit code (1 config, 2 role or task) and the project log known so far."""
 
     def __init__(self, msg, rc, plog=None):
         super().__init__(msg)
@@ -100,7 +100,7 @@ def load(root):
 
 
 def setup(a, root):
-    """(cfg, roles, name, role, plog) for the run's assignee and task, else Setup."""
+    """(cfg, roles, name, role, plog) for the agent run's assignee and task, else Setup."""
     cfg, roles = load(root)
     name = role_for(roles, a.assignee)
     if name is None:
@@ -113,7 +113,7 @@ def setup(a, root):
 
 
 def outer(a, *, sh, gql, run, projects, keychain, root):
-    """In the router tick: check, bounce or prepare the run, then start the inner in tmux."""
+    """In the router tick: check, bounce or prepare the agent run, then start the inner in tmux."""
     os.environ["PATH"] = PATH
     layout, attach = None, False
     if a.runner == "tui":
@@ -146,7 +146,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         except Exception as e:  # a gh/git timeout or OS error
             return fail(plog, a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
-            return fail(plog, a.issue, "transient", repo.reason, 3)  # never bounce a mid-build run
+            return fail(plog, a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, target.Invalid):
             try:
                 writeback.bounce(_context(a, cfg, role, gql, plog, issue.id, None), issue, repo.reason)
@@ -203,7 +203,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
         return 2
     live = router.live_sessions(roles, sh)
     if role := next((r for r, ids in live.items() if a.issue in ids), None):
-        print(f"run.py: {a.issue} has a live run: tmux attach -t '={session(role, a.issue)}'", file=sys.stderr)
+        print(f"run.py: {a.issue} has a live agent run: tmux attach -t '={session(role, a.issue)}'", file=sys.stderr)
         return 1
     board = router.Board(gql, router.parse_log(runs), projects, datetime.now(timezone.utc), dry=False, cfg=cfg, root=root)
     taken = board.take(a.issue)
@@ -218,7 +218,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
 
 
 def inner(a, *, layout, gql, popen, runs, root):
-    """In tmux, cwd work/<ID>: 1 when config, role or task fails, else 0; the run's own code goes to the end lines.
+    """In tmux, cwd work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to the end lines.
     `layout` is the tui runner's, None for headless."""
     os.environ["PATH"] = PATH
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""The command a run reports with: appends one progress report, its outcome or a turn end as a JSON line to the
+"""The command an agent run reports with: appends one progress report, its outcome or a turn end as a JSON line to the
 channel the driver tails (drive.start), which checks them.
 
 report.py --to CHANNEL progress NAME TEXT...
 report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...
           [--deliverable FILE]   (FILE's text becomes the outcome's deliverable)
 report.py --to CHANNEL stop [--pending KEY]   (a turn ended; the interactive client's Stop hook runs it;
-          with --pending, the list at KEY in stdin's JSON is the run's pending background work)
+          with --pending, the list at KEY in stdin's JSON is the agent run's pending background work)
 """
 import argparse
 import json

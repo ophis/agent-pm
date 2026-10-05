@@ -19,7 +19,7 @@ Run one round of parallel agents, then write a short report.
 
 ## Resume
 
-The prompt starts "Resumed run" → re-read the input (it may have changed) and reuse everything this session produced. This overrides steps 4–5:
+The prompt starts "Resumed agent run" → re-read the input (it may have changed) and reuse everything this session produced. This overrides steps 4–5:
 - No agent dispatched this session → run steps 3–7 as usual.
 - Report not written → keep the results you have; prepare again (local, mixed), then re-dispatch each angle without a result (none, or an error) with its original prompt, once, in one parallel batch.
 
