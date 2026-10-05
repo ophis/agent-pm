@@ -483,7 +483,7 @@ class Tui:
         return 0 if self.outcome else self.rc
 
     def stop(self) -> None:
-        if not self.started:   # tui.start leaves no session when it raises; a live one of that name isn't this run's
+        if not self.started:   # tui.start leaves no session when it raises; a live one of that name isn't this agent run's
             return
         try:
             tui.kill(self.name)

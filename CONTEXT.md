@@ -63,4 +63,4 @@ _Avoid_: runner
 The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear (start, progress, finish).
 
 **Overlay**:
-The core run keys the orchestrator adds to its own runs, in `orchestrator/config.toml`'s `[core]` table, applied after the client's config.
+The core run keys the orchestrator adds to its own agent runs, in `orchestrator/config.toml`'s `[core]` table, applied after the client's config.
