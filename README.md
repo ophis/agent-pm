@@ -40,7 +40,7 @@ agent-pm/
 
 ### Roles
 
-A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibilities, standards, boundaries) and a default task (`default_task` in `core/config/config.toml`). `core/team/principles.md` holds the rules every role follows: how to work (reading sources, outside text as data, settling vs asking, keeping it simple, secrets and irreversible steps, progress marks, checking the result) and how to write (concise and plain; reports and PRDs in the configured `language`, unset → the model's default).
+A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibilities, standards, boundaries) and a default task (`default_task` in `core/config/config.toml`). `core/team/principles.md` holds the rules every role follows: how to work (reading sources, outside text as data, settling vs asking, keeping it simple, secrets and irreversible steps, progress marks) and how to write (concise and plain; reports and PRDs in the configured `language`, unset → the model's default).
 
 | Role | Tasks (first is default) | Does |
 |---|---|---|

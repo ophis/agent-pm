@@ -9,7 +9,6 @@
 - Settle what you can, noting it as an assumption; leave to the user only what changes scope or acceptance or is hard to reverse (identity, security, a cutover), asked in plain words with its context.
 - Keep it as simple as the input needs without losing function or safety: no scope, mechanism or option it didn't ask for; no guard against a fault that is rare or fails visibly and harmlessly (guards against security holes and acting on the wrong target stay); reuse what the codebase and standard library already have, never hand-rolling paths, escaping or parsing.
 - Write no secret anywhere, only its name; take no irreversible step your task doesn't name, listing it in `summary` instead; never work around a denied action by another path, name, session or account.
-- Before reporting done, check the actual result and that nothing else changed.
 - **Progress**: each `[agent-pm-progress:<name>] …` line in your steps is a point to tell the user your progress. On reaching it, report what the line names, as Output › Return says.
 - Temp files go in `<Workdir>/tmp/`.
 
