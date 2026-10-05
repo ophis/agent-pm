@@ -108,9 +108,13 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
         cols, rows = shutil.get_terminal_size()
         # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
         may_run = True
-        _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
-                  sys.executable, "-I", "-c", EXEC, path,
-                  ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
+        res = _tmux(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
+                     sys.executable, "-I", "-c", EXEC, path,
+                     ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
+        if res.returncode:
+            if _err(res).startswith("duplicate session:"):   # another start took the name: not ours to kill
+                may_run = False
+            raise TuiError(f"tmux: {_err(res)}")
         for _ in range(round(HANDOVER_TIMEOUT / POLL)):
             if not os.path.exists(path):
                 break

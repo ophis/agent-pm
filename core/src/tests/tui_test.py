@@ -211,6 +211,13 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
 
+    def test_a_duplicate_session_is_not_killed(self):
+        fake = Tmux(results={"new-session": (1, "", "duplicate session: s\n")})   # another start took the name
+        with self.assertRaisesRegex(tui.TuiError, r"^tmux: duplicate session: s$"):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_an_interrupt_after_new_session_kills_the_session(self):
         def interrupt(*args, **kw):
             raise KeyboardInterrupt
