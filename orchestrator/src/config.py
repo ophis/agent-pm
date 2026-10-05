@@ -266,7 +266,7 @@ def clone_error(path, slug, *, run=sh_run):
         found, _ = repo.resolve(path, run=lambda argv, timeout: run(["git", *repo.GUARD, *argv[1:]], timeout))
     except repo.Invalid as e:
         return str(e)
-    except (OSError, subprocess.TimeoutExpired) as e:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:   # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
         return f"git: {e}"
     if found.host != "github.com" or f"{found.owner}/{found.name}".lower() != slug.lower():
         return f"origin is {found.slug}, not github.com/{slug}"
@@ -322,10 +322,10 @@ def docs(roles, root=ROOT):
     """Docs of the github outputs among roles' tasks ({role: Role}); they must share one github.com repo and branch."""
     outs = {t: o for r, role in roles.items() for t in role.tasks if (o := run_config(r, t, root).output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
-    repo, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
-    if not repo or not branch or host != "github.com":
+    name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
+    if not name or not branch or host != "github.com":
         raise SystemExit("core: document tasks must publish to one github.com repo and branch")
-    return Docs(repo, branch, {t: o["dir"] for t, o in outs.items()})
+    return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
 
 
 def role_for(runs, email):

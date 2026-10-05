@@ -477,7 +477,8 @@ class CloneError(Clones):
 
     def test_run_failures_are_reasons(self):
         clone = self.clone()
-        for error in (OSError("boom"), subprocess.TimeoutExpired(["git"], 10)):
+        for error in (OSError("boom"), subprocess.TimeoutExpired(["git"], 10),
+                      UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")):
             def run(argv, timeout):
                 raise error
             with self.subTest(type(error).__name__):

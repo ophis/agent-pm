@@ -166,7 +166,7 @@ def _split(issue, humans):
 
 
 def _repo(target):
-    return f"Repo: {target.clone or f'{target.owner}/{target.name}'}"
+    return "Repo: " + (target.clone or f"{target.owner}/{target.name}")
 
 
 def _reference(issue, target):

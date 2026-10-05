@@ -161,11 +161,12 @@ def with_clone(t, ident, clones, *, work=WORK, writable=None, run=sh_run) -> Tar
     """`t` with `clone` set: what the issue's existing checkout was made from, else its `[local_clones]` entry, else "". The
     checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the right origin."""
     checkout = os.path.join(work, ident, CLONES[0], t.owner, t.name)
-    git, slug = os.path.join(checkout, ".git"), f"{t.owner}/{t.name}"
+    git, full = os.path.join(checkout, ".git"), f"{t.owner}/{t.name}"
     if os.path.isdir(git) and not os.path.islink(git):
         return replace(t, clone="")
     if common := common_dir(checkout):
-        clone, roots = os.path.dirname(common), config.writable(work) if writable is None else writable
-        if not under(clone, roots) and config.clone_error(clone, slug, run=run) is None:
+        clone = os.path.dirname(common)
+        roots = config.writable(work) if writable is None else writable
+        if not under(common, roots) and config.clone_error(clone, full, run=run) is None:
             return replace(t, clone=clone)
-    return replace(t, clone=next((v for k, v in clones.items() if k.lower() == slug.lower()), ""))
+    return replace(t, clone=next((v for k, v in clones.items() if k.lower() == full.lower()), ""))
