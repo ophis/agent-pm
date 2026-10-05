@@ -11,7 +11,7 @@ drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir D
 <workdir>/outcome.json and <workdir>/progress.jsonl.
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
 command in a detached tmux session <role>-<task>-<sid[:8]> (tui.py), shown as the `show` run key says, done once the
-outcome arrives and left open for the user.
+outcome arrives or it gives up, and left open for the user.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env", "files"} and changes
 nothing. Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config
 error, 3 when the client or its tmux session fails.
@@ -48,7 +48,8 @@ SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable
 OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
 NAME = re.compile(r"[\w-]+")
 POLL = 0.5   # seconds between reads of the channel while the host is quiet
-STOP_LIMIT = 3   # the tui runner's turn ends without an outcome, after its nudge, before it gives up
+WAIT_LIMIT = 2 * 60 * 60   # seconds the tui runner waits for an outcome or a progress report before it gives up
+STOP_LIMIT = 3   # turn ends with no outcome or pending background work, after its nudge, before the tui runner gives up
 NUDGE = ("Finish your task, then report its outcome with the report command your instructions name. "
          "If you are waiting for background work, wait for it first.")
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
@@ -419,14 +420,15 @@ class Headless:
 
 class Tui:
     """The client's interactive command in a detached tmux session (tui.py), never killed after the outcome. Done once
-    the outcome arrives, or once it gives up: a turn end without one (`stop`) gets one NUDGE, and STOP_LIMIT more,
-    counted since the last progress report, leave the session to a human."""
+    the outcome arrives, or once it gives up and leaves the session to a human. A turn end without an outcome
+    (`stop`) with background work pending is ignored; any other gets one NUDGE, and STOP_LIMIT more, counted since the
+    last progress report, give up. So does WAIT_LIMIT seconds with no progress report (counted from the start)."""
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None):
         self.run, self.name, self.layout = run, tui_session(run.role, run.task, params.sid), layout or Layout()
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
-        self.started = False
+        self.started, self.since = False, 0.0
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
@@ -434,7 +436,7 @@ class Tui:
                       beside=self.layout.beside)
         except tui.TuiError as e:
             raise RunnerError(str(e)) from e
-        self.started = True
+        self.started, self.since = True, time.monotonic()
 
     def poll(self, timeout: float) -> tuple[list[Event], bool]:
         time.sleep(timeout)
@@ -451,8 +453,8 @@ class Tui:
         if event.kind == "outcome":
             self.outcome = True
         elif event.kind == "progress":
-            self.stops = 0
-        elif event.kind == "stop" and not (self.outcome or self.gave_up):
+            self.stops, self.since = 0, time.monotonic()
+        elif event.kind == "stop" and not (self.outcome or self.gave_up or event.pending):
             if not self.nudged:
                 self.nudged = True
                 try:
@@ -462,12 +464,18 @@ class Tui:
                 return
             self.stops += 1
             if self.stops >= STOP_LIMIT:
-                self.gave_up = True
-                print(f"drive.py: no outcome after {self.stops} stops; session {self.name} left open: "
-                      f"tmux attach -t '={self.name}'", file=sys.stderr)
+                self.give_up(f"no outcome after {self.stops} stops")
+
+    def give_up(self, reason: str) -> None:
+        self.gave_up = True
+        print(f"drive.py: {reason}; session {self.name} left open: tmux attach -t '={self.name}'", file=sys.stderr)
 
     def done(self, outcome_arrived: bool) -> bool:
-        return outcome_arrived or self.gave_up
+        if outcome_arrived:
+            return True
+        if not self.gave_up and time.monotonic() - self.since > WAIT_LIMIT:
+            self.give_up(f"no outcome {WAIT_LIMIT / 3600:g} h after the last progress report")
+        return self.gave_up
 
     def returncode(self) -> int:
         return 0 if self.outcome else self.rc

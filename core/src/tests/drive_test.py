@@ -6,10 +6,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tomllib
 import unittest
 import unittest.mock
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import clients  # noqa: E402
@@ -444,18 +445,23 @@ def feed(channel, items):
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 STOP = {"kind": "stop"}
+PENDING = {"kind": "stop", "pending": 2}
 
 
 class FakeTui:
     """tui's API for the tui runner. Each status call takes the next step: a list of items appended to the channel
-    (the pane runs on), or a pane state (None: gone; an int: dead with that status). No step left fails the test."""
+    (the pane runs on), or a pane state (None: gone; an int: dead with that status); a (t, step) pair first sets the
+    fake clock, which starts at 0, to t seconds. No step left fails the test."""
     def __init__(self, channel, steps):
-        self.channel, self.steps, self.calls = channel, list(steps), []
+        self.channel, self.steps, self.calls, self.now = channel, list(steps), [], 0
 
     def patch(self, **api):
-        """tui's start, status, kill and send replaced by this fake's, or by `api`'s."""
-        return unittest.mock.patch.multiple(drive.tui, **{"start": self.start, "status": self.status, "kill": self.kill,
-                                                          "send": self.send, **api})
+        """tui's start, status, kill and send replaced by this fake's, or by `api`'s; time.monotonic by its clock."""
+        stack = ExitStack()
+        stack.enter_context(unittest.mock.patch.multiple(
+            drive.tui, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
+        stack.enter_context(unittest.mock.patch.object(time, "monotonic", lambda: self.now))
+        return stack
 
     def start(self, name, argv, **kw):
         self.calls.append(("start", name, argv, kw))
@@ -464,6 +470,8 @@ class FakeTui:
         if not self.steps:
             raise AssertionError("polled after the last step")
         step = self.steps.pop(0)
+        if isinstance(step, tuple):
+            self.now, step = step
         if not isinstance(step, list):
             return step
         for item in step:
@@ -1199,6 +1207,47 @@ class TuiRunner(Base):
         again = [[STOP]] * (drive.STOP_LIMIT - 1)
         r, calls, _, _ = self.start([STOP], *again, [progress("round", "x")], *again, [outcome(DONE)])
         self.assertEqual((r.outcome.status, [c[0] for c in calls]), ("done", ["start", "send"]))
+
+    def test_pending_stops_are_ignored_however_many(self):
+        r, calls, _, _ = self.start(*[[PENDING]] * (2 + drive.STOP_LIMIT), [outcome(DONE)])
+        self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls]), (0, "done", ["start"]))
+        self.assertEqual(self.fake.steps, [])
+
+    def test_pending_stops_between_others_do_not_count_or_nudge(self):
+        steps = [[PENDING], [PENDING], [STOP], *[[PENDING], [STOP]] * drive.STOP_LIMIT]
+        r, calls, _, err = self.start(*steps)
+        self.assertEqual((r.error, [c[0] for c in calls], self.fake.steps),
+                         ("the run returned no outcome", ["start", "send"], []))
+        self.assertIn(f"drive.py: no outcome after {drive.STOP_LIMIT} stops; session {self.NAME} left open: "
+                      f"tmux attach -t '={self.NAME}'\n", err)
+
+    def test_it_gives_up_when_no_progress_comes_for_wait_limit_and_leaves_the_session(self):
+        steps = [(drive.WAIT_LIMIT, []), (drive.WAIT_LIMIT + 1, [])]
+        r, calls, kinds, err = self.start(*steps)
+        self.assertEqual(r, drive.Result(0, None, "the run returned no outcome"))
+        self.assertEqual(([c[0] for c in calls], kinds, self.fake.steps), (["start"], [], []))
+        self.assertIn(f"drive.py: no outcome 2 h after the last progress report; session {self.NAME} left open: "
+                      f"tmux attach -t '={self.NAME}'\n", err)
+        code, calls, _ = self.main(*steps)
+        self.assertEqual((code, [c[0] for c in calls]), (1, ["start"]))
+
+    def test_exactly_wait_limit_of_quiet_is_not_over_it(self):
+        r, _, _, err = self.start((drive.WAIT_LIMIT, []), [outcome(DONE)])
+        self.assertEqual((r.outcome.status, err), ("done", ""))
+
+    def test_progress_restarts_the_quiet_clock(self):
+        p = drive.WAIT_LIMIT - 10
+        r, _, _, _ = self.start((p, [progress("round", "x")]), (drive.WAIT_LIMIT + 10, []), (p + drive.WAIT_LIMIT, []),
+                                (p + drive.WAIT_LIMIT + 1, []))
+        self.assertEqual((r.error, self.fake.steps), ("the run returned no outcome", []))
+
+    def test_pending_stops_do_not_restart_the_quiet_clock(self):
+        r, _, _, _ = self.start((drive.WAIT_LIMIT - 10, [PENDING]), (drive.WAIT_LIMIT + 1, []))
+        self.assertEqual((r.error, self.fake.steps), ("the run returned no outcome", []))
+
+    def test_an_outcome_in_the_poll_the_quiet_limit_passes_wins(self):
+        r, calls, _, err = self.start((drive.WAIT_LIMIT + 1, [outcome(DONE)]))
+        self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls], err), (0, "done", ["start"], ""))
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
         send = unittest.mock.Mock(side_effect=drive.tui.TuiError("no pane"))
