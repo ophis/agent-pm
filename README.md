@@ -46,7 +46,7 @@ A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibili
 |---|---|---|
 | researcher | `deep-research`, `light-research` | Judges the question web, local (needs one repo's code, read from a read-only checkout) or mixed (both), and answers it with a report: every finding with its confidence and numbered sources (a URL; for code, a GitHub permalink at the commit the report names), known claims re-checked, gaps listed |
 | pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions |
-| engineer | `engineering` | Builds requirements (a PRD, the user's own, or both) into a pull request on the target repo, following that repo's conventions and its declared tier; never merges a pull request, force-pushes, touches the default branch or changes repository settings |
+| engineer | `engineering` | Builds requirements (a PRD, the user's own, or both) into a pull request on the target repo, following that repo's conventions and its declared tier; never merges a pull request, force-pushes or touches the default branch |
 
 ### Tasks
 
