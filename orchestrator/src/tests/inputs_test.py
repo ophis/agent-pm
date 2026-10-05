@@ -262,6 +262,12 @@ class RenderResearch(unittest.TestCase):
         got = inputs.render(issue("Which?"), "light-research", inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
         self.assertEqual(got, lines("Reference: RES-4", "", RESEARCH_PRECEDENCE, "", "## Question", "", "Compare queues", "", "Which?"))
 
+    def test_golden_repo_names_the_local_clone(self):
+        got = inputs.render(issue("Which?"), "deep-research", inputs.Sources((), None), humans=HUMANS,
+                            target=target.Target("ophis", "agent-pm", clone="/x/agent-pm"), docs=DOCS)
+        self.assertEqual(got, lines("Reference: RES-4", "Repo: /x/agent-pm", "", RESEARCH_PRECEDENCE, "",
+                                    "## Question", "", "Compare queues", "", "Which?"))
+
     def test_empty_description_leaves_only_the_title(self):
         got = inputs.render(issue(""), "deep-research", inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
         self.assertTrue(got.endswith("## Question\n\nCompare queues"))
@@ -329,6 +335,13 @@ class RenderDesign(unittest.TestCase):
         self.assertEqual(got, lines("Reference: PM-9", "Repo: ophis/agent-pm", "", DESIGN_PRECEDENCE, "",
                                     "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
 
+    def test_golden_direct_issue_with_clone(self):
+        got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
+                            inputs.Sources((), None), humans=HUMANS,
+                            target=target.Target("ophis", "agent-pm", clone="/x/agent-pm"), docs=DOCS)
+        self.assertEqual(got, lines("Reference: PM-9", "Repo: /x/agent-pm", "", DESIGN_PRECEDENCE, "",
+                                    "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
+
     def test_direct_issue_user_words_and_prd_fallback_earlier(self):
         ns = (note("More.", "2026-09-02T00:00:00.000Z", ANN),)
         src = inputs.Sources((), inputs.Doc(BASE + "Product%20Design/p.md", "Product Design/p.md", None))
@@ -390,6 +403,17 @@ class RenderBuild(unittest.TestCase):
             "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
             "## PRD", "", "None linked.", "",
             "## Comments on PM-9 (context)", "", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi"))
+
+    def test_golden_repo_names_the_local_clone(self):
+        d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build phase 1.")
+        t = target.Target("ophis", "agent-pm", "ENG-7-session-registry", "/x/agent-pm")
+        got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "engineering", inputs.Sources((), None),
+                            humans=HUMANS, target=t, docs=DOCS)
+        self.assertEqual(got, lines(
+            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Branch: ENG-7-session-registry",
+            "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
+            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
+            "## PRD", "", "None linked."))
 
     def test_handoff_prd_and_link_line(self):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")

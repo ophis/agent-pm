@@ -165,8 +165,12 @@ def _split(issue, humans):
     return user, [n for n in issue.notes if n not in user]
 
 
+def _repo(target):
+    return f"Repo: {target.clone or f'{target.owner}/{target.name}'}"
+
+
 def _reference(issue, target):
-    return "\n".join(["Reference: " + issue.identifier] + ([f"Repo: {target.owner}/{target.name}"] if target else []))
+    return "\n".join(["Reference: " + issue.identifier] + ([_repo(target)] if target else []))
 
 
 def _research(issue, sources, humans, target, docs):
@@ -207,7 +211,7 @@ def _build(issue, sources, humans, target, docs):
     prd = next((d for d in sources.docs if d.path.startswith(dirs)), None)
     instructions = h.instructions if h else _join([issue.title, _head(issue.description).strip()])
     head = ["Reference: " + issue.identifier, "Title: " + pr_title(issue.identifier, issue.title),
-            f"Repo: {target.owner}/{target.name}", f"Branch: {target.branch}",
+            _repo(target), f"Branch: {target.branch}",
             "Links: " + ", ".join([issue.url, *([prd.url] if prd else [])])]
     return _join([
         "\n".join(head), PRECEDENCE["build"],
