@@ -63,18 +63,13 @@ TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM
 CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
-EXEC = "\n".join([
-    "import json, os, signal, sys",
-    "path = sys.argv[1]",
-    "with open(path) as f:",
-    "    h = json.load(f)",
-    "os.unlink(path)",
-    "os.chdir(h['cwd'])",
-    f"h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)",
-    "signal.signal(signal.SIGPIPE, signal.SIG_DFL)",
-    "signal.signal(signal.SIGXFSZ, signal.SIG_DFL)",
-    "os.execve(h['argv'][0], h['argv'], h['env'])",
-])
+EXEC = f"""import json, os, signal, sys
+with open(sys.argv[1]) as f: h = json.load(f)
+os.unlink(sys.argv[1])
+os.chdir(h['cwd'])
+h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
+for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+os.execve(h['argv'][0], h['argv'], h['env'])"""
 STATUS = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 
 
@@ -96,6 +91,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
     if exe is None:
         raise TuiError(f"command not found: {argv[0]}")
     tmp = None
+    may_run = False
     try:
         tmp = tempfile.mkdtemp()
         path = os.path.join(tmp, "handover.json")
@@ -112,23 +108,27 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)
         cols, rows = shutil.get_terminal_size()
-        try:   # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
-            _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
-                      sys.executable, "-I", "-c", EXEC, path,
-                      ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
-            if not _handed_over(path, sleep):
-                raise TuiError("the session did not start")
-            show(session, template, split=split, beside=beside, proc=proc)
-        except BaseException:
-            shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
-            with contextlib.suppress(TuiError):
-                kill(session, proc=proc)
-            raise
+        # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
+        may_run = True
+        _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
+                  sys.executable, "-I", "-c", EXEC, path,
+                  ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
+        for _ in range(round(HANDOVER_TIMEOUT / POLL)):
+            if not os.path.exists(path):
+                break
+            sleep(POLL)
+        if os.path.exists(path):
+            raise TuiError("the session did not start")
+        show(session, template, split=split, beside=beside, proc=proc)
+        may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
     finally:
         if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
+        if may_run:
+            with contextlib.suppress(TuiError):
+                kill(session, proc=proc)
 
 
 def status(session: str, *, proc=subprocess.run):
@@ -357,14 +357,6 @@ def _tmux(args: list[str], proc) -> subprocess.CompletedProcess:
 
 def _err(res: subprocess.CompletedProcess) -> str:
     return (res.stderr or "").strip()
-
-
-def _handed_over(path: str, sleep) -> bool:
-    for _ in range(round(HANDOVER_TIMEOUT / POLL)):
-        if not os.path.exists(path):
-            return True
-        sleep(POLL)
-    return not os.path.exists(path)
 
 
 if __name__ == "__main__":
