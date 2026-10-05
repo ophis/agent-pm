@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Delete the clones and worktrees of finished issues (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
+"""Delete finished issues' checkouts (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
 
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, work/<ID>/src/<owner>/<name> (a legacy clone work/<ID>/src/<name> too) and
-work/<ID>/publish. An entry must be a real directory inside its own folder (not a symlink) with a .git directory
-(a core clone) or a .git file (a core worktree); anything else is skipped. A clone is deleted with any uncommitted or
-unpushed work (shutil.rmtree). A worktree is removed by repo.remove, with its branch when pushed; one with changes or
-untracked files is kept and skipped again every tick until someone cleans it by hand. A src/<owner>/ left empty is
-removed. Remote branches and work/<ID>/ itself are never touched.
+Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>) and work/<ID>/publish, each a
+real directory inside its own folder (not a symlink); anything else is skipped. A clone (.git a directory) is deleted
+with any unpushed work (shutil.rmtree); a worktree (.git a file) goes to repo.remove, and a dirty one is skipped every
+tick until cleaned by hand. Remote branches and work/<ID>/ itself are never touched.
 
-TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its clones go, since a
+TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its checkouts go, since a
 left-open claude may work in one.
 
 Archive: every finished issue of the team assigned to the pm or engineer role

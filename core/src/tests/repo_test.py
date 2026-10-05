@@ -25,8 +25,8 @@ def fail(stderr):
 
 
 class Fake:
-    """A `run` that answers by argv prefix (a list answer gives its items in turn) and records every call and its
-    timeout; `gh repo clone` makes the checkout's .git."""
+    """A `run` that answers by argv prefix (a list answers in turn) and records every call; `gh repo clone` makes the
+    checkout's .git."""
 
     def __init__(self, answers):
         self.answers, self.calls, self.timeouts = answers, [], []
@@ -49,7 +49,7 @@ class Fake:
 
 
 class Real(Fake):
-    """Real git, `gh` answered as Fake does; origin's URL, when there is one, reads as URL."""
+    """Real git; `gh` as in Fake; an origin's URL reads as URL."""
 
     def __call__(self, argv, timeout):
         if argv[0] != "git":
@@ -283,7 +283,7 @@ class Retry(unittest.TestCase):
 
 
 class Clone(unittest.TestCase):
-    """A real clone of a bare repo; `gh` faked, origin's URL read as github.com/o/n."""
+    """A real clone of a bare repo, its origin reading as github.com/o/n."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

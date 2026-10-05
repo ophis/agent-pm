@@ -103,9 +103,8 @@ def _repo_info(o, n, run):
 
 
 def _branches(ident, o, n, run, work):
-    """Names of the <ident>-* branches: in the agent run's own checkout `src/<o>/<n>` (a clone, or a worktree that lists its
-    clone's branches; `.git` a directory or a regular file, never a symlink) without the read-only tasks' `<ident>-<task>`
-    branches, else on GitHub (gh's credentials, no shared clone); or a Transient."""
+    """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own checkout (a
+    worktree lists its clone's branches), else on GitHub (gh's credentials, no shared clone); or a Transient."""
     clone = os.path.join(work, ident, CLONES[0], o, n)
     git = os.path.join(clone, ".git")
     if (os.path.isdir(git) or os.path.isfile(git)) and not os.path.islink(git):

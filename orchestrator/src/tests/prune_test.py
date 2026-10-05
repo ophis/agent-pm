@@ -62,7 +62,7 @@ def write(path, text):
 
 
 class Remove:
-    """repo.remove stand-in: records (worktree, prefix), deletes the worktree like the real one; outcomes {worktree: result dict or exception}."""
+    """repo.remove stand-in that deletes the worktree; `outcomes` maps a worktree to its result or exception."""
 
     def __init__(self, outcomes=None):
         self.outcomes, self.calls = outcomes or {}, []

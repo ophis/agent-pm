@@ -1,29 +1,20 @@
 #!/usr/bin/env python3
 """Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>, on the run's own branch.
 
-repo.py worktree --dir DIR --branch B REPO  the checkout on branch B; prints {"repo", "host", "default", "branch",
-                                           "commit", "worktree", "permalink_base", "push"}, `push` being whether
-                                           the gh user may push (no permission is no error)
+repo.py worktree --dir DIR --branch B REPO  prints {"repo", "host", "default", "branch", "commit", "worktree",
+                                           "permalink_base", "push"}; no push permission is no error
 repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", "since", "user", "others"}, `user` and
                                            `others` being PR comments and reviews by the user (config.toml's `users`,
                                            else the gh login) and by anyone else since the latest plan doc commit
-REPO is `owner/name`, `host/owner/name`, `https://host/owner/name`, or a local clone's path (starting with / or ~;
-its .git a directory, its origin URL naming host/owner/name). From a local clone, `worktree` fetches origin (only
-`origin/*` moves, never the clone's branches or work tree) and adds a git worktree; otherwise it clones blobless
-(full history, blobs fetched on demand) with core.symlinks=false. A checkout already at DIR/<owner>/<name> is
-reused (fetched only): a clone of the repo, or a worktree of the local clone REPO names.
-Branch B: the local B, else a new B tracking origin/B, else a new B from origin/<default>; B may be neither the
-default branch nor checked out in another worktree. Git calls that fail on a lock (several runs on one clone)
-are retried: 5 attempts, 7.5 s of backoff in all.
-remove(wt, prefix) (no command; prune imports it), with fsmonitor and hooks off: once `wt` and its clone's worktree
-entry point at each other, `git worktree remove` (never forced: changes or untracked files keep it all, Invalid) and
-`worktree prune`; then its branch B is deleted when B starts with `prefix`, is not origin/HEAD's branch, and
-origin/<B> or origin/HEAD contains it, else kept with the reason. A clone without origin/HEAD keeps branches not in
-origin/<B>; `git remote set-head origin -a` fixes it.
+REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its
+origin. A local clone gets a git worktree after `fetch origin`, which moves only `origin/*`; any other REPO a blobless
+clone with core.symlinks=false. B: the local B, else tracking origin/B, else new from origin/<default>.
+Git lock failures (runs sharing a clone) are retried.
+remove(wt, prefix), for prune: never forced; deletes only a pushed, non-default branch starting with `prefix`. A clone
+without origin/HEAD keeps branches not in origin/<B> (`git remote set-head origin -a`).
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
-Exits 2 when REPO or B is invalid or unusable (not found or no access, not a clone, no origin, DIR/<owner>/<name>
-holds something else, B is the default branch or checked out elsewhere), 1 on any other failure.
+Exits 2 when REPO or B is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other failure.
 """
 import argparse
 import json
@@ -103,7 +94,7 @@ def err_text(res: subprocess.CompletedProcess) -> str:
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
-    """stdout of `git [pre] -C wt args`, retrying a lock failure; RuntimeError if it fails."""
+    """Retries a lock failure: runs may share a clone."""
     for i in range(5):
         res = run(["git", *pre, "-C", wt, *args], timeout)
         if res.returncode == 0:
@@ -140,7 +131,7 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
 
 
 def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
-    """(repo, local clone or None) of a REPO argument; Invalid if unreadable, or a path to no clone with an origin."""
+    """(repo, local clone or None) of a REPO argument; Invalid if unreadable."""
     if not spec.startswith(("/", "~")):
         return Repo.parse(spec), None
     clone = os.path.realpath(os.path.expanduser(spec))
@@ -155,8 +146,7 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
 
 
 def place(repo: Repo, base: str, clone: str | None, *, run: Runner) -> tuple[str, bool]:
-    """(worktree, whether it exists) for the repo under `base`; Invalid if base/<owner>/<name> holds anything but a
-    clone of it or a worktree of `clone`."""
+    """(worktree, whether it exists); Invalid if it holds anything but a clone of the repo or a worktree of `clone`."""
     wt = os.path.join(os.path.abspath(base), repo.owner, repo.name)
     if not os.path.lexists(wt):
         return wt, False
@@ -273,8 +263,8 @@ def kept(run: Runner, clone: str, branch: str, prefix: str) -> str | None:
 
 
 def remove(wt: str, prefix: str, *, run: Runner = sh) -> dict:
-    """Removes worktree `wt` of a local clone, then its branch unless kept: {"worktree", "branch", "kept"}; Invalid if
-    `wt` is no registered worktree of a clone or holds changes or untracked files, RuntimeError on other failures."""
+    """Removes worktree `wt`, then its branch unless kept: {"worktree", "branch", "kept"}. Invalid: no registered
+    worktree, or dirty; RuntimeError: any other failure."""
     clone = clone_of(run, wt)
     branch = git(run, wt, "branch", "--show-current", pre=GUARD).strip()
     res = run(["git", *GUARD, "-C", clone, "worktree", "remove", wt], LONG)
