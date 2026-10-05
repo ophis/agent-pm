@@ -55,6 +55,7 @@ You answer research questions with Markdown reports.
 
 - **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. The outcome's `title`: `[Title]` alone, without `Report: ` or `[Reference]`.
 - Known claims in the input are claims to verify; corrections go under Corrections to known claims.
+- A reader's code source: `<owner>/<name>:<path from its worktree root>:<a>-<b>`; each reader prompt asks for it.
 - A code permalink: `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with that repo's `permalink_base` and the path from its worktree root.
 - `summary` names the type, plus each repo and its commit for local or mixed.
 
@@ -71,7 +72,7 @@ Run one round of parallel agents, then write a short report.
    [agent-pm-progress:start] the type, plus each target repo and its commit for local or mixed
 5. **Research.**
    - Split the question into 3–6 **angles** by importance, from the input: web angles for web, worktree angles for local, both for mixed. File each known claim under its angle as a claim to verify.
-   - Dispatch one subagent per angle, all in parallel, and wait for their results. Each prompt is self-contained: the angle's questions, shared context, claims to verify and the agent's restriction (Researcher › Type and target). It asks for primary sources and, per finding, the claim, its sources (`<owner>/<name>:<path from its worktree root>:<a>-<b>` for code), whether a source states it directly, how many independent sources back it, and confidence; plus what it couldn't cover.
+   - Dispatch one subagent per angle, all in parallel, and wait for their results. Each prompt is self-contained: the angle's questions, shared context, claims to verify and the agent's restriction (Researcher › Type and target). It asks for primary sources and, per finding, the claim, its sources (for code, Researcher › Standards), whether a source states it directly, how many independent sources back it, and confidence; plus what it couldn't cover.
    - **Verification**: each agent checks its own findings; its results go into the report as returned.
 6. **Failure.** Never retry or replace an agent. Some usable findings → report, listing failed angles under Gaps. None → `failed`, stop.
 7. **Report** (Researcher › Standards), after the type line `Light Research. Angles: <angle 1>; <angle 2>; …. No independent verification stage: each finding is checked only by the agent that found it.`, ≤ 3000 words.

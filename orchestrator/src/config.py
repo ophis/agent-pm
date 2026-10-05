@@ -128,8 +128,8 @@ class Docs:
     dirs: dict          # task → output dir
 
 
-# Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
-# `<Workdir>/publish`.
+# Core's repo dirs under an agent run's workdir, emptied by prune: `src` (repo.py's `<owner>/<name>` worktrees and clones;
+# config commands' `--dir {{workdir}}/src`) and `publish` (the github destination's `<Workdir>/publish`).
 CLONES = ("src", "publish")
 
 

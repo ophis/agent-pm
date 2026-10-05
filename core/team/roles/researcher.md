@@ -17,5 +17,6 @@ You answer research questions with Markdown reports.
 
 - **Report**: follow the template `templates/research-report.md` (inlined below); title `Report: [Reference] [Title]`, `[Reference]` being the id the input gives (e.g. `TASK-142`); none → `Report: [Title]`. The outcome's `title`: `[Title]` alone, without `Report: ` or `[Reference]`.
 - Known claims in the input are claims to verify; corrections go under Corrections to known claims.
+- A reader's code source: `<owner>/<name>:<path from its worktree root>:<a>-<b>`; each reader prompt asks for it.
 - A code permalink: `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with that repo's `permalink_base` and the path from its worktree root.
 - `summary` names the type, plus each repo and its commit for local or mixed.

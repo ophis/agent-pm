@@ -11,7 +11,7 @@ Build the PRD with `autopilot:build`, then open a pull request.
 ## Steps
 
 1. **Read** the input and the PRD. The user's requirements outrank the PRD.
-2. **Repo.** `<repo>` is the target repo as the input writes it. `<branch>` is the input's `Branch:`, else `<id>-<slug>`, ≤ 40 characters: `<id>` the id the input gives (e.g. `TASK-142`), else `build`; `<slug>` 2–4 lowercase English words for the PRD, joined by `-`. Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>` as its own command (no `cd`, pipe, redirect or `&&`). Its JSON: `host` → `<host>`, `repo` → `<owner>/<name>`, `default` → `<default>`, `worktree` → `<worktree>`, and `push`. In the target repo, inspect only `<worktree>`.
+2. **Repo.** `<repo>` is the target repo as the input writes it. `<branch>` is the input's `Branch:`, else `<id>-<slug>`, ≤ 40 characters: `<id>` the id the input gives (e.g. `TASK-142`), else `build`; `<slug>` 2–4 lowercase English words for the PRD, joined by `-`. Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>` as its own command (no `cd`, pipe, redirect or `&&`). Its JSON: `host` → `<host>`, `repo` → `<owner>/<name>`, `default` → `<default>`, `worktree` → `<worktree>`; `push` is checked below. In the target repo, inspect only `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, a `questions` entry quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` says there is no push permission on `<owner>/<name>`; stop.

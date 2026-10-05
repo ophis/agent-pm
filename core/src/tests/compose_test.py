@@ -512,6 +512,13 @@ class RealCore(unittest.TestCase):
                        "that repo's `permalink_base`", "each repo and its commit", "each `<repo>` at `<commit>`"):
             self.assertIn(phrase, prompt)
 
+    def test_code_source_format_is_in_the_charter_only(self):
+        fmt = "`<owner>/<name>:<path from its worktree root>:<a>-<b>`"
+        for task in ("deep-research", "light-research"):
+            self.assertIn(fmt, composed("researcher", task)[0], task)
+        with open(os.path.join(CORE, "team", "tasks", "light-research.md")) as f:
+            self.assertNotIn(fmt, f.read())
+
     def test_light_research_prepares_before_its_start_mark(self):
         with open(os.path.join(CORE, "team", "tasks", "light-research.md")) as f:
             text = f.read()
