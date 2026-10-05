@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from typing import NamedTuple
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -169,11 +170,13 @@ def kill(session: str, *, proc=subprocess.run) -> None:
 
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
-    """Type text into the session's pane, then press Enter."""
+    """Paste text into the session's pane as a bracketed paste, then press Enter."""
     target = f"={_name(session)}:"
-    if text.endswith(";"):   # tmux takes an argument ending in ';' for a command separator, and '\;' for ';'
-        text = text[:-1] + "\\;"
-    _tmux_ok(["send-keys", "-t", target, "-l", "--", text], proc)
+    buffer = f"tui-{session}-{uuid.uuid4().hex}"
+    # load-buffer from stdin keeps the text exact: send-keys -l lost the head of long multi-line text, and set-buffer
+    # takes a trailing ';' for a command separator
+    _tmux_ok(["load-buffer", "-b", buffer, "-"], proc, text)
+    _tmux_ok(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target], proc)
     sleep(PAUSE)
     _tmux_ok(["send-keys", "-t", target, "Enter"], proc)
 
@@ -393,8 +396,8 @@ def _lines_arg(value: str) -> int:
     return int(value)
 
 
-def _tmux_ok(args: list[str], proc) -> subprocess.CompletedProcess:
-    res = _tmux(args, proc)
+def _tmux_ok(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
+    res = _tmux(args, proc, stdin)
     if res.returncode:
         raise TuiError(f"tmux: {_err(res)}")
     return res
@@ -406,8 +409,10 @@ def _name(session: str) -> str:
     return session
 
 
-def _tmux(args: list[str], proc) -> subprocess.CompletedProcess:
+def _tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
     try:
+        if stdin is not None:
+            return proc(["tmux", *args], capture_output=True, text=True, input=stdin)
         return proc(["tmux", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
         raise TuiError(f"tmux: {e}") from e

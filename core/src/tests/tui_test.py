@@ -368,27 +368,44 @@ class Kill(unittest.TestCase):
 
 
 class Send(unittest.TestCase):
-    def test_types_the_text_then_presses_enter(self):
+    def send(self, fake, text):
+        tui.send("s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
+        buffer = fake.calls[0][3]
+        self.assertRegex(buffer, r"^tui-s-[0-9a-f]{32}$")
+        return buffer
+
+    def test_pastes_the_text_then_presses_enter(self):
         fake = Tmux()
-        tui.send("s", "-x hi", proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
-        self.assertEqual(fake.calls, [["tmux", "send-keys", "-t", "=s:", "-l", "--", "-x hi"], ("sleep", 0.5),
+        buffer = self.send(fake, "-x hi")
+        self.assertEqual(fake.calls, [["tmux", "load-buffer", "-b", buffer, "-"],
+                                      ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"], ("sleep", 0.5),
                                       ["tmux", "send-keys", "-t", "=s:", "Enter"]])
-        self.assertEqual(fake.kwargs, [TMUX_KW, TMUX_KW])
+        self.assertEqual(fake.kwargs, [{"capture_output": True, "text": True, "input": "-x hi"}, TMUX_KW, TMUX_KW])
         self.assertEqual(tui.PAUSE, 0.5)
 
-    def test_trailing_semicolon_escaped(self):
-        for text, sent in (("ls;", "ls\\;"), (";", "\\;"), ("a;b", "a;b"), ("a\\;", "a\\\\;")):
-            with self.subTest(text=text):
+    def test_text_goes_through_stdin_verbatim(self):
+        long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
+        for text in ("ls;", ";", "a\\;", "a;b", long_lines, "one\ntwo;\n"):
+            with self.subTest(text=text[:20]):
                 fake = Tmux()
-                tui.send("s", text, proc=fake, sleep=lambda seconds: None)
-                self.assertEqual(fake.calls[0][-1], sent)
+                self.send(fake, text)
+                self.assertEqual(fake.kwargs[0]["input"], text)
+                self.assertNotIn(text, [a for call in fake.calls for a in call])
+
+    def test_a_buffer_per_call(self):
+        fake = Tmux()
+        first = self.send(fake, "a")
+        fake.calls = []
+        self.assertNotEqual(self.send(fake, "a"), first)
 
     def test_failure(self):
-        fake, sleep = Tmux(fail={"send-keys"}), unittest.mock.Mock()
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
-            tui.send("s", "hi", proc=fake, sleep=sleep)
-        self.assertEqual(len(fake.calls), 1)
-        sleep.assert_not_called()
+        for step, calls in (("load-buffer", 1), ("paste-buffer", 2)):
+            with self.subTest(step=step):
+                fake, sleep = Tmux(fail={step}), unittest.mock.Mock()
+                with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
+                    tui.send("s", "hi", proc=fake, sleep=sleep)
+                self.assertEqual(len(fake.calls), calls)
+                sleep.assert_not_called()
 
 
 class Read(unittest.TestCase):

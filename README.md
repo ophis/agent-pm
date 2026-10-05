@@ -94,7 +94,7 @@ In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s enviro
 ```bash
 python3 core/src/tui.py start a -- claude                         # a session running claude, in a pane right of this one
 python3 core/src/tui.py start b --beside a --split below -- cat   # a pane below a's
-python3 core/src/tui.py send a 'Summarize README.md'              # types the text, then Enter
+python3 core/src/tui.py send a 'Summarize README.md'              # pastes the text, then Enter
 python3 core/src/tui.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui.py show a --show ''                          # only prints a's attach command
 python3 core/src/tui.py --help                                    # options, and how --show and $TUI_SHOW pick the show
