@@ -27,35 +27,32 @@ SHOW_TIMEOUT = 30
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
-CLIENTS = "#{client_activity} #{client_tty}"
-# osascript's argv: split, anchor kind (id: iTerm2 unique ids; tty: client ttys), tmux path, session, anchor values.
+# osascript's argv: split, tmux path, session, then the anchors to try in order (iTerm2 unique ids or client ttys).
 # They stay arguments, never script text.
 APPLESCRIPT = """on run argv
-  set {splitDir, anchorKind, tmuxPath, sessionName} to items 1 thru 4 of argv
+  if application "iTerm2" is not running then return "iTerm2 is not running"
+  set {splitDir, tmuxPath, sessionName} to items 1 thru 3 of argv
   set paneCommand to (quoted form of tmuxPath) & " attach -t " & (quoted form of ("=" & sessionName))
-  if application "iTerm2" is running then
-    tell application "iTerm2"
-      repeat with i from 5 to count of argv
-        set anchorValue to item i of argv
-        repeat with w in windows
-          repeat with t in tabs of w
-            repeat with s in sessions of t
-              if (anchorKind is "id" and unique id of s is anchorValue) or (anchorKind is "tty" and tty of s is anchorValue) then
-                if splitDir is "right" then
-                  tell s to split vertically with default profile command paneCommand
-                else
-                  tell s to split horizontally with default profile command paneCommand
-                end if
-                return ""
+  tell application "iTerm2"
+    repeat with i from 4 to count of argv
+      set anchorValue to item i of argv
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if tty of s is anchorValue or unique id of s is anchorValue then
+              if splitDir is "right" then
+                tell s to split vertically with default profile command paneCommand
+              else
+                tell s to split horizontally with default profile command paneCommand
               end if
-            end repeat
+              return ""
+            end if
           end repeat
         end repeat
       end repeat
-    end tell
-    return "no iTerm2 pane shows the anchor"
-  end if
-  return "iTerm2 is not running"
+    end repeat
+  end tell
+  return "no iTerm2 pane shows the anchor"
 end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
@@ -70,7 +67,6 @@ os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
 for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
 os.execve(h['argv'][0], h['argv'], h['env'])"""
-STATUS = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 
 
 class TuiError(Exception):
@@ -133,7 +129,8 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
 
 def status(session: str, *, proc=subprocess.run):
     """None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)."""
-    res = _tmux(["display-message", "-p", "-t", f"={_name(session)}:", STATUS], proc)
+    res = _tmux(["display-message", "-p", "-t", f"={_name(session)}:",
+                 "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"], proc)
     fields = res.stdout.rstrip("\n").split(" ") if res.returncode == 0 else []
     if len(fields) != 3 or fields[0] not in ("0", "1"):   # tmux (3.7) exits 0 with empty fields for a missing session
         return None
@@ -196,11 +193,11 @@ def iterm(session: str, *, split: str = "right", beside: str | None = None, proc
     if tmux is None:
         return "tmux not found"
     try:
-        kind, anchors = _anchor(beside, proc)
+        anchors = _anchor(beside, proc)
     except TuiError as e:
         return str(e)
     try:
-        res = proc(["osascript", "-e", APPLESCRIPT, split, kind, os.path.abspath(tmux), session, *anchors],
+        res = proc(["osascript", "-e", APPLESCRIPT, split, os.path.abspath(tmux), session, *anchors],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=SHOW_TIMEOUT)
     except subprocess.TimeoutExpired:
         return f"osascript timed out after {SHOW_TIMEOUT} s"
@@ -295,22 +292,23 @@ def own_session(*, proc=subprocess.run) -> str | None:
     return name
 
 
-def _anchor(beside: str | None, proc) -> tuple[str, list[str]]:
-    """("tty", the ttys of the clients showing a tmux session, most recently active first), or ("id", [unique id])."""
+def _anchor(beside: str | None, proc) -> list[str]:
+    """The ttys of the clients showing a tmux session, most recently active first, or [the caller's unique id]."""
     if beside is None:
         beside = own_session(proc=proc)
     if beside is not None:
-        out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", CLIENTS], proc).stdout
+        out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", "#{client_activity} #{client_tty}"],
+                       proc).stdout
         clients = [(int(at), tty) for at, _, tty in (line.partition(" ") for line in out.splitlines())
                    if at.isdigit() and tty]
         ttys = [tty for _, tty in sorted(clients, key=lambda c: c[0], reverse=True)]
         if not ttys:
             raise TuiError(f"no terminal shows tmux session {beside}")
-        return "tty", ttys
+        return ttys
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique:
         raise TuiError("no anchor pane: not in tmux or iTerm2 ($ITERM_SESSION_ID)")
-    return "id", [unique]
+    return [unique]
 
 
 def _show_options(p: argparse.ArgumentParser) -> None:
