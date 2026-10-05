@@ -61,20 +61,17 @@ def write(path, text):
         f.write(text)
 
 
-class Remove:
-    """repo.remove stand-in that deletes the worktree; `outcomes` maps a worktree to its result or exception."""
+class Git:
+    """Pruner's git runner: records every call; runs real git when `real`, else fails the test."""
 
-    def __init__(self, outcomes=None):
-        self.outcomes, self.calls = outcomes or {}, []
+    def __init__(self, real=False):
+        self.real, self.calls = real, []
 
-    def __call__(self, wt, prefix, *, untrusted):
-        self.calls.append((wt, prefix))
-        self.untrusted = untrusted
-        out = self.outcomes.get(wt, {"worktree": wt, "branch": None, "kept": None})
-        if isinstance(out, BaseException):
-            raise out
-        shutil.rmtree(wt)
-        return out
+    def __call__(self, argv, timeout):
+        self.calls.append(argv)
+        if not self.real:
+            raise AssertionError(f"git ran: {argv}")
+        return repo.sh(argv, timeout)
 
 
 def git(*argv):
@@ -107,11 +104,11 @@ class PruneTest(unittest.TestCase):
     def assertOutsideKept(self):
         self.assertTrue(os.path.isfile(os.path.join(self.outside, "keep")))
 
-    def prune(self, gql, dry=False, tmux=None, remove=None):
+    def prune(self, gql, dry=False, tmux=None, git=None, writable=None):
         out = io.StringIO()
         with redirect_stdout(out):
             code = prune.Pruner(gql, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES, logs=self.logs,
-                                proc=tmux or Tmux(), remove=remove or Remove()).run()
+                                proc=tmux or Tmux(), run=git or Git(), writable=writable).run()
         return code, out.getvalue()
 
     def record(self, ident, *names):
@@ -137,12 +134,10 @@ class PruneTest(unittest.TestCase):
             with self.subTest(key=key):
                 self.fresh()
                 path = self.mkg("TASK-49", *parts, git=None)
-                rm = Remove()
-                code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
+                code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
                 self.assertEqual(code, 0)
                 self.assertEqual(msgs(out), [f"prune-skip TASK-49/{key}: not a clone or worktree"])
                 self.assertTrue(os.path.isdir(path))
-                self.assertEqual(rm.calls, [])
 
     def test_clones_deleted_beside_skipped_entries(self):
         clone, bare = self.mkc("TASK-49", "src", "repo"), self.mkg("TASK-49", "src", "o", "bare", git=None)
@@ -221,15 +216,13 @@ class PruneTest(unittest.TestCase):
         self.assertNotIn(prune.M_ARCHIVE, gql.calls)
         self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in paths))
 
-    def test_dry_run_plans_worktree_removal_and_touches_nothing(self):
+    def test_dry_run_plans_worktree_deletion_and_touches_nothing(self):
         wt, clone = self.mkg("TASK-49", "src", "o", "n"), self.mkc("TASK-49", "src", "o", "m")
-        rm = Remove()
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        code, out = self.prune(gql, dry=True, remove=rm)
+        code, out = self.prune(gql, dry=True)
         self.assertEqual(code, 0)
         self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-49/src/o/m: delete the clone",
-                                     "dry-run: prune-plan TASK-49/src/o/n: remove the worktree"])
-        self.assertEqual(rm.calls, [])
+                                     "dry-run: prune-plan TASK-49/src/o/n: delete the worktree"])
         self.assertTrue(os.path.isdir(os.path.join(clone, ".git")) and os.path.isfile(os.path.join(wt, ".git")))
 
     def test_publish_alone_makes_the_issue_a_candidate(self):
@@ -292,68 +285,18 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49", "src")))
         self.assertOutsideKept()
 
-    def test_worktrees_removed_through_remove_and_worded(self):
-        a, b, c, d = (self.mkg("TASK-49", "src", "o", n) for n in "abcd")
-        self.mkg("TASK-49", "src", "p", "e")
-        rm = Remove({a: {"worktree": a, "branch": "TASK-49-a", "kept": None},
-                     b: {"worktree": b, "branch": "TASK-49-b", "kept": "not pushed"},
-                     c: {"worktree": c, "branch": None, "kept": None},
-                     d: {"worktree": d, "branch": "main", "kept": "not this run's branch"}})
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
+    def test_worktrees_deleted_like_clones_with_uncommitted_work(self):
+        a, b = (self.mkg("TASK-49", "src", "o", n) for n in "ab")
+        e, gh, pub = self.mkg("TASK-49", "src", "p", "e"), self.mkg("TASK-49", "src", "q", ".github"), self.mkg("TASK-49", "publish")
+        write(os.path.join(a, "notes.md"), "uncommitted")
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
         self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/a: worktree and branch TASK-49-a",
-                                     "prune-removed TASK-49/src/o/b: worktree; branch TASK-49-b kept: not pushed",
-                                     "prune-removed TASK-49/src/o/c: worktree",
-                                     "prune-removed TASK-49/src/o/d: worktree; branch main kept: not this run's branch",
-                                     "prune-removed TASK-49/src/p/e: worktree"])
-        self.assertEqual(rm.calls, [(p, "TASK-49-") for p in (a, b, c, d, os.path.join(self.work, "TASK-49", "src", "p", "e"))])
-        self.assertFalse(any(os.path.lexists(os.path.join(self.work, "TASK-49", "src", o)) for o in "op"))
-
-    def test_dot_named_repos_under_an_owner_are_entries(self):
-        wt, clone = self.mkg("TASK-49", "src", "o", ".github"), self.mkc("TASK-49", "src", "p", ".github")
-        rm = Remove()
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
-        self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/.github: worktree", "prune-removed TASK-49/src/p/.github: clone"])
-        self.assertEqual(rm.calls, [(wt, "TASK-49-")])
-        self.assertFalse(any(os.path.lexists(os.path.join(self.work, "TASK-49", "src", o)) for o in "op"))
-
-    def test_publish_worktree_removed_too(self):
-        wt = self.mkg("TASK-49", "publish")
-        rm = Remove()
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
-        self.assertEqual((code, msgs(out), rm.calls), (0, ["prune-removed TASK-49/publish: worktree"], [(wt, "TASK-49-")]))
-
-    def test_dirty_worktree_skipped_kept_and_its_owner_dir_stays(self):
-        dirty, clean = self.mkg("TASK-49", "src", "o", "a"), self.mkg("TASK-49", "src", "o", "b")
-        rm = Remove({dirty: repo.Invalid(f"{dirty}: error: contains modified\nor untracked files")})
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
-        self.assertEqual(code, 0)
-        self.assertEqual(msgs(out), [f"prune-skip TASK-49/src/o/a: {dirty}: error: contains modified or untracked files",
-                                     "prune-removed TASK-49/src/o/b: worktree"])
-        self.assertTrue(os.path.isfile(os.path.join(dirty, ".git")))
-        self.assertFalse(os.path.lexists(clean))
-
-    def test_dirty_worktree_is_skipped_again_every_tick(self):
-        dirty = self.mkg("TASK-49", "src", "o", "a")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        for _ in range(2):
-            rm = Remove({dirty: repo.Invalid("dirty")})
-            code, out = self.prune(gql, remove=rm)
-            self.assertEqual((code, msgs(out), rm.calls), (0, ["prune-skip TASK-49/src/o/a: dirty"], [(dirty, "TASK-49-")]))
-
-    def test_remove_failures_logged_as_errors_exit_3_and_the_rest_removed(self):
-        a, b, c, d = (self.mkg("TASK-49", "src", "o", n) for n in "abcd")
-        rm = Remove({a: RuntimeError("git worktree remove: boom\nlock"), b: OSError("gone"),
-                     c: subprocess.TimeoutExpired(["git"], 600)})
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
-        lines = msgs(out)
-        self.assertEqual(code, 3)
-        self.assertEqual(lines[:2], ["prune-error TASK-49/src/o/a: RuntimeError: git worktree remove: boom lock",
-                                     "prune-error TASK-49/src/o/b: OSError: gone"])
-        self.assertTrue(lines[2].startswith("prune-error TASK-49/src/o/c: TimeoutExpired: "), lines[2])
-        self.assertEqual(lines[3:], ["prune-removed TASK-49/src/o/d: worktree"])
-        self.assertTrue(all(os.path.isdir(p) for p in (a, b, c)) and not os.path.lexists(d))
+        self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/a: worktree", "prune-removed TASK-49/src/o/b: worktree",
+                                     "prune-removed TASK-49/src/p/e: worktree", "prune-removed TASK-49/src/q/.github: worktree",
+                                     "prune-removed TASK-49/publish: worktree"])
+        self.assertFalse(any(os.path.lexists(p) for p in (a, b, e, gh, pub)))
+        self.assertFalse(any(os.path.lexists(os.path.join(self.work, "TASK-49", "src", o)) for o in "opq"))
+        self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49")))
 
     def test_symlinked_owner_dir_and_owner_entries_refused(self):
         victim = self.mkg("TASK-50", "src", "o", "n")
@@ -363,13 +306,11 @@ class PruneTest(unittest.TestCase):
         os.symlink(victim, os.path.join(self.work, "TASK-48", "src", "o", "n"))
         write(os.path.join(self.work, "TASK-48", "src", "o", "file"), "x")
         done = ("Done", [(30, "Done")])
-        rm = Remove()
-        code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}), remove=rm)
+        code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
         self.assertEqual(code, 0)
         self.assertEqual(msgs(out), ["prune-skip TASK-48/src/o/file: not a real directory inside TASK-48/src/o/, refusing to touch",
                                      "prune-skip TASK-48/src/o/n: not a real directory inside TASK-48/src/o/, refusing to touch",
                                      "prune-skip TASK-49/src/o: not a real directory inside TASK-49/src/, refusing to touch"])
-        self.assertEqual(rm.calls, [])
         self.assertTrue(os.path.isfile(os.path.join(victim, ".git")))
         self.assertTrue(os.path.islink(os.path.join(self.work, "TASK-49", "src", "o")))
 
@@ -390,49 +331,36 @@ class PruneTest(unittest.TestCase):
 
     def test_young_worktree_untouched(self):
         wt = self.mkg("TASK-48", "src", "o", "n")
-        rm = Remove()
         gql = gql_for({"TASK-48": ("Done", [(24 - 1 / 3600, "Done")])})
-        self.assertEqual(self.prune(gql, remove=rm), (0, ""))
-        self.assertEqual(rm.calls, [])
+        self.assertEqual(self.prune(gql), (0, ""))
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
-    def real_prune(self, **kw):
-        out = io.StringIO()
-        with redirect_stdout(out):
-            code = prune.Pruner(gql_for({"TASK-49": ("Done", [(30, "Done")])}), NOW, False, work=self.work,
-                                team=TEAM_OBJ, roles=ROLES, logs=self.logs, proc=Tmux(), **kw).run()
-        return code, out.getvalue()
+    def test_tmp_goes_and_the_rest_of_the_issues_dir_and_logs_stay(self):
+        ident = os.path.join(self.work, "TASK-49")
+        os.makedirs(os.path.join(ident, "tmp", "deep"))
+        write(os.path.join(ident, "tmp", "deep", "pr.md"), "x")
+        os.chmod(os.path.join(ident, "tmp", "deep", "pr.md"), 0o444)
+        kept = [os.path.join(ident, f) for f in ("input.md", "progress.jsonl", "outcome.json", "writeback.json", ".report.jsonl")]
+        for f in kept:
+            write(f, "x")
+        os.makedirs(self.logs)
+        write(os.path.join(self.logs, "runs.log"), "x")
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
+        self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/tmp: temp files"]))
+        self.assertFalse(os.path.lexists(os.path.join(ident, "tmp")))
+        self.assertTrue(all(os.path.isfile(f) for f in kept + [os.path.join(self.logs, "runs.log")]))
 
-    def test_a_worktree_of_a_clone_in_work_is_deleted_without_running_git(self):
-        env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-        evil, marker = os.path.join(self.work, "TASK-49", "evil"), os.path.join(self.root, "marker")
-        wt = os.path.join(self.work, "TASK-49", "src", "o", "n")
-        with mock.patch.dict(os.environ, env):
-            git("init", "-q", "-b", "main", evil)
-            write(os.path.join(evil, ".gitattributes"), "* filter=x\n")
-            write(os.path.join(evil, "f"), "one\n")
-            git("-C", evil, "add", "-A")
-            git("-C", evil, "commit", "-q", "-m", "evil")
-            git("-C", evil, "config", "filter.x.clean", f"touch {marker}; cat")
-            git("-C", evil, "worktree", "add", "-q", "-b", "TASK-49-x", wt)
-            write(os.path.join(wt, "f"), "two\n")
-            code, out = self.real_prune()
-        self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/src/o/n: untrusted worktree, deleted without git"]))
-        self.assertFalse(os.path.exists(marker))
-        self.assertFalse(os.path.lexists(wt))
-
-    def test_untrusted_dirs_default_to_the_agent_writable_ones(self):
-        pruner = prune.Pruner(None, NOW, False, work=self.work, team=TEAM_OBJ, roles=ROLES, logs=self.logs)
-        self.assertEqual(pruner.untrusted, config.agent_writable(self.work))
-
-    def test_untrusted_worktree_deleted_and_worded(self):
-        wt = self.mkg("TASK-49", "src", "o", "n")
-        rm = Remove({wt: repo.Untrusted(f"{wt}: its clone is under {self.work}")})
-        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
-        self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/src/o/n: untrusted worktree, deleted without git"]))
-        self.assertFalse(os.path.lexists(wt))
-        self.assertEqual(rm.untrusted, config.agent_writable(self.work))
+    def test_tmp_dry_run_and_a_symlinked_tmp(self):
+        tmp = os.path.join(self.work, "TASK-49", "tmp")
+        os.makedirs(tmp)
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), dry=True)
+        self.assertEqual((code, msgs(out)), (0, ["dry-run: prune-plan TASK-49/tmp: delete the temp files"]))
+        self.assertTrue(os.path.isdir(tmp))
+        os.rmdir(tmp)
+        os.symlink(self.outside, tmp)
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
+        self.assertEqual((code, msgs(out)), (0, ["prune-skip TASK-49/tmp: not a real directory inside TASK-49/, refusing to touch"]))
+        self.assertOutsideKept()
 
     def test_dot_files_under_an_owner_are_no_entries(self):
         wt = self.mkg("TASK-49", "src", "o", "n")
@@ -441,24 +369,95 @@ class PruneTest(unittest.TestCase):
         self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/src/o/n: worktree"]))
         self.assertFalse(os.path.lexists(wt))
 
-    def test_real_worktree_removed_end_to_end_with_its_pushed_branch(self):
-        env = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-        seed, bare, clone = (os.path.join(self.root, d) for d in ("seed", "origin.git", "clone"))
-        with mock.patch.dict(os.environ, env):
+    def real_clone(self, at=None):
+        """A clone at `at` (default <root>/clone) of a bare origin with one commit on main."""
+        seed, bare, clone = os.path.join(self.root, "seed"), os.path.join(self.root, "origin.git"), at or os.path.join(self.root, "clone")
+        if not os.path.isdir(bare):
             git("init", "-q", "-b", "main", seed)
             git("-C", seed, "commit", "-q", "--allow-empty", "-m", "one")
             git("clone", "-q", "--bare", seed, bare)
-            git("clone", "-q", bare, clone)
+        git("clone", "-q", bare, clone)
+        return clone
+
+    def git_env(self):
+        return mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t",
+                                            "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+
+    def test_finished_worktrees_go_with_their_records_and_pushed_branches(self):
+        with self.git_env():
+            clone = self.real_clone()
+            x, y = os.path.join(self.work, "TASK-49", "src", "o", "n"), os.path.join(self.work, "TASK-49", "src", "p", "m")
+            git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", x, "origin/main")
+            git("-C", x, "commit", "-q", "--allow-empty", "-m", "x")
+            git("-C", x, "push", "-q", "origin", "TASK-49-x")
+            git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-y", y, "origin/main")
+            git("-C", y, "commit", "-q", "--allow-empty", "-m", "y")
+            git("-C", clone, "branch", "TASK-49-z", "origin/main")
+            git("-C", clone, "branch", "TASK-490-q", "origin/main")
+            own = os.path.join(self.root, "own")
+            git("-C", clone, "worktree", "add", "-q", "-b", "mine", own)
+            git("-C", clone, "worktree", "lock", own)
+            shutil.move(own, own + "-unmounted")
+            write(os.path.join(clone, "dirty.txt"), "x")
+            before = [git("-C", clone, *a) for a in (["rev-parse", "HEAD"], ["branch", "--show-current"], ["status", "--porcelain"])]
+            run = Git(real=True)
+            code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=run, writable=(self.work,))
+            self.assertEqual(code, 0, out)
+            self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/n: worktree", "prune-removed TASK-49/src/p/m: worktree",
+                                         f"prune-removed TASK-49: branch TASK-49-x in {clone}",
+                                         f"prune-skip TASK-49: branch TASK-49-y in {clone} kept: not pushed",
+                                         f"prune-removed TASK-49: branch TASK-49-z in {clone}"])
+            self.assertFalse(os.path.lexists(x) or os.path.lexists(y))
+            listing = git("-C", clone, "worktree", "list", "--porcelain")
+            self.assertNotIn(x, listing)
+            self.assertNotIn(y, listing)
+            self.assertIn(f"worktree {own}", listing)
+            self.assertEqual(sorted(git("-C", clone, "branch", "--format=%(refname:short)").split()),
+                             ["TASK-49-y", "TASK-490-q", "main", "mine"])
+            self.assertEqual([git("-C", clone, *a) for a in (["rev-parse", "HEAD"], ["branch", "--show-current"], ["status", "--porcelain"])],
+                             before)
+            self.assertTrue(run.calls)
+            self.assertTrue(all(c[5:8] == ["-C", clone, f"--git-dir={clone}/.git"] for c in run.calls), run.calls)
+
+    def test_a_clone_an_agent_run_could_write_gets_no_git_run(self):
+        with self.git_env():
+            for name, at, writable in (("in work/", os.path.join(self.work, "TASK-49", "evil"), (self.work,)),
+                                       ("in a temp dir, by default", os.path.join(self.root, "tmp-clone"), None)):
+                with self.subTest(name):
+                    clone = self.real_clone(at)
+                    wt = os.path.join(self.work, "TASK-49", "src", "o", "n")
+                    git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", wt, "origin/main")
+                    run = Git(real=True)
+                    code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=run, writable=writable)
+                    self.assertEqual((code, run.calls), (0, []))
+                    self.assertEqual(msgs(out)[0], "prune-removed TASK-49/src/o/n: worktree")
+                    self.assertTrue(msgs(out)[1].startswith(f"prune-skip TASK-49: {clone} is under "), out)
+                    self.assertFalse(os.path.lexists(wt))
+
+    def test_writable_dirs_default_to_work_and_the_temp_dirs(self):
+        pruner = prune.Pruner(None, NOW, False, work=self.work, team=TEAM_OBJ, roles=ROLES, logs=self.logs)
+        self.assertEqual(pruner.writable, (self.work, *repo.temp_dirs()))
+
+    def test_a_git_failure_in_the_clone_is_an_error(self):
+        with self.git_env():
+            clone = self.real_clone()
+            git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", os.path.join(self.work, "TASK-49", "src", "o", "n"))
+        failing = lambda argv, timeout: subprocess.CompletedProcess(argv, 1, "", "fatal: boom")
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=failing, writable=(self.work,))
+        self.assertEqual(code, 3)
+        self.assertEqual(msgs(out)[0], "prune-removed TASK-49/src/o/n: worktree")
+        self.assertTrue(msgs(out)[1].startswith("prune-error TASK-49: RuntimeError: git --git-dir="), out)
+        self.assertTrue(msgs(out)[1].endswith("worktree prune: fatal: boom"), out)
+
+    def test_dry_run_plans_the_clone_step_and_runs_no_git(self):
+        with self.git_env():
+            clone = self.real_clone()
             wt = os.path.join(self.work, "TASK-49", "src", "o", "n")
-            git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", wt, "origin/main")
-            git("-C", wt, "commit", "-q", "--allow-empty", "-m", "work")
-            git("-C", wt, "push", "-q", "origin", "TASK-49-x")
-            code, out = self.real_prune(untrusted=(self.work,))
-            self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/src/o/n: worktree and branch TASK-49-x"]))
-            self.assertFalse(os.path.lexists(os.path.join(self.work, "TASK-49", "src", "o")))
-            self.assertEqual(git("-C", clone, "branch", "--format=%(refname:short)").split(), ["main"])
-            self.assertEqual(git("-C", clone, "worktree", "list", "--porcelain").count("worktree "), 1)
+            git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", wt)
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), dry=True, writable=(self.work,))
+        self.assertEqual((code, msgs(out)), (0, ["dry-run: prune-plan TASK-49/src/o/n: delete the worktree",
+                                                 f"dry-run: prune-plan TASK-49: prune {clone}'s worktree records and pushed TASK-49-* branches"]))
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
     def test_archives_pm_and_engineer_issues_finished_24h(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "In Progress"), (24, "Done")]), "TASK-2": ("Canceled", [(50, "Canceled")]),

@@ -4,12 +4,14 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>) and work/<ID>/publish, each a real
-directory inside its own folder (not a symlink); anything else is skipped. A clone (.git a directory) is deleted with
-any unpushed work (shutil.rmtree); a worktree (.git a file) goes to repo.remove, and a dirty one is skipped every tick
-until cleaned by hand. A worktree whose clone is in a dir an agent run can write (config.agent_writable) is deleted
-without running git: that clone's config could run commands as the harness. Remote branches and work/<ID>/ itself are
-never touched.
+Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>), work/<ID>/publish and
+work/<ID>/tmp, each a real directory inside its own folder (not a symlink); a src or publish entry must be a clone or a
+worktree (.git a directory or a file), else it is skipped. Each goes with shutil.rmtree, uncommitted work included; the
+rest of work/<ID>/ and logs/ stay. A worktree's .git file is read first (repo.common_dir, no git) for its local clone;
+there, unless the clone lies in work/ or a temp dir, git reads refs only: `worktree prune`, then each <ID>-* branch but
+the default is deleted when origin/<branch> or origin/<default> holds it, else kept and reported. Remote branches are
+never touched. Agent runs and the harness are the same macOS user: this keeps code an agent run planted (filters, hooks,
+submodules) from running outside auto mode's review; it is no privilege boundary.
 
 TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its checkouts go, since a
 left-open claude may work in one.
@@ -27,7 +29,7 @@ import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CLONES, LOGS, WORK, agent_writable  # noqa: E402
+from config import CLONES, LOGS, WORK  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
@@ -37,6 +39,7 @@ IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
+TMP = "tmp"   # core/team/principles.md: an agent run's temp files
 
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
@@ -51,13 +54,13 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, remove=repo.remove,
-                 untrusted=None):
-        """roles: {Linear user id: role} as linear.role_ids returns. untrusted: dirs an agent run can write, whose
-        clones' worktrees are deleted without running git (default config.agent_writable)."""
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, run=repo.sh,
+                 writable=None):
+        """roles: {Linear user id: role} as linear.role_ids returns. run: git's runner. writable: dirs whose clones get
+        no git run (default work/ and the temp dirs)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles, self.logs, self.proc, self.remove = team, roles, logs, proc, remove
-        self.untrusted = agent_writable(work) if untrusted is None else untrusted
+        self.team, self.roles, self.logs, self.proc, self.run_git = team, roles, logs, proc, run
+        self.writable = (work, *repo.temp_dirs()) if writable is None else writable
         self.errors = 0
 
     def say(self, msg):
@@ -68,7 +71,7 @@ class Pruner:
         self.say(f"prune-error {key}: {msg}")
 
     def entries(self, ident):
-        """Paths below work/<ident>/, as parts: (src, n) legacy, (src, owner, n) and (publish,)."""
+        """Paths below work/<ident>/, as parts: (src, n) legacy, (src, owner, n), (publish,) and (tmp,)."""
         found = []
         for folder in FOLDERS:
             base = os.path.join(self.work, ident, folder)
@@ -86,69 +89,69 @@ class Pruner:
                               if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))]
                 except OSError:
                     pass
-        if os.path.lexists(os.path.join(self.work, ident, PUBLISH)):
-            found.append((PUBLISH,))
+        found += [(d,) for d in (PUBLISH, TMP) if os.path.lexists(os.path.join(self.work, ident, d))]
         return found
 
     def prune(self, ident, parts):
+        """Deletes one entry; for a worktree, the clone's git dir its `.git` file names (read before the delete)."""
         entry = os.path.join(self.work, ident, *parts)
         path = os.path.join(os.path.realpath(self.work), ident, *parts)
         key = "/".join((ident, *parts))
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
                 raise Skip(f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch")
+            if parts == (TMP,):
+                self.delete(key, path, "temp files")
+                return None
             dotgit = os.path.join(path, ".git")
-            if os.path.islink(dotgit):
+            if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
                 raise Skip("not a clone or worktree")
-            if os.path.isdir(dotgit):
-                self.delete_clone(key, path)
-            elif os.path.isfile(dotgit):
-                self.remove_worktree(key, path, ident)
-            else:
-                raise Skip("not a clone or worktree")
+            common = repo.common_dir(path) if os.path.isfile(dotgit) else None
+            return common if self.delete(key, path, "worktree" if os.path.isfile(dotgit) else "clone") else None
         except Skip as e:
             self.say(f"prune-skip {key}: {e}")
 
-    def delete_clone(self, key, path):
+    def delete(self, key, path, what):
+        """True once `path` is deleted (planned, in a dry run)."""
         if self.dry:
-            self.say(f"prune-plan {key}: delete the clone")
-            return
+            self.say(f"prune-plan {key}: delete the {what}")
+            return True
         try:
             shutil.rmtree(path)
         except OSError as e:
             self.error(key, f"rmtree: {one_line(e)}")
-            return
-        self.say(f"prune-removed {key}: clone")
+            return False
+        self.say(f"prune-removed {key}: {what}")
+        return True
 
-    def remove_worktree(self, key, path, ident):
+    def clean_clone(self, ident, common):
+        """In the local clone of deleted worktrees: drops their records and the <ident>-* branches origin holds. Only refs
+        are read: no git runs on a working tree, or in a clone an agent run could write."""
+        clone = os.path.dirname(common)
+        if root := repo.under(common, self.writable):
+            self.say(f"prune-skip {ident}: {clone} is under {root}, so no git runs there")
+            return
         if self.dry:
-            self.say(f"prune-plan {key}: remove the worktree")
+            self.say(f"prune-plan {ident}: prune {clone}'s worktree records and pushed {ident}-* branches")
             return
+        at = ["git", *repo.GUARD, "-C", clone, f"--git-dir={common}"]
         try:
-            res = self.remove(path, f"{ident}-", untrusted=self.untrusted)
-        except repo.Untrusted:
-            self.delete_untrusted(key, path)
-            return
-        except repo.Invalid as e:
-            raise Skip(one_line(str(e)))
+            repo.git(self.run_git, clone, at[-1], "worktree", "prune", pre=repo.GUARD)
+            head = self.run_git([*at, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], repo.SHORT)
+            default = head.stdout.strip().removeprefix("origin/") if head.returncode == 0 else None
+            listed = repo.git(self.run_git, clone, at[-1], "for-each-ref", "--format=%(refname:short)",
+                              f"refs/heads/{ident}-*", pre=repo.GUARD)
+            for branch in listed.split():
+                if branch == default:
+                    continue
+                if any(self.run_git([*at, "merge-base", "--is-ancestor", f"refs/heads/{branch}", f"refs/remotes/origin/{b}"],
+                                    repo.SHORT).returncode == 0 for b in dict.fromkeys(filter(None, (branch, default)))):
+                    repo.git(self.run_git, clone, at[-1], "branch", "-D", branch, pre=repo.GUARD)
+                    self.say(f"prune-removed {ident}: branch {branch} in {clone}")
+                else:
+                    self.say(f"prune-skip {ident}: branch {branch} in {clone} kept: not pushed")
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-            self.error(key, one_line(e))
-            return
-        branch, kept = res["branch"], res["kept"]
-        if not branch:
-            self.say(f"prune-removed {key}: worktree")
-        elif kept:
-            self.say(f"prune-removed {key}: worktree; branch {branch} kept: {kept}")
-        else:
-            self.say(f"prune-removed {key}: worktree and branch {branch}")
-
-    def delete_untrusted(self, key, path):
-        try:
-            shutil.rmtree(path)
-        except OSError as e:
-            self.error(key, f"rmtree: {one_line(e)}")
-            return
-        self.say(f"prune-removed {key}: untrusted worktree, deleted without git")
+            self.error(ident, one_line(e))
 
     def rmdir_owners(self, ident, owners):
         for owner in sorted(owners):
@@ -233,9 +236,10 @@ class Pruner:
             elif self.now - since >= QUARANTINE:
                 self.close_sessions(ident)
                 entries = self.entries(ident)
-                for parts in entries:
-                    self.prune(ident, parts)
+                commons = {c for parts in entries if (c := self.prune(ident, parts))}
                 if not self.dry:
                     self.rmdir_owners(ident, {parts[:-1] for parts in entries if len(parts) == 3})
+                for common in sorted(commons):
+                    self.clean_clone(ident, common)
         self.archive(finished)
         return 3 if self.errors else 0

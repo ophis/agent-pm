@@ -1,4 +1,4 @@
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, sys, tempfile, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import issues  # noqa: E402
@@ -115,34 +115,26 @@ class Check(unittest.TestCase):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
         self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm")
-        self.at, self.untrusted = self.clone, (self.work,)
         self.ls_remote = ["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                           "ls-remote", "--heads", "https://github.com/ophis/agent-pm.git", "TASK-26-*"]
 
     def git_dir(self):
         os.makedirs(os.path.join(self.clone, ".git"))
 
-    def git_file(self, real=None):
-        """The checkout as a real worktree of a clone, by default one outside work/; its branches are listed there."""
-        if real is None:
-            outer = os.path.realpath(tempfile.mkdtemp())
-            self.addCleanup(shutil.rmtree, outer)
-            real = os.path.join(outer, "clone")
-        for argv in (["init", "-q", "-b", "main", real], ["-C", real, "commit", "-q", "--allow-empty", "-m", "a"],
-                     ["-C", real, "worktree", "add", "-q", "-b", "TASK-26-wt", self.clone]):
-            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *argv], check=True, capture_output=True)
-        self.at = real
+    def git_file(self):
+        os.makedirs(self.clone)
+        with open(os.path.join(self.clone, ".git"), "w") as f:
+            f.write("gitdir: /elsewhere/.git/worktrees/agent-pm\n")
 
     def branch_list(self, at=None):
-        at = at or self.at
+        at = at or self.clone
         return (*LOCAL, at, f"--git-dir={at}/.git", "branch", "--list", "TASK-26-*", "--format=%(refname:short)")
 
     def check(self, desc="Repo: ophis/agent-pm", repos=None, project=None, title="ENG: Session Registry", **over):
         t = {"api": api(), "local": ok(""), "remote": ok("")}
         t.update(over)
         self.run_ = FakeRun([(("gh", "api"), t["api"]), (LOCAL, t["local"]), (("git", "-c", "credential.helper="), t["remote"])])
-        return target.check(issue(desc, title=title, project=project), repos or {}, run=self.run_, work=self.work,
-                            untrusted=self.untrusted)
+        return target.check(issue(desc, title=title, project=project), repos or {}, run=self.run_, work=self.work)
 
     def argvs(self):
         return [c[0] for c in self.run_.calls]
@@ -175,30 +167,11 @@ class Check(unittest.TestCase):
         self.assertEqual(self.check(remote=ok("abc\trefs/heads/TASK-26-a\nabc\trefs/heads/TASK-26-b\n")),
                          target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
 
-    def test_worktree_branches_are_listed(self):
+    def test_a_worktrees_branches_are_read_on_github(self):
         self.git_file()
-        r = self.check(local=ok("TASK-26-unpushed\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-unpushed"))
-        self.assertEqual(self.argvs()[1:], [self.branch_list()])
-
-    def test_a_git_file_of_no_registered_worktree_is_not_run(self):
-        os.makedirs(self.clone)
-        with open(os.path.join(self.clone, ".git"), "w") as f:
-            f.write("gitdir: /elsewhere/.git/worktrees/agent-pm\n")
         r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
         self.assertEqual(r.branch, "TASK-26-remote")
         self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
-
-    def test_a_worktree_of_a_clone_an_agent_run_can_write_is_not_run(self):
-        for name, real, untrusted in (("in work/", os.path.join(self.work, "TASK-26", "evil"), (self.work,)),
-                                      ("in a temp dir, by default", None, None)):
-            with self.subTest(name):
-                shutil.rmtree(os.path.join(self.work, "TASK-26"), ignore_errors=True)
-                self.git_file(real)
-                self.untrusted = untrusted
-                r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-                self.assertEqual(r.branch, "TASK-26-remote")
-                self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
 
     def test_symlinked_git_is_not_run(self):
         os.makedirs(self.clone)
@@ -222,20 +195,16 @@ class Check(unittest.TestCase):
     def test_read_only_task_branches_are_not_the_engineering_branch(self):
         read_only = [f"TASK-26-{t}" for t, spec in config.TASKS.items() if spec.kind != "build"]
         self.assertEqual(sorted(read_only), ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"])
-        for make in (self.git_dir, self.git_file):
-            with self.subTest(make.__name__):
-                shutil.rmtree(self.clone, ignore_errors=True)
-                self.at = self.clone
-                make()
-                r = self.check(local=ok("\n".join(["TASK-26-session-registry", *read_only]) + "\n"))
-                self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-                self.assertEqual(self.argvs()[1:], [self.branch_list()])
-                r = self.check(local=ok("\n".join(read_only) + "\n"), remote=ok(""))
-                self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-                self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
+        self.git_dir()
+        r = self.check(local=ok("\n".join(["TASK-26-session-registry", *read_only]) + "\n"))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertEqual(self.argvs()[1:], [self.branch_list()])
+        r = self.check(local=ok("\n".join(read_only) + "\n"), remote=ok(""))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
 
     def test_read_only_branch_alone_falls_back_to_the_remote(self):
-        self.git_file()
+        self.git_dir()
         r = self.check(local=ok("TASK-26-light-research\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
         self.assertEqual(r.branch, "TASK-26-remote")
 

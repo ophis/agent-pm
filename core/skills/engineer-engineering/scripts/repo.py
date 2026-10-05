@@ -7,14 +7,11 @@ repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", 
                                            `others` being PR comments and reviews by the user (config.toml's `users`,
                                            else the gh login) and by anyone else since the latest plan doc commit
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
-and outside the temp dirs (prune would distrust it). A local clone gets a git worktree after a fetch that moves only
-`origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig); any other
-REPO a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new from origin/<default>.
+and outside the temp dirs (prune runs no git in a clone there). A local clone gets a git worktree after a fetch that
+moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig);
+any other REPO a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new from
+origin/<default>.
 Git lock failures (runs sharing a clone) are retried.
-remove(wt, prefix, untrusted), for prune: runs no git when wt's clone is under an `untrusted` dir, and otherwise only
-on the dirs it read from wt/.git as git does; refuses a dirty worktree and a detached HEAD not in origin; deletes only a
-pushed, non-default branch starting with `prefix`. A clone without origin/HEAD keeps branches not in origin/<B>
-(`git remote set-head origin -a`).
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
 Exits 2 when REPO or B is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other failure.
@@ -51,10 +48,6 @@ Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
 class Invalid(Exception):
-    pass
-
-
-class Untrusted(Exception):
     pass
 
 
@@ -287,76 +280,25 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None) 
             "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
 
 
-def git_path(path: str, prefix: str = "") -> str:
-    """The path in a `.git`, `commondir` or `gitdir` file, read as git reads it: the whole file, trailing CR/LF
-    dropped. Edge whitespace or a line break left over is refused: git would keep it and resolve another path."""
-    if not os.path.isfile(path):   # a FIFO would block open()
-        raise Invalid(f"{path} is no file")
-    try:
-        with open(path, "rb") as f:
-            text = f.read(4097).decode()
-    except (OSError, UnicodeDecodeError) as e:
-        raise Invalid(f"{path}: {e}") from None
-    text = text.rstrip("\r\n")
-    p = text[len(prefix):]
-    if len(text) > 4096 or not text.startswith(prefix) or not p or p != p.strip() or any(c in p for c in "\r\n\0"):
-        raise Invalid(f"{path} holds no single path")
-    return p
-
-
-def clone_of(wt: str, untrusted=()) -> tuple[str, str]:
-    """(clone, gitdir) of registered worktree `wt`, read from files: a clone the agent run could write may configure
-    filters, so no git runs before it is known. Invalid unless the two point at each other; Untrusted if the clone is
-    under an `untrusted` dir."""
-    dotgit = os.path.join(wt, ".git")
-    if os.path.islink(wt) or not os.path.isdir(wt) or os.path.islink(dotgit) or not os.path.isfile(dotgit):
-        raise Invalid(f"{wt} is not a worktree")
-    gitdir = os.path.realpath(os.path.join(wt, git_path(dotgit, "gitdir: ")))
-    common = os.path.realpath(os.path.join(gitdir, git_path(os.path.join(gitdir, "commondir"))))
-    if root := under(common, untrusted):
-        raise Untrusted(f"{wt}: its clone {common} is under {root}")
-    # The backlink is relative to gitdir under worktree.useRelativePaths.
-    back = os.path.realpath(os.path.join(gitdir, git_path(os.path.join(gitdir, "gitdir"))))
-    if (os.path.basename(common) != ".git" or os.path.dirname(gitdir) != os.path.join(common, "worktrees")
-            or back != os.path.join(os.path.realpath(wt), ".git")):
-        raise Invalid(f"{wt} is not a registered worktree of a clone")
-    return os.path.dirname(common), gitdir
-
-
-def kept(run: Runner, clone: str, branch: str, prefix: str) -> str | None:
-    """Why `remove` keeps `branch`, or None."""
-    if not branch.startswith(prefix) or not BRANCH.fullmatch(branch):
-        return "not this run's branch"
-    at = ["git", *GUARD, "-C", clone, f"--git-dir={os.path.join(clone, '.git')}"]
-    head = run([*at, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], SHORT)
-    if head.returncode == 0 and head.stdout.strip() == f"refs/remotes/origin/{branch}":
-        return "the default branch"
-    for ref in (f"refs/remotes/origin/{branch}", "refs/remotes/origin/HEAD"):
-        if run([*at, "merge-base", "--is-ancestor", f"refs/heads/{branch}", ref], SHORT).returncode == 0:
+def common_dir(wt: str) -> str | None:
+    """The `<clone>/.git` that worktree `wt`'s `.git` file names, found by reading files as git reads them (whole file,
+    trailing CR/LF dropped), never by running git; None if it names none."""
+    def read(path):
+        if not os.path.isfile(path):   # a FIFO would block open()
             return None
-    return "not pushed"
-
-
-def remove(wt: str, prefix: str, *, untrusted=(), run: Runner = sh) -> dict:
-    """Removes worktree `wt`, then its branch unless kept: {"worktree", "branch", "kept"}. Invalid: no registered
-    worktree, dirty, or a detached HEAD not in origin; Untrusted: see clone_of; RuntimeError: any other failure.
-    Every git call names the dirs clone_of checked, so none reads wt/.git again."""
-    clone, gitdir = clone_of(wt, untrusted)
-    tree, common = (f"--git-dir={gitdir}", f"--work-tree={wt}"), f"--git-dir={os.path.join(clone, '.git')}"
-    branch = git(run, wt, *tree, "branch", "--show-current", pre=GUARD).strip()
-    if not branch:
-        head = git(run, wt, *tree, "rev-parse", "HEAD", pre=GUARD).strip()
-        if not git(run, clone, common, "for-each-ref", "--count=1", "--contains", head, "refs/remotes/origin",
-                   pre=GUARD).strip():
-            raise Invalid(f"{wt}: detached HEAD {head[:12]} is not in origin")
-    if git(run, wt, *tree, "status", "--porcelain", "--ignore-submodules=none", timeout=LONG, pre=GUARD).strip():
-        raise Invalid(f"{wt}: has changes or untracked files")
-    # --force only skips git's own clean check, which would read wt/.git again; the check above stands for it.
-    git(run, clone, common, "worktree", "remove", "--force", wt, timeout=LONG, pre=GUARD)
-    reason = kept(run, clone, branch, prefix) if branch else None
-    if branch and not reason:
-        git(run, clone, common, "branch", "-D", branch, pre=GUARD)
-    return {"worktree": wt, "branch": branch or None, "kept": reason}
+        with open(path, "rb") as f:
+            return f.read(4096).decode().rstrip("\r\n")
+    try:
+        dotgit = os.path.join(wt, ".git")
+        text = None if os.path.islink(dotgit) else read(dotgit)
+        if not text or not text.startswith("gitdir: "):
+            return None
+        gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: "):]))
+        rel = read(os.path.join(gitdir, "commondir"))
+        common = os.path.realpath(os.path.join(gitdir, rel)) if rel else None
+    except (OSError, ValueError):   # UnicodeDecodeError and a NUL in a path are ValueErrors
+        return None
+    return common if common and os.path.basename(common) == ".git" and os.path.isdir(common) else None
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:

@@ -570,283 +570,52 @@ class LocalSafety(Clone):
         self.assertEqual(git("-C", self.clone, "rev-parse", "TASK-9-mine"), mine)
 
 
-GUARD = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C"]
-
-
-class Remove(Clone):
-    def add(self, branch="TASK-1-x", start="origin/main", at=None, opts=()):
-        wt = os.path.join(self.tmp, "w", branch or "detached")
-        git("-C", at or self.clone, "worktree", "add", "-q", *opts, *(["-b", branch] if branch else ["--detach"]), wt, start)
+class CommonDir(Clone):
+    def add(self, branch="TASK-1-x", opts=()):
+        wt = os.path.join(self.tmp, "w", branch)
+        git("-C", self.clone, "worktree", "add", "-q", *opts, "-b", branch, wt)
         return wt
 
-    def commit(self, wt, push=False):
-        git("-C", wt, "commit", "-q", "--allow-empty", "-m", "w")
-        if push:
-            git("-C", wt, "push", "-q", "origin", "HEAD")
-
-    def remove(self, wt, prefix="TASK-1-", **kw):
-        run = Real([])
-        try:
-            r = repo.remove(wt, prefix, run=run, **kw)
-        except (repo.Invalid, repo.Untrusted, RuntimeError) as e:
-            r = e
-        for c in run.calls:
-            self.assertEqual(c[:6], GUARD, c)
-            self.assertTrue(c[7].startswith("--git-dir="), c)
-        return r, run
-
-    def branches(self):
-        return git("-C", self.clone, "branch", "--format=%(refname:short)").split()
-
-    def state(self, at=None):
-        return [git("-C", at or self.clone, *a) for a in (["worktree", "list", "--porcelain"], ["branch", "--list"])]
-
-    def test_a_pushed_branch_is_deleted(self):
-        wt = self.add()
-        self.commit(wt, push=True)
-        self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-x", "kept": None})
-        self.assertFalse(os.path.exists(wt))
-        self.assertEqual(self.branches(), ["main"])
-        self.assertEqual(git("-C", self.clone, "worktree", "list", "--porcelain").count("worktree "), 1)
-
-    def test_a_relative_backlink_is_followed(self):
-        try:
-            wt = self.add(opts=("--relative-paths",))
-        except subprocess.CalledProcessError:
-            self.skipTest("git without worktree add --relative-paths")
-        self.commit(wt, push=True)
-        self.assertEqual(self.remove(wt)[0]["kept"], None)
-
-    def test_a_branch_with_no_own_commits_is_in_origin_head(self):
-        wt = self.add()
-        self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-x", "kept": None})
-        self.assertEqual(self.branches(), ["main"])
-
-    def test_an_unpushed_commit_keeps_the_branch(self):
-        for i, pushed in enumerate((False, True)):
-            with self.subTest(pushed=pushed):
-                wt = self.add(f"TASK-1-{i}")
-                if pushed:
-                    self.commit(wt, push=True)
-                self.commit(wt)
-                self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": f"TASK-1-{i}", "kept": "not pushed"})
-                self.assertFalse(os.path.exists(wt))
-                self.assertIn(f"TASK-1-{i}", self.branches())
-
-    def test_without_origin_head_only_the_branch_on_origin_counts(self):
-        git("-C", self.clone, "remote", "set-head", "origin", "-d")
-        merged, pushed = self.add("TASK-1-merged"), self.add("TASK-1-pushed")
-        self.commit(pushed, push=True)
-        self.assertEqual(self.remove(merged)[0]["kept"], "not pushed")
-        self.assertEqual(self.remove(pushed)[0]["kept"], None)
-
-    def test_a_dirty_worktree_is_refused_and_kept(self):
-        for change in ("tracked", "untracked"):
-            with self.subTest(change=change):
-                wt = self.add(f"TASK-1-{change}")
-                path = os.path.join(wt, "f.txt")
-                if change == "tracked":
-                    with open(path, "w") as f:
-                        f.write("x")
-                    git("-C", wt, "add", "f.txt")
-                    git("-C", wt, "commit", "-q", "-m", "f")
-                with open(path, "w") as f:
-                    f.write("y")
-                before = self.state()
-                r, run = self.remove(wt)
-                self.assertIsInstance(r, repo.Invalid)
-                self.assertTrue(str(r).startswith(f"{wt}: "), r)
-                gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-                self.assertTrue(run.ran(*GUARD, wt, f"--git-dir={gitdir}", f"--work-tree={wt}", "status", "--porcelain",
-                                        "--ignore-submodules=none"))
-                self.assertEqual(self.state(), before)
-                self.assertTrue(os.path.isfile(path))
-
-    def test_a_failed_removal_of_a_clean_worktree_is_an_error(self):
-        wt = self.add()
-        git("-C", self.clone, "worktree", "lock", wt)
-        before = self.state()
-        r, _ = self.remove(wt)
-        self.assertIs(type(r), RuntimeError)
-        self.assertEqual(self.state(), before)
-        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
-
-    def test_ignored_files_do_not_block(self):
-        wt = self.add()
-        os.makedirs(os.path.join(self.clone, ".git", "info"), exist_ok=True)
-        with open(os.path.join(self.clone, ".git", "info", "exclude"), "a") as f:
-            f.write("*.log\n")
-        open(os.path.join(wt, "x.log"), "w").close()
-        self.assertEqual(self.remove(wt)[0]["kept"], None)
-        self.assertFalse(os.path.exists(wt))
-
-    def test_not_a_worktree_is_invalid(self):
-        wt = self.add()
-        plain, linked, junk, alias = (os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "alias"))
-        for d in (plain, linked, junk):
-            os.makedirs(d)
-        os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
-        with open(os.path.join(junk, ".git"), "w") as f:
-            f.write("nonsense\n")
-        os.symlink(wt, alias)
-        before = self.state()
-        for path in (self.clone, plain, linked, junk, alias, os.path.join(self.tmp, "missing")):
-            with self.subTest(path=path):
-                r, run = self.remove(path)
-                self.assertIsInstance(r, repo.Invalid)
-                self.assertEqual(run.calls, [])
-        self.assertEqual(self.state(), before)
-        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
-
-    def test_a_forged_git_file_is_invalid_and_nothing_is_touched(self):
-        real = self.add()
-        admin = git("-C", real, "rev-parse", "--path-format=absolute", "--git-dir")
-        agent = os.path.join(self.tmp, "agent.git")
-        git("clone", "-q", "--bare", self.bare, agent)
-        bare_wt = self.add("TASK-1-y", "main", at=agent)
-        os.makedirs(os.path.join(self.tmp, "fake"))
-        os.symlink(agent, os.path.join(self.tmp, "fake", ".git"))
-        forged = os.path.join(self.tmp, "forged")
-        os.makedirs(forged)
-        with open(os.path.join(self.clone, ".git", "gitdir"), "w") as f:
-            f.write(os.path.join(forged, ".git") + "\n")
-        cases = {"gitdir outside worktrees/": (forged, f"{self.clone}/.git"), "wrong backlink": (forged, admin),
-                 "symlinked common dir": (bare_wt, f"{self.tmp}/fake/.git/worktrees/TASK-1-y")}
-        before = self.state(), self.state(agent)
-        for name, (wt, gitdir) in cases.items():
-            with self.subTest(name):
-                with open(os.path.join(wt, ".git"), "w") as f:
-                    f.write(f"gitdir: {gitdir}\n")
-                r, run = self.remove(wt)
-                self.assertIsInstance(r, repo.Invalid)
-                self.assertEqual(run.calls, [])
-                self.assertTrue(os.path.isdir(wt))
-        self.assertEqual((self.state(), self.state(agent)), before)
-        self.assertTrue(os.path.isdir(real))
-
-    def test_an_agent_built_repo_is_the_only_one_touched(self):
-        agent = os.path.join(self.tmp, "agent")
-        git("init", "-q", "-b", "main", agent)
-        git("-C", agent, "commit", "-q", "--allow-empty", "-m", "a")
-        wt = self.add(start="main", at=agent)
-        before = self.state()
-        r, run = self.remove(wt)
-        self.assertEqual(r, {"worktree": wt, "branch": "TASK-1-x", "kept": "not pushed"})
-        self.assertFalse(os.path.exists(wt))
-        self.assertEqual(self.state(), before)
-        self.assertEqual({c[6] for c in run.calls}, {wt, agent})
-
-    def test_a_branch_outside_the_prefix_is_kept(self):
-        for branch in ("TASK-2-x", "TASK-1-a+b"):
-            with self.subTest(branch=branch):
-                wt = self.add(branch)
-                self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": branch, "kept": "not this run's branch"})
-                self.assertFalse(os.path.exists(wt))
-                self.assertIn(branch, self.branches())
-
-    def test_the_default_branch_is_kept(self):
-        git("-C", self.clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/TASK-1-remote")
-        wt = self.add("TASK-1-remote", "origin/TASK-1-remote")
-        self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-remote", "kept": "the default branch"})
-        self.assertIn("TASK-1-remote", self.branches())
-
-    def test_a_detached_worktree_in_origin_deletes_no_branch(self):
-        wt = self.add(None)
-        before = self.branches()
-        r, run = self.remove(wt)
-        self.assertEqual(r, {"worktree": wt, "branch": None, "kept": None})
-        self.assertFalse(os.path.exists(wt))
-        self.assertEqual(self.branches(), before)
-        self.assertFalse(any("-D" in c for c in run.calls))
-
-    def test_a_detached_worktree_with_unpushed_commits_is_refused_and_kept(self):
-        wt = self.add(None)
-        self.commit(wt)
-        before = self.state()
-        r, _ = self.remove(wt)
-        self.assertIsInstance(r, repo.Invalid)
-        self.assertIn("detached HEAD", str(r))
-        self.assertEqual(self.state(), before)
-        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
-
-    def test_other_worktrees_missing_dirs_stay_registered(self):
-        gone, wt = self.add("TASK-2-gone"), self.add()
-        shutil.rmtree(gone)
-        self.remove(wt)
-        self.assertIn(f"worktree {gone}", git("-C", self.clone, "worktree", "list", "--porcelain"))
+    def test_a_worktree_names_its_clones_git_dir(self):
+        common = os.path.join(self.clone, ".git")
+        self.assertEqual(repo.common_dir(self.add()), common)
+        self.assertEqual(repo.common_dir(self.add("TASK-1-rel", ("--relative-paths",))), common)
 
     def test_a_crlf_git_file_is_read_as_git_reads_it(self):
         wt = self.add()
         gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
         with open(os.path.join(wt, ".git"), "w", newline="") as f:
             f.write(f"gitdir: {gitdir}\r\n")
-        self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-x", "kept": None})
-        self.assertFalse(os.path.exists(wt))
+        self.assertEqual(repo.common_dir(wt), os.path.join(self.clone, ".git"))
 
-    def test_a_git_file_git_reads_otherwise_runs_no_git(self):
-        """`.git` names, as git reads it, a fake gitdir in an untrusted dir whose filter writes a marker; parsed loosely,
-        it names the real worktree admin dir."""
-        with open(os.path.join(self.seed, ".gitattributes"), "w") as f:
-            f.write("* filter=x\n")
-        with open(os.path.join(self.seed, "f"), "w") as f:
-            f.write("one\n")
-        git("-C", self.seed, "add", "-A")
-        git("-C", self.seed, "commit", "-q", "-m", "f")
-        git("-C", self.seed, "push", "-q", "origin", "main")
-        git("-C", self.clone, "pull", "-q")
-        work, marker = os.path.join(self.tmp, "work"), os.path.join(self.tmp, "marker")
-        fake = os.path.join(work, "fake.git")
-        shutil.copytree(os.path.join(self.clone, ".git"), fake, symlinks=True)
-        git("--git-dir", fake, "config", "filter.x.clean", f"touch {marker}; cat")
-        os.makedirs(os.path.join(work, "a"))
-        for suffix, (name, content) in {"space": ("sym ", "{a}/sym \n"), "newline": ("sym\nx", "{a}/sym\nx\n")}.items():
-            with self.subTest(suffix):
-                wt = self.add(f"TASK-1-{suffix}")
-                admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-                a = os.path.join(work, "a", suffix)
-                os.makedirs(a)
-                os.symlink(admin, os.path.join(a, "sym"))
-                os.symlink(fake, os.path.join(a, name))
-                with open(os.path.join(wt, ".git"), "w") as f:
-                    f.write("gitdir: " + content.format(a=a))
-                with open(os.path.join(wt, "f"), "a") as f:
-                    f.write("two\n")
-                r, run = self.remove(wt, untrusted=(work,))
-                self.assertIsInstance(r, repo.Invalid)
-                self.assertEqual(run.calls, [])
-                self.assertFalse(os.path.exists(marker))
-                self.assertTrue(os.path.isdir(wt))
+    def test_trailing_whitespace_is_part_of_the_path_as_for_git(self):
+        wt = self.add()
+        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+        fake, other = os.path.join(self.tmp, "fake-admin"), os.path.join(self.tmp, "other", ".git")
+        os.makedirs(fake)
+        os.makedirs(other)
+        with open(os.path.join(fake, "commondir"), "w") as f:
+            f.write(other + "\n")
+        a = os.path.join(self.tmp, "a")
+        os.makedirs(a)
+        os.symlink(admin, os.path.join(a, "sym"))
+        os.symlink(fake, os.path.join(a, "sym "))
+        with open(os.path.join(wt, ".git"), "w") as f:
+            f.write(f"gitdir: {a}/sym \n")
+        self.assertEqual(repo.common_dir(wt), other)
 
-    def evil(self, name):
-        """A worktree of an agent-built clone whose clean filter writes a marker, with a stat-dirty file."""
-        evil, marker = os.path.join(self.tmp, "agent", "evil"), os.path.join(self.tmp, f"{name}.marker")
-        if not os.path.isdir(evil):
-            git("init", "-q", "-b", "main", evil)
-            for f, text in ((".gitattributes", "* filter=x\n"), ("f", "one\n")):
-                with open(os.path.join(evil, f), "w") as fh:
-                    fh.write(text)
-            git("-C", evil, "add", "-A")
-            git("-C", evil, "commit", "-q", "-m", "evil")
-        git("-C", evil, "config", "filter.x.clean", f"touch {marker}; cat")
-        wt = os.path.join(self.tmp, "w", name)
-        git("-C", evil, "worktree", "add", "-q", "-b", f"TASK-1-{name}", wt)
-        with open(os.path.join(wt, "f"), "a") as fh:
-            fh.write("two\n")
-        return wt, marker
-
-    def test_an_agent_built_clone_can_run_a_filter(self):
-        wt, marker = self.evil("control")
-        self.assertFalse(os.path.exists(marker))
-        self.remove(wt)
-        self.assertTrue(os.path.exists(marker))
-
-    def test_a_worktree_of_a_clone_in_an_untrusted_dir_runs_no_git(self):
-        wt, marker = self.evil("bad")
-        r, run = self.remove(wt, untrusted=(os.path.join(self.tmp, "agent"),))
-        self.assertIsInstance(r, repo.Untrusted)
-        self.assertEqual(run.calls, [])
-        self.assertFalse(os.path.exists(marker))
-        self.assertTrue(os.path.isdir(wt))
+    def test_no_worktree_names_no_clone(self):
+        wt = self.add()
+        plain, linked, junk, orphan, bare = (os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare"))
+        for d in (plain, linked, junk, orphan, bare):
+            os.makedirs(d)
+        os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
+        for d, text in ((junk, "nonsense\n"), (orphan, f"gitdir: {self.tmp}/gone\n"), (bare, f"gitdir: {self.bare}\n")):
+            with open(os.path.join(d, ".git"), "w") as f:
+                f.write(text)
+        for path in (self.clone, plain, linked, junk, orphan, bare, os.path.join(self.tmp, "missing")):
+            with self.subTest(path=path):
+                self.assertIsNone(repo.common_dir(path))
 
 
 class Status(Base):
