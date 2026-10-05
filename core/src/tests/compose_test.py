@@ -480,7 +480,7 @@ class RealCore(unittest.TestCase):
             text = f.read()
         for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
             self.assertNotIn(word, text, word)
-        for phrase in ("a **reader** to read-only file tools (read, search, list) inside the worktree",
+        for phrase in ("a **reader** to read-only file tools (read, search, list) inside the worktrees",
                        "readers, whether from a workflow you write or dispatched by the ultracode method",
                        "the deep-research method's agents are web agents"):
             self.assertIn(phrase, text)
@@ -491,6 +491,31 @@ class RealCore(unittest.TestCase):
             for cmd in run.commands:
                 cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
+
+    def test_every_repo_named_by_url_may_be_a_local_clone_path(self):
+        named = []
+        for role, task in ALL:
+            prompt, _ = composed(role, task)
+            if "repo URL" in prompt:
+                named.append(task)
+                self.assertEqual(prompt.count("repo URL"),
+                                 len(re.findall(r"repo URLs? or local clone paths?", prompt)), task)
+        self.assertEqual(sorted(named), ["deep-research", "echo", "engineering", "light-research", "prepare-test",
+                                         "product-design"])
+
+    def test_engineering_fails_without_push_permission(self):
+        self.assertIn("`push` false → `failed`", composed("engineer", "engineering")[0])
+
+    def test_researcher_takes_several_repos(self):
+        prompt, _ = composed("researcher", "light-research")
+        for phrase in ("the repos the input names, one or more", "None → too vague.", "once per target repo",
+                       "that repo's `permalink_base`", "each repo and its commit", "each `<repo>` at `<commit>`"):
+            self.assertIn(phrase, prompt)
+
+    def test_light_research_prepares_before_its_start_mark(self):
+        with open(os.path.join(CORE, "team", "tasks", "light-research.md")) as f:
+            text = f.read()
+        self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
     def test_a_run_reads_the_methods_dir_its_text_names(self):
         with open(os.path.join(CORE, "config", "clients", "claude.toml"), "rb") as f:

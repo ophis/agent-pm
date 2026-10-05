@@ -79,7 +79,7 @@ class Claude(Base):
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
             "--output-format", "stream-json", "--verbose",
-            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)",
+            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
         self.assertIn(f"## Return\n\nReport through `{self.report()}`", launch.argv[2])
         self.assertIn(f"`{self.report()} progress start <what that line asks you to report>`", launch.argv[2])
@@ -91,15 +91,15 @@ class Claude(Base):
         argv = self.plan("engineer", "engineering", client="claude").argv
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
-            f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("checkout", "status")]
+            f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("worktree", "status")]
             + [f"Bash({self.report()} *)"])
 
-    def test_product_design_argv_has_the_prepare_rule(self):
+    def test_product_design_argv_has_the_worktree_rule(self):
         argv = self.plan("pm", "product-design", client="claude").argv
         self.assertEqual(argv[argv.index("--allowedTools"):], [
-            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py prepare --dir {self.work}/src *)",
+            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn(f"`python3 {CORE}/src/repo.py prepare --dir <Workdir>/src <repo>`", argv[2])
+        self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
@@ -202,7 +202,7 @@ class Generic(Base):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
         self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[
-            f"python3 {CORE}/src/repo.py prepare --dir {self.work}/src *", f"{self.report()} *"]))
+            f"python3 {CORE}/src/repo.py worktree --dir {self.work}/src *", f"{self.report()} *"]))
         self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Guide"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
@@ -300,7 +300,8 @@ class Skill(Base):
         self.assertIn('description: "Quick research on a question', head)
         self.assertTrue(body.lstrip().startswith("# Guide"))
         self.assertIn("Input: $ARGUMENTS", body)
-        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare ", body)
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`",
+                      body)
         self.assertNotIn(self.tmp.name, body)
         self.assertNotIn(CORE, body)
 
@@ -349,7 +350,7 @@ class Skill(Base):
         skill = os.path.join(self.tmp.name, "pm-product-design")
         files = self.export("pm", "product-design").files
         self.assertEqual(sorted(files), [os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py")])
-        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py prepare --dir <Workdir>/src <repo>`",
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`",
                       files[os.path.join(skill, "SKILL.md")])
 
     def test_document_tasks_return_to_the_orchestrator(self):

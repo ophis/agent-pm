@@ -1,6 +1,6 @@
 # Report: [Reference] [Title]
 
-The type; for local or mixed, `<repo>` at `<commit>`.
+The type; for local or mixed, each `<repo>` at `<commit>`.
 
 ## Conclusion and recommendation
 One paragraph of ≤ 5 sentences. The first answers the question, with an overall confidence; then the findings it rests on and the recommendation, labeled as your synthesis.

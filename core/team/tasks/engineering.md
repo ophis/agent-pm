@@ -5,15 +5,16 @@ Build the PRD with `autopilot:build`, then open a pull request.
 ## Input
 
 - The PRD: a path or its text.
-- The target repo: a `Repo:` line, else an `<owner>/<name>`, `<host>/<owner>/<name>` or repo URL in the text.
+- The target repo: a `Repo:` line, else an `<owner>/<name>`, `<host>/<owner>/<name>`, repo URL or local clone path in the text.
 - Optional: `Title:` (the pull request title), `Branch:`, `Phase:`, `Links:` (links the pull request description carries), the **user's requirements** since the last build, and others' **review input** (each with its source, kind, author and time).
 
 ## Steps
 
 1. **Read** the input and the PRD. The user's requirements outrank the PRD.
-2. **Repo.** `<repo>` is the target repo as the input writes it. `<branch>` is the input's `Branch:`, else `<id>-<slug>`, ≤ 40 characters: `<id>` the id the input gives (e.g. `TASK-142`), else `build`; `<slug>` 2–4 lowercase English words for the PRD, joined by `-`. Run exactly `python3 {{scripts}}/repo.py checkout --dir <Workdir>/src --branch <branch> <repo>` as its own command (no `cd`, pipe, redirect or `&&`). Its JSON: `host` → `<host>`, `repo` → `<owner>/<name>`, `default` → `<default>`, `worktree` → `<worktree>`. In the target repo, inspect only `<worktree>`.
+2. **Repo.** `<repo>` is the target repo as the input writes it. `<branch>` is the input's `Branch:`, else `<id>-<slug>`, ≤ 40 characters: `<id>` the id the input gives (e.g. `TASK-142`), else `build`; `<slug>` 2–4 lowercase English words for the PRD, joined by `-`. Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>` as its own command (no `cd`, pipe, redirect or `&&`). Its JSON: `host` → `<host>`, `repo` → `<owner>/<name>`, `default` → `<default>`, `worktree` → `<worktree>`, and `push`. In the target repo, inspect only `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, a `questions` entry quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
+   - `push` false → `failed`, `summary` says there is no push permission on `<owner>/<name>`; stop.
 3. **Status.** Run exactly `python3 {{scripts}}/repo.py status --dir <Workdir>/src --branch <branch> <repo>` the same way. Its JSON: `pr` (`number`, `url`, `state`; null when none), `plan_docs` (`path`, `phase`), and the PR's comments and reviews since the latest plan doc commit: `user`, the user's (requirements too), and `others`, everyone else's (review input).
 4. **Which build**, from the plan docs and the user's requirements:
    - A plan doc before S9 → continue it (`autopilot:build` resumes from it), first updating its spec and plan to the user's requirements.
