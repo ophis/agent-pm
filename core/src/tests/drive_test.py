@@ -141,7 +141,7 @@ class Claude(Base):
     def test_interactive_adds_the_stop_hook_after_the_config_flags(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
-        cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop"
+        cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
 
@@ -548,8 +548,43 @@ class Report(Base):
         self.assertEqual(self.report("stop"), (0, "report.py: stop reported\n"))
         self.assertEqual(self.lines(), [{"kind": "stop"}])
 
+    def stop_line(self, stdin, *argv):
+        """The one line `report.py stop ARGV` appends with `stdin` as sys.stdin."""
+        before = len(self.lines())
+        with unittest.mock.patch("sys.stdin", stdin):
+            self.assertEqual(self.report("stop", *argv), (0, "report.py: stop reported\n"))
+        lines = self.lines()
+        self.assertEqual(len(lines), before + 1)
+        return lines[-1]
+
+    def test_stop_pending_counts_the_list_at_key_on_stdin(self):
+        for tasks, n in (([{}, {}], 2), ([], 0)):
+            with self.subTest(n=n):
+                stdin = io.StringIO(json.dumps({"background_tasks": tasks}))
+                self.assertEqual(self.stop_line(stdin, "--pending", "background_tasks"), {"kind": "stop", "pending": n})
+
+    def test_stop_pending_without_a_list_at_key_is_a_plain_stop(self):
+        undecodable = io.TextIOWrapper(io.BytesIO(b'{"background_tasks": [\xff\xfe]}'), encoding="utf-8")
+        for stdin in (io.StringIO(""), io.StringIO("not json"), io.StringIO("[1]"), io.StringIO("{}"),
+                      io.StringIO('{"background_tasks": 3}'), undecodable):
+            with self.subTest(stdin=stdin):
+                self.assertEqual(self.stop_line(stdin, "--pending", "background_tasks"), STOP)
+
+    def test_stop_without_pending_reads_no_stdin(self):
+        class Unreadable:
+            def read(self, *args):
+                raise AssertionError("stdin was read")
+        self.assertEqual(self.stop_line(Unreadable()), STOP)
+
     def test_report_event_maps_stop(self):
         self.assertEqual(drive.report_event('{"kind": "stop"}'), clients.Event("stop"))
+
+    def test_report_event_maps_a_stops_pending_count(self):
+        self.assertEqual(drive.report_event('{"kind": "stop", "pending": 2}'), clients.Event("stop", pending=2))
+        self.assertEqual(drive.report_event('{"kind": "stop", "pending": 0}'), clients.Event("stop"))
+        for pending in ("true", "-1", '"2"', "1.5"):
+            with self.subTest(pending=pending):
+                self.assertEqual(drive.report_event('{"kind": "stop", "pending": %s}' % pending), clients.Event("stop"))
 
     def test_progress_appends_one_line(self):
         self.assertEqual(self.report("progress", "round-1", "2", "rounds,", "cap 80"), (0, "report.py: progress reported\n"))

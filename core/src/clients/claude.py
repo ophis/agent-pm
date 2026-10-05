@@ -42,8 +42,8 @@ class ClaudeClient(Client):
         if allow:
             tail += ["--allowedTools", *allow]
         argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", *tail]
-        hook = {"hooks": {"Stop": [{"hooks": [{"type": "command",
-                                               "command": report_command(CORE_SCRIPTS, params) + " stop"}]}]}}
+        stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
+        hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
         interactive = ["claude", prompt, *head, *tail, "--settings", json.dumps(hook)]
         return Launch(argv, dict(c.get("env", {})), cwd=os.path.abspath(params.workdir), interactive=interactive)
 

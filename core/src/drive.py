@@ -303,7 +303,8 @@ def report_event(line: str) -> Event | None:
     if data.get("kind") == "outcome" and isinstance(data.get("outcome"), dict):
         return Event("outcome", outcome=data["outcome"])
     if data.get("kind") == "stop":
-        return Event("stop")
+        pending = data.get("pending")
+        return Event("stop", pending=pending if type(pending) is int and pending >= 0 else 0)
     name, text = data.get("name"), data.get("text")
     if data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str):
         if text := " ".join(text.split()):
