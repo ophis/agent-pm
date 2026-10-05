@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs, checked out into DIR/<name>; a checkout of the same repo there is reused.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>, on the run's own branch.
 
-repo.py prepare --dir DIR REPO             read-only, blobless (full history), detached at the default branch; prints
-                                           {"repo", "host", "commit", "worktree", "permalink_base"}
-repo.py checkout --dir DIR --branch B REPO  writable, on branch B (from origin/B, else the default branch); needs push
-                                           permission; prints {"repo", "host", "default", "branch", "worktree"}
-repo.py status --dir DIR --branch B REPO    after checkout: {"pr", "plan_docs", "user", "others"}, `user` and `others`
-                                           being PR comments and reviews by the user (config.toml's `users`, else
-                                           the gh login) and by anyone else since the latest plan doc commit
-REPO is `owner/name`, `host/owner/name` or `https://host/owner/name`. Each option may be given once, so a command
-pre-approved by its `--dir` prefix can't be redirected elsewhere by a second `--dir`.
-Exits 2 when REPO or B is invalid or unreachable (not found, no access or push permission, DIR/<name> holds
-something else), 1 on any other failure.
+repo.py worktree --dir DIR --branch B REPO  the checkout on branch B; prints {"repo", "host", "default", "branch",
+                                           "commit", "worktree", "permalink_base", "push"}, `push` being whether
+                                           the gh user may push (no permission is no error)
+repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", "since", "user", "others"}, `user` and
+                                           `others` being PR comments and reviews by the user (config.toml's `users`,
+                                           else the gh login) and by anyone else since the latest plan doc commit
+REPO is `owner/name`, `host/owner/name`, `https://host/owner/name`, or a local clone's path (starting with / or ~;
+its .git a directory, its origin URL naming host/owner/name). From a local clone, `worktree` fetches origin (only
+`origin/*` moves, never the clone's branches or work tree) and adds a git worktree; otherwise it clones blobless
+(full history, blobs fetched on demand) with core.symlinks=false. A checkout already at DIR/<owner>/<name> is
+reused (fetched only): a clone of the repo, or a worktree of the local clone REPO names.
+Branch B: the local B, else a new B tracking origin/B, else a new B from origin/<default>; B may be neither the
+default branch nor checked out in another worktree. Git calls that fail on a lock (several runs on one clone)
+are retried: 5 attempts, 7.5 s of backoff in all.
+Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
+second `--dir`.
+Exits 2 when REPO or B is invalid or unusable (not found or no access, not a clone, no origin, DIR/<owner>/<name>
+holds something else, B is the default branch or checked out elsewhere), 1 on any other failure.
 """
 import argparse
 import json
@@ -19,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +37,8 @@ NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
 SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
 SHA = re.compile(r"[0-9a-f]{40}")
+URL = re.compile(r"(?:https://|ssh://git@|git@)([^/:\s]+)[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
+LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SHORT, LONG = 60, 600
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "config.toml")
@@ -70,21 +80,32 @@ class Repo:
         return f"{self.host}/{self.owner}/{self.name}"
 
 
+def url_slug(url: str) -> str | None:
+    """host/owner/name of a clone URL as written, or None."""
+    m = URL.fullmatch(url.strip())
+    return "/".join(m.groups()) if m else None
+
+
 def origin(url: str) -> str | None:
     """host/owner/name of a clone URL, lowercased, or None."""
-    m = re.fullmatch(r"(?:https://|ssh://git@|git@)([^/:\s]+)[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url.strip())
-    return "/".join(m.groups()).lower() if m else None
+    slug = url_slug(url)
+    return slug.lower() if slug else None
 
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return (res.stderr or "").strip()[:200]
 
 
-def git(run: Runner, wt: str, *args: str, timeout: int = SHORT) -> str:
-    res = run(["git", "-C", wt, *args], timeout)
-    if res.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)[:100]}: {err_text(res)}")
-    return res.stdout
+def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
+    """stdout of `git [pre] -C wt args`, retrying a lock failure; RuntimeError if it fails."""
+    for i in range(5):
+        res = run(["git", *pre, "-C", wt, *args], timeout)
+        if res.returncode == 0:
+            return res.stdout
+        if i == 4 or not LOCK.search(res.stderr or ""):
+            break
+        time.sleep(0.5 * 2**i)
+    raise RuntimeError(f"git {' '.join(args)[:100]}: {err_text(res)}")
 
 
 def gh_json(run: Runner, argv: list[str]):
@@ -112,39 +133,46 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         raise RuntimeError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
 
 
-def place(repo: Repo, base: str, *, run: Runner) -> tuple[str, bool]:
-    """(worktree, whether it exists) for the repo under `base`; Invalid if base/<name> holds anything but its checkout."""
-    wt = os.path.join(os.path.abspath(base), repo.name)
+def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
+    """(repo, local clone or None) of a REPO argument; Invalid if unreadable, or a path to no clone with an origin."""
+    if not spec.startswith(("/", "~")):
+        return Repo.parse(spec), None
+    clone = os.path.realpath(os.path.expanduser(spec))
+    dotgit = os.path.join(clone, ".git")
+    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
+        raise Invalid(f"{clone} is not a git clone")
+    res = run(["git", "-C", clone, "remote", "get-url", "origin"], SHORT)
+    slug = url_slug(res.stdout) if res.returncode == 0 else None
+    if slug is None:
+        raise Invalid(f"{clone}: no origin URL naming host/owner/name")
+    return Repo.parse(slug), clone
+
+
+def place(repo: Repo, base: str, clone: str | None, *, run: Runner) -> tuple[str, bool]:
+    """(worktree, whether it exists) for the repo under `base`; Invalid if base/<owner>/<name> holds anything but a
+    clone of it or a worktree of `clone`."""
+    wt = os.path.join(os.path.abspath(base), repo.owner, repo.name)
     if not os.path.lexists(wt):
         return wt, False
-    if os.path.islink(wt) or not os.path.isdir(os.path.join(wt, ".git")):
+    dotgit = os.path.join(wt, ".git")
+    if os.path.islink(wt) or os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
         raise Invalid(f"{wt} exists and is not a checkout")
+    if os.path.isfile(dotgit):
+        res = run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"], SHORT) if clone else None
+        if res is None or res.returncode != 0 or os.path.realpath(res.stdout.strip()) != os.path.join(clone, ".git"):
+            raise Invalid(f"{wt} is not a checkout of {repo.slug}")
     res = run(["git", "-C", wt, "remote", "get-url", "origin"], SHORT)
     if res.returncode != 0 or origin(res.stdout) != repo.slug.lower():
         raise Invalid(f"{wt} is not a checkout of {repo.slug}")
     return wt, True
 
 
-def clone(repo: Repo, wt: str, *extra: str, run: Runner) -> None:
+def clone_repo(repo: Repo, wt: str, *, run: Runner) -> None:
     os.makedirs(os.path.dirname(wt), exist_ok=True)
     # The repo is untrusted: no symlinks that could point outside the checkout.
-    res = run(["gh", "repo", "clone", repo.slug, wt, "--", "-c", "core.symlinks=false", *extra], LONG)
+    res = run(["gh", "repo", "clone", repo.slug, wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"], LONG)
     if res.returncode != 0:
         raise RuntimeError(f"gh repo clone: {err_text(res)}")
-
-
-def prepare(repo: Repo, base: str, *, run: Runner = sh) -> dict:
-    """The read-only checkout's details; raises Invalid, or RuntimeError on other failures."""
-    wt, exists = place(repo, base, run=run)
-    if not exists:
-        info(repo, run=run)
-        clone(repo, wt, "--filter=blob:none", run=run)
-        git(run, wt, "checkout", "--detach")
-    commit = git(run, wt, "rev-parse", "HEAD").strip()
-    if not SHA.fullmatch(commit):
-        raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
-    return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "commit": commit, "worktree": wt,
-            "permalink_base": f"https://{repo.slug}/blob/{commit}/"}
 
 
 def check_branch(branch: str) -> None:
@@ -152,29 +180,52 @@ def check_branch(branch: str) -> None:
         raise Invalid(f"unsafe branch name {branch[:80]!r}")
 
 
-def checkout(repo: Repo, branch: str, base: str, *, run: Runner = sh) -> dict:
-    """The writable checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures."""
+def check_free(run: Runner, at: str, branch: str, wt: str) -> None:
+    """Invalid if `branch` is checked out in a worktree of `at` other than `wt`."""
+    path = None
+    for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line == f"branch refs/heads/{branch}" and path and os.path.realpath(path) != os.path.realpath(wt):
+            raise Invalid(f"{branch} is checked out in {path}")
+
+
+def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
+    """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures."""
     check_branch(branch)
-    wt, exists = place(repo, base, run=run)
+    repo, clone = resolve(spec, run=run)
+    wt, exists = place(repo, base, clone, run=run)
     push, default = info(repo, run=run)
-    if not push:
-        raise Invalid(f"{repo.slug}: no push permission")
     if not isinstance(default, str) or not BRANCH.fullmatch(default):
         raise Invalid(f"{repo.slug}: unsafe default branch name")
     if branch == default:
         raise Invalid(f"{branch} is the default branch; build on another")
-    if not exists:
-        clone(repo, wt, run=run)
-    else:
+    add = clone is not None and not exists
+    if exists:
         git(run, wt, "fetch", "origin", timeout=LONG)
-    if git(run, wt, "branch", "--show-current").strip() != branch:
-        if git(run, wt, "branch", "--list", branch).strip():
-            git(run, wt, "checkout", branch)
-        elif git(run, wt, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
-            git(run, wt, "checkout", "--track", "-b", branch, f"origin/{branch}")
+    elif add:
+        git(run, clone, "fetch", "origin", timeout=LONG)
+    else:
+        clone_repo(repo, wt, run=run)
+    at = clone if add else wt
+    if add or git(run, wt, "branch", "--show-current").strip() != branch:
+        check_free(run, at, branch, wt)
+        if git(run, at, "branch", "--list", branch).strip():
+            opts, start = [], branch
+        elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
+            opts, start = ["--track", "-b", branch], f"origin/{branch}"
         else:
-            git(run, wt, "checkout", "--no-track", "-b", branch, f"origin/{default}")
-    return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "default": default, "branch": branch, "worktree": wt}
+            opts, start = ["--no-track", "-b", branch], f"origin/{default}"
+        if add:
+            os.makedirs(os.path.dirname(wt), exist_ok=True)
+            git(run, clone, "worktree", "add", *opts, wt, start)
+        else:
+            git(run, wt, "checkout", *opts, start)
+    commit = git(run, wt, "rev-parse", "HEAD").strip()
+    if not SHA.fullmatch(commit):
+        raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
+    return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "default": default, "branch": branch, "commit": commit,
+            "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
@@ -204,11 +255,12 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: datetime.fromisoformat(e["at"]))
 
 
-def status(repo: Repo, branch: str, base: str, *, run: Runner = sh, users: list[str] | None = None) -> dict:
+def status(spec: str, branch: str, base: str, *, run: Runner = sh, users: list[str] | None = None) -> dict:
     """The branch's PR, plan docs and PR feedback since the latest plan doc commit; raises Invalid or RuntimeError."""
-    wt, exists = place(repo, base, run=run)
+    repo, clone = resolve(spec, run=run)
+    wt, exists = place(repo, base, clone, run=run)
     if not exists:
-        raise Invalid(f"{wt} missing: run checkout first")
+        raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
     since = git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip() if docs else ""
     login = gh_json(run, ["api", "--hostname", repo.host, "user"]).get("login")
@@ -240,25 +292,21 @@ def status(repo: Repo, branch: str, base: str, *, run: Runner = sh, users: list[
 def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = CONFIG) -> int:
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for cmd in ("prepare", "checkout", "status"):
+    for cmd in ("worktree", "status"):
         p = sub.add_parser(cmd)
         p.add_argument("--dir", required=True, action=Once)
-        if cmd != "prepare":
-            p.add_argument("--branch", required=True, action=Once)
+        p.add_argument("--branch", required=True, action=Once)
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        if a.cmd == "prepare":
-            r = prepare(Repo.parse(a.repo), a.dir, run=run)
-        elif a.cmd == "checkout":
-            check_branch(a.branch)
-            r = checkout(Repo.parse(a.repo), a.branch, a.dir, run=run)
+        if a.cmd == "worktree":
+            r = worktree(a.repo, a.branch, a.dir, run=run)
         else:
             users = None
             if os.path.isfile(config):   # a skill's copy of this script has no config.toml beside it
                 with open(config, "rb") as f:
                     users = tomllib.load(f).get("users")
-            r = status(Repo.parse(a.repo), a.branch, a.dir, run=run, users=users)
+            r = status(a.repo, a.branch, a.dir, run=run, users=users)
     except Invalid as e:
         err.write(f"repo.py: {e}\n")
         return 2

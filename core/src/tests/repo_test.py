@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import unittest.mock
 
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import repo  # noqa: E402
 
 SHA = "a" * 40
+URL = "https://github.com/o/n.git"
 
 
 def ok(stdout=""):
@@ -22,7 +24,8 @@ def fail(stderr):
 
 
 class Fake:
-    """A `run` that answers by argv prefix and records every call; `gh repo clone` makes the checkout's .git."""
+    """A `run` that answers by argv prefix (a list answer gives its items in turn) and records every call;
+    `gh repo clone` makes the checkout's .git."""
 
     def __init__(self, answers):
         self.answers, self.calls = answers, []
@@ -33,15 +36,40 @@ class Fake:
             os.makedirs(os.path.join(argv[4], ".git"))
         for prefix, res in self.answers:
             if prefix(argv) if callable(prefix) else argv[:len(prefix)] == prefix:
-                return res
+                return res.pop(0) if isinstance(res, list) else res
         return ok()
 
     def ran(self, *prefix):
         return any(c[:len(prefix)] == list(prefix) for c in self.calls)
 
 
+class Real(Fake):
+    """Real git, `gh` answered as Fake does; origin's URL, when there is one, reads as URL."""
+
+    def __call__(self, argv, timeout):
+        if argv[0] != "git":
+            return super().__call__(argv, timeout)
+        self.calls.append(argv)
+        res = repo.sh(argv, timeout)
+        if argv[-3:] == ["remote", "get-url", "origin"] and res.returncode == 0:
+            return ok(URL + "\n")
+        return res
+
+
 def info(push=True, default="main"):
     return (["gh", "api", "--hostname"], ok(json.dumps({"permissions": {"push": push}, "default_branch": default})))
+
+
+HEAD = (lambda a: a[3:] == ["rev-parse", "HEAD"], ok(SHA + "\n"))
+
+
+def git(*argv):
+    return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def upstream(wt):
+    res = subprocess.run(["git", "-C", wt, "rev-parse", "--abbrev-ref", "@{upstream}"], capture_output=True, text=True)
+    return res.stdout.strip() if res.returncode == 0 else None
 
 
 class Base(unittest.TestCase):
@@ -49,9 +77,9 @@ class Base(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.wt = os.path.join(self.dir, "n")
+        self.wt = os.path.join(self.dir, "o", "n")
 
-    def existing(self, url="https://github.com/o/n.git"):
+    def existing(self, url=URL):
         os.makedirs(os.path.join(self.wt, ".git"))
         return (lambda a: a[3:] == ["remote", "get-url", "origin"], ok(url + "\n"))
 
@@ -75,6 +103,8 @@ class Parse(unittest.TestCase):
     def test_origin(self):
         self.assertEqual(repo.origin("git@GitHub.com:O/N.git"), "github.com/o/n")
         self.assertEqual(repo.origin("https://ghe.io/o/n"), "ghe.io/o/n")
+        self.assertEqual(repo.url_slug("git@GitHub.com:O/N.git"), "GitHub.com/O/N")
+        self.assertIsNone(repo.url_slug("/tmp/origin.git"))
 
 
 class ErrText(unittest.TestCase):
@@ -84,101 +114,315 @@ class ErrText(unittest.TestCase):
                 self.assertEqual(repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want)
 
 
-class Prepare(Base):
-    def test_fresh_blobless_detached_checkout(self):
-        run = Fake([info(), (["git", "-C", self.wt, "rev-parse"], ok(SHA + "\n"))])
-        code, out, _ = self.main(["prepare", "o/n", "--dir", self.dir], run)
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out), {"repo": "o/n", "host": "github.com", "commit": SHA, "worktree": self.wt,
-                                           "permalink_base": f"https://github.com/o/n/blob/{SHA}/"})
-        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
-                      run.calls)
-        self.assertFalse(any("--depth" in c for c in run.calls))
-        self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--detach"))
+class Worktree(Base):
+    def worktree(self, *answers, branch="TASK-1-x", spec="o/n"):
+        run = Fake([*answers, HEAD])
+        return self.main(["worktree", spec, f"--branch={branch}", "--dir", self.dir], run), run
 
-    def test_reuses_a_checkout_of_the_same_repo(self):
-        run = Fake([self.existing(), (["git", "-C", self.wt, "rev-parse"], ok(SHA))])
-        self.assertEqual(self.main(["prepare", "https://github.com/o/n", "--dir", self.dir], run)[0], 0)
-        self.assertFalse(run.ran("gh"))
-
-    def test_other_repo_in_the_way_is_invalid(self):
-        code, _, err = self.main(["prepare", "o/n", "--dir", self.dir], Fake([self.existing("https://github.com/x/n")]))
-        self.assertEqual(code, 2)
-        self.assertIn("not a checkout of github.com/o/n", err)
-
-    def test_not_found_is_invalid(self):
-        run = Fake([(["gh", "api"], fail("gh: Not Found (HTTP 404)"))])
-        code, _, err = self.main(["prepare", "o/n", "--dir", self.dir], run)
-        self.assertEqual(code, 2)
-        self.assertIn("HTTP 404", err)
-        self.assertFalse(run.ran("gh", "repo", "clone"))
-
-    def test_a_second_dir_is_refused(self):
-        err = io.StringIO()
-        with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
-            repo.main(["prepare", "--dir", self.dir, "o/n", "--dir", os.path.expanduser("~/.claude/skills")], run=Fake([]))
-        self.assertIn("--dir given twice", err.getvalue())
-
-    def test_network_failure_exits_1(self):
-        run = Fake([info(), (["gh", "repo", "clone"], fail("connection reset"))])
-        code, _, err = self.main(["prepare", "o/n", "--dir", self.dir], run)
-        self.assertEqual(code, 1)
-        self.assertIn("connection reset", err)
-
-
-class Checkout(Base):
-    def checkout(self, *answers, branch="TASK-1-x"):
-        run = Fake(list(answers))
-        return self.main(["checkout", "o/n", f"--branch={branch}", "--dir", self.dir], run), run
-
-    def test_new_branch_from_the_default(self):
-        (code, out, _), run = self.checkout(info(default="trunk"))
+    def test_fresh_blobless_clone_on_a_new_branch_from_the_default(self):
+        (code, out, _), run = self.worktree(info(default="trunk"))
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out), {"repo": "o/n", "host": "github.com", "default": "trunk", "branch": "TASK-1-x",
-                                           "worktree": self.wt})
-        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false"], run.calls)
+                                           "commit": SHA, "worktree": self.wt,
+                                           "permalink_base": f"https://github.com/o/n/blob/{SHA}/", "push": True})
+        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
+                      run.calls)
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--no-track", "-b", "TASK-1-x", "origin/trunk"))
 
     def test_remote_branch_is_tracked(self):
-        (code, _, _), run = self.checkout(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
+        (code, _, _), run = self.worktree(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
         self.assertEqual(code, 0)
         self.assertTrue(run.ran("git", "-C", self.wt, "ls-remote", "--heads", "origin", "refs/heads/TASK-1-x"))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--track", "-b", "TASK-1-x", "origin/TASK-1-x"))
 
     def test_default_branch_is_invalid(self):
-        (code, _, err), run = self.checkout(info(default="main"), branch="main")
+        (code, _, err), run = self.worktree(info(default="main"), branch="main")
         self.assertEqual(code, 2)
         self.assertIn("default branch", err)
         self.assertFalse(run.ran("gh", "repo", "clone"))
 
-    def test_existing_checkout_fetches_and_switches_to_the_local_branch(self):
-        (code, _, _), run = self.checkout(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")))
+    def test_no_push_permission_is_reported_not_refused(self):
+        (code, out, _), run = self.worktree(info(push=False))
+        self.assertEqual((code, json.loads(out)["push"]), (0, False))
+        self.assertTrue(run.ran("gh", "repo", "clone"))
+
+    def test_reuse_fetches_and_switches_to_the_local_branch(self):
+        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")))
         self.assertEqual(code, 0)
         self.assertTrue(run.ran("git", "-C", self.wt, "fetch", "origin"))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "TASK-1-x"))
         self.assertFalse(run.ran("gh", "repo", "clone"))
 
     def test_already_on_the_branch_changes_nothing(self):
-        (code, _, _), run = self.checkout(self.existing(), info(), (lambda a: "--show-current" in a, ok("TASK-1-x\n")))
+        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: "--show-current" in a, ok("TASK-1-x\n")))
         self.assertEqual(code, 0)
-        self.assertFalse(any("checkout" in c for c in run.calls))
+        self.assertFalse(any("checkout" in c or "worktree" in c for c in run.calls))
+
+    def test_same_name_under_two_owners(self):
+        for owner in ("a", "b"):
+            code, out, _ = self.main(["worktree", f"{owner}/n", "--branch", "TASK-1-x", "--dir", self.dir], Fake([info(), HEAD]))
+            self.assertEqual((code, json.loads(out)["worktree"]), (0, os.path.join(self.dir, owner, "n")))
+
+    def test_other_repo_in_the_way_is_invalid(self):
+        (code, _, err), _ = self.worktree(self.existing("https://github.com/x/n"), info())
+        self.assertEqual(code, 2)
+        self.assertIn("not a checkout of github.com/o/n", err)
+
+    def test_a_worktree_in_the_way_is_invalid_for_a_remote_repo(self):
+        os.makedirs(self.wt)
+        with open(os.path.join(self.wt, ".git"), "w") as f:
+            f.write("gitdir: /elsewhere/.git/worktrees/n\n")
+        (code, _, err), run = self.worktree(info())
+        self.assertEqual(code, 2)
+        self.assertIn("not a checkout of github.com/o/n", err)
+        self.assertFalse(run.ran("gh", "repo", "clone"))
+
+    def test_a_symlink_in_the_way_is_invalid(self):
+        os.makedirs(os.path.dirname(self.wt))
+        os.symlink(self.dir, self.wt)
+        (code, _, err), _ = self.worktree(info())
+        self.assertEqual(code, 2)
+        self.assertIn("exists and is not a checkout", err)
+
+    def test_not_found_is_invalid(self):
+        (code, _, err), run = self.worktree((["gh", "api"], fail("gh: Not Found (HTTP 404)")))
+        self.assertEqual(code, 2)
+        self.assertIn("HTTP 404", err)
+        self.assertFalse(run.ran("gh", "repo", "clone"))
+
+    def test_network_failure_exits_1(self):
+        (code, _, err), _ = self.worktree(info(), (["gh", "repo", "clone"], fail("connection reset")))
+        self.assertEqual(code, 1)
+        self.assertIn("connection reset", err)
+
+    def test_unreadable_repo_is_invalid(self):
+        (code, _, err), run = self.worktree(info(), spec="not a repo")
+        self.assertEqual(code, 2)
+        self.assertIn("unreadable repo", err)
+        self.assertEqual(run.calls, [])
+
+    def test_a_local_path_whose_origin_names_no_repo_is_invalid(self):
+        clone = os.path.join(self.dir, "clone")
+        os.makedirs(os.path.join(clone, ".git"))
+        (code, _, err), run = self.worktree((lambda a: a[3:] == ["remote", "get-url", "origin"], ok("/srv/n.git\n")), spec=clone)
+        self.assertEqual(code, 2)
+        self.assertIn("no origin URL naming host/owner/name", err)
+        self.assertFalse(run.ran("gh"))
 
     def test_unsafe_branch_is_reported_before_an_unreadable_repo(self):
-        code, _, err = self.main(["checkout", "--dir", self.dir, "--branch=a..b", "not a repo"], Fake([]))
+        code, _, err = self.main(["worktree", "--dir", self.dir, "--branch=a..b", "not a repo"], Fake([]))
         self.assertEqual(code, 2)
         self.assertIn("unsafe branch name", err)
 
-    def test_no_push_permission_is_invalid(self):
-        (code, _, err), run = self.checkout(info(push=False))
-        self.assertEqual(code, 2)
-        self.assertIn("no push permission", err)
-        self.assertFalse(run.ran("gh", "repo", "clone"))
-
     def test_unsafe_branch_is_invalid(self):
         for branch in ("-x", "a..b", "a b", "x/"):
-            (code, _, _), run = self.checkout(info(), branch=branch)
+            (code, _, _), run = self.worktree(info(), branch=branch)
             self.assertEqual(code, 2, branch)
             self.assertEqual(run.calls, [])
+
+    def test_an_option_given_twice_is_refused(self):
+        for cmd in ("worktree", "status"):
+            for argv, opt in ((["--dir", self.dir, "--branch", "b", "o/n", "--dir", os.path.expanduser("~/.claude")], "--dir"),
+                              (["--dir", self.dir, "--branch", "b", "o/n", "--branch", "c"], "--branch")):
+                err = io.StringIO()
+                with self.subTest(cmd=cmd, opt=opt), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
+                    repo.main([cmd, *argv], run=Fake([]))
+                self.assertIn(f"{opt} given twice", err.getvalue())
+
+    def test_branch_is_required(self):
+        for cmd in ("worktree", "status"):
+            with self.subTest(cmd=cmd), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", io.StringIO()):
+                repo.main([cmd, "--dir", self.dir, "o/n"], run=Fake([]))
+
+    def test_prepare_and_checkout_are_gone(self):
+        for cmd in ("prepare", "checkout"):
+            with self.subTest(cmd=cmd), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", io.StringIO()):
+                repo.main([cmd, "--dir", self.dir, "--branch", "b", "o/n"], run=Fake([]))
+
+
+class Retry(unittest.TestCase):
+    LOCKS = ("fatal: Unable to create '/w/.git/index.lock': File exists.",
+             "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
+             "error: could not lock config file .git/config: File exists")
+
+    def git(self, *results):
+        run = Fake([(["git"], list(results))])
+        with unittest.mock.patch.object(repo.time, "sleep") as sleep:
+            try:
+                return repo.git(run, "/w", "fetch", "origin"), run, sleep
+            except RuntimeError as e:
+                return e, run, sleep
+
+    def test_a_lock_failure_is_retried(self):
+        for stderr in self.LOCKS:
+            with self.subTest(stderr=stderr):
+                out, run, sleep = self.git(fail(stderr), ok("done"))
+                self.assertEqual((out, len(run.calls)), ("done", 2))
+                sleep.assert_called_once_with(0.5)
+
+    def test_five_lock_failures_raise(self):
+        err, run, sleep = self.git(*[fail(self.LOCKS[0])] * 5)
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("index.lock", str(err))
+        self.assertEqual(len(run.calls), 5)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.5, 1, 2, 4])
+
+    def test_other_failures_are_not_retried(self):
+        err, run, sleep = self.git(fail("fatal: not a git repository"), ok())
+        self.assertIsInstance(err, RuntimeError)
+        self.assertEqual(len(run.calls), 1)
+        sleep.assert_not_called()
+
+
+class Local(unittest.TestCase):
+    """Worktrees from a real clone of a bare repo; `gh` faked, origin's URL read as github.com/o/n."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        env = unittest.mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                                                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.seed, self.bare, self.clone = (os.path.join(self.tmp, d) for d in ("seed", "origin.git", "clone"))
+        git("init", "-q", "-b", "main", self.seed)
+        git("-C", self.seed, "commit", "-q", "--allow-empty", "-m", "one")
+        git("-C", self.seed, "branch", "TASK-1-remote")
+        git("clone", "-q", "--bare", self.seed, self.bare)
+        git("-C", self.seed, "remote", "add", "origin", self.bare)
+        git("clone", "-q", self.bare, self.clone)
+        self.dir = os.path.join(self.tmp, "work", "src")
+        self.wt = os.path.join(self.dir, "o", "n")
+
+    def advance(self):
+        git("-C", self.seed, "commit", "-q", "--allow-empty", "-m", "two")
+        git("-C", self.seed, "push", "-q", "origin", "main")
+        return git("-C", self.seed, "rev-parse", "HEAD")
+
+    def worktree(self, branch="TASK-1-x", spec=None, base=None):
+        run, out, err = Real([info()]), io.StringIO(), io.StringIO()
+        code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err)
+        return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
+
+    def test_a_path_or_a_tilde_path(self):
+        head = git("-C", self.clone, "rev-parse", "HEAD")
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp}):
+            for i, spec in enumerate((self.clone, "~/clone")):
+                with self.subTest(spec=spec):
+                    base = os.path.join(self.tmp, f"w{i}")
+                    wt = os.path.join(base, "o", "n")
+                    code, r, _ = self.worktree(f"TASK-1-{i}", spec=spec, base=base)
+                    self.assertEqual(code, 0, r)
+                    self.assertEqual(r, {"repo": "o/n", "host": "github.com", "default": "main", "branch": f"TASK-1-{i}",
+                                         "commit": head, "worktree": wt,
+                                         "permalink_base": f"https://github.com/o/n/blob/{head}/", "push": True})
+                    self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
+                    self.assertEqual(git("-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+                                     os.path.join(self.clone, ".git"))
+
+    def test_not_a_clone_is_invalid(self):
+        linked, plain, bare = (os.path.join(self.tmp, d) for d in ("linked", "plain", "no-origin"))
+        git("-C", self.clone, "worktree", "add", "-q", "-b", "TASK-9-y", linked)
+        os.makedirs(plain)
+        git("init", "-q", bare)
+        for spec in (os.path.join(self.tmp, "missing"), plain, linked, bare):
+            with self.subTest(spec=spec):
+                code, err, run = self.worktree(spec=spec)
+                self.assertEqual(code, 2, err)
+                self.assertFalse(run.ran("gh"))
+                self.assertFalse(os.path.exists(self.dir))
+
+    def test_fetch_leaves_the_clone_alone(self):
+        with open(os.path.join(self.clone, "dirty.txt"), "w") as f:
+            f.write("x")
+        git("-C", self.clone, "commit", "-q", "--allow-empty", "-m", "local")
+
+        def state():
+            return [git("-C", self.clone, *a) for a in (["rev-parse", "main"], ["branch", "--show-current"], ["status", "--porcelain"])]
+        before = state()
+        new = self.advance()
+        code, r, _ = self.worktree()
+        self.assertEqual((code, r["commit"]), (0, new))
+        self.assertEqual(git("-C", self.clone, "rev-parse", "origin/main"), new)
+        self.assertEqual(state(), before)
+
+    def test_branch_rules_via_worktree_add(self):
+        old = git("-C", self.clone, "rev-parse", "HEAD")
+        git("-C", self.clone, "branch", "TASK-1-local")
+        new = self.advance()
+        for branch, commit, tracks in (("TASK-1-local", old, None), ("TASK-1-remote", old, "origin/TASK-1-remote"),
+                                       ("TASK-1-new", new, None)):
+            with self.subTest(branch=branch):
+                base = os.path.join(self.tmp, branch)
+                wt = os.path.join(base, "o", "n")
+                code, r, run = self.worktree(branch, base=base)
+                self.assertEqual((code, r["commit"], r["worktree"]), (0, commit, wt))
+                self.assertTrue(run.ran("git", "-C", self.clone, "worktree", "add"))
+                self.assertEqual((git("-C", wt, "branch", "--show-current"), upstream(wt)), (branch, tracks))
+
+    def test_reuse_fetches_only(self):
+        self.assertEqual(self.worktree()[0], 0)
+        new = self.advance()
+        code, r, run = self.worktree()
+        self.assertEqual((code, r["worktree"]), (0, self.wt))
+        self.assertTrue(run.ran("git", "-C", self.wt, "fetch", "origin"))
+        self.assertFalse(any("add" in c or "checkout" in c for c in run.calls))
+        self.assertEqual(git("-C", self.clone, "rev-parse", "origin/main"), new)
+
+    def test_a_worktree_of_another_clone_is_invalid(self):
+        other = os.path.join(self.tmp, "clone2")
+        git("clone", "-q", self.bare, other)
+        git("-C", other, "worktree", "add", "-q", "-b", "TASK-1-x", self.wt)
+        code, err, _ = self.worktree()
+        self.assertEqual(code, 2)
+        self.assertIn("not a checkout of github.com/o/n", err)
+
+    def test_a_full_clone_at_the_place_is_used(self):
+        git("clone", "-q", self.bare, self.wt)
+        code, r, run = self.worktree()
+        self.assertEqual((code, r["worktree"]), (0, self.wt))
+        self.assertTrue(os.path.isdir(os.path.join(self.wt, ".git")))
+        self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--no-track", "-b", "TASK-1-x", "origin/main"))
+        self.assertFalse(run.ran("git", "-C", self.clone, "worktree", "add"))
+
+    def test_a_branch_checked_out_elsewhere_is_invalid(self):
+        other = os.path.join(self.tmp, "elsewhere")
+        git("-C", self.clone, "worktree", "add", "-q", "-b", "TASK-1-x", other)
+        code, err, _ = self.worktree()
+        self.assertEqual(code, 2)
+        self.assertIn(f"TASK-1-x is checked out in {other}", err)
+        self.assertFalse(os.path.exists(self.wt))
+
+    def test_two_runs_at_once_on_one_clone(self):
+        self.advance()
+        results = {}
+
+        def go(branch):
+            try:
+                results[branch] = repo.worktree(self.clone, branch, os.path.join(self.tmp, branch), run=Real([info()]))
+            except Exception as e:
+                results[branch] = e
+        threads = [threading.Thread(target=go, args=(b,)) for b in ("TASK-1-a", "TASK-2-b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        for b, r in results.items():
+            self.assertIsInstance(r, dict, r)
+            self.assertEqual(git("-C", r["worktree"], "branch", "--show-current"), b)
+        self.assertEqual(len(results), 2)
+
+    def test_status_with_a_local_path(self):
+        self.assertEqual(self.worktree()[0], 0)
+        run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')), (["gh", "pr", "list"], ok("[]"))])
+        out, err = io.StringIO(), io.StringIO()
+        code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-1-x", self.clone], run=run, out=out, err=err,
+                         config=os.path.join(self.tmp, "none.toml"))
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIsNone(json.loads(out.getvalue())["pr"])
+        self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
 
 
 class Status(Base):
@@ -249,7 +493,7 @@ class Status(Base):
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))
         self.assertEqual(code, 2)
-        self.assertIn("run checkout first", err)
+        self.assertIn("run worktree first", err)
 
 
 if __name__ == "__main__":
