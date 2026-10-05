@@ -32,7 +32,8 @@ SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
 PANES = "#{pane_tty} #{pane_id}"
-PGREP = ["pgrep", "-x", "iTerm2"]   # before osascript, whose script needs iTerm2 installed
+# before osascript, whose script needs iTerm2 installed; -a includes ancestors (the caller usually runs inside iTerm2)
+PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 # osascript's argv: split, anchor kind (id: iTerm2 unique ids; tty: client ttys), tmux path, session, anchor values.
 # They stay arguments, never script text.
 APPLESCRIPT = """on run argv

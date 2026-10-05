@@ -17,7 +17,7 @@ import tui  # noqa: E402
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
-PGREP = ["pgrep", "-x", "iTerm2"]
+PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
 TMUX_KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 SH_KW = {"stdin": subprocess.DEVNULL, "timeout": 30}

@@ -149,6 +149,14 @@ class StartTest(unittest.TestCase):
         self.assertEqual(argv[11], workers.hooks(self.events))
         self.assertEqual(argv[12:], ["--model", "m", "--", "do it"])
 
+    def test_show_failure_surfaces(self):
+        fake = Fake(tui_err="noise\ntui: show: iTerm2 is not running\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start(fake)
+        self.assertEqual(err.getvalue(), "tui: show: iTerm2 is not running\n")
+        self.assertIn("@sid", fake.options())
+
     def test_no_prompt(self):
         fake = Fake()
         self.start(fake, flags=("--x",))

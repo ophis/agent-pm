@@ -111,6 +111,9 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     res = _run(proc, argv, cwd=cwd, env=child_env)
     if res.returncode != 0:
         raise WorkersError((res.stderr or "").strip() or f"tui.py exited {res.returncode}")
+    for line in (res.stderr or "").splitlines():
+        if line.startswith("tui: show:"):
+            print(line, file=sys.stderr)
     options = {"@sid": sid, "@cwd": cwd, "@events": events, "@claude": claude,
                "@env": json.dumps({k: child_env[k] for k in ENV_KEYS if k in child_env}),
                "@flags": json.dumps(list(flags)), "@started": str(time.time_ns())}
