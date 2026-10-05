@@ -3,11 +3,12 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config  # noqa: E402
 from config import CLONES, NAME, OWNER, REF, TASKS, WORK, repo_slug, sh_run  # noqa: E402
-from repo import GUARD, SHORT, err_text  # noqa: E402
+from repo import GUARD, SHORT, common_dir, err_text, under  # noqa: E402
 
 MAPPED = "project mapping "
 
@@ -17,6 +18,7 @@ class Target:
     owner: str
     name: str
     branch: str = ""
+    clone: str = ""  # the local clone path the input's `Repo:` names; "" = owner/name
 
 
 @dataclass(frozen=True)
@@ -153,3 +155,17 @@ def check(issue, repos, *, run=sh_run, work=WORK) -> Target | Invalid | Transien
     if names and not re.fullmatch(rf"{re.escape(ident)}-[a-z0-9-]{{1,40}}", names[0]):
         return Invalid(f"existing branch name {names[0][:80]!r} is not {ident}-<lowercase slug>")
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
+
+
+def with_clone(t, ident, clones, *, work=WORK, writable=None, run=sh_run) -> Target:
+    """`t` with `clone` set: what the issue's existing checkout was made from, else its `[local_clones]` entry, else "". The
+    checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the right origin."""
+    checkout = os.path.join(work, ident, CLONES[0], t.owner, t.name)
+    git, slug = os.path.join(checkout, ".git"), f"{t.owner}/{t.name}"
+    if os.path.isdir(git) and not os.path.islink(git):
+        return replace(t, clone="")
+    if common := common_dir(checkout):
+        clone, roots = os.path.dirname(common), config.writable(work) if writable is None else writable
+        if not under(clone, roots) and config.clone_error(clone, slug, run=run) is None:
+            return replace(t, clone=clone)
+    return replace(t, clone=next((v for k, v in clones.items() if k.lower() == slug.lower()), ""))
