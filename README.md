@@ -76,7 +76,7 @@ claude -p '<prompt>' \
 
 `--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); `--split right|below` picks the side and `--beside <tmux session>` the pane to split (tui only); `core/config/config.toml`'s header says what replaces that split. The run is done once its outcome arrives; the session stays open.
 
-The `Stop` hook reports each turn end (`report.py … stop`). The first turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. There is no wait timeout: a dialog nobody answers waits in the pane.
+The `Stop` hook reports each turn end with the run's pending background work (`report.py … stop --pending background_tasks`). A turn that ends with work pending is ignored. The first other turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. It gives up the same way once 2 h (`WAIT_LIMIT`) pass since the last progress report, or the run's start, with no outcome, whatever the hook reports; a dialog nobody answers waits in the pane until then.
 
 With tui:
 

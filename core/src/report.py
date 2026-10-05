@@ -5,7 +5,8 @@ channel the driver tails (drive.start), which checks them.
 report.py --to CHANNEL progress NAME TEXT...
 report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...
           [--deliverable FILE]   (FILE's text becomes the outcome's deliverable)
-report.py --to CHANNEL stop   (a turn ended; the interactive client's Stop hook runs it)
+report.py --to CHANNEL stop [--pending KEY]   (a turn ended; the interactive client's Stop hook runs it;
+          with --pending, the list at KEY in stdin's JSON is the run's pending background work)
 """
 import argparse
 import json
@@ -31,8 +32,19 @@ def parse(argv: list[str]) -> argparse.Namespace:
     o.add_argument("--url")
     o.add_argument("--file", action="append", dest="files")
     o.add_argument("--deliverable")
-    sub.add_parser("stop")
+    s = sub.add_parser("stop")
+    s.add_argument("--pending", metavar="KEY")
     return ap.parse_args(argv)
+
+
+def pending(key: str) -> int | None:
+    """The length of the list at `key` in the JSON object on stdin; None when stdin holds no such list."""
+    try:
+        data = json.load(sys.stdin)
+    except (OSError, ValueError):
+        return None
+    value = data.get(key) if isinstance(data, dict) else None
+    return len(value) if isinstance(value, list) else None
 
 
 def main(argv: list[str]) -> int:
@@ -42,6 +54,8 @@ def main(argv: list[str]) -> int:
             line = {"kind": "progress", "name": a.name, "text": " ".join(a.text)}
         elif a.kind == "stop":
             line = {"kind": "stop"}
+            if a.pending is not None and (n := pending(a.pending)) is not None:
+                line["pending"] = n
         else:
             data = {k: v for k in ("status", "title", "summary", "questions", "url", "files")
                     if (v := getattr(a, k)) is not None}
