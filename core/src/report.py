@@ -6,7 +6,7 @@ report.py --to CHANNEL progress NAME TEXT...
 report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...
           [--deliverable FILE]   (FILE's text becomes the outcome's deliverable)
 report.py --to CHANNEL stop [--pending KEY]   (a turn ended; the interactive client's Stop hook runs it;
-          with --pending, stdin's JSON object holds at KEY the list of the run's pending background work)
+          the list at KEY in stdin's JSON is its pending background work)
 """
 import argparse
 import json
