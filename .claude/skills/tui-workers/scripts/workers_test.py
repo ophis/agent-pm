@@ -39,9 +39,9 @@ class Fake:
         self.kwargs.append(kw)
         if self.oserror and self.oserror(argv):
             raise OSError(2, "No such file or directory")
-        if argv[0] == "tmux" and argv[1] == "set-option" and argv[4] == self.fail_set:
+        if argv[0] == "tmux" and argv[1] in ("set-option", "set-hook") and self.fail_set in argv:
             return subprocess.CompletedProcess(argv, 1, "", "set boom")
-        if argv[0] == "tmux" and argv[1] == "set-option":
+        if argv[0] == "tmux" and argv[1] == "set-option" and argv[2] == "-t":
             self.store[argv[4]] = argv[5]
         if argv[0] == "tmux" and argv[1] == "show-options":
             if argv[5] not in self.store:
@@ -61,7 +61,17 @@ class Fake:
         return [c for c in self.calls if c[0] == sys.executable]
 
     def options(self):
-        return {c[4]: c[5] for c in self.calls if c[0] == "tmux" and c[1] == "set-option"}
+        return {c[4]: c[5] for c in self.calls if c[0] == "tmux" and c[1] == "set-option" and c[2] == "-t"}
+
+    def decorations(self):
+        return [c for c in self.calls if c[0] == "tmux" and (c[1] == "set-hook" or c[1] == "set-option" and c[2] != "-t")]
+
+
+DECORATIONS = [
+    ["tmux", "set-hook", "-p", "-t", "=w1:", "pane-died", workers.DIED],
+    ["tmux", "set-option", "-w", "-t", "=w1:", "pane-border-status", "top"],
+    ["tmux", "set-option", "-w", "-t", "=w1:", "pane-border-format", workers.BORDER],
+]
 
 
 class HooksTest(unittest.TestCase):
@@ -70,7 +80,14 @@ class HooksTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.bin = os.path.join(self.tmp.name, "bin")
         os.mkdir(self.bin)
-        executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\necho w1\n")
+        self.log = os.path.join(self.tmp.name, "tmux.log")
+        executable(os.path.join(self.bin, "tmux"), f"#!/bin/sh\necho \"$*\" >> '{self.log}'\necho w1\n")
+
+    def tmux_calls(self):
+        if not os.path.exists(self.log):
+            return []
+        with open(self.log) as f:
+            return f.read().splitlines()
 
     def run_hook(self, cmd, pane):
         env = {"PATH": f"{self.bin}:/usr/bin:/bin"}
@@ -83,8 +100,9 @@ class HooksTest(unittest.TestCase):
 
     def test_shape(self):
         hooks = self.hooks("/e")
-        self.assertEqual(set(hooks), {"Stop", "Notification"})
+        self.assertEqual(set(hooks), {"Stop", "Notification", "UserPromptSubmit"})
         self.assertNotIn("matcher", hooks["Stop"][0])
+        self.assertNotIn("matcher", hooks["UserPromptSubmit"][0])
         self.assertEqual(hooks["Notification"][0]["matcher"], "permission_prompt|elicitation_dialog|agent_needs_input")
         for name in hooks:
             inner = hooks[name][0]["hooks"]
@@ -103,14 +121,23 @@ class HooksTest(unittest.TestCase):
                     lines = f.readlines()
                 self.assertRegex(lines[-1], EVENT_RE)
                 self.assertTrue(lines[-1].endswith(f" w1 {word}\n"))
+                self.assertEqual(self.tmux_calls()[-2], f"set-option -t %1 @state {word}")
             self.assertEqual(len(lines), 2)
+
+    def test_prompt_sets_working_silently(self):
+        events = os.path.join(self.tmp.name, "e")
+        res = self.run_hook(self.hooks(events)["UserPromptSubmit"][0]["hooks"][0]["command"], pane=True)
+        self.assertEqual((res.returncode, res.stdout), (0, ""))
+        self.assertEqual(self.tmux_calls(), ["set-option -t %1 @state working"])
+        self.assertFalse(os.path.exists(events))
 
     def test_outside_tmux_writes_nothing(self):
         events = os.path.join(self.tmp.name, "e")
-        for name in ("Stop", "Notification"):
+        for name in ("Stop", "Notification", "UserPromptSubmit"):
             cmd = self.hooks(events)[name][0]["hooks"][0]["command"]
             self.assertEqual(self.run_hook(cmd, pane=False).returncode, 0)
         self.assertFalse(os.path.exists(events))
+        self.assertEqual(self.tmux_calls(), [])
 
 
 class StartTest(unittest.TestCase):
@@ -220,9 +247,24 @@ class StartTest(unittest.TestCase):
         self.assertEqual(json.loads(opts["@flags"]), ["--model", "m"])
         self.assertTrue(opts["@started"].isdigit())
         for c in fake.calls:
-            if c[1] == "set-option":
+            if c[1] == "set-option" and c[2] == "-t":
                 self.assertEqual(c[:4], ["tmux", "set-option", "-t", "=w1:"])
         self.assertLess(fake.calls.index(fake.tui()[0]), min(i for i, c in enumerate(fake.calls) if c[1] == "set-option"))
+
+    def test_decorations_after_options(self):
+        fake = Fake()
+        self.start(fake)
+        self.assertEqual(fake.decorations(), DECORATIONS)
+        last_option = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option" and c[2] == "-t")
+        self.assertLess(last_option, fake.calls.index(DECORATIONS[0]))
+
+    def test_decoration_failure_kills_session(self):
+        for fail in ("pane-died", "pane-border-format"):
+            fake = Fake()
+            fake.fail_set = fail
+            with self.assertRaisesRegex(workers.WorkersError, "undone"):
+                self.start(fake)
+            self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
 
     def test_env_without_config_dir(self):
         del self.env["CLAUDE_CONFIG_DIR"]
@@ -246,7 +288,7 @@ class StartTest(unittest.TestCase):
     def assert_fails(self, fake, **kw):
         with self.assertRaises(workers.WorkersError) as cm:
             self.start(fake, **kw)
-        self.assertEqual([c for c in fake.calls if len(c) > 1 and c[1] == "set-option"], [])
+        self.assertEqual([c for c in fake.calls if len(c) > 1 and c[1] in ("set-option", "set-hook")], [])
         return str(cm.exception)
 
     def test_bad_name(self):
@@ -393,6 +435,23 @@ class RestartTest(WorkerCase):
                                             f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", self.claude,
                                             "--resume", sid, "--name", "w1", "--settings",
                                             workers.hooks(self.events), "--model", "m c"])
+
+    def test_redecorates_and_clears_state_before_respawn(self):
+        fake = Fake()
+        self.started(fake)
+        n = len(fake.calls)
+        workers.restart("w1", proc=fake)
+        tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
+        self.assertEqual(tail[:-1], [*DECORATIONS, ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
+        self.assertEqual(tail[-1][1], "respawn-pane")
+
+    def test_decoration_failure_no_respawn(self):
+        fake = Fake()
+        self.started(fake)
+        fake.fail_set = "pane-died"
+        with self.assertRaisesRegex(workers.WorkersError, "set boom"):
+            workers.restart("w1", proc=fake)
+        self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
     def test_agrees_with_start(self):
         fake = Fake()

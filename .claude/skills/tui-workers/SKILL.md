@@ -1,6 +1,6 @@
 ---
 name: tui-workers
-description: "Start and direct other Claude Code sessions (workers) in tmux/iTerm2 panes: start, watch done/blocked events, follow up, read replies, rename, stop, restart."
+description: "Start and direct other Claude Code sessions (workers) in tmux/iTerm2 panes: start, watch done/blocked/dead events, follow up, read replies, rename, stop, restart."
 allowed-tools:
   - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/workers.py reply *)
   - Bash(python3 ${CLAUDE_SKILL_DIR}/../../../core/src/tui.py read *)
@@ -13,9 +13,9 @@ You, the commander, run each worker as an interactive `claude` in its own tmux s
 ## Start
 
 1. Events file: one for all your workers, e.g. `<scratchpad>/workers.events`.
-2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended) or `HH:MM:SS <name> blocked` (it waits on a permission prompt, a dialog or input).
+2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended), `HH:MM:SS <name> blocked` (it waits on a permission prompt, a dialog or input) or `HH:MM:SS <name> dead` (its `claude` exited; the pane stays).
 3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--prompt '<text>'] [--beside <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, the prompt is its first message, and the flags reach `claude` verbatim: pass only those the user's request warrants (e.g. `--permission-mode`).
-   The first worker's pane opens right of yours; later workers split below the newest worker on the same events file that a terminal shows. `--beside`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; `tmux attach -t '=<name>'` shows it.
+   The first worker's pane opens right of yours; later workers split below the newest worker on the same events file that a terminal shows. `--beside`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; `tmux attach -t '=<name>'` shows it. The pane's top border shows `<name> <state>` (working, done, blocked, dead) for the user.
 4. Read its pane: `tui.py read <name>`. In a folder claude doesn't trust yet it shows the trust dialog, which sends no event: handle it as blocked.
 
 ## Events
@@ -24,7 +24,8 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 
 - **done** → `workers.py reply <name>` prints its last answer; `tui.py read <name> --lines <N>` shows the pane's last N lines.
 - **blocked** → `tui.py read <name>` shows the dialog. Within the user's mandate, answer it: `tmux send-keys -t '=<name>:' Enter` picks the highlighted option, a digit the numbered one, `Escape` cancels. Outside it, ask the user.
-- **Monitor expired** → re-arm it, then catch up: `tail -n 20 <file>` for events after the last one you received, and `tmux list-panes -a -F '#{session_name} #{pane_dead}'`, filtered to your worker names, for a dead one (`1`; a crash sends no event): read its pane, then restart or stop it.
+- **dead** → `tui.py read <name>` shows why; then `workers.py restart <name>`, or report it to the user.
+- **Monitor expired** → re-arm it, then catch up: `tail -n 20 <file>` for events after the last one you received.
 
 ## Direct
 
