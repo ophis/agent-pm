@@ -629,6 +629,9 @@ class Cli(unittest.TestCase):
                      "start -- cmd", "start a b -- cmd", "start --show -- a -- cmd"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split())[0], 2)
+        for argv in ("start a", "start a cmd", "start a --split below cmd"):
+            with self.subTest(argv=argv):
+                self.assertIn("a command must follow --", self.main(*argv.split())[2])
         start.assert_not_called()
 
     def test_help(self):

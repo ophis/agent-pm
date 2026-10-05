@@ -214,9 +214,8 @@ def main(argv: list[str] | None = None) -> int:
                                  "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
-                             usage="%(prog)s [-h] [--show T] [--split {" + ",".join(SPLITS) + "}] [--beside S] "
-                                   "session -- cmd [args...]",
-                             description="Everything after the first -- is the command, passed through verbatim.")
+                             description="session -- cmd [args...]: everything after the first -- is the "
+                                         "command, passed through verbatim.")
     _show_options(start_p)
     start_p.add_argument("session", type=_session_arg)
     p = sub.add_parser("send", help="type text into the session, then Enter")
@@ -233,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["start"] and "--" in argv:   # argparse < 3.13 drops a later -- from a nargs list
         i = argv.index("--")
         argv, command = argv[:i], argv[i + 1:]
+    elif argv[:1] == ["start"] and not {"-h", "--help"} & set(argv):
+        start_p.error("a command must follow --")
     a = ap.parse_args(argv)
     if a.cmd == "start" and not command:
         start_p.error("a command must follow --")
