@@ -15,6 +15,11 @@ reused (fetched only): a clone of the repo, or a worktree of the local clone REP
 Branch B: the local B, else a new B tracking origin/B, else a new B from origin/<default>; B may be neither the
 default branch nor checked out in another worktree. Git calls that fail on a lock (several runs on one clone)
 are retried: 5 attempts, 7.5 s of backoff in all.
+remove(wt, prefix) (no command; prune imports it), with fsmonitor and hooks off: once `wt` and its clone's worktree
+entry point at each other, `git worktree remove` (never forced: changes or untracked files keep it all, Invalid) and
+`worktree prune`; then its branch B is deleted when B starts with `prefix`, is not origin/HEAD's branch, and
+origin/<B> or origin/HEAD contains it, else kept with the reason. A clone without origin/HEAD keeps branches not in
+origin/<B>; `git remote set-head origin -a` fixes it.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
 Exits 2 when REPO or B is invalid or unusable (not found or no access, not a clone, no origin, DIR/<owner>/<name>
@@ -41,6 +46,7 @@ URL = re.compile(r"(?:https://|ssh://git@|git@)([^/:\s]+)[:/]([^/\s]+)/([^/\s]+?
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SHORT, LONG = 60, 600
+GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "config.toml")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -226,6 +232,59 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
         raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
     return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "default": default, "branch": branch, "commit": commit,
             "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
+
+
+def clone_of(run: Runner, wt: str) -> str:
+    """The clone whose registered worktree `wt` is; Invalid unless the two point at each other."""
+    dotgit = os.path.join(wt, ".git")
+    if os.path.islink(wt) or not os.path.isdir(wt) or os.path.islink(dotgit) or not os.path.isfile(dotgit):
+        raise Invalid(f"{wt} is not a worktree")
+    res = run(["git", *GUARD, "-C", wt, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], SHORT)
+    dirs = res.stdout.splitlines() if res.returncode == 0 else []
+    if len(dirs) != 2:
+        raise Invalid(f"{wt} is not a worktree: {err_text(res)}")
+    gitdir, common = (os.path.realpath(d) for d in dirs)
+    link, back = os.path.join(gitdir, "gitdir"), None
+    # isfile: a FIFO would block open(). The backlink is relative to gitdir under worktree.useRelativePaths.
+    if (os.path.basename(common) == ".git" and os.path.dirname(gitdir) == os.path.join(common, "worktrees")
+            and os.path.isfile(link)):
+        try:
+            with open(link, errors="replace") as f:
+                back = os.path.realpath(os.path.join(gitdir, f.read(4096).strip()))
+        except (OSError, ValueError):
+            pass
+    if back != os.path.join(os.path.realpath(wt), ".git"):
+        raise Invalid(f"{wt} is not a registered worktree of a clone")
+    return os.path.dirname(common)
+
+
+def kept(run: Runner, clone: str, branch: str, prefix: str) -> str | None:
+    """Why `remove` keeps `branch`, or None."""
+    if not branch.startswith(prefix) or not BRANCH.fullmatch(branch):
+        return "not this run's branch"
+    head = run(["git", *GUARD, "-C", clone, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], SHORT)
+    if head.returncode == 0 and head.stdout.strip() == f"refs/remotes/origin/{branch}":
+        return "the default branch"
+    for ref in (f"refs/remotes/origin/{branch}", "refs/remotes/origin/HEAD"):
+        res = run(["git", *GUARD, "-C", clone, "merge-base", "--is-ancestor", f"refs/heads/{branch}", ref], SHORT)
+        if res.returncode == 0:
+            return None
+    return "not pushed"
+
+
+def remove(wt: str, prefix: str, *, run: Runner = sh) -> dict:
+    """Removes worktree `wt` of a local clone, then its branch unless kept: {"worktree", "branch", "kept"}; Invalid if
+    `wt` is no registered worktree of a clone or holds changes or untracked files, RuntimeError on other failures."""
+    clone = clone_of(run, wt)
+    branch = git(run, wt, "branch", "--show-current", pre=GUARD).strip()
+    res = run(["git", *GUARD, "-C", clone, "worktree", "remove", wt], LONG)
+    if res.returncode != 0:
+        raise Invalid(f"{wt}: {err_text(res)}")
+    git(run, clone, "worktree", "prune", pre=GUARD)
+    reason = kept(run, clone, branch, prefix) if branch else None
+    if branch and not reason:
+        git(run, clone, "branch", "-D", branch, pre=GUARD)
+    return {"worktree": wt, "branch": branch or None, "kept": reason}
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
