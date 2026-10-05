@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Driver: composes a run, has its client (src/clients/) build the command, starts it through a runner, tails the
+"""Driver: composes an agent run, has its client (src/clients/) build the command, starts it through a runner, tails the
 channel the run reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the
 outcome.
 
@@ -60,7 +60,7 @@ class InvalidOutcome(Exception):
 
 
 class RunnerError(Exception):
-    """A runner's host failed: the run ends with no outcome, rc 1."""
+    """A runner's host failed: the agent run ends with no outcome, rc 1."""
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class Outcome:
 @dataclass(frozen=True)
 class Result:
     returncode: int
-    outcome: Outcome | None   # None: the run returned no valid outcome
+    outcome: Outcome | None   # None: the agent run returned no valid outcome
     error: str = ""
 
 
@@ -89,8 +89,8 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str) -> Access:
-    """The run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands filled,
-    then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
+    """The agent run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands
+    filled, then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
     permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
     dirs = []
@@ -106,8 +106,8 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
 
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
          repo: str | None = None, layers: Sequence[Mapping] = ()) -> tuple[Launch, RunConfig]:
-    """The Launch for one run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after the
-    client's config."""
+    """The Launch for one agent run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after
+    the client's config."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
     run = load_run(root, role, task, layers=[client.config, *layers])
@@ -120,7 +120,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
 def export(root: str, client: Client, role: str, task: str | None = None, *, dest: str) -> Launch:
     """The files an export client (skill) writes for role/task under `dest`; raises ConfigError."""
     if client.runs:
-        raise ConfigError(f"{type(client).__name__} starts runs; use plan()")
+        raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     run = load_run(root, role, task, layers=[client.config])
     return client.export(render(root, run, vehicle=client), run, dest=dest)
 
@@ -132,7 +132,7 @@ def write(files: dict[str, str]) -> None:
             f.write(text)
 
 
-# The run controls its workdir, where the driver writes too: writes replace a symlink planted at the path, never
+# The agent run controls its workdir, where the driver writes too: writes replace a symlink planted at the path, never
 # follow it.
 def save(path: str | Path, text: str) -> None:
     """Writes `text` to `path` atomically, through a temp file renamed over it."""
@@ -159,12 +159,12 @@ def append_line(path: str | Path, text: str) -> None:
 
 
 def printable(text: str) -> str:
-    """`text` without control characters but tabs, so a run's output can't steer the terminal."""
+    """`text` without control characters but tabs, so an agent run's output can't steer the terminal."""
     return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
 def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
-    """The outcome a run returned, once it holds; raises InvalidOutcome. Checks the schema
+    """The outcome an agent run returned, once it holds; raises InvalidOutcome. Checks the schema
     (output/outcome.schema.json) and what it can't. Its text stays untrusted."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
@@ -223,7 +223,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
 
 
 def _url(url: str, run: RunConfig) -> str:
-    """The url, once it is a plain https link the run's destination can produce."""
+    """The url, once it is a plain https link the agent run's destination can produce."""
     out = run.output
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
@@ -250,11 +250,11 @@ def _file(path, workdir: str) -> str:
         raise InvalidOutcome(f"file {str(path)[:200]!r} is not a single-link .md file under the workdir")
     return str(real)
 
-Sink = Callable[[Event], None]   # receives each text and progress event as the run goes, then a missing mark and the checked outcome
+Sink = Callable[[Event], None]   # receives each text and progress event as the agent run goes, then a missing mark and the checked outcome
 
 
 def terminal(log=sys.stderr) -> Sink:
-    """Shows the run's text and progress, e.g. in its tmux pane."""
+    """Shows the agent run's text and progress, e.g. in its tmux pane."""
     def sink(event: Event) -> None:
         if event.kind == "text":
             print(printable(event.text), file=log, flush=True)
@@ -276,7 +276,7 @@ def progress_file(path: str, *, append: bool = False) -> Sink:
 
 
 def outcome_file(path: str) -> Sink:
-    """Writes the checked outcome as JSON; an earlier one is removed first, so it is never read as this run's."""
+    """Writes the checked outcome as JSON; an earlier one is removed first, so it is never read as this agent run's."""
     Path(path).unlink(missing_ok=True)
 
     def sink(event: Event) -> None:
@@ -349,7 +349,7 @@ TUI_SESSION = re.compile(r"[a-z][a-z0-9-]*-[0-9a-f]{8}")
 
 
 def tui_session(role: str, task: str, sid: str) -> str:
-    """The name of the tui runner's tmux session for a run."""
+    """The name of the tui runner's tmux session for an agent run."""
     return f"{role}-{task}-{sid[:8]}"
 
 
@@ -361,7 +361,8 @@ class Layout:
 
 
 class Runner(Protocol):
-    """How a run's command is hosted, and when the run counts as done; the driver loop is the same for every runner."""
+    """How an agent run's command is hosted, and when the run counts as done; the driver loop is the same for every
+    runner."""
     starts: str   # the Launch field holding the command it starts
 
     # begin and poll raise RunnerError when the host fails.
@@ -422,7 +423,7 @@ class Tui:
     """The client's interactive command in a detached tmux session (tui.py), never killed after the outcome. Done once
     the outcome arrives, or once it gives up and leaves the session to a human. A turn end without an outcome
     (`stop`) with background work pending is ignored; any other gets one NUDGE, and STOP_LIMIT more, counted since the
-    last progress report, give up. So does WAIT_LIMIT seconds since the last progress report, or the run's start,
+    last progress report, give up. So does WAIT_LIMIT seconds since the last progress report, or the agent run's start,
     without an outcome."""
     starts = "interactive"
 
@@ -516,7 +517,7 @@ def check_layout(runner: str, layout: Layout | None) -> None:
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
           layout: Layout | None = None, sinks: Sequence[Sink] | None = None, popen=subprocess.Popen) -> Result:
-    """Starts the run through `runner` (RUNNERS) and waits, handing `sinks` (default_sinks() when None) its host's
+    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (default_sinks() when None) its host's
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
@@ -533,8 +534,8 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     sinks = default_sinks(params) if sinks is None else sinks
     out = Path(params.out).absolute()
     if not out.is_dir():
-        out.unlink(missing_ok=True)   # an earlier deliverable is never read as this run's
-    append_line(params.channel, "")   # created before launch, so the run's report command finds it
+        out.unlink(missing_ok=True)   # an earlier deliverable is never read as this agent run's
+    append_line(params.channel, "")   # created before launch, so the agent run's report command finds it
     tail, raw, seen = Tail(params.channel), None, set()
 
     def hand(event: Event) -> None:
@@ -542,7 +543,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         if event.kind == "outcome":
             raw = event.outcome
             return
-        if event.kind == "stop":   # only an interactive run's turn end; no sink takes it
+        if event.kind == "stop":   # only an interactive agent run's turn end; no sink takes it
             return
         if event.kind == "progress":
             seen.add(event.name)
@@ -573,7 +574,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     if rc != 0:
         return Result(rc, None, f"the client exited {rc}")
     if raw is None:
-        return Result(rc, None, "the run returned no outcome")
+        return Result(rc, None, "the agent run returned no outcome")
     try:
         outcome = validate(raw, run, params)
     except InvalidOutcome as e:

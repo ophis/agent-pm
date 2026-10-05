@@ -27,7 +27,7 @@ import compose  # noqa: E402
 
 
 def session(role, issue):
-    """The tmux session of a role's run on an issue."""
+    """The tmux session of a role's agent run on an issue."""
     return f"agent-pm-{role}-{issue}"
 
 
@@ -68,7 +68,7 @@ def repo_slug(value):
 
 
 def transcript(issue, sid, projects=PROJECTS):
-    """Session file for a run; sid must be a UUID (untrusted input) or this returns None."""
+    """Session file for an agent run; sid must be a UUID (untrusted input) or this returns None."""
     if not UUID_RE.fullmatch(sid):
         return None
     return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
@@ -90,7 +90,7 @@ class Task:
     done: str = ""                      # done comment lead
     question: str = ""                  # needs_input comment lead
     failed: str = ""                    # failed comment lead
-    failed_new: str = "in_review"       # state after failed on a new run (resume: in_review)
+    failed_new: str = "in_review"       # state after failed on a new agent run (resume: in_review)
     retitle: bool = False               # done → title "<prefix>: <outcome title>"
     approve: bool = False               # done → approve line
     files: bool = False                 # done/failed → outcome files as Spec/Plan comments
@@ -113,7 +113,7 @@ class Role:
     account: str        # Linear email
     key: str            # Keychain service of its API key
     tasks: tuple        # core config tasks, default_task first, then core order
-    max_runs: int = 1   # runs of the role at once
+    max_runs: int = 1   # agent runs of the role at once
 
     @property
     def default(self):
@@ -128,7 +128,7 @@ class Docs:
     dirs: dict          # task → output dir
 
 
-# Core's checkout dirs under a run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
+# Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
 # `<Workdir>/publish`.
 CLONES = ("src", "publish")
 

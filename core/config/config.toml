@@ -2,11 +2,11 @@
 #   tier       model tier 1–4 (1 = strongest); each client config (config/clients/<name>.toml) maps it to a model
 #   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
 #   templates  files under templates/ inlined into the prompt
-#   read       extra dirs the run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/ dir.
+#   read       extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/ dir.
 #              Read-only by the prompt only: no deny rules
-#   write      extra dirs the run writes; the workdir is always reachable
+#   write      extra dirs the agent run writes; the workdir is always reachable
 #   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
-#              {{scripts}} is core's src/ dir, {{workdir}} the run's workdir
+#              {{scripts}} is core's src/ dir, {{workdir}} the agent run's workdir
 #   gate       a usage-gate command a task runs before a costly step (deep research: before a second round); pre-approved; unset → none
 #   language   optional; the language reports and PRDs are written in (one line); unset → no language rule, the model's default
 #   show       tui runner: the shell command that shows the live session, {{session}} = the tmux session; one line, same trust as

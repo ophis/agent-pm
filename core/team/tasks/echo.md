@@ -9,4 +9,4 @@ Return the input unchanged.
 
 ## Resume
 
-The prompt starts "Resumed run" → redo steps 1–2.
+The prompt starts "Resumed agent run" → redo steps 1–2.

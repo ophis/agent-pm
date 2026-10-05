@@ -36,4 +36,4 @@ Build the PRD with `autopilot:build`, then open a pull request.
 
 ## Resume
 
-The prompt starts "Resumed run" → re-read the input (it may have changed); use it and this session's history, and do only what's left (step 4 picks the build); run steps 2–3 again first. Never re-create a branch or PR.
+The prompt starts "Resumed agent run" → re-read the input (it may have changed); use it and this session's history, and do only what's left (step 4 picks the build); run steps 2–3 again first. Never re-create a branch or PR.

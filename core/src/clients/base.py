@@ -1,4 +1,4 @@
-"""The client interface: a Client turns a composed run into a Launch."""
+"""The client interface: a Client turns a composed agent run into a Launch."""
 import os
 import tomllib
 from collections.abc import Iterable, Iterator
@@ -10,8 +10,8 @@ from compose import PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams,
 
 @dataclass(frozen=True)
 class Access:
-    """A run's client-neutral constraints, as absolute paths and commands to pre-approve."""
-    dirs: list[str]       # extra dirs the run may reach
+    """An agent run's client-neutral constraints, as absolute paths and commands to pre-approve."""
+    dirs: list[str]       # extra dirs the agent run may reach
     commands: list[str]   # shell commands to pre-approve
 
 
@@ -21,13 +21,13 @@ class Launch:
     env: dict[str, str] = field(default_factory=dict)      # added to the caller's environment
     cwd: str = ""
     files: dict[str, str] = field(default_factory=dict)    # path → text, written by the driver
-    interactive: list[str] = field(default_factory=list)   # the same run's interactive command; empty: none
+    interactive: list[str] = field(default_factory=list)   # the same agent run's interactive command; empty: none
 
 
 @dataclass(frozen=True)
 class Event:
-    """One thing a run says: text to show (its stdout), a progress report (named by its point) or its outcome (the
-    last one counts), both through report.py; or, from the driver, a progress point the run never reported
+    """One thing an agent run says: text to show (its stdout), a progress report (named by its point) or its outcome
+    (the last one counts), both through report.py; or, from the driver, a progress point the run never reported
     (`missing`, named by it); or a turn end (`stop`, the interactive client's Stop hook, whose `pending` counts the
     background work still running; meaningful on `stop` only)."""
     kind: Literal["text", "progress", "outcome", "missing", "stop"]
@@ -40,7 +40,7 @@ class Event:
 class Client:
     keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
-    runs = True            # True: launch() starts a run; False: export() writes files instead
+    runs = True            # True: launch() starts an agent run; False: export() writes files instead
 
     def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):
@@ -56,20 +56,20 @@ class Client:
         return os.path.join(os.path.abspath(root), TEXT, "methods")
 
     def handover(self) -> str:
-        """Prompt text (Output › Return): how the run returns its outcome and reports progress; `{{report}}` is
+        """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; `{{report}}` is
         filled with the report command (compose.report_command)."""
         return ""
 
     def value(self, run: RunConfig, key: str):
-        """One of this client's own keys for the run, in config.toml's layout."""
+        """One of this client's own keys for the agent run, in config.toml's layout."""
         return lookup(self.config, run.role, run.task, key)
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access) -> Launch:
-        """The command for a run."""
+        """The command for an agent run."""
         raise NotImplementedError
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:
-        """The run's stdout as text Events."""
+        """The agent run's stdout as text Events."""
         for line in lines:
             yield Event("text", line.rstrip("\n"))
 

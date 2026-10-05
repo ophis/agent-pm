@@ -17,7 +17,7 @@ from typing import Literal, Protocol, get_args
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
-OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how a run hands back
+OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how an agent run hands back
 CONFIG = os.path.join("config", "config.toml")
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
@@ -30,8 +30,8 @@ PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name
 # A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
-CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the run's progress and outcome, drive.start tails it
-RESUME = "Resumed run after an interruption. These rules are current; they may have changed since this session started.\n\n"
+CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the agent run's progress and outcome, drive.start tails it
+RESUME = "Resumed agent run after an interruption. These rules are current; they may have changed since this session started.\n\n"
 
 
 class ConfigError(Exception):
@@ -42,7 +42,7 @@ class Vehicle(Protocol):
     """What render() needs from whatever carries the prompt (a client)."""
     def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
     def methods_path(self, root: str) -> str: ...   # how the prompt names core's team/methods/ dir
-    def handover(self) -> str: ...                  # how the run returns its outcome and progress (Output › Return);
+    def handover(self) -> str: ...                  # how the agent run returns its outcome and progress (Output › Return);
                                                     # {{report}}: report_command()
 
 
@@ -83,7 +83,7 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one run: its input, where its deliverable is saved, its workdir and Claude session."""
+    """What the caller passes for one agent run: its input, where its deliverable is saved, its workdir and Claude session."""
     input: str
     out: str
     workdir: str
@@ -127,7 +127,7 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:
-    """The run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return
+    """The agent run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return
     ({{report}} filled when params are given), then the Workdir/Input tail when params are given."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
@@ -162,7 +162,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
 
 
 def report_command(scripts: str, params: RunParams) -> str:
-    """The shell command a run reports its progress and outcome with, up to its subcommand."""
+    """The shell command an agent run reports its progress and outcome with, up to its subcommand."""
     return f"python3 {shlex.quote(os.path.join(scripts, 'report.py'))} --to {shlex.quote(params.channel)}"
 
 

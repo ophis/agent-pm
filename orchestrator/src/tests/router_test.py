@@ -926,7 +926,7 @@ class Tick(Base):
         self.assertIn("/opt/homebrew/bin", self.path)
 
     def test_interrupted_text(self):
-        self.assertEqual(router.INTERRUPTED, "The previous run was interrupted. Moving this issue back to the Todo queue.")
+        self.assertEqual(router.INTERRUPTED, "The previous agent run was interrupted. Moving this issue back to the Todo queue.")
 
     def test_now_skips_hours_and_starts(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -1493,7 +1493,7 @@ class TaskLabels(Base):
             self.tick(fake)
             t = fake.issues["TASK-1"]
             self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
-                             ("In Review", who(role), [f'The interrupted run\'s task "{task}" is not one of {role}\'s tasks ({tasks}); needs a look.'],
+                             ("In Review", who(role), [f'The interrupted agent run\'s task "{task}" is not one of {role}\'s tasks ({tasks}); needs a look.'],
                               ["me@x.com"]), role)
             self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1"), ("issueUpdate", "TASK-1"),
                                             ("commentCreate", "TASK-1")], role)

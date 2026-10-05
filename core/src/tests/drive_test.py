@@ -127,7 +127,7 @@ class Claude(Base):
     def test_resume(self):
         argv = self.plan(client="claude", resume=True).argv
         self.assertEqual(argv[3:5], ["--resume", SID])
-        self.assertTrue(argv[2].startswith("Resumed run"))
+        self.assertTrue(argv[2].startswith("Resumed agent run"))
 
     def test_interactive_is_argv_without_the_headless_flags(self):
         for role, task in (("researcher", "light-research"), ("engineer", "engineering")):
@@ -152,7 +152,7 @@ class Claude(Base):
     def test_interactive_resume(self):
         launch = self.plan(client="claude", resume=True)
         self.assertEqual(launch.interactive[2:4], ["--resume", SID])
-        self.assertTrue(launch.interactive[1].startswith("Resumed run"))
+        self.assertTrue(launch.interactive[1].startswith("Resumed agent run"))
 
     def test_other_launches_have_no_interactive_command(self):
         self.assertEqual(clients.Launch(["x"]).interactive, [])
@@ -435,7 +435,7 @@ def outcome(data):
 
 
 def feed(channel, items):
-    """The run's stdout: each str a line of it; each dict appended to the channel first, as report.py does."""
+    """The agent run's stdout: each str a line of it; each dict appended to the channel first, as report.py does."""
     for item in items:
         if isinstance(item, dict):
             drive.append_line(channel, json.dumps(item, ensure_ascii=False) + "\n")
@@ -809,7 +809,7 @@ class Start(Base):
             f.write(json.dumps(progress("start", "old")) + "\n" + json.dumps(outcome(DONE)) + "\n")
         seen = []
         r, _, _ = self.start([said("resumed")], sinks=[seen.append], resume=True)
-        self.assertEqual((r.error, [e.kind for e in seen]), ("the run returned no outcome", ["text"]))
+        self.assertEqual((r.error, [e.kind for e in seen]), ("the agent run returned no outcome", ["text"]))
         r, _, _ = self.start([outcome({**DONE, "title": "new"})], resume=True)
         self.assertEqual(r.outcome.title, "new")
 
@@ -860,7 +860,7 @@ class Start(Base):
                 f.write(json.dumps(outcome(DONE)) + "\n")
             yield said("x")
         r, _, _ = self.start(items())
-        self.assertEqual(r.error, "the run returned no outcome")
+        self.assertEqual(r.error, "the agent run returned no outcome")
 
     def test_orchestrator_destination_saves_the_deliverable_with_no_url(self):
         r, _, _ = self.start([outcome(DONE)], output={"type": "orchestrator"})
@@ -879,7 +879,7 @@ class Start(Base):
 
     def test_no_outcome(self):
         r, _, _ = self.start([said("bye")])
-        self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the run returned no outcome"))
+        self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the agent run returned no outcome"))
 
     def test_failed_client_ignores_the_outcome_and_leaves_no_stale_files(self):
         os.makedirs(self.work)
@@ -1138,8 +1138,8 @@ class TuiRunner(Base):
         self.assertEqual(self.fake.steps, [])
 
     def test_a_dead_pane_or_a_gone_session_ends_the_run_without_an_outcome(self):
-        for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the run returned no outcome")),
-                              (None, (0, None, "the run returned no outcome"))):
+        for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the agent run returned no outcome")),
+                              (None, (0, None, "the agent run returned no outcome"))):
             r, calls, _, _ = self.start([progress("round", "x")], state)
             self.assertEqual((r.returncode, r.outcome, r.error), result)
             self.assertEqual([c[0] for c in calls], ["start"])
@@ -1196,7 +1196,7 @@ class TuiRunner(Base):
 
     def test_it_gives_up_after_stop_limit_counted_stops_and_leaves_the_session(self):
         r, calls, kinds, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT))
-        self.assertEqual(r, drive.Result(0, None, "the run returned no outcome"))
+        self.assertEqual(r, drive.Result(0, None, "the agent run returned no outcome"))
         self.assertEqual(([c[0] for c in calls], kinds, self.fake.steps), (["start", "send"], [], []))
         self.assertIn(f"drive.py: no outcome after {drive.STOP_LIMIT} stops; session {self.NAME} left open: "
                       f"tmux attach -t '={self.NAME}'\n", err)
@@ -1217,14 +1217,14 @@ class TuiRunner(Base):
         steps = [[PENDING], [PENDING], [STOP], *[[PENDING], [STOP]] * drive.STOP_LIMIT]
         r, calls, _, err = self.start(*steps)
         self.assertEqual((r.error, [c[0] for c in calls], self.fake.steps),
-                         ("the run returned no outcome", ["start", "send"], []))
+                         ("the agent run returned no outcome", ["start", "send"], []))
         self.assertIn(f"drive.py: no outcome after {drive.STOP_LIMIT} stops; session {self.NAME} left open: "
                       f"tmux attach -t '={self.NAME}'\n", err)
 
     def test_it_gives_up_when_no_progress_comes_for_wait_limit_and_leaves_the_session(self):
         steps = [(drive.WAIT_LIMIT, []), (drive.WAIT_LIMIT + 1, [])]
         r, calls, kinds, err = self.start(*steps)
-        self.assertEqual(r, drive.Result(0, None, "the run returned no outcome"))
+        self.assertEqual(r, drive.Result(0, None, "the agent run returned no outcome"))
         self.assertEqual(([c[0] for c in calls], kinds, self.fake.steps), (["start"], [], []))
         self.assertIn(f"drive.py: no outcome 2 h after the last progress report; session {self.NAME} left open: "
                       f"tmux attach -t '={self.NAME}'\n", err)
@@ -1239,11 +1239,11 @@ class TuiRunner(Base):
         p = drive.WAIT_LIMIT - 10
         r, _, _, _ = self.start((p, [progress("round", "x")]), (drive.WAIT_LIMIT + 10, []), (p + drive.WAIT_LIMIT, []),
                                 (p + drive.WAIT_LIMIT + 1, []))
-        self.assertEqual((r.error, self.fake.steps), ("the run returned no outcome", []))
+        self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
 
     def test_pending_stops_do_not_restart_the_quiet_clock(self):
         r, _, _, _ = self.start((drive.WAIT_LIMIT - 10, [PENDING]), (drive.WAIT_LIMIT + 1, []))
-        self.assertEqual((r.error, self.fake.steps), ("the run returned no outcome", []))
+        self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
 
     def test_an_outcome_in_the_poll_the_quiet_limit_passes_wins(self):
         r, calls, _, err = self.start((drive.WAIT_LIMIT + 1, [outcome(DONE)]))
@@ -1252,7 +1252,7 @@ class TuiRunner(Base):
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
         send = unittest.mock.Mock(side_effect=drive.tui.TuiError("no pane"))
         r, _, _, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT), api={"send": send})
-        self.assertEqual((r.error, send.call_count), ("the run returned no outcome", 1))
+        self.assertEqual((r.error, send.call_count), ("the agent run returned no outcome", 1))
         self.assertIn("drive.py: tui: no pane\n", err)
 
     def test_start_refuses_a_client_without_the_command_before_anything_starts(self):
@@ -1363,7 +1363,7 @@ class Main(Base):
     def test_resume_end_to_end(self):
         code, _, _, ((argv, _),) = self.run_main("--sid", SID, "--resume", lines=[outcome(DONE)])
         self.assertEqual((code, argv[3:5]), (0, ["--resume", SID]))
-        self.assertTrue(argv[2].startswith("Resumed run"))
+        self.assertTrue(argv[2].startswith("Resumed agent run"))
         self.assertEqual(self.run_main("--resume")[0], 2)
 
     def test_a_run_client_needs_input_and_workdir(self):

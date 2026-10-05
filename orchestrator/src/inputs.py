@@ -1,4 +1,4 @@
-"""The free-text input of a core run: the docs-repo files an issue links (read through `gh api`), laid out per task kind."""
+"""The free-text input of a core agent run: the docs-repo files an issue links (read through `gh api`), laid out per task kind."""
 import fnmatch
 import json
 import os

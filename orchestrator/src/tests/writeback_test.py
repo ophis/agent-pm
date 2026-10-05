@@ -125,7 +125,7 @@ class Base(unittest.TestCase):
         return path
 
     def files(self, ctx):
-        """(spec, plan) paths in the run's core clone."""
+        """(spec, plan) paths in the agent run's core clone."""
         return (self.write(ctx, "src/agent-pm/docs/ENG-7-spec.md", SPEC_TEXT),
                 self.write(ctx, "src/agent-pm/docs/ENG-7-plan.md", PLAN_TEXT))
 

@@ -103,12 +103,12 @@ def _repo_info(o, n, run):
 
 
 def _branches(ident, o, n, run, work):
-    """Names of the <ident>-* branches: in the run's own core clone if it has a real `.git` directory, else on GitHub
+    """Names of the <ident>-* branches: in the agent run's own core clone if it has a real `.git` directory, else on GitHub
     (gh's credentials, no shared clone); or a Transient."""
     clone = os.path.join(work, ident, CLONES[0], n)
     git = os.path.join(clone, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
-        # The run can write this clone's config; these keep it from running code as the harness.
+        # The agent run can write this clone's config; these keep it from running code as the harness.
         res = run(["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", clone,
                    "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
         if res.returncode != 0:
