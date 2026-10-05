@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Delete the clones of finished issues (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
+"""Delete the clones and worktrees of finished issues (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
 
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, work/<ID>/src/* and work/<ID>/publish.
-An entry must be a real directory inside its own folder (not a symlink) with a .git directory
-(a core clone); anything else is skipped. A clone is deleted with any uncommitted or unpushed
-work (shutil.rmtree). Remote branches and work/<ID>/ itself are never touched.
+Entries: for each finished issue, work/<ID>/src/<owner>/<name> (a legacy clone work/<ID>/src/<name> too) and
+work/<ID>/publish. An entry must be a real directory inside its own folder (not a symlink) with a .git directory
+(a core clone) or a .git file (a core worktree); anything else is skipped. A clone is deleted with any uncommitted or
+unpushed work (shutil.rmtree). A worktree is removed by repo.remove, with its branch when pushed; one with changes or
+untracked files is kept and skipped again every tick until someone cleans it by hand. A src/<owner>/ left empty is
+removed. Remote branches and work/<ID>/ itself are never touched.
 
 TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its clones go, since a
 left-open claude may work in one.
@@ -27,6 +29,7 @@ from datetime import timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CLONES, LOGS, WORK  # noqa: E402
 import attended  # noqa: E402
+import repo  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -48,10 +51,10 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run):
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, remove=repo.remove):
         """roles: {Linear user id: role} as linear.role_ids returns."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles, self.logs, self.proc = team, roles, logs, proc
+        self.team, self.roles, self.logs, self.proc, self.remove = team, roles, logs, proc, remove
         self.errors = 0
 
     def say(self, msg):
@@ -62,14 +65,23 @@ class Pruner:
         self.say(f"prune-error {key}: {msg}")
 
     def entries(self, ident):
-        """Paths below work/<ident>/, as parts: (src, n) and (publish,)."""
+        """Paths below work/<ident>/, as parts: (src, n) legacy, (src, owner, n) and (publish,)."""
         found = []
         for folder in FOLDERS:
+            base = os.path.join(self.work, ident, folder)
             try:
-                found += [(folder, n) for n in sorted(os.listdir(os.path.join(self.work, ident, folder)))
-                          if not n.startswith(".")]
+                names = [n for n in sorted(os.listdir(base)) if not n.startswith(".")]
             except OSError:
-                pass
+                continue
+            for n in names:
+                entry = os.path.join(base, n)
+                if os.path.islink(entry) or not os.path.isdir(entry) or os.path.lexists(os.path.join(entry, ".git")):
+                    found.append((folder, n))
+                    continue
+                try:
+                    found += [(folder, n, m) for m in sorted(os.listdir(entry)) if not m.startswith(".")]
+                except OSError:
+                    pass
         if os.path.lexists(os.path.join(self.work, ident, PUBLISH)):
             found.append((PUBLISH,))
         return found
@@ -82,9 +94,14 @@ class Pruner:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
                 raise Skip(f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch")
             dotgit = os.path.join(path, ".git")
-            if not os.path.isdir(dotgit) or os.path.islink(dotgit):
-                raise Skip("not a clone: .git is not a directory")
-            self.delete_clone(key, path)
+            if os.path.islink(dotgit):
+                raise Skip("not a clone or worktree")
+            if os.path.isdir(dotgit):
+                self.delete_clone(key, path)
+            elif os.path.isfile(dotgit):
+                self.remove_worktree(key, path, ident)
+            else:
+                raise Skip("not a clone or worktree")
         except Skip as e:
             self.say(f"prune-skip {key}: {e}")
 
@@ -98,6 +115,32 @@ class Pruner:
             self.error(key, f"rmtree: {one_line(e)}")
             return
         self.say(f"prune-removed {key}: clone")
+
+    def remove_worktree(self, key, path, ident):
+        if self.dry:
+            self.say(f"prune-plan {key}: remove the worktree")
+            return
+        try:
+            res = self.remove(path, f"{ident}-")
+        except repo.Invalid as e:
+            raise Skip(one_line(str(e)))
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            self.error(key, one_line(e))
+            return
+        branch, kept = res["branch"], res["kept"]
+        if not branch:
+            self.say(f"prune-removed {key}: worktree")
+        elif kept:
+            self.say(f"prune-removed {key}: worktree; branch {branch} kept: {kept}")
+        else:
+            self.say(f"prune-removed {key}: worktree and branch {branch}")
+
+    def rmdir_owners(self, ident, owners):
+        for owner in sorted(owners):
+            try:
+                os.rmdir(os.path.join(self.work, ident, *owner))
+            except OSError:
+                pass
 
     def close_sessions(self, ident):
         if self.dry:
@@ -174,7 +217,10 @@ class Pruner:
                 self.say(f"prune-skip {ident}: finish time unknown")
             elif self.now - since >= QUARANTINE:
                 self.close_sessions(ident)
-                for parts in self.entries(ident):
+                entries = self.entries(ident)
+                for parts in entries:
                     self.prune(ident, parts)
+                if not self.dry:
+                    self.rmdir_owners(ident, {parts[:-1] for parts in entries if len(parts) == 3})
         self.archive(finished)
         return 3 if self.errors else 0
