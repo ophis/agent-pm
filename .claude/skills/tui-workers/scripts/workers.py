@@ -88,9 +88,12 @@ def _beside(name: str, events: str, proc) -> list:
 
 
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
-          proc=subprocess.run) -> str:
-    """Start worker `name`, record its options on the tmux session; returns the session id."""
+          beside: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
+    """Start worker `name`, record its options on the tmux session; returns the session id.
+    `beside` or `split` replaces the automatic placement; tui.py defaults the other."""
     _check(name)
+    if beside is not None:
+        _check(beside)
     events, cwd = os.path.abspath(events), os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
@@ -101,8 +104,10 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     _touch(events)
     sid = str(uuid.uuid4())
     child_env = {k: v for k, v in env.items() if k not in STRIP}
-    argv = [sys.executable, TUI, "start", name, *_beside(name, events, proc), "--", claude, "--session-id", sid,
-            "--name", name, "--settings", hooks(events), *flags, *(["--", prompt] if prompt else [])]
+    layout = [*(["--beside", beside] if beside else []), *(["--split", split] if split else [])]
+    argv = [sys.executable, TUI, "start", name, *(layout or _beside(name, events, proc)), "--", claude,
+            "--session-id", sid, "--name", name, "--settings", hooks(events), *flags,
+            *(["--", prompt] if prompt else [])]
     res = _run(proc, argv, cwd=cwd, env=child_env)
     if res.returncode != 0:
         raise WorkersError((res.stderr or "").strip() or f"tui.py exited {res.returncode}")
@@ -206,13 +211,15 @@ def main(argv=None) -> int:
     p.add_argument("--events", required=True)
     p.add_argument("--cwd")
     p.add_argument("--prompt")
+    p.add_argument("--beside")
+    p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
         sub.add_parser(cmd).add_argument("name")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "start":
             sid = start(a.name, a.events, cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
-                        env=dict(os.environ), proc=subprocess.run)
+                        env=dict(os.environ), beside=a.beside, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, proc=subprocess.run)

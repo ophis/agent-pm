@@ -72,7 +72,7 @@ claude -p '<prompt>' \
     'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm/work/TASK-142/.report.jsonl *)'
 ```
 
-`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`.
+`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
 
 `--runner tui` starts the same run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session); `--split right|below` picks the side and `--beside <tmux session>` the pane to split (tui only); `core/config/config.toml`'s header says what replaces that split. The run is done once its outcome arrives; the session stays open.
 
@@ -84,7 +84,6 @@ With tui:
 - Auto mode depends on the model: where it is unavailable (Haiku, tier 4), the session runs in manual mode and asks in the pane for what isn't pre-approved.
 - The open session is an agent nobody watches: after the outcome, or once `drive.py` gives up, it keeps the run's pre-approvals and `drive.py`'s environment, and nothing it does is reported. End it with `tmux kill-session -t '=<session>'`.
 - The nudge is typed into the pane up to about a second after the turn ends: if a new turn has opened a permission dialog by then (manual mode), the keys go to the dialog.
-- Start `drive.py` and `tui.py start` from a plain shell: a `claude` they start from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, saves no transcript and can't be resumed (the tui-workers helper strips it).
 
 In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s environment, e.g. to a command that asks a host-side watcher (yours to deploy) to attach, and leave `show` unset.
 

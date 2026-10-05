@@ -307,6 +307,22 @@ class StartTest(unittest.TestCase):
         self.start(fake)
         self.assertEqual(fake.tui()[0][4], "--")
 
+    def test_explicit_layout_overrides(self):
+        rows = [("a", "1", self.events, "100")]
+        for kw, layout in (({"beside": "x", "split": "below"}, ["--beside", "x", "--split", "below"]),
+                           ({"beside": "x"}, ["--beside", "x"]),
+                           ({"split": "right"}, ["--split", "right"])):
+            fake = Fake(sessions="".join("\t".join(r) + "\n" for r in rows))
+            self.start(fake, **kw)
+            argv = fake.tui()[0]
+            self.assertEqual(argv[4:4 + len(layout) + 1], [*layout, "--"], kw)
+            self.assertNotIn("list-sessions", [c[1] for c in fake.calls])
+
+    def test_bad_beside(self):
+        fake = Fake()
+        self.assertIn("bad name 'a b'", self.assert_fails(fake, beside="a b"))
+        self.assertEqual(fake.calls, [])
+
     def test_cwd_missing(self):
         fake = Fake()
         self.assert_fails(fake, cwd=os.path.join(self.dir, "nope"))
@@ -560,6 +576,20 @@ class MainTest(WorkerCase):
         self.assertEqual(out, f"w1 {sid}\n")
         self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
         self.assertEqual(fake.tui()[0][-1], "go")
+
+    def test_start_beside_split(self):
+        fake = Fake()
+        rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--beside", "x",
+                                    "--split", "below", "--", "--model", "m"], fake)
+        self.assertEqual(rc, 0, err)
+        argv = fake.tui()[0]
+        self.assertEqual(argv[4:9], ["--beside", "x", "--split", "below", "--"])
+        self.assertEqual(argv[-2:], ["--model", "m"])
+
+    def test_bad_split_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            workers.main(["start", "w1", "--events", self.events, "--split", "left"])
+        self.assertEqual(cm.exception.code, 2)
 
     def test_start_defaults_cwd(self):
         fake = Fake()

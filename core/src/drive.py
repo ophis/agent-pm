@@ -539,8 +539,9 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         for sink in sinks:
             sink(event)
 
+    env = {k: v for k, v in os.environ.items() if k != tui.CHILD_SESSION}
     try:
-        host.begin(argv, cwd=launch.cwd or workdir, env={**os.environ, **launch.env})
+        host.begin(argv, cwd=launch.cwd or workdir, env={**env, **launch.env})
         while True:
             events, ended = host.poll(POLL)
             for event in tail():   # first: a report made before a stdout line comes before it
