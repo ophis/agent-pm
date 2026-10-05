@@ -429,7 +429,7 @@ class Tui:
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
-            tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show, split=self.layout.split,
+            tui.start(self.name, argv, cwd=cwd, env=env, template=self.run.show, split=self.layout.split,
                       beside=self.layout.beside)
         except tui.TuiError as e:
             raise RunnerError(str(e)) from e

@@ -1,21 +1,6 @@
 """Generic tmux host: runs a command in a detached tmux session another agent or a person can watch and drive.
 
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
-
-start(session, argv, cwd=, env=, show=, split=, beside=)
-                                  a detached session running argv; the command line, cwd and env (minus CHILD_SESSION)
-                                  reach the pane through a 0600 handover file, never through tmux; then show(session,
-                                  show, split=, beside=)
-status(session)                   None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)
-send(session, text)               types text into the pane, then Enter
-read(session, lines=)             the pane's text: the visible pane, or its last lines with history
-show(session, template, split=, beside=)
-                                  prints how to attach, then runs the template, else $TUI_SHOW, else
-                                  iterm(session, split=, beside=); returns the failure reason instead of raising
-iterm(session, split=, beside=)   the iTerm2 split: a pane split off right or below the one showing tmux session
-                                  beside, else the caller's, attached to the session; returns the failure reason
-own_session()                     the tmux session of the caller's pane, None outside tmux
-kill(session)                     ends the session
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
 """
 from __future__ import annotations
@@ -97,12 +82,13 @@ class TuiError(Exception):
     pass
 
 
-def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show: str | None = None,
+def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], template: str | None = None,
           split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run argv in a new detached session, in cwd with env minus CHILD_SESSION plus the pane's terminal keys; show it
-    once started. Raising, it leaves no session of its own."""
+    once started. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it leaves
+    no session of its own."""
     _name(session)
-    if _template(show) is None:
+    if _template(template) is None:
         _layout(split, beside)
     if not argv:
         raise TuiError("no command")
@@ -132,7 +118,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
                       ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
             if not _handed_over(path, sleep):
                 raise TuiError("the session did not start")
-            globals()["show"](session, show, split=split, beside=beside, proc=proc)   # the parameter shadows show()
+            show(session, template, split=split, beside=beside, proc=proc)
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
             with contextlib.suppress(TuiError):
@@ -257,8 +243,8 @@ def main(argv: list[str] | None = None) -> int:
             start_p.error("no command")
     try:
         if a.cmd == "start":
-            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), show=a.show, split=a.split,
-                  beside=a.beside)
+            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), template=a.show,
+                  split=a.split, beside=a.beside)
         elif a.cmd == "send":
             send(a.session, a.text)
         elif a.cmd == "read":

@@ -299,7 +299,7 @@ class Start(unittest.TestCase):
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
         with unittest.mock.patch.object(tui, "show", side_effect=show):
-            self.start(fake, show="tmpl", split="below", beside="b")
+            self.start(fake, template="tmpl", split="below", beside="b")
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "proc": fake}, False,
                                  ["display-message", "new-session"])])
 
@@ -330,7 +330,7 @@ class Start(unittest.TestCase):
                         self.start(fake, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
-            self.start(fake, show="", split="up", beside="a b")
+            self.start(fake, template="", split="up", beside="a b")
             self.assertEqual(fake.commands(), ["display-message", "new-session"])
 
 
@@ -607,7 +607,7 @@ class Cli(unittest.TestCase):
 
     def test_start_forms(self):
         start = self.patch("start")
-        for argv, session, command, show, split, beside in (
+        for argv, session, command, template, split, beside in (
                 ("start a -- cmd", "a", ["cmd"], None, "right", None),
                 ("start b --beside a --split below -- cmd -x", "b", ["cmd", "-x"], None, "below", "a"),
                 ("start --split below b --show T -- cmd", "b", ["cmd"], "T", "below", None),
@@ -615,10 +615,10 @@ class Cli(unittest.TestCase):
             with self.subTest(argv=argv):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
-                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ), show=show,
-                                              split=split, beside=beside)
+                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ),
+                                              template=template, split=split, beside=beside)
         self.main("start", "--show", "", "a", "cmd")
-        self.assertEqual(start.call_args.kwargs["show"], "")
+        self.assertEqual(start.call_args.kwargs["template"], "")
 
     def test_start_usage_errors(self):
         start = self.patch("start")
