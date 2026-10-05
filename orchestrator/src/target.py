@@ -6,8 +6,8 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CLONES, NAME, OWNER, REF, WORK, repo_slug, sh_run  # noqa: E402
-from repo import SHORT, err_text  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, TASKS, WORK, repo_slug, sh_run  # noqa: E402
+from repo import GUARD, SHORT, err_text  # noqa: E402
 
 MAPPED = "project mapping "
 
@@ -103,17 +103,19 @@ def _repo_info(o, n, run):
 
 
 def _branches(ident, o, n, run, work):
-    """Names of the <ident>-* branches: in the agent run's own core clone if it has a real `.git` directory, else on GitHub
-    (gh's credentials, no shared clone); or a Transient."""
-    clone = os.path.join(work, ident, CLONES[0], n)
-    git = os.path.join(clone, ".git")
+    """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own clone, else on
+    GitHub (gh's credentials, no shared clone); or a Transient. A worktree's are read on GitHub: its clone is known only
+    from a `.git` file the agent run could have changed."""
+    checkout = os.path.join(work, ident, CLONES[0], o, n)
+    git = os.path.join(checkout, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
         # The agent run can write this clone's config; these keep it from running code as the harness.
-        res = run(["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", clone,
+        res = run(["git", *GUARD, "-C", checkout, f"--git-dir={git}",
                    "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
         if res.returncode != 0:
             return Transient(f"git branch --list: {err_text(res)}")
-        if local := res.stdout.split():
+        read_only = {f"{ident}-{t}" for t, task in TASKS.items() if task.kind != "build"}
+        if local := [b for b in res.stdout.split() if b not in read_only]:
             return local
     res = run(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                "ls-remote", "--heads", f"https://github.com/{o}/{n}.git", f"{ident}-*"], SHORT)

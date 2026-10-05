@@ -26,12 +26,12 @@ agent-pm/
 │       ├── writeback.py   # start, progress and finish of an agent run → Linear
 │       ├── sessions.py    # records each agent run's session on its issue
 │       ├── promote.py     # Handoff to the next role
-│       ├── prune.py       # deletes finished issues' clones, archives pm and engineer ones, closes their TUI sessions
+│       ├── prune.py       # removes finished issues' worktrees and deletes their clones, archives pm and engineer ones, closes their TUI sessions
 │       ├── attended.py    # where an attended run's TUI pane goes; the record of its TUI sessions (logs/tui/<ID>)
 │       ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
 │       ├── linear.py      # Linear client and lookups, shared helpers
 │       └── tests/
-├── work/<ID>/             # an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, clones in src/ and publish/ (gitignored)
+├── work/<ID>/             # an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/ (gitignored)
 └── logs/                  # router state and agent run output (gitignored)
 ```
 
@@ -45,18 +45,18 @@ A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibili
 
 | Role | Tasks (first is default) | Does |
 |---|---|---|
-| researcher | `deep-research`, `light-research` | Judges the question web, local (needs one repo's code, read from a read-only checkout) or mixed (both), and answers it with a report: every finding with its confidence and numbered sources (a URL; for code, a GitHub permalink at the commit the report names), known claims re-checked, gaps listed |
+| researcher | `deep-research`, `light-research` | Judges the question web, local (needs one or more repos' code, read from read-only worktrees) or mixed (both), and answers it with a report: every finding with its confidence and numbered sources (a URL; for code, a GitHub permalink at the commit the report names), known claims re-checked, gaps listed |
 | pm | `product-design` | Turns a brief or research report into a PRD, adding no scope you didn't ask for and marking its own inferences as assumptions |
 | engineer | `engineering` | Builds requirements (a PRD, the user's own, or both) into a pull request on the target repo, following that repo's conventions; never merges, force-pushes or touches the default branch |
 
 ### Tasks
 
-A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config/config.toml`.
+A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config/config.toml`. A task gets a target repo through `core/src/repo.py worktree`: at `<Workdir>/src/<owner>/<name>`, on the agent run's own branch, as a git worktree of the local clone path the input names (it must lie outside `work/` and the temp dirs; symlinks are checked out as plain files, which turns on that clone's `extensions.worktreeConfig`), or a fresh blobless clone for an `<owner>/<name>` or URL.
 
-- **`deep-research`:** for a web question, runs the built-in `/deep-research` Workflow once over all its subquestions; for a local one, writes and runs one workflow of its own (ultracode, ≤ 100 agents, verification inside) over the checkout; for a mixed one, at most that workflow plus one `/deep-research` run for the web part, skipping the second round when the `gate` command fails. Without a Workflow tool it follows `core/team/methods/` instead. Writes the report from `core/team/templates/research-report.md` to `Research/` in the docs repo.
-- **`light-research`:** sends 3–6 angles in one round, one agent each (web angles, checkout angles, or both), each checking its own sources, with no separate verification. Publishes a shorter report marked Light Research. A later `deep-research` agent run given that report rewrites the same file.
-- **`product-design`:** reads the brief and source reports; prepares a read-only checkout when the input names a repo; researches and grills itself with a subagent when needed; writes the PRD from `core/team/templates/prd.md` to `Product Design/` in the docs repo, has a fresh subagent review it and fixes what holds up.
-- **`engineering`:** runs `autopilot:build` in a checkout (`<Workdir>/src/<name>`) on an `<ID>-<slug>` branch of the target repo, reporting progress at each build step, pushes the branch and opens the PR. A failed build still pushes the branch and reports what failed.
+- **`deep-research`:** for a web question, runs the built-in `/deep-research` Workflow once over all its subquestions; for a local one, writes and runs one workflow of its own (ultracode, ≤ 100 agents, verification inside) over the worktrees; for a mixed one, at most that workflow plus one `/deep-research` run for the web part, skipping the second round when the `gate` command fails. Without a Workflow tool it follows `core/team/methods/` instead. Writes the report from `core/team/templates/research-report.md` to `Research/` in the docs repo.
+- **`light-research`:** sends 3–6 angles in one round, one agent each (web angles, worktree angles, or both), each checking its own sources, with no separate verification. Publishes a shorter report marked Light Research. A later `deep-research` agent run given that report rewrites the same file.
+- **`product-design`:** reads the brief and source reports; prepares a read-only worktree when the input names a repo; researches and grills itself with a subagent when needed; writes the PRD from `core/team/templates/prd.md` to `Product Design/` in the docs repo, has a fresh subagent review it and fixes what holds up.
+- **`engineering`:** runs `autopilot:build` in a worktree (`<Workdir>/src/<owner>/<name>`) on an `<ID>-<slug>` branch of the target repo, reporting progress at each build step, pushes the branch and opens the PR. A failed build still pushes the branch and reports what failed.
 
 ### An agent run's command
 
@@ -68,7 +68,7 @@ claude -p '<prompt>' \
   --model opus --effort high \
   --permission-mode auto --setting-sources user --strict-mcp-config \
   --output-format stream-json --verbose \
-  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py prepare --dir /Users/francis/playground/agent-pm/work/TASK-142/src *)' \
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm/work/TASK-142/src *)' \
     'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm/work/TASK-142/.report.jsonl *)'
 ```
 
@@ -140,7 +140,7 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 | `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research agent run goes back to Todo). Steps are ledgered in `work/<ID>/writeback.json`, so a resumed agent run repeats none. An agent run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
-| `prune.py` | End of each promote tick | Deletes the clones (`src/*` and `publish/`) of issues that have been Done or Canceled for 24 hours, along with any unpushed work, and archives the pm and engineer ones; closes their attended runs' TUI sessions. |
+| `prune.py` | End of each promote tick | Cleans up issues that have been Done or Canceled for 24 hours (see Using the board › Finish) and archives the pm and engineer ones; closes their attended runs' TUI sessions. |
 | `config.py` | Shared | Loading and validating the config (`orchestrator/config.toml`, core's, the `[core]` overlay), and the per-task data `TASKS` (title prefix, write-back texts). |
 | `linear.py` | Shared | Linear API client (Keychain-keyed GraphQL), lookups of the config's users, team and task labels, the comment, subscribe and state-move writes, and small helpers. |
 
@@ -151,7 +151,7 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff, with a comment saying what to do next (optional for a PRD). A PRD's target repo is the project's `[project_repos]` entry, which the PM's hand-off comment names; without one, comment `Repo: <owner>/<name>`. A `Repo:` line in your comment always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
-- **Finish:** Done and Canceled are yours to set. Clones of finished issues (a target-repo checkout in `src/`, the docs clone in `publish/`) are deleted 24 hours later, along with any unpushed work; pm and engineer issues are archived then too, so restore one in Linear before reworking it.
+- **Finish:** Done and Canceled are yours to set. 24 hours later, a finished issue's `src/` (clones and worktrees), `publish/` (the docs clone) and `tmp/` in `work/<ID>/` are deleted; the rest of `work/<ID>/` stays. In each local clone those worktrees came from, prune then drops their records and deletes the issue's `<ID>-*` branches that origin already holds; it keeps and reports the others. Lost: uncommitted changes, commits never pushed from a detached HEAD or a submodule, and, since `git worktree prune` covers the whole clone, the record of any of your own worktrees whose folder is missing at that moment unless you `git worktree lock` it. pm and engineer issues are archived then too, so restore one in Linear before reworking it.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 

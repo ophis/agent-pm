@@ -114,12 +114,21 @@ class Check(unittest.TestCase):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "agent-pm")
+        self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm")
         self.ls_remote = ["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                           "ls-remote", "--heads", "https://github.com/ophis/agent-pm.git", "TASK-26-*"]
 
     def git_dir(self):
         os.makedirs(os.path.join(self.clone, ".git"))
+
+    def git_file(self):
+        os.makedirs(self.clone)
+        with open(os.path.join(self.clone, ".git"), "w") as f:
+            f.write("gitdir: /elsewhere/.git/worktrees/agent-pm\n")
+
+    def branch_list(self, at=None):
+        at = at or self.clone
+        return (*LOCAL, at, f"--git-dir={at}/.git", "branch", "--list", "TASK-26-*", "--format=%(refname:short)")
 
     def check(self, desc="Repo: ophis/agent-pm", repos=None, project=None, title="ENG: Session Registry", **over):
         t = {"api": api(), "local": ok(""), "remote": ok("")}
@@ -144,13 +153,13 @@ class Check(unittest.TestCase):
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-old-name"))
         self.assertEqual(self.run_.calls, [
             (("gh", "api", "repos/ophis/agent-pm"), repo.SHORT),
-            ((*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), repo.SHORT)])
+            (self.branch_list(), repo.SHORT)])
 
     def test_local_clone_without_branches_falls_back_to_the_remote(self):
         self.git_dir()
         r = self.check(remote=ok("abc\trefs/heads/TASK-26-remote\n"))
         self.assertEqual(r.branch, "TASK-26-remote")
-        self.assertEqual(self.argvs()[1:], [(*LOCAL, self.clone, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"), tuple(self.ls_remote)])
+        self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
 
     def test_remote_names_are_taken_after_refs_heads(self):
         r = self.check(remote=ok("abc\trefs/heads/TASK-26-a\nabc\trefs/tags/x\n"))
@@ -158,21 +167,56 @@ class Check(unittest.TestCase):
         self.assertEqual(self.check(remote=ok("abc\trefs/heads/TASK-26-a\nabc\trefs/heads/TASK-26-b\n")),
                          target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
 
-    def test_git_dir_that_is_not_a_real_directory_is_not_run(self):
+    def test_a_worktrees_branches_are_read_on_github(self):
+        self.git_file()
+        r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+        self.assertEqual(r.branch, "TASK-26-remote")
+        self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
+
+    def test_symlinked_git_is_not_run(self):
         os.makedirs(self.clone)
         elsewhere = os.path.join(self.work, "elsewhere")
-        os.makedirs(elsewhere)
-        for label, make in (("symlink", lambda p: os.symlink(elsewhere, p)), ("file", lambda p: open(p, "w").close())):
+        os.makedirs(os.path.join(elsewhere, ".git"))
+        for target_ in (os.path.join(elsewhere, ".git"), os.path.join(elsewhere, "gone")):
             git = os.path.join(self.clone, ".git")
-            make(git)
-            with self.subTest(label):
+            os.symlink(target_, git)
+            with self.subTest(target_):
                 r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
                 self.assertEqual(r.branch, "TASK-26-remote")
                 self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
             os.unlink(git)
 
+    def test_legacy_src_name_path_is_not_read(self):
+        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "agent-pm", ".git"))
+        r = self.check(local=ok("TASK-26-old\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+        self.assertEqual(r.branch, "TASK-26-remote")
+        self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
+
+    def test_read_only_task_branches_are_not_the_engineering_branch(self):
+        read_only = [f"TASK-26-{t}" for t, spec in config.TASKS.items() if spec.kind != "build"]
+        self.assertEqual(sorted(read_only), ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"])
+        self.git_dir()
+        r = self.check(local=ok("\n".join(["TASK-26-session-registry", *read_only]) + "\n"))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertEqual(self.argvs()[1:], [self.branch_list()])
+        r = self.check(local=ok("\n".join(read_only) + "\n"), remote=ok(""))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
+        self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
+
+    def test_read_only_branch_alone_falls_back_to_the_remote(self):
+        self.git_dir()
+        r = self.check(local=ok("TASK-26-light-research\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+        self.assertEqual(r.branch, "TASK-26-remote")
+
+    def test_only_the_exact_read_only_names_are_dropped(self):
+        self.git_dir()
+        r = self.check(local=ok("TASK-26-light-research-2\nTASK-26-light-research\n"))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-light-research-2"))
+        r = self.check(local=ok("TASK-26-engineering\nTASK-26-light-research\n"))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-engineering"))
+
     def test_no_clone_dir_runs_no_local_git(self):
-        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0]))
+        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
         self.check()
         self.assertFalse(any(a[:len(LOCAL)] == LOCAL for a in self.argvs()))
 
@@ -269,14 +313,14 @@ class Check(unittest.TestCase):
                 self.assertEqual(self.argvs(), [("gh", "api", "repos/ophis/agent-pm")])
 
     def test_o_and_n_come_from_full_name(self):
-        renamed = os.path.join(self.work, "TASK-26", config.CLONES[0], "Agent-PM-2")
+        renamed = os.path.join(self.work, "TASK-26", config.CLONES[0], "Ophis", "Agent-PM-2")
         os.makedirs(os.path.join(renamed, ".git"))
         for desc, asked in (("Repo: OPHIS/agent-pm", "OPHIS/agent-pm"), ("Repo: https://github.com/ophis/Agent-PM.git", "ophis/Agent-PM")):
             with self.subTest(desc):
                 r = self.check(desc, api=api("Ophis/Agent-PM-2"), local=ok("TASK-26-x\n"))
                 self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-x"))
                 self.assertEqual(self.run_.calls[0][0], ("gh", "api", f"repos/{asked}"))
-                self.assertEqual(self.argvs()[1], (*LOCAL, renamed, "branch", "--list", "TASK-26-*", "--format=%(refname:short)"))
+                self.assertEqual(self.argvs()[1], self.branch_list(renamed))
         r = self.check(api=api("Ophis/Agent-PM-2"), remote=ok("abc\trefs/heads/TASK-26-y\n"))
         self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-y"))
         self.assertEqual(self.argvs()[-1][-2:], ("https://github.com/Ophis/Agent-PM-2.git", "TASK-26-*"))

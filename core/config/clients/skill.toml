@@ -37,7 +37,7 @@ description = "Return the input unchanged. Use only to check that a role, a task
 type = "orchestrator"
 
 [roles.dummy-tester.tasks.prepare-test]
-description = "Clone the named repo read-only and report the checkout. Use only to check that repo.py prepare works end to end."
+description = "Open a worktree of the named repo and report it. Use only to check that repo.py worktree works end to end."
 
 [roles.dummy-tester.tasks.prepare-test.output]
 type = "orchestrator"
