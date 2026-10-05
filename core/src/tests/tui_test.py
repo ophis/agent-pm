@@ -120,11 +120,12 @@ class Start(unittest.TestCase):
         self.sleep.assert_not_called()
 
     def test_handover_file(self):
-        env = {"PATH": self.bin, "HOME": "/h", **{k: "x" for k in tui.TERMINAL_KEYS}}
+        env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
+               **{k: "x" for k in tui.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
-        self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"], "env": {"PATH": self.bin, "HOME": "/h"},
-                                         "cwd": self.cwd})
+        self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"],
+                                         "env": {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1"}, "cwd": self.cwd})
         self.assertEqual(fake.mode, 0o600)
         self.assertEqual(fake.dir_mode, 0o700)
         self.assertEqual(os.path.dirname(os.path.dirname(fake.path)), self.temp)

@@ -3,9 +3,9 @@
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
 
 start(session, argv, cwd=, env=, show=, split=, beside=)
-                                  a detached session running argv; the command line, cwd and env reach the pane
-                                  through a 0600 handover file, never through tmux; then show(session, show, split=,
-                                  beside=)
+                                  a detached session running argv; the command line, cwd and env (minus CHILD_SESSION)
+                                  reach the pane through a 0600 handover file, never through tmux; then show(session,
+                                  show, split=, beside=)
 status(session)                   None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)
 send(session, text)               types text into the pane, then Enter
 read(session, lines=)             the pane's text: the visible pane, or its last lines with history
@@ -74,6 +74,8 @@ APPLESCRIPT = """on run argv
 end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
+# Set in a Claude Code session's commands: a claude inheriting it saves no transcript and can't be resumed.
+CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
 EXEC = "\n".join([
@@ -97,8 +99,8 @@ class TuiError(Exception):
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show: str | None = None,
           split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
-    """Run argv in a new detached session, in cwd with env plus the pane's terminal keys; show it once started.
-    Raising, it leaves no session of its own."""
+    """Run argv in a new detached session, in cwd with env minus CHILD_SESSION plus the pane's terminal keys; show it
+    once started. Raising, it leaves no session of its own."""
     _name(session)
     if _template(show) is None:
         _layout(split, beside)
@@ -120,7 +122,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
         if state is not None:
             kill(session, proc=proc)
         handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": os.path.abspath(cwd),
-                    "env": {k: v for k, v in env.items() if k not in TERMINAL_KEYS}}
+                    "env": {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, CHILD_SESSION)}}
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)
         cols, rows = shutil.get_terminal_size()

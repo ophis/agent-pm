@@ -716,6 +716,12 @@ class Start(Base):
         self.assertEqual(json.loads(self.read("progress.jsonl")) | {"ts": ""}, {"ts": "", "name": "round", "text": "half way"})
         self.assertEqual(log, "Progress (round): half way\nhi\n")
 
+    def test_run_env_drops_claude_code_child_session(self):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDECODE": "1"}):
+            _, ((_, kw),), _ = self.start([outcome(DONE)])
+        self.assertNotIn("CLAUDE_CODE_CHILD_SESSION", kw["env"])
+        self.assertEqual((kw["env"]["CLAUDECODE"], kw["env"]["FAKE"]), ("1", "1"))
+
     def test_stop_events_reach_no_sink(self):
         seen = []
         r, _, _ = self.start([{"kind": "stop"}, progress("round", "x"), {"kind": "stop"}, outcome(DONE)],
