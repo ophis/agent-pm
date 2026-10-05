@@ -1034,7 +1034,7 @@ class TuiRunner(Base):
         _, calls, _, _ = self.start([outcome(DONE)], show="echo {{session}}")
         (_, name, argv, kw), = [c for c in calls if c[0] == "start"]
         self.assertEqual((name, argv, kw["cwd"]), (self.NAME, ["claude", "hi"], self.work))
-        self.assertEqual(kw["show"], "echo {{session}}")
+        self.assertEqual(kw["template"], "echo {{session}}")
         self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
 
     def test_tui_session_name(self):

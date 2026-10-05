@@ -211,6 +211,13 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
 
+    def test_a_duplicate_session_is_not_killed(self):
+        fake = Tmux(results={"new-session": (1, "", "duplicate session: s\n")})   # another start took the name
+        with self.assertRaisesRegex(tui.TuiError, r"^tmux: duplicate session: s$"):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_an_interrupt_after_new_session_kills_the_session(self):
         def interrupt(*args, **kw):
             raise KeyboardInterrupt
@@ -299,7 +306,7 @@ class Start(unittest.TestCase):
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
         with unittest.mock.patch.object(tui, "show", side_effect=show):
-            self.start(fake, show="tmpl", split="below", beside="b")
+            self.start(fake, template="tmpl", split="below", beside="b")
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "proc": fake}, False,
                                  ["display-message", "new-session"])])
 
@@ -330,7 +337,7 @@ class Start(unittest.TestCase):
                         self.start(fake, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
-            self.start(fake, show="", split="up", beside="a b")
+            self.start(fake, template="", split="up", beside="a b")
             self.assertEqual(fake.commands(), ["display-message", "new-session"])
 
 
@@ -607,32 +614,49 @@ class Cli(unittest.TestCase):
 
     def test_start_forms(self):
         start = self.patch("start")
-        for argv, session, command, show, split, beside in (
+        for argv, session, command, template, split, beside in (
                 ("start a -- cmd", "a", ["cmd"], None, "right", None),
                 ("start b --beside a --split below -- cmd -x", "b", ["cmd", "-x"], None, "below", "a"),
                 ("start --split below b --show T -- cmd", "b", ["cmd"], "T", "below", None),
-                ("start a cmd -h -- x", "a", ["cmd", "-h", "--", "x"], None, "right", None)):
+                ("start a -- cmd -- x", "a", ["cmd", "--", "x"], None, "right", None),
+                ("start b --beside a -- claude --x -- -p", "b", ["claude", "--x", "--", "-p"], None, "right", "a")):
             with self.subTest(argv=argv):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
-                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ), show=show,
-                                              split=split, beside=beside)
-        self.main("start", "--show", "", "a", "cmd")
-        self.assertEqual(start.call_args.kwargs["show"], "")
+                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ),
+                                              template=template, split=split, beside=beside)
+        self.main("start", "--show", "", "a", "--", "cmd")
+        self.assertEqual(start.call_args.kwargs["template"], "")
 
     def test_start_usage_errors(self):
         start = self.patch("start")
         for argv in ("start a", "start a --", "start a --split below cmd", "start a --bogus x -- cmd",
-                     "start a=b -- cmd", "start --split up a -- cmd", "start b --beside a=b -- cmd"):
+                     "start a=b -- cmd", "start --split up a -- cmd", "start b --beside a=b -- cmd", "start a cmd",
+                     "start -- cmd", "start a b -- cmd", "start --show -- a -- cmd"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split())[0], 2)
+        for argv in ("start a", "start a cmd", "start a --split below cmd"):
+            with self.subTest(argv=argv):
+                self.assertIn("a command must follow --", self.main(*argv.split())[2])
         start.assert_not_called()
+
+    def test_help(self):
+        rc, out, _ = self.main("-h")
+        self.assertEqual(rc, 0)
+        self.assertIn("{start,send,read,show}", out)
+        rc, out, _ = self.main("start", "-h")
+        self.assertEqual(rc, 0)
+        self.assertIn("session -- cmd", out)
+        for option in ("--show", "--split", "--beside"):
+            self.assertIn(option, out)
 
     def test_subcommands(self):
         send, read, show, status = (self.patch(n) for n in ("send", "read", "show", "status"))
         read.return_value, show.return_value, status.return_value = "pane\ntext", None, tui.RUNNING
         self.assertEqual(self.main("send", "s", "hi there"), (0, "", ""))
         send.assert_called_once_with("s", "hi there")
+        self.assertEqual(self.main("send", "s", "--", "-x")[0], 0)
+        self.assertEqual(send.call_args, unittest.mock.call("s", "-x"))
         self.assertEqual(self.main("read", "s"), (0, "pane\ntext\n", ""))
         self.assertEqual(self.main("read", "s", "--lines", "3")[0], 0)
         self.assertEqual(read.call_args_list, [unittest.mock.call("s", None), unittest.mock.call("s", 3)])

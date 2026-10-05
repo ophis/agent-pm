@@ -1,21 +1,6 @@
 """Generic tmux host: runs a command in a detached tmux session another agent or a person can watch and drive.
 
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
-
-start(session, argv, cwd=, env=, show=, split=, beside=)
-                                  a detached session running argv; the command line, cwd and env (minus CHILD_SESSION)
-                                  reach the pane through a 0600 handover file, never through tmux; then show(session,
-                                  show, split=, beside=)
-status(session)                   None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)
-send(session, text)               types text into the pane, then Enter
-read(session, lines=)             the pane's text: the visible pane, or its last lines with history
-show(session, template, split=, beside=)
-                                  prints how to attach, then runs the template, else $TUI_SHOW, else
-                                  iterm(session, split=, beside=); returns the failure reason instead of raising
-iterm(session, split=, beside=)   the iTerm2 split: a pane split off right or below the one showing tmux session
-                                  beside, else the caller's, attached to the session; returns the failure reason
-own_session()                     the tmux session of the caller's pane, None outside tmux
-kill(session)                     ends the session
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
 """
 from __future__ import annotations
@@ -42,7 +27,6 @@ SHOW_TIMEOUT = 30
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
-CLIENTS = "#{client_activity} #{client_tty}"
 # osascript's argv: split, anchor kind (id: iTerm2 unique ids; tty: client ttys), tmux path, session, anchor values.
 # They stay arguments, never script text.
 APPLESCRIPT = """on run argv
@@ -78,31 +62,26 @@ TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM
 CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
-EXEC = "\n".join([
-    "import json, os, signal, sys",
-    "path = sys.argv[1]",
-    "with open(path) as f:",
-    "    h = json.load(f)",
-    "os.unlink(path)",
-    "os.chdir(h['cwd'])",
-    f"h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)",
-    "signal.signal(signal.SIGPIPE, signal.SIG_DFL)",
-    "signal.signal(signal.SIGXFSZ, signal.SIG_DFL)",
-    "os.execve(h['argv'][0], h['argv'], h['env'])",
-])
-STATUS = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
+EXEC = f"""import json, os, signal, sys
+with open(sys.argv[1]) as f: h = json.load(f)
+os.unlink(sys.argv[1])
+os.chdir(h['cwd'])
+h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
+for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+os.execve(h['argv'][0], h['argv'], h['env'])"""
 
 
 class TuiError(Exception):
     pass
 
 
-def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show: str | None = None,
+def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], template: str | None = None,
           split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run argv in a new detached session, in cwd with env minus CHILD_SESSION plus the pane's terminal keys; show it
-    once started. Raising, it leaves no session of its own."""
+    once started. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it leaves
+    no session of its own."""
     _name(session)
-    if _template(show) is None:
+    if _template(template) is None:
         _layout(split, beside)
     if not argv:
         raise TuiError("no command")
@@ -110,6 +89,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
     if exe is None:
         raise TuiError(f"command not found: {argv[0]}")
     tmp = None
+    may_run = False
     try:
         tmp = tempfile.mkdtemp()
         path = os.path.join(tmp, "handover.json")
@@ -126,28 +106,37 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], show:
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)
         cols, rows = shutil.get_terminal_size()
-        try:   # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
-            _tmux_ok(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
-                      sys.executable, "-I", "-c", EXEC, path,
-                      ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
-            if not _handed_over(path, sleep):
-                raise TuiError("the session did not start")
-            globals()["show"](session, show, split=split, beside=beside, proc=proc)   # the parameter shadows show()
-        except BaseException:
-            shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
-            with contextlib.suppress(TuiError):
-                kill(session, proc=proc)
-            raise
+        # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
+        may_run = True
+        res = _tmux(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
+                     sys.executable, "-I", "-c", EXEC, path,
+                     ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
+        if res.returncode:
+            if _err(res).startswith("duplicate session:"):   # another start took the name: not ours to kill
+                may_run = False
+            raise TuiError(f"tmux: {_err(res)}")
+        for _ in range(round(HANDOVER_TIMEOUT / POLL)):
+            if not os.path.exists(path):
+                break
+            sleep(POLL)
+        if os.path.exists(path):
+            raise TuiError("the session did not start")
+        show(session, template, split=split, beside=beside, proc=proc)
+        may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
     finally:
         if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
+        if may_run:
+            with contextlib.suppress(TuiError):
+                kill(session, proc=proc)
 
 
 def status(session: str, *, proc=subprocess.run):
     """None (no such session), RUNNING, or the dead pane's exit status (signal n: 128+n)."""
-    res = _tmux(["display-message", "-p", "-t", f"={_name(session)}:", STATUS], proc)
+    res = _tmux(["display-message", "-p", "-t", f"={_name(session)}:",
+                 "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"], proc)
     fields = res.stdout.rstrip("\n").split(" ") if res.returncode == 0 else []
     if len(fields) != 3 or fields[0] not in ("0", "1"):   # tmux (3.7) exits 0 with empty fields for a missing session
         return None
@@ -230,10 +219,11 @@ def main(argv: list[str] | None = None) -> int:
                                  "type into it, read it, show it. The show: --show T, else $TUI_SHOW, else an iTerm2 "
                                  "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    start_p = sub.add_parser("start", help="run a command in a new detached session, then show it")
+    start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
+                             description="session -- cmd [args...]: everything after the first -- is the "
+                                         "command, passed through verbatim.")
     _show_options(start_p)
     start_p.add_argument("session", type=_session_arg)
-    start_p.add_argument("command", nargs=argparse.REMAINDER, help="[--] cmd [args...]")
     p = sub.add_parser("send", help="type text into the session, then Enter")
     p.add_argument("session", type=_session_arg)
     p.add_argument("text")
@@ -243,22 +233,20 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("show", help="show a running session")
     _show_options(p)
     p.add_argument("session", type=_session_arg)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    command = None
+    if argv[:1] == ["start"] and "--" in argv:   # argparse < 3.13 drops a later -- from a nargs list
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
+    elif argv[:1] == ["start"] and not {"-h", "--help"} & set(argv):
+        start_p.error("a command must follow --")
     a = ap.parse_args(argv)
-    if a.cmd == "start":
-        command = a.command
-        if command[:1] and command[0].startswith("-"):   # REMAINDER also took the options after the session
-            if "--" not in command:
-                start_p.error("options after the session need -- before the command")
-            late = argparse.ArgumentParser(prog=start_p.prog, add_help=False)
-            _show_options(late)
-            late.parse_args(command[:command.index("--")], namespace=a)
-            command = command[command.index("--") + 1:]
-        if not command:
-            start_p.error("no command")
+    if a.cmd == "start" and not command:
+        start_p.error("a command must follow --")
     try:
         if a.cmd == "start":
-            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), show=a.show, split=a.split,
-                  beside=a.beside)
+            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), template=a.show,
+                  split=a.split, beside=a.beside)
         elif a.cmd == "send":
             send(a.session, a.text)
         elif a.cmd == "read":
@@ -316,7 +304,8 @@ def _anchor(beside: str | None, proc) -> tuple[str, list[str]]:
     if beside is None:
         beside = own_session(proc=proc)
     if beside is not None:
-        out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", CLIENTS], proc).stdout
+        out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", "#{client_activity} #{client_tty}"],
+                       proc).stdout
         clients = [(int(at), tty) for at, _, tty in (line.partition(" ") for line in out.splitlines())
                    if at.isdigit() and tty]
         ttys = [tty for _, tty in sorted(clients, key=lambda c: c[0], reverse=True)]
@@ -371,14 +360,6 @@ def _tmux(args: list[str], proc) -> subprocess.CompletedProcess:
 
 def _err(res: subprocess.CompletedProcess) -> str:
     return (res.stderr or "").strip()
-
-
-def _handed_over(path: str, sleep) -> bool:
-    for _ in range(round(HANDOVER_TIMEOUT / POLL)):
-        if not os.path.exists(path):
-            return True
-        sleep(POLL)
-    return not os.path.exists(path)
 
 
 if __name__ == "__main__":
