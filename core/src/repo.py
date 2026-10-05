@@ -218,9 +218,9 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
             opts, start = ["--no-track", "-b", branch], f"origin/{default}"
         if add:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
-            git(run, clone, "worktree", "add", *opts, wt, start)
+            git(run, clone, "worktree", "add", *opts, wt, start, timeout=LONG)
         else:
-            git(run, wt, "checkout", *opts, start)
+            git(run, wt, "checkout", *opts, start, timeout=LONG)
     commit = git(run, wt, "rev-parse", "HEAD").strip()
     if not SHA.fullmatch(commit):
         raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")

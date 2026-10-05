@@ -24,14 +24,15 @@ def fail(stderr):
 
 
 class Fake:
-    """A `run` that answers by argv prefix (a list answer gives its items in turn) and records every call;
-    `gh repo clone` makes the checkout's .git."""
+    """A `run` that answers by argv prefix (a list answer gives its items in turn) and records every call and its
+    timeout; `gh repo clone` makes the checkout's .git."""
 
     def __init__(self, answers):
-        self.answers, self.calls = answers, []
+        self.answers, self.calls, self.timeouts = answers, [], []
 
     def __call__(self, argv, timeout):
         self.calls.append(argv)
+        self.timeouts.append(timeout)
         if argv[:3] == ["gh", "repo", "clone"]:
             os.makedirs(os.path.join(argv[4], ".git"))
         for prefix, res in self.answers:
@@ -42,6 +43,9 @@ class Fake:
     def ran(self, *prefix):
         return any(c[:len(prefix)] == list(prefix) for c in self.calls)
 
+    def timeout(self, *prefix):
+        return next(t for c, t in zip(self.calls, self.timeouts) if c[:len(prefix)] == list(prefix))
+
 
 class Real(Fake):
     """Real git, `gh` answered as Fake does; origin's URL, when there is one, reads as URL."""
@@ -50,6 +54,7 @@ class Real(Fake):
         if argv[0] != "git":
             return super().__call__(argv, timeout)
         self.calls.append(argv)
+        self.timeouts.append(timeout)
         res = repo.sh(argv, timeout)
         if argv[-3:] == ["remote", "get-url", "origin"] and res.returncode == 0:
             return ok(URL + "\n")
@@ -128,12 +133,14 @@ class Worktree(Base):
         self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
                       run.calls)
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--no-track", "-b", "TASK-1-x", "origin/trunk"))
+        self.assertEqual(run.timeout("git", "-C", self.wt, "checkout"), repo.LONG)
 
     def test_remote_branch_is_tracked(self):
         (code, _, _), run = self.worktree(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
         self.assertEqual(code, 0)
         self.assertTrue(run.ran("git", "-C", self.wt, "ls-remote", "--heads", "origin", "refs/heads/TASK-1-x"))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--track", "-b", "TASK-1-x", "origin/TASK-1-x"))
+        self.assertEqual(run.timeout("git", "-C", self.wt, "checkout"), repo.LONG)
 
     def test_default_branch_is_invalid(self):
         (code, _, err), run = self.worktree(info(default="main"), branch="main")
@@ -359,7 +366,7 @@ class Local(unittest.TestCase):
                 wt = os.path.join(base, "o", "n")
                 code, r, run = self.worktree(branch, base=base)
                 self.assertEqual((code, r["commit"], r["worktree"]), (0, commit, wt))
-                self.assertTrue(run.ran("git", "-C", self.clone, "worktree", "add"))
+                self.assertEqual(run.timeout("git", "-C", self.clone, "worktree", "add"), repo.LONG)
                 self.assertEqual((git("-C", wt, "branch", "--show-current"), upstream(wt)), (branch, tracks))
 
     def test_reuse_fetches_only(self):
