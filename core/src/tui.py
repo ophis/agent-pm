@@ -17,8 +17,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from typing import NamedTuple
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
+PANE = re.compile(r"%[0-9]+")
 RUNNING = "running"
 HANDOVER_TIMEOUT = 10
 POLL = 0.1   # seconds between checks that the wrapper took the handover file
@@ -27,6 +30,9 @@ SHOW_TIMEOUT = 30
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
+CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
+PANES = "#{pane_tty} #{pane_id}"
+PGREP = ["pgrep", "-x", "iTerm2"]   # before osascript, whose script needs iTerm2 installed
 # osascript's argv: split, anchor kind (id: iTerm2 unique ids; tty: client ttys), tmux path, session, anchor values.
 # They stay arguments, never script text.
 APPLESCRIPT = """on run argv
@@ -73,6 +79,16 @@ os.execve(h['argv'][0], h['argv'], h['env'])"""
 
 class TuiError(Exception):
     pass
+
+
+class Anchor(NamedTuple):
+    """The pane a show goes beside. iterm: the iTerm2 panes that may show it, ("tty", client ttys, most recently active
+    first) or ("id", [unique id]); None when it is a tmux pane showing a nested client. pane, socket: the tmux pane split
+    when no iTerm2 pane shows it, and its server (None for an "id" anchor). session: the tmux session it was found by."""
+    iterm: tuple[str, list[str]] | None
+    pane: str | None = None
+    socket: str | None = None
+    session: str | None = None
 
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], template: str | None = None,
@@ -154,11 +170,13 @@ def kill(session: str, *, proc=subprocess.run) -> None:
 
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
-    """Type text into the session's pane, then press Enter."""
+    """Paste text into the session's pane as a bracketed paste, then press Enter."""
     target = f"={_name(session)}:"
-    if text.endswith(";"):   # tmux takes an argument ending in ';' for a command separator, and '\;' for ';'
-        text = text[:-1] + "\\;"
-    _tmux_ok(["send-keys", "-t", target, "-l", "--", text], proc)
+    buffer = f"tui-{session}-{uuid.uuid4().hex}"
+    # load-buffer from stdin keeps the text exact: send-keys -l lost the head of long multi-line text, and set-buffer
+    # takes a trailing ';' for a command separator
+    _tmux_ok(["load-buffer", "-b", buffer, "-"], proc, text)
+    _tmux_ok(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target], proc)
     sleep(PAUSE)
     _tmux_ok(["send-keys", "-t", target, "Enter"], proc)
 
@@ -178,12 +196,12 @@ def read(session: str, lines: int | None = None, *, proc=subprocess.run) -> str:
 
 def show(session: str, template: str | None = None, *, split: str = "right", beside: str | None = None,
          proc=subprocess.run) -> str | None:
-    """Print how to attach, then run the show: template, else $TUI_SHOW, else the iTerm2 split; "" runs nothing.
-    A failure is printed and returned, never raised; only the iTerm2 split raises TuiError, for a bad split or beside."""
+    """Print how to attach, then run the show: template, else $TUI_SHOW, else open_pane; "" runs nothing.
+    A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split or beside."""
     print(f"tui: session {session}: tmux attach -t '={session}'", file=sys.stderr)
     template = _template(template)
     if template is None:
-        why = iterm(session, split=split, beside=beside, proc=proc)
+        why = open_pane(session, split=split, beside=beside, proc=proc)
     else:
         why = _run(session, template, proc) if template else None
     if why:
@@ -191,19 +209,46 @@ def show(session: str, template: str | None = None, *, split: str = "right", bes
     return why
 
 
-def iterm(session: str, *, split: str = "right", beside: str | None = None, proc=subprocess.run) -> str | None:
-    """Split an iTerm2 pane right or below, attached to the session: the pane showing tmux session `beside`, else
-    the caller's (inside tmux: the one showing its own session; outside: $ITERM_SESSION_ID's). None or the failure."""
+def open_pane(session: str, *, split: str = "right", beside: str | None = None, proc=subprocess.run) -> str | None:
+    """Open a pane attached to the session, split right or below the anchor (anchor()): an iTerm2 split when an iTerm2
+    pane shows the anchor, else a tmux split of its tmux pane. None or the failure; with no pane to split, the failure
+    names the attach command."""
     _layout(split, beside)
     tmux = shutil.which("tmux")
     if tmux is None:
         return "tmux not found"
+    tmux = os.path.abspath(tmux)
+    watch = f"; watch it with tmux attach -t '={session}'"
     try:
-        kind, anchors = _anchor(beside, proc)
+        a = anchor(beside, proc=proc)
+    except TuiError as e:
+        return f"{e}{watch}"
+    why = _iterm(session, split, tmux, a.iterm, proc) if a.iterm else None
+    if a.iterm and why is None:
+        return None
+    if a.pane is None:
+        return f"{why}{watch}"
+    command = ["env", "-u", "TMUX", tmux, "-S", a.socket, "attach", "-t", f"={session}"]   # argv: as a sh -c string it died at once (tmux 3.7)
+    for arg in command:
+        if "#" in arg or arg.endswith(";"):
+            return f"tmux would misread {arg!r}{watch}"
+    try:
+        res = _tmux(["split-window", "-h" if split == "right" else "-v", "-t", a.pane, *command], proc)
     except TuiError as e:
         return str(e)
+    return f"tmux: {_err(res)}" if res.returncode else None
+
+
+def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], proc) -> str | None:
     try:
-        res = proc(["osascript", "-e", APPLESCRIPT, split, kind, os.path.abspath(tmux), session, *anchors],
+        running = proc(PGREP, capture_output=True, text=True, stdin=subprocess.DEVNULL).returncode == 0
+    except OSError:
+        running = False
+    if not running:
+        return "iTerm2 is not running"
+    kind, anchors = iterm
+    try:
+        res = proc(["osascript", "-e", APPLESCRIPT, split, kind, tmux, session, *anchors],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=SHOW_TIMEOUT)
     except subprocess.TimeoutExpired:
         return f"osascript timed out after {SHOW_TIMEOUT} s"
@@ -217,7 +262,7 @@ def iterm(session: str, *, split: str = "right", beside: str | None = None, proc
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tui.py", description="Host a command in a detached tmux session: start it, "
                                  "type into it, read it, show it. The show: --show T, else $TUI_SHOW, else an iTerm2 "
-                                 "split; T may use {{session}}; '' prints only the attach command.")
+                                 "split, else a tmux split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
                              description="session -- cmd [args...]: everything after the first -- is the "
@@ -291,7 +336,7 @@ def own_session(*, proc=subprocess.run) -> str | None:
     if not os.environ.get("TMUX"):
         return None
     pane = os.environ.get("TMUX_PANE", "")
-    if not re.fullmatch(r"%[0-9]+", pane):
+    if not PANE.fullmatch(pane):
         raise TuiError(f"bad $TMUX_PANE {pane!r}")
     name = _tmux_ok(["display-message", "-p", "-t", pane, "#{session_name}"], proc).stdout.strip()
     if not NAME.fullmatch(name):
@@ -299,30 +344,43 @@ def own_session(*, proc=subprocess.run) -> str | None:
     return name
 
 
-def _anchor(beside: str | None, proc) -> tuple[str, list[str]]:
-    """("tty", the ttys of the clients showing a tmux session, most recently active first), or ("id", [unique id])."""
-    if beside is None:
-        beside = own_session(proc=proc)
-    if beside is not None:
-        out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", "#{client_activity} #{client_tty}"],
-                       proc).stdout
-        clients = [(int(at), tty) for at, _, tty in (line.partition(" ") for line in out.splitlines())
-                   if at.isdigit() and tty]
-        ttys = [tty for _, tty in sorted(clients, key=lambda c: c[0], reverse=True)]
-        if not ttys:
-            raise TuiError(f"no terminal shows tmux session {beside}")
-        return "tty", ttys
+def anchor(beside: str | None = None, *, proc=subprocess.run) -> Anchor:
+    """The pane a show goes beside: tmux session `beside`'s (a client's, the most recently active; a nested client's
+    host pane), else the caller's own ($TMUX_PANE) when a terminal shows its session, else $ITERM_SESSION_ID's iTerm2
+    pane (outside tmux only with $TERM_PROGRAM iTerm.app: a leftover variable names another pane). Raises TuiError when
+    there is none."""
+    own = beside is None
+    session = own_session(proc=proc) if own else beside
+    why = "not in tmux"
+    if session is not None:
+        out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
+        clients = sorted((c for c in (line.split(" ", 3) for line in out.splitlines())
+                          if len(c) == 4 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3]),
+                         key=lambda c: int(c[0]), reverse=True)
+        if clients:
+            _, tty, pane, socket = clients[0]
+            if own:
+                pane = os.environ["TMUX_PANE"]
+            else:
+                hosts = dict(line.split(" ", 1) for line in
+                             _tmux_ok(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines() if " " in line)
+                if PANE.fullmatch(hosts.get(tty, "")):
+                    return Anchor(None, hosts[tty], socket, session)
+            return Anchor(("tty", [c[1] for c in clients]), pane, socket, session)
+        why = f"no terminal shows tmux session {session}"
+        if not own:
+            raise TuiError(why)
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
-    if not unique:
-        raise TuiError("no anchor pane: not in tmux or iTerm2 ($ITERM_SESSION_ID)")
-    return "id", [unique]
+    if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
+        raise TuiError(f"no anchor pane: {why}, no iTerm2 pane ($ITERM_SESSION_ID)")
+    return Anchor(("id", [unique]))
 
 
 def _show_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--show", metavar="T", help="the show command; overrides $TUI_SHOW")
-    p.add_argument("--split", choices=SPLITS, default="right", help="the iTerm2 split's side (default: right)")
+    p.add_argument("--split", choices=SPLITS, default="right", help="the split's side (default: right)")
     p.add_argument("--beside", metavar="S", type=_session_arg,
-                   help="split the iTerm2 pane showing tmux session S (default: the current pane)")
+                   help="split the pane showing tmux session S (default: the current pane)")
 
 
 def _session_arg(value: str) -> str:
@@ -338,8 +396,8 @@ def _lines_arg(value: str) -> int:
     return int(value)
 
 
-def _tmux_ok(args: list[str], proc) -> subprocess.CompletedProcess:
-    res = _tmux(args, proc)
+def _tmux_ok(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
+    res = _tmux(args, proc, stdin)
     if res.returncode:
         raise TuiError(f"tmux: {_err(res)}")
     return res
@@ -351,8 +409,10 @@ def _name(session: str) -> str:
     return session
 
 
-def _tmux(args: list[str], proc) -> subprocess.CompletedProcess:
+def _tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
     try:
+        if stdin is not None:
+            return proc(["tmux", *args], capture_output=True, text=True, input=stdin)
         return proc(["tmux", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
         raise TuiError(f"tmux: {e}") from e

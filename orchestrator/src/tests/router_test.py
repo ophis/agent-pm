@@ -1279,7 +1279,7 @@ class Tick(Base):
 class TuiTick(Base):
     """router.py --tui: attended.layout (patched) before the tick; the tick's run.py launch gains --runner=tui."""
     def tui_tick(self, fake, *argv, layout=None, **kw):
-        place = mock.Mock(side_effect=layout, return_value=(drive.Layout(), False))
+        place = mock.Mock(side_effect=layout, return_value=drive.Layout())
         with mock.patch.object(attended, "layout", place):
             rc = self.tick(fake, *argv, **kw)
         self.layout = place.call_args_list

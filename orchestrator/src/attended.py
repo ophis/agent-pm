@@ -23,8 +23,9 @@ class Bad(Exception):
     """No usable place for the TUI pane; the message is for the user."""
 
 
-def layout(split, beside, *, proc=subprocess.run, isatty=os.isatty):
-    """(drive.Layout, attach): attach is True when the outer must attach this terminal to the driver session."""
+def layout(split, beside, *, proc=subprocess.run):
+    """The drive.Layout for the TUI pane: beside the pane tui.anchor finds (session `beside`'s, else the caller's tmux
+    session's when a terminal shows it, else $ITERM_SESSION_ID's iTerm2 pane)."""
     if split is not None and split not in tui.SPLITS:
         raise Bad(f"split must be one of {', '.join(tui.SPLITS)}")
     split = split or drive.Layout.split
@@ -33,15 +34,12 @@ def layout(split, beside, *, proc=subprocess.run, isatty=os.isatty):
             raise Bad("bad tmux session name")
         if tui.status(beside, proc=proc) is None:
             raise Bad(f"no tmux session {beside}")
-        return drive.Layout(split, beside), False
-    if os.environ.get("TMUX"):
-        try:
-            return drive.Layout(split, tui.own_session(proc=proc)), False
-        except tui.TuiError as e:
-            raise Bad(one_line(e)) from e
-    if isatty(0):
-        return drive.Layout(split, None), True
-    raise Bad("no pane to show the TUI beside: run from tmux or a terminal, or pass --beside SESSION")
+    try:
+        found = tui.anchor(beside, proc=proc)
+    except tui.TuiError as e:
+        hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
+        raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
+    return drive.Layout(split, found.session)
 
 
 def _path(ident, logs):

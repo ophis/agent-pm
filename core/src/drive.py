@@ -355,7 +355,7 @@ def tui_session(role: str, task: str, sid: str) -> str:
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default iTerm2 show: the split's side (tui.SPLITS) and the tmux session whose pane it splits."""
+    """The tui runner's default show, a split: the split's side (tui.SPLITS) and the tmux session whose pane it splits."""
     split: str = "right"
     beside: str | None = None
 
@@ -605,8 +605,8 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
-    ap.add_argument("--split", choices=tui.SPLITS, help=f"the tui runner's iTerm2 split (default: {Layout.split})")
-    ap.add_argument("--beside", metavar="SESSION", help="split the iTerm2 pane showing this tmux session")
+    ap.add_argument("--split", choices=tui.SPLITS, help=f"the tui runner's split (default: {Layout.split})")
+    ap.add_argument("--beside", metavar="SESSION", help="split the pane showing this tmux session")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.input == "-":

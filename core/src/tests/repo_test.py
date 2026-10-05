@@ -321,6 +321,21 @@ class Retry(unittest.TestCase):
         self.assertEqual(len(run.calls), 5)
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.5, 1, 2, 4])
 
+    def test_a_long_path_keeps_the_subcommand_whole(self):
+        run = Fake([(["git"], [fail("fatal: boom")])])
+        with self.assertRaises(RuntimeError) as cm:
+            repo.git(run, "/w", "--git-dir=" + "/private/var/folders/xy" * 10, "worktree", "prune")
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("git --git-dir=/private/var/folders/xy"), msg)
+        self.assertTrue(msg.endswith("worktree prune: fatal: boom"), msg)
+        self.assertLess(len(msg), 120)
+
+    def test_the_command_text_stays_bounded(self):
+        run = Fake([(["git"], [fail("fatal: boom")])])
+        with self.assertRaises(RuntimeError) as cm:
+            repo.git(run, "/w", *["/a/long/path/argument" * 3] * 50)
+        self.assertLess(len(str(cm.exception)), 250)
+
     def test_other_failures_are_not_retried(self):
         err, run, sleep = self.git(fail("fatal: not a git repository"), ok())
         self.assertIsInstance(err, RuntimeError)
