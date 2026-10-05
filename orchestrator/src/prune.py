@@ -7,7 +7,9 @@ move into either, from its history; unknown means skip) is at least 24 hours ago
 Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>) and work/<ID>/publish, each a
 real directory inside its own folder (not a symlink); anything else is skipped. A clone (.git a directory) is deleted
 with any unpushed work (shutil.rmtree); a worktree (.git a file) goes to repo.remove, and a dirty one is skipped every
-tick until cleaned by hand. Remote branches and work/<ID>/ itself are never touched.
+tick until cleaned by hand. A worktree whose clone is in a dir an agent run can write (work/, the temp dirs) is deleted
+without running git: that clone's config could run commands as the harness. Remote branches and work/<ID>/ itself are
+never touched.
 
 TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its checkouts go, since a
 left-open claude may work in one.
@@ -22,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,10 +52,13 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, remove=repo.remove):
-        """roles: {Linear user id: role} as linear.role_ids returns."""
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, remove=repo.remove,
+                 untrusted=None):
+        """roles: {Linear user id: role} as linear.role_ids returns. untrusted: dirs an agent run can write, whose
+        clones' worktrees are deleted without running git."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.logs, self.proc, self.remove = team, roles, logs, proc, remove
+        self.untrusted = (work, tempfile.gettempdir(), "/tmp") if untrusted is None else untrusted
         self.errors = 0
 
     def say(self, msg):
@@ -77,7 +83,8 @@ class Pruner:
                     found.append((folder, n))
                     continue
                 try:
-                    found += [(folder, n, m) for m in sorted(os.listdir(entry))]
+                    found += [(folder, n, m) for m in sorted(os.listdir(entry))
+                              if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))]
                 except OSError:
                     pass
         if os.path.lexists(os.path.join(self.work, ident, PUBLISH)):
@@ -119,7 +126,10 @@ class Pruner:
             self.say(f"prune-plan {key}: remove the worktree")
             return
         try:
-            res = self.remove(path, f"{ident}-")
+            res = self.remove(path, f"{ident}-", untrusted=self.untrusted)
+        except repo.Untrusted:
+            self.delete_untrusted(key, path)
+            return
         except repo.Invalid as e:
             raise Skip(one_line(str(e)))
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
@@ -132,6 +142,14 @@ class Pruner:
             self.say(f"prune-removed {key}: worktree; branch {branch} kept: {kept}")
         else:
             self.say(f"prune-removed {key}: worktree and branch {branch}")
+
+    def delete_untrusted(self, key, path):
+        try:
+            shutil.rmtree(path)
+        except OSError as e:
+            self.error(key, f"rmtree: {one_line(e)}")
+            return
+        self.say(f"prune-removed {key}: untrusted worktree, deleted without git")
 
     def rmdir_owners(self, ident, owners):
         for owner in sorted(owners):

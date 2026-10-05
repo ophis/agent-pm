@@ -7,10 +7,12 @@ repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", 
                                            `others` being PR comments and reviews by the user (config.toml's `users`,
                                            else the gh login) and by anyone else since the latest plan doc commit
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its
-origin. A local clone gets a git worktree after `fetch origin`, which moves only `origin/*`; any other REPO a blobless
-clone with core.symlinks=false. B: the local B, else tracking origin/B, else new from origin/<default>.
+origin. A local clone gets a git worktree after a fetch that moves only `origin/*`, with core.symlinks=false for that
+worktree (this turns on the clone's extensions.worktreeConfig); any other REPO a blobless clone with
+core.symlinks=false. B: the local B, else tracking origin/B, else new from origin/<default>.
 Git lock failures (runs sharing a clone) are retried.
-remove(wt, prefix), for prune: never forced; deletes only a pushed, non-default branch starting with `prefix`. A clone
+remove(wt, prefix, untrusted), for prune: runs no git when wt's clone is under an `untrusted` dir; never forced;
+refuses a detached HEAD not in origin; deletes only a pushed, non-default branch starting with `prefix`. A clone
 without origin/HEAD keeps branches not in origin/<B> (`git remote set-head origin -a`).
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
@@ -33,7 +35,8 @@ NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
 SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
 SHA = re.compile(r"[0-9a-f]{40}")
-URL = re.compile(r"(?:https://|ssh://git@|git@)([^/:\s]+)[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
+URL = re.compile(r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
+FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SHORT, LONG = 60, 600
@@ -44,6 +47,10 @@ Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
 class Invalid(Exception):
+    pass
+
+
+class Untrusted(Exception):
     pass
 
 
@@ -78,9 +85,12 @@ class Repo:
 
 
 def url_slug(url: str) -> str | None:
-    """host/owner/name of a clone URL as written, or None."""
+    """host/owner/name of a clone URL as written, or None; an ssh port is no part of the web host."""
     m = URL.fullmatch(url.strip())
-    return "/".join(m.groups()) if m else None
+    if not m:
+        return None
+    scheme, host, port, owner, name = m.groups()
+    return f"{host}:{port}/{owner}/{name}" if port and scheme in ("http", "https") else f"{host}/{owner}/{name}"
 
 
 def origin(url: str) -> str | None:
@@ -176,14 +186,16 @@ def check_branch(branch: str) -> None:
         raise Invalid(f"unsafe branch name {branch[:80]!r}")
 
 
-def check_free(run: Runner, at: str, branch: str, wt: str) -> None:
-    """Invalid if `branch` is checked out in a worktree of `at` other than `wt`."""
-    path = None
+def registered(run: Runner, at: str) -> dict[str, str | None]:
+    """{realpath: branch or None} of the worktrees registered in `at`'s clone, existing or not."""
+    found, path = {}, None
     for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
-            path = line[len("worktree "):]
-        elif line == f"branch refs/heads/{branch}" and path and os.path.realpath(path) != os.path.realpath(wt):
-            raise Invalid(f"{branch} is checked out in {path}")
+            path = os.path.realpath(line[len("worktree "):])
+            found[path] = None
+        elif line.startswith("branch refs/heads/") and path:
+            found[path] = line[len("branch refs/heads/"):]
+    return found
 
 
 def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
@@ -197,15 +209,19 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
     if branch == default:
         raise Invalid(f"{branch} is the default branch; build on another")
     add = clone is not None and not exists
+    # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move local branches.
     if exists:
-        git(run, wt, "fetch", "origin", timeout=LONG)
+        git(run, wt, *FETCH, timeout=LONG)
     elif add:
-        git(run, clone, "fetch", "origin", timeout=LONG)
+        git(run, clone, *FETCH, timeout=LONG)
     else:
         clone_repo(repo, wt, run=run)
     at = clone if add else wt
     if add or git(run, wt, "branch", "--show-current").strip() != branch:
-        check_free(run, at, branch, wt)
+        trees, mine = registered(run, at), os.path.realpath(wt)
+        busy = [p for p, b in trees.items() if b == branch and p != mine]
+        if busy:
+            raise Invalid(f"{branch} is checked out in {busy[0]}")
         if git(run, at, "branch", "--list", branch).strip():
             opts, start = [], branch
         elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
@@ -214,7 +230,14 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
             opts, start = ["--no-track", "-b", branch], f"origin/{default}"
         if add:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
-            git(run, clone, "worktree", "add", *opts, wt, start, timeout=LONG)
+            # Untrusted content gets no symlinks, as in a remote clone; per worktree, so the clone's own checkout
+            # keeps its config. --force re-adds our own path when it was deleted by hand but is still registered.
+            if run(["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT).stdout.strip() != "true":
+                git(run, clone, "config", "extensions.worktreeConfig", "true")
+            force = ["--force"] if mine in trees else []
+            git(run, clone, "worktree", "add", "--no-checkout", *force, *opts, wt, start, timeout=LONG)
+            git(run, wt, "config", "--worktree", "core.symlinks", "false")
+            git(run, wt, "reset", "-q", "--hard", timeout=LONG)
         else:
             git(run, wt, "checkout", *opts, start, timeout=LONG)
     commit = git(run, wt, "rev-parse", "HEAD").strip()
@@ -224,26 +247,38 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh) -> dict:
             "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
 
 
-def clone_of(run: Runner, wt: str) -> str:
-    """The clone whose registered worktree `wt` is; Invalid unless the two point at each other."""
+def first_line(path: str) -> str:
+    if not os.path.isfile(path):   # a FIFO would block open()
+        raise Invalid(f"{path} is no file")
+    try:
+        with open(path, errors="replace") as f:
+            return f.read(4096).split("\n", 1)[0].strip()
+    except OSError as e:
+        raise Invalid(f"{path}: {e}") from None
+
+
+def clone_of(wt: str, untrusted: tuple[str, ...] = ()) -> str:
+    """The clone whose registered worktree `wt` is, read from files: a clone the agent run could write may configure
+    filters, so no git runs before it is known. Invalid unless the two point at each other; Untrusted if the clone is
+    under an `untrusted` dir."""
     dotgit = os.path.join(wt, ".git")
     if os.path.islink(wt) or not os.path.isdir(wt) or os.path.islink(dotgit) or not os.path.isfile(dotgit):
         raise Invalid(f"{wt} is not a worktree")
-    res = run(["git", *GUARD, "-C", wt, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], SHORT)
-    dirs = res.stdout.splitlines() if res.returncode == 0 else []
-    if len(dirs) != 2:
-        raise Invalid(f"{wt} is not a worktree: {err_text(res)}")
-    gitdir, common = (os.path.realpath(d) for d in dirs)
-    link, back = os.path.join(gitdir, "gitdir"), None
-    # isfile: a FIFO would block open(). The backlink is relative to gitdir under worktree.useRelativePaths.
-    if (os.path.basename(common) == ".git" and os.path.dirname(gitdir) == os.path.join(common, "worktrees")
-            and os.path.isfile(link)):
-        try:
-            with open(link, errors="replace") as f:
-                back = os.path.realpath(os.path.join(gitdir, f.read(4096).strip()))
-        except (OSError, ValueError):
-            pass
-    if back != os.path.join(os.path.realpath(wt), ".git"):
+    try:
+        line = first_line(dotgit)
+        if not line.startswith("gitdir: "):
+            raise Invalid(f"{wt} is not a worktree")
+        gitdir = os.path.realpath(os.path.join(wt, line[len("gitdir: "):]))
+        common = os.path.realpath(os.path.join(gitdir, first_line(os.path.join(gitdir, "commondir"))))
+        for root in map(os.path.realpath, untrusted):
+            if os.path.commonpath([common, root]) == root:
+                raise Untrusted(f"{wt}: its clone {common} is under {root}")
+        # The backlink is relative to gitdir under worktree.useRelativePaths.
+        back = os.path.realpath(os.path.join(gitdir, first_line(os.path.join(gitdir, "gitdir"))))
+    except ValueError as e:
+        raise Invalid(f"{wt} is not a worktree: {e}") from None
+    if (os.path.basename(common) != ".git" or os.path.dirname(gitdir) != os.path.join(common, "worktrees")
+            or back != os.path.join(os.path.realpath(wt), ".git")):
         raise Invalid(f"{wt} is not a registered worktree of a clone")
     return os.path.dirname(common)
 
@@ -262,17 +297,20 @@ def kept(run: Runner, clone: str, branch: str, prefix: str) -> str | None:
     return "not pushed"
 
 
-def remove(wt: str, prefix: str, *, run: Runner = sh) -> dict:
+def remove(wt: str, prefix: str, *, untrusted: tuple[str, ...] = (), run: Runner = sh) -> dict:
     """Removes worktree `wt`, then its branch unless kept: {"worktree", "branch", "kept"}. Invalid: no registered
-    worktree, or dirty; RuntimeError: any other failure."""
-    clone = clone_of(run, wt)
+    worktree, dirty, or a detached HEAD not in origin; Untrusted: see clone_of; RuntimeError: any other failure."""
+    clone = clone_of(wt, untrusted)
     branch = git(run, wt, "branch", "--show-current", pre=GUARD).strip()
+    if not branch:
+        head = git(run, wt, "rev-parse", "HEAD", pre=GUARD).strip()
+        if not git(run, clone, "for-each-ref", "--count=1", "--contains", head, "refs/remotes/origin", pre=GUARD).strip():
+            raise Invalid(f"{wt}: detached HEAD {head[:12]} is not in origin")
     res = run(["git", *GUARD, "-C", clone, "worktree", "remove", wt], LONG)
     if res.returncode != 0:
         if git(run, wt, "status", "--porcelain", "--ignore-submodules=none", timeout=LONG, pre=GUARD).strip():
             raise Invalid(f"{wt}: {err_text(res)}")
         raise RuntimeError(f"git worktree remove {wt}: {err_text(res)}")
-    git(run, clone, "worktree", "prune", pre=GUARD)
     reason = kept(run, clone, branch, prefix) if branch else None
     if branch and not reason:
         git(run, clone, "branch", "-D", branch, pre=GUARD)

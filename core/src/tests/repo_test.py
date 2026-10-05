@@ -14,6 +14,7 @@ import repo  # noqa: E402
 
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
+FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 
 
 def ok(stdout=""):
@@ -112,6 +113,18 @@ class Parse(unittest.TestCase):
         self.assertEqual(repo.url_slug("git@GitHub.com:O/N.git"), "GitHub.com/O/N")
         self.assertIsNone(repo.url_slug("/tmp/origin.git"))
 
+    def test_more_url_forms(self):
+        for url, want in (("ssh://git@ghe.io:2222/o/n.git", "ghe.io/o/n"), ("ssh://ghe.io/o/n", "ghe.io/o/n"),
+                          ("https://user@github.com/o/n", "github.com/o/n"),
+                          ("https://user:tok@github.com/o/n.git", "github.com/o/n"),
+                          ("http://ghe.io/o/n/", "ghe.io/o/n"), ("https://ghe.io:8443/o/n", "ghe.io:8443/o/n")):
+            with self.subTest(url=url):
+                self.assertEqual(repo.url_slug(url), want)
+                repo.Repo.parse(want)
+        for url in ("ftp://ghe.io/o/n", "https://ghe.io/o", "ssh://git@ghe.io:x/o/n", "https://ghe.io/o/n/extra"):
+            with self.subTest(url=url):
+                self.assertIsNone(repo.url_slug(url))
+
 
 class ErrText(unittest.TestCase):
     def test_trimmed_and_capped(self):
@@ -157,7 +170,7 @@ class Worktree(Base):
     def test_reuse_fetches_and_switches_to_the_local_branch(self):
         (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")))
         self.assertEqual(code, 0)
-        self.assertTrue(run.ran("git", "-C", self.wt, "fetch", "origin"))
+        self.assertTrue(run.ran("git", "-C", self.wt, *FETCH))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "TASK-1-x"))
         self.assertFalse(run.ran("gh", "repo", "clone"))
 
@@ -377,7 +390,7 @@ class Local(Clone):
         new = self.advance()
         code, r, run = self.worktree()
         self.assertEqual((code, r["worktree"]), (0, self.wt))
-        self.assertTrue(run.ran("git", "-C", self.wt, "fetch", "origin"))
+        self.assertTrue(run.ran("git", "-C", self.wt, *FETCH))
         self.assertFalse(any("add" in c or "checkout" in c for c in run.calls))
         self.assertEqual(git("-C", self.clone, "rev-parse", "origin/main"), new)
 
@@ -435,6 +448,45 @@ class Local(Clone):
         self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
 
 
+class LocalSafety(Clone):
+    def worktree(self, branch="TASK-1-x"):
+        run, out, err = Real([info()]), io.StringIO(), io.StringIO()
+        code = repo.main(["worktree", "--dir", self.dir, "--branch", branch, self.clone], run=run, out=out, err=err)
+        return code, err.getvalue()
+
+    def test_a_worktree_gets_no_symlinks_and_the_clone_keeps_its_config(self):
+        os.symlink("/etc/passwd", os.path.join(self.seed, "link"))
+        git("-C", self.seed, "add", "link")
+        git("-C", self.seed, "commit", "-q", "-m", "link")
+        git("-C", self.seed, "push", "-q", "origin", "main")
+        self.assertEqual(self.worktree()[0], 0)
+        link = os.path.join(self.wt, "link")
+        self.assertTrue(os.path.isfile(link) and not os.path.islink(link))
+        self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
+        self.assertEqual(git("-C", self.wt, "config", "--get", "core.symlinks"), "false")
+        self.assertEqual(subprocess.run(["git", "-C", self.clone, "config", "--get", "core.symlinks"]).returncode, 1)
+        self.assertEqual(git("-C", self.clone, "status", "--porcelain"), "")
+
+    def test_a_worktree_deleted_by_hand_is_added_again(self):
+        other = os.path.join(self.tmp, "users-own")
+        git("-C", self.clone, "worktree", "add", "-q", "-b", "mine", other)
+        shutil.rmtree(other)
+        self.assertEqual(self.worktree()[0], 0)
+        shutil.rmtree(self.wt)
+        self.assertEqual(self.worktree(), (0, ""))
+        self.assertEqual(git("-C", self.wt, "branch", "--show-current"), "TASK-1-x")
+        self.assertIn(f"worktree {other}", git("-C", self.clone, "worktree", "list", "--porcelain"))
+
+    def test_a_mirror_refspec_cannot_move_the_clones_branches(self):
+        git("-C", self.clone, "branch", "TASK-9-mine")
+        mine = git("-C", self.clone, "rev-parse", "TASK-9-mine")
+        git("-C", self.seed, "commit", "-q", "--allow-empty", "-m", "theirs")
+        git("-C", self.seed, "push", "-q", "origin", "HEAD:TASK-9-mine")
+        git("-C", self.clone, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
+        self.assertEqual(self.worktree()[0], 0)
+        self.assertEqual(git("-C", self.clone, "rev-parse", "TASK-9-mine"), mine)
+
+
 GUARD = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C"]
 
 
@@ -449,11 +501,11 @@ class Remove(Clone):
         if push:
             git("-C", wt, "push", "-q", "origin", "HEAD")
 
-    def remove(self, wt, prefix="TASK-1-"):
+    def remove(self, wt, prefix="TASK-1-", **kw):
         run = Real([])
         try:
-            r = repo.remove(wt, prefix, run=run)
-        except (repo.Invalid, RuntimeError) as e:
+            r = repo.remove(wt, prefix, run=run, **kw)
+        except (repo.Invalid, repo.Untrusted, RuntimeError) as e:
             r = e
         for c in run.calls:
             self.assertEqual(c[:6], GUARD, c)
@@ -556,7 +608,7 @@ class Remove(Clone):
             with self.subTest(path=path):
                 r, run = self.remove(path)
                 self.assertIsInstance(r, repo.Invalid)
-                self.assertTrue(all("rev-parse" in c for c in run.calls))
+                self.assertEqual(run.calls, [])
         self.assertEqual(self.state(), before)
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
@@ -581,7 +633,7 @@ class Remove(Clone):
                     f.write(f"gitdir: {gitdir}\n")
                 r, run = self.remove(wt)
                 self.assertIsInstance(r, repo.Invalid)
-                self.assertEqual([c[7] for c in run.calls], ["rev-parse"])
+                self.assertEqual(run.calls, [])
                 self.assertTrue(os.path.isdir(wt))
         self.assertEqual((self.state(), self.state(agent)), before)
         self.assertTrue(os.path.isdir(real))
@@ -612,7 +664,7 @@ class Remove(Clone):
         self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-remote", "kept": "the default branch"})
         self.assertIn("TASK-1-remote", self.branches())
 
-    def test_a_detached_worktree_deletes_no_branch(self):
+    def test_a_detached_worktree_in_origin_deletes_no_branch(self):
         wt = self.add(None)
         before = self.branches()
         r, run = self.remove(wt)
@@ -621,11 +673,52 @@ class Remove(Clone):
         self.assertEqual(self.branches(), before)
         self.assertFalse(any("-D" in c for c in run.calls))
 
-    def test_stale_worktree_entries_are_pruned(self):
+    def test_a_detached_worktree_with_unpushed_commits_is_refused_and_kept(self):
+        wt = self.add(None)
+        self.commit(wt)
+        before = self.state()
+        r, _ = self.remove(wt)
+        self.assertIsInstance(r, repo.Invalid)
+        self.assertIn("detached HEAD", str(r))
+        self.assertEqual(self.state(), before)
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
+
+    def test_other_worktrees_missing_dirs_stay_registered(self):
         gone, wt = self.add("TASK-2-gone"), self.add()
         shutil.rmtree(gone)
         self.remove(wt)
-        self.assertNotIn(gone, git("-C", self.clone, "worktree", "list", "--porcelain"))
+        self.assertIn(f"worktree {gone}", git("-C", self.clone, "worktree", "list", "--porcelain"))
+
+    def evil(self, name):
+        """A worktree of an agent-built clone whose clean filter writes a marker, with a stat-dirty file."""
+        evil, marker = os.path.join(self.tmp, "agent", "evil"), os.path.join(self.tmp, f"{name}.marker")
+        if not os.path.isdir(evil):
+            git("init", "-q", "-b", "main", evil)
+            for f, text in ((".gitattributes", "* filter=x\n"), ("f", "one\n")):
+                with open(os.path.join(evil, f), "w") as fh:
+                    fh.write(text)
+            git("-C", evil, "add", "-A")
+            git("-C", evil, "commit", "-q", "-m", "evil")
+        git("-C", evil, "config", "filter.x.clean", f"touch {marker}; cat")
+        wt = os.path.join(self.tmp, "w", name)
+        git("-C", evil, "worktree", "add", "-q", "-b", f"TASK-1-{name}", wt)
+        with open(os.path.join(wt, "f"), "a") as fh:
+            fh.write("two\n")
+        return wt, marker
+
+    def test_an_agent_built_clone_can_run_a_filter(self):
+        wt, marker = self.evil("control")
+        self.assertFalse(os.path.exists(marker))
+        self.remove(wt)
+        self.assertTrue(os.path.exists(marker))
+
+    def test_a_worktree_of_a_clone_in_an_untrusted_dir_runs_no_git(self):
+        wt, marker = self.evil("bad")
+        r, run = self.remove(wt, untrusted=(os.path.join(self.tmp, "agent"),))
+        self.assertIsInstance(r, repo.Untrusted)
+        self.assertEqual(run.calls, [])
+        self.assertFalse(os.path.exists(marker))
+        self.assertTrue(os.path.isdir(wt))
 
 
 class Status(Base):
