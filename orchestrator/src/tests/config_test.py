@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
 import config  # noqa: E402
+import repo  # noqa: E402
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
 
@@ -333,6 +334,7 @@ class RealConfig(unittest.TestCase):
             "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
         self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
+        self.assertEqual(cfg["local_clones"], {})
         self.assertEqual(config.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
         self.assertEqual({t: (x.kind, x.prefix) for t, x in config.TASKS.items()},
@@ -364,6 +366,160 @@ class ProjectRepos(ConfigFile, unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             self.load(HEADER + 'project_repos = "x"\n' + body)
         self.assertTrue(str(cm.exception.code).startswith("orchestrator/config.toml: project_repos"), cm.exception.code)
+
+
+def git(*args):
+    subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+
+
+SLUG = "ophis/agent-pm"
+HTTPS = "https://github.com/ophis/agent-pm.git"
+
+
+class Clones(ConfigFile, unittest.TestCase):
+    """Real git clones (no network) in self.dir, a realpath."""
+    def setUp(self):
+        super().setUp()
+        self.dir = os.path.realpath(self.dir)
+
+    def clone(self, name="clone", origin=HTTPS):
+        path = os.path.join(self.dir, name)
+        git("init", "-q", path)
+        if origin:
+            git("-C", path, "remote", "add", "origin", origin)
+        return path
+
+    def bad(self):
+        """[(name, path, reason)]: what is no local clone of github.com/ophis/agent-pm."""
+        dotgit_file = os.path.join(self.dir, "file")
+        os.makedirs(dotgit_file)
+        with open(os.path.join(dotgit_file, ".git"), "w") as f:
+            f.write("gitdir: /elsewhere\n")
+        linked = os.path.join(self.dir, "linked")
+        os.makedirs(linked)
+        os.symlink(os.path.join(self.clone("real"), ".git"), os.path.join(linked, ".git"))
+        missing = os.path.join(self.dir, "missing")
+        no_origin = self.clone("no-origin", origin=None)
+        gitlab = self.clone("gitlab", "https://gitlab.com/ophis/agent-pm.git")
+        other = self.clone("other", "https://github.com/ophis/other.git")
+        return [
+            ("missing", missing, f"{missing} does not exist"),
+            (".git a file", dotgit_file, f"{dotgit_file} is not a git clone"),
+            (".git a symlink", linked, f"{linked} is not a git clone"),
+            ("no origin", no_origin, f"{no_origin}: no origin URL naming host/owner/name"),
+            ("non-github host", gitlab, "origin is gitlab.com/ophis/agent-pm, not github.com/ophis/agent-pm"),
+            ("other owner/name", other, "origin is github.com/ophis/other, not github.com/ophis/agent-pm"),
+        ]
+
+
+class LocalClones(Clones):
+    def entry(self, key, value):
+        return BASE + f'[local_clones]\n"{key}" = {json.dumps(value)}\n'
+
+    def test_absent_is_empty(self):
+        self.assertEqual(self.load(BASE)["local_clones"], {})
+
+    def test_entries_stored_as_realpaths(self):
+        real = os.path.join(self.dir, "real")
+        os.makedirs(real)
+        os.symlink(real, os.path.join(self.dir, "link"))
+        with mock.patch.dict(os.environ, {"HOME": self.dir}):
+            cfg = self.load(BASE + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
+        self.assertEqual(cfg["local_clones"], {SLUG: real, "ophis/x": real, "ophis/y": self.dir})
+
+    def test_bad_entry_rejected(self):
+        cases = [("agent-pm", "/x"), ("https://github.com/ophis/agent-pm", "/x"), ("ophis/..", "/x"), (SLUG, 42), (SLUG, True),
+                 (SLUG, ["/x"]), (SLUG, ""), (SLUG, "x/y"), (SLUG, "./x"), (SLUG, " /x"), (SLUG, "/x\ny"), (SLUG, "/x\x85y"),
+                 (SLUG, "/x\u2028y"), (SLUG, "/x\u2029y"), (SLUG, "/x\ty"), (SLUG, "/x\x00y")]
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(self.entry(key, value))
+                msg = str(cm.exception.code)
+                self.assertTrue(msg.startswith(f"orchestrator/config.toml: local_clones.{key} "), msg)
+                self.assertIn(repr(value), msg)
+
+    def test_not_a_table_rejected(self):
+        body = BASE[BASE.index("[roles"):]
+        for value in ('"/x"', '["/x"]', "5"):
+            with self.subTest(value):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load(HEADER + f"local_clones = {value}\n" + body)
+                self.assertTrue(str(cm.exception.code).startswith("orchestrator/config.toml: local_clones must be a table"), cm.exception.code)
+
+    def test_keys_equal_ignoring_case_rejected(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.load(BASE + f'[local_clones]\n"{SLUG}" = "/x"\n"Ophis/Agent-PM" = "/y"\n')
+        self.assertEqual(cm.exception.code, f"orchestrator/config.toml: local_clones.{SLUG} and local_clones.Ophis/Agent-PM are the same repo")
+
+    def test_two_keys_one_clone(self):
+        cfg = self.load(BASE + '[local_clones]\n"ophis/a" = "/x"\n"ophis/b" = "/x"\n')
+        self.assertEqual(cfg["local_clones"], {"ophis/a": os.path.realpath("/x"), "ophis/b": os.path.realpath("/x")})
+
+
+class CloneError(Clones):
+    def test_matching_origin(self):
+        for name, origin, slug in (("https", HTTPS, SLUG), ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
+                                   ("bare", "https://github.com/ophis/agent-pm", SLUG), ("case", HTTPS, "OPHIS/Agent-PM"),
+                                   ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG)):
+            with self.subTest(name):
+                self.assertIsNone(config.clone_error(self.clone(name, origin), slug))
+
+    def test_reasons(self):
+        for name, path, reason in self.bad():
+            with self.subTest(name):
+                self.assertEqual(config.clone_error(path, SLUG), reason)
+
+    def test_non_printable_path(self):
+        for path in ("/x\ny", "/x\x85y", "/x\u2028y"):
+            with self.subTest(path=path):
+                self.assertEqual(config.clone_error(path, SLUG), f"{path!r} has a non-printable character")
+
+    def test_run_failures_are_reasons(self):
+        clone = self.clone()
+        for error in (OSError("boom"), subprocess.TimeoutExpired(["git"], 10)):
+            def run(argv, timeout):
+                raise error
+            with self.subTest(type(error).__name__):
+                self.assertEqual(config.clone_error(clone, SLUG, run=run), f"git: {error}")
+
+    def test_git_runs_guarded(self):
+        clone, calls = self.clone(), []
+        def run(argv, timeout):
+            calls.append((argv, timeout))
+            return subprocess.CompletedProcess(argv, 0, HTTPS + "\n", "")
+        self.assertIsNone(config.clone_error(clone, SLUG, run=run))
+        self.assertEqual(calls, [(["git", *repo.GUARD, "-C", clone, "remote", "get-url", "origin"], repo.SHORT)])
+
+
+class LocalClonesRunnable(Clones):
+    def runs(self, key, path):
+        return config.runnable(self.load(PIPELINE + f'[local_clones]\n"{key}" = {json.dumps(path)}\n'))
+
+    def test_matching_origins_pass(self):
+        for name, origin, key in (("https", HTTPS, SLUG), ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
+                                  ("case", HTTPS, "OPHIS/Agent-PM")):
+            with self.subTest(name):
+                self.assertEqual(list(self.runs(key, self.clone(name, origin))), ["researcher", "pm", "engineer"])
+
+    def test_bad_entry_names_its_key(self):
+        for name, path, reason in self.bad():
+            with self.subTest(name):
+                with self.assertRaises(SystemExit) as cm:
+                    self.runs(SLUG, path)
+                self.assertEqual(cm.exception.code, f"orchestrator/config.toml: local_clones.{SLUG}: {reason}")
+
+    def test_no_entries_runs_no_git(self):
+        with mock.patch.object(config, "clone_error") as clone_error:
+            self.assertEqual(list(config.runnable(self.load(PIPELINE))), ["researcher", "pm", "engineer"])
+        clone_error.assert_not_called()
+
+
+class Writable(unittest.TestCase):
+    def test_work_then_the_temp_dirs(self):
+        with mock.patch.object(repo, "temp_dirs", return_value=("/t1", "/t2")):
+            self.assertEqual(config.writable("/w"), ("/w", "/t1", "/t2"))
+            self.assertEqual(config.writable(), (config.WORK, "/t1", "/t2"))
 
 
 class RepoSlug(unittest.TestCase):
