@@ -57,6 +57,9 @@ class Real(Fake):
             return super().__call__(argv, timeout)
         self.calls.append(argv)
         self.timeouts.append(timeout)
+        for prefix, res in self.answers:
+            if callable(prefix) and prefix(argv):
+                return res
         res = repo.sh(argv, timeout)
         if argv[-3:] == ["remote", "get-url", "origin"] and res.returncode == 0:
             return ok(URL + "\n")
@@ -127,10 +130,33 @@ class Parse(unittest.TestCase):
 
 
 class ErrText(unittest.TestCase):
+    def test_userinfo_is_redacted(self):
+        res = fail("fatal: could not read Password for 'https://SECRETTOK@github.com': no\n"
+                   "fatal: unable to access 'https://u:SECRET2@ghe.io/o/n/'")
+        text = repo.err_text(res)
+        self.assertNotIn("SECRET", text)
+        self.assertIn("'https://***@github.com'", text)
+        self.assertIn("'https://***@ghe.io/o/n/'", text)
+
     def test_trimmed_and_capped(self):
         for stderr, want in ((None, ""), ("", ""), ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"), ("x" * 300, "x" * 200)):
             with self.subTest(stderr=stderr):
                 self.assertEqual(repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want)
+
+
+class TempDirs(unittest.TestCase):
+    def test_every_temp_dir_counts(self):
+        getconf = subprocess.CompletedProcess([], 0, "/x/d/\n", "")
+        with unittest.mock.patch.dict(os.environ, {"TMPDIR": "/x/e/"}), \
+                unittest.mock.patch("tempfile.gettempdir", return_value="/x/t"), \
+                unittest.mock.patch("subprocess.run", return_value=getconf) as sub:
+            dirs = repo.temp_dirs()
+        self.assertEqual(sub.call_args.args[0], ["getconf", "DARWIN_USER_TEMP_DIR"])
+        self.assertEqual(dirs, tuple(dict.fromkeys(os.path.realpath(d) for d in ("/x/e", "/x/t", "/tmp", "/var/tmp", "/x/d"))))
+
+    def test_getconf_failing_is_ignored(self):
+        with unittest.mock.patch("subprocess.run", side_effect=OSError("no getconf")):
+            self.assertIn(os.path.realpath("/var/tmp"), repo.temp_dirs())
 
 
 class Worktree(Base):
@@ -210,6 +236,13 @@ class Worktree(Base):
         self.assertEqual(code, 2)
         self.assertIn("HTTP 404", err)
         self.assertFalse(run.ran("gh", "repo", "clone"))
+
+    def test_a_token_in_git_output_is_redacted(self):
+        code, _, err = self.main(["worktree", "o/n", "--branch=TASK-1-x", "--dir", self.dir],
+                                 Fake([self.existing(), info(), (lambda a: "fetch" in a, fail("fatal: could not read Password for 'https://TOK@github.com'"))]))
+        self.assertEqual(code, 1)
+        self.assertNotIn("TOK", err)
+        self.assertIn("https://***@github.com", err)
 
     def test_network_failure_exits_1(self):
         (code, _, err), _ = self.worktree(info(), (["gh", "repo", "clone"], fail("connection reset")))
@@ -326,7 +359,8 @@ class Clone(unittest.TestCase):
 class Local(Clone):
     def worktree(self, branch="TASK-1-x", spec=None, base=None):
         run, out, err = Real([info()]), io.StringIO(), io.StringIO()
-        code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err)
+        code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err,
+                         temp=())
         return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
 
     def test_a_path_or_a_tilde_path(self):
@@ -424,7 +458,7 @@ class Local(Clone):
 
         def go(branch):
             try:
-                results[branch] = repo.worktree(self.clone, branch, os.path.join(self.tmp, branch), run=Real([info()]))
+                results[branch] = repo.worktree(self.clone, branch, os.path.join(self.tmp, branch), run=Real([info()]), temp=())
             except Exception as e:
                 results[branch] = e
         threads = [threading.Thread(target=go, args=(b,)) for b in ("TASK-1-a", "TASK-2-b")]
@@ -449,10 +483,59 @@ class Local(Clone):
 
 
 class LocalSafety(Clone):
-    def worktree(self, branch="TASK-1-x"):
-        run, out, err = Real([info()]), io.StringIO(), io.StringIO()
-        code = repo.main(["worktree", "--dir", self.dir, "--branch", branch, self.clone], run=run, out=out, err=err)
+    def worktree(self, branch="TASK-1-x", fail_on=None, temp=()):
+        run, out, err = Real([info(), *([(fail_on, fail("boom"))] if fail_on else [])]), io.StringIO(), io.StringIO()
+        code = repo.main(["worktree", "--dir", self.dir, "--branch", branch, self.clone], run=run, out=out, err=err, temp=temp)
         return code, err.getvalue()
+
+    def file_commit(self):
+        with open(os.path.join(self.seed, "f"), "w") as fh:
+            fh.write("one\n")
+        git("-C", self.seed, "add", "f")
+        git("-C", self.seed, "commit", "-q", "-m", "f")
+        git("-C", self.seed, "push", "-q", "origin", "main")
+        git("-C", self.clone, "fetch", "-q")
+
+    def assertGood(self):
+        index = git("-C", self.wt, "rev-parse", "--path-format=absolute", "--git-path", "index")
+        self.assertTrue(os.path.isfile(index))
+        self.assertTrue(os.path.isfile(os.path.join(self.wt, "f")))
+        self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
+        self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "false")
+
+    def test_a_local_clone_under_a_temp_dir_is_refused(self):
+        code, err = self.worktree(temp=(self.tmp,))
+        self.assertEqual(code, 2)
+        self.assertIn("temp dir", err)
+        self.assertFalse(os.path.exists(self.wt))
+
+    def test_a_failed_step_after_the_add_leaves_no_worktree_and_a_rerun_succeeds(self):
+        self.file_commit()
+        for step, fail_on in (("config", lambda a: a[3:5] == ["config", "--worktree"] and "--get" not in a),
+                              ("reset", lambda a: a[3:4] == ["reset"])):
+            with self.subTest(step):
+                code, err = self.worktree(fail_on=fail_on)
+                self.assertEqual(code, 1, err)
+                self.assertFalse(os.path.exists(self.wt))
+                self.assertNotIn(self.wt, git("-C", self.clone, "worktree", "list", "--porcelain"))
+                self.assertEqual(self.worktree(), (0, ""))
+                self.assertGood()
+                shutil.rmtree(self.wt)
+                git("-C", self.clone, "worktree", "prune")
+
+    def test_a_half_made_worktree_is_made_again(self):
+        self.file_commit()
+        git("-C", self.clone, "config", "extensions.worktreeConfig", "true")
+        git("-C", self.clone, "worktree", "add", "-q", "--no-checkout", "-b", "TASK-1-x", self.wt, "origin/main")
+        self.assertEqual(self.worktree(), (0, ""))
+        self.assertGood()
+
+    def test_a_worktree_with_symlinks_on_is_refused(self):
+        self.file_commit()
+        git("-C", self.clone, "worktree", "add", "-q", "-b", "TASK-1-x", self.wt, "origin/main")
+        code, err = self.worktree()
+        self.assertEqual(code, 2)
+        self.assertIn("symlinks", err)
 
     def test_a_worktree_gets_no_symlinks_and_the_clone_keeps_its_config(self):
         os.symlink("/etc/passwd", os.path.join(self.seed, "link"))
@@ -509,6 +592,7 @@ class Remove(Clone):
             r = e
         for c in run.calls:
             self.assertEqual(c[:6], GUARD, c)
+            self.assertTrue(c[7].startswith("--git-dir="), c)
         return r, run
 
     def branches(self):
@@ -572,7 +656,9 @@ class Remove(Clone):
                 r, run = self.remove(wt)
                 self.assertIsInstance(r, repo.Invalid)
                 self.assertTrue(str(r).startswith(f"{wt}: "), r)
-                self.assertTrue(run.ran(*GUARD, wt, "status", "--porcelain", "--ignore-submodules=none"))
+                gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+                self.assertTrue(run.ran(*GUARD, wt, f"--git-dir={gitdir}", f"--work-tree={wt}", "status", "--porcelain",
+                                        "--ignore-submodules=none"))
                 self.assertEqual(self.state(), before)
                 self.assertTrue(os.path.isfile(path))
 
@@ -688,6 +774,48 @@ class Remove(Clone):
         shutil.rmtree(gone)
         self.remove(wt)
         self.assertIn(f"worktree {gone}", git("-C", self.clone, "worktree", "list", "--porcelain"))
+
+    def test_a_crlf_git_file_is_read_as_git_reads_it(self):
+        wt = self.add()
+        gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+        with open(os.path.join(wt, ".git"), "w", newline="") as f:
+            f.write(f"gitdir: {gitdir}\r\n")
+        self.assertEqual(self.remove(wt)[0], {"worktree": wt, "branch": "TASK-1-x", "kept": None})
+        self.assertFalse(os.path.exists(wt))
+
+    def test_a_git_file_git_reads_otherwise_runs_no_git(self):
+        """`.git` names, as git reads it, a fake gitdir in an untrusted dir whose filter writes a marker; parsed loosely,
+        it names the real worktree admin dir."""
+        with open(os.path.join(self.seed, ".gitattributes"), "w") as f:
+            f.write("* filter=x\n")
+        with open(os.path.join(self.seed, "f"), "w") as f:
+            f.write("one\n")
+        git("-C", self.seed, "add", "-A")
+        git("-C", self.seed, "commit", "-q", "-m", "f")
+        git("-C", self.seed, "push", "-q", "origin", "main")
+        git("-C", self.clone, "pull", "-q")
+        work, marker = os.path.join(self.tmp, "work"), os.path.join(self.tmp, "marker")
+        fake = os.path.join(work, "fake.git")
+        shutil.copytree(os.path.join(self.clone, ".git"), fake, symlinks=True)
+        git("--git-dir", fake, "config", "filter.x.clean", f"touch {marker}; cat")
+        os.makedirs(os.path.join(work, "a"))
+        for suffix, (name, content) in {"space": ("sym ", "{a}/sym \n"), "newline": ("sym\nx", "{a}/sym\nx\n")}.items():
+            with self.subTest(suffix):
+                wt = self.add(f"TASK-1-{suffix}")
+                admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+                a = os.path.join(work, "a", suffix)
+                os.makedirs(a)
+                os.symlink(admin, os.path.join(a, "sym"))
+                os.symlink(fake, os.path.join(a, name))
+                with open(os.path.join(wt, ".git"), "w") as f:
+                    f.write("gitdir: " + content.format(a=a))
+                with open(os.path.join(wt, "f"), "a") as f:
+                    f.write("two\n")
+                r, run = self.remove(wt, untrusted=(work,))
+                self.assertIsInstance(r, repo.Invalid)
+                self.assertEqual(run.calls, [])
+                self.assertFalse(os.path.exists(marker))
+                self.assertTrue(os.path.isdir(wt))
 
     def evil(self, name):
         """A worktree of an agent-built clone whose clean filter writes a marker, with a stat-dirty file."""

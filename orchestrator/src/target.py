@@ -6,8 +6,8 @@ import sys
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CLONES, NAME, OWNER, REF, TASKS, WORK, repo_slug, sh_run  # noqa: E402
-from repo import SHORT, err_text  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, TASKS, WORK, agent_writable, repo_slug, sh_run  # noqa: E402
+from repo import GUARD, SHORT, Invalid as NoCheckout, Untrusted, clone_of, err_text  # noqa: E402
 
 MAPPED = "project mapping "
 
@@ -102,14 +102,22 @@ def _repo_info(o, n, run):
     return full, push is True, default
 
 
-def _branches(ident, o, n, run, work):
-    """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own checkout (a
-    worktree lists its clone's branches), else on GitHub (gh's credentials, no shared clone); or a Transient."""
-    clone = os.path.join(work, ident, CLONES[0], o, n)
-    git = os.path.join(clone, ".git")
-    if (os.path.isdir(git) or os.path.isfile(git)) and not os.path.islink(git):
-        # The agent run can write this checkout's config; these keep it from running code as the harness.
-        res = run(["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", clone,
+def _branches(ident, o, n, run, work, untrusted):
+    """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own checkout, else on
+    GitHub (gh's credentials, no shared clone); or a Transient. A worktree's are read in its clone, only when clone_of
+    finds one outside `untrusted`."""
+    checkout = os.path.join(work, ident, CLONES[0], o, n)
+    git, at = os.path.join(checkout, ".git"), None
+    if os.path.isdir(git) and not os.path.islink(git):
+        at = checkout
+    elif os.path.isfile(git) and not os.path.islink(git):
+        try:
+            at = clone_of(checkout, untrusted)[0]
+        except (NoCheckout, Untrusted):
+            pass
+    if at:
+        # The agent run can write a checkout's config; these keep it from running code as the harness.
+        res = run(["git", *GUARD, "-C", at, f"--git-dir={os.path.join(at, '.git')}",
                    "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
         if res.returncode != 0:
             return Transient(f"git branch --list: {err_text(res)}")
@@ -123,7 +131,7 @@ def _branches(ident, o, n, run, work):
     return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
 
 
-def check(issue, repos, *, run=sh_run, work=WORK) -> Target | Invalid | Transient:
+def check(issue, repos, *, run=sh_run, work=WORK, untrusted=None) -> Target | Invalid | Transient:
     """The engineering pre-check: the repo is reachable with push permission and a safe default branch; its branch name."""
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
@@ -144,7 +152,7 @@ def check(issue, repos, *, run=sh_run, work=WORK) -> Target | Invalid | Transien
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{asked}: unsafe default branch name")
     ident = issue.identifier
-    names = _branches(ident, o, n, run, work)
+    names = _branches(ident, o, n, run, work, agent_writable(work) if untrusted is None else untrusted)
     if isinstance(names, Transient):
         return names
     if len(names) > 1:

@@ -4,10 +4,10 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>) and work/<ID>/publish, each a
-real directory inside its own folder (not a symlink); anything else is skipped. A clone (.git a directory) is deleted
-with any unpushed work (shutil.rmtree); a worktree (.git a file) goes to repo.remove, and a dirty one is skipped every
-tick until cleaned by hand. A worktree whose clone is in a dir an agent run can write (work/, the temp dirs) is deleted
+Entries: for each finished issue, work/<ID>/src/<owner>/<name> (legacy: src/<name>) and work/<ID>/publish, each a real
+directory inside its own folder (not a symlink); anything else is skipped. A clone (.git a directory) is deleted with
+any unpushed work (shutil.rmtree); a worktree (.git a file) goes to repo.remove, and a dirty one is skipped every tick
+until cleaned by hand. A worktree whose clone is in a dir an agent run can write (config.agent_writable) is deleted
 without running git: that clone's config could run commands as the harness. Remote branches and work/<ID>/ itself are
 never touched.
 
@@ -24,11 +24,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CLONES, LOGS, WORK  # noqa: E402
+from config import CLONES, LOGS, WORK, agent_writable  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
@@ -55,10 +54,10 @@ class Pruner:
     def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, remove=repo.remove,
                  untrusted=None):
         """roles: {Linear user id: role} as linear.role_ids returns. untrusted: dirs an agent run can write, whose
-        clones' worktrees are deleted without running git."""
+        clones' worktrees are deleted without running git (default config.agent_writable)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.logs, self.proc, self.remove = team, roles, logs, proc, remove
-        self.untrusted = (work, tempfile.gettempdir(), "/tmp") if untrusted is None else untrusted
+        self.untrusted = agent_writable(work) if untrusted is None else untrusted
         self.errors = 0
 
     def say(self, msg):

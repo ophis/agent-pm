@@ -422,9 +422,9 @@ class PruneTest(unittest.TestCase):
         self.assertFalse(os.path.exists(marker))
         self.assertFalse(os.path.lexists(wt))
 
-    def test_untrusted_dirs_default_to_work_and_the_temp_dirs(self):
+    def test_untrusted_dirs_default_to_the_agent_writable_ones(self):
         pruner = prune.Pruner(None, NOW, False, work=self.work, team=TEAM_OBJ, roles=ROLES, logs=self.logs)
-        self.assertEqual(pruner.untrusted, (self.work, tempfile.gettempdir(), "/tmp"))
+        self.assertEqual(pruner.untrusted, config.agent_writable(self.work))
 
     def test_untrusted_worktree_deleted_and_worded(self):
         wt = self.mkg("TASK-49", "src", "o", "n")
@@ -432,7 +432,7 @@ class PruneTest(unittest.TestCase):
         code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
         self.assertEqual((code, msgs(out)), (0, ["prune-removed TASK-49/src/o/n: untrusted worktree, deleted without git"]))
         self.assertFalse(os.path.lexists(wt))
-        self.assertEqual(rm.untrusted, (self.work, tempfile.gettempdir(), "/tmp"))
+        self.assertEqual(rm.untrusted, config.agent_writable(self.work))
 
     def test_dot_files_under_an_owner_are_no_entries(self):
         wt = self.mkg("TASK-49", "src", "o", "n")

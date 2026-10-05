@@ -252,6 +252,14 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         researcher = self.runs()["researcher"]
         self.assertEqual((researcher.tasks, researcher.default), (("light-research", "deep-research"), "light-research"))
 
+    def test_agent_writable_dirs(self):
+        self.core(CORE_TOML.replace(DESIGN, DESIGN + '\nwrite = ["~/notes", "{{methods}}/x", "repo"]'))
+        self.load(PIPELINE + '[core.roles.engineer.tasks.engineering]\nwrite = ["/srv/out"]\n')
+        work = os.path.join(self.root, "work")
+        self.assertEqual(config.agent_writable(work, self.root), (
+            work, *config.repo.temp_dirs(), os.path.expanduser("~/notes"),
+            os.path.join(self.root, "core", "team", "methods", "x"), "/srv/out"))
+
     def test_overlay_fills_root(self):
         self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
                   '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/x --y {{root}}"\n')

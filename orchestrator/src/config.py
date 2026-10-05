@@ -24,6 +24,7 @@ PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
+import repo  # noqa: E402
 
 
 def session(role, issue):
@@ -236,6 +237,20 @@ def run_config(role, task, root=ROOT):
     """compose.RunConfig of role/task: core config, then the claude client config, then layers(root)."""
     core = os.path.join(root, "core")
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
+
+
+def agent_writable(work=WORK, root=ROOT):
+    """Dirs an orchestrated agent run can write: work/, the temp dirs and every core task's `write` dirs (`repo`, the
+    --repo dir, has no fixed place). A worktree whose clone lies under one gets no git run on it by the harness."""
+    core = os.path.join(root, "core")
+    with open(os.path.join(core, compose.CONFIG), "rb") as f:
+        roles = tomllib.load(f).get("roles", {})
+    dirs, methods = [work, *repo.temp_dirs()], os.path.join(core, "team", "methods")
+    for role, spec in roles.items():
+        for task in spec.get("tasks", {}):
+            dirs += [os.path.abspath(os.path.expanduser(compose.fill(e, {"methods": methods}, "write")))
+                     for e in run_config(role, task, root).write if e != "repo"]
+    return tuple(dict.fromkeys(dirs))
 
 
 def runnable(cfg, root=ROOT):
