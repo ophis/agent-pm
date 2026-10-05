@@ -49,7 +49,7 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 - Each pipeline task (deep-research, light-research, product-design, engineering) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks). Without it write-back posts no start comment, and engineering's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
-- A tmux `-t agent-pm-<role>-<ID>` whose session is gone prefix-matches another (TASK-1 hits a live TASK-12); target `'=agent-pm-<role>-<ID>'` (quoted: zsh expands a leading `=`). The code targets no session: the router reads `list-sessions`, `run.py` names its session with `new-session -s`.
+- A tmux `-t agent-pm-<role>-<ID>` whose session is gone prefix-matches another (TASK-1 hits a live TASK-12); target `'=agent-pm-<role>-<ID>'` (quoted: zsh expands a leading `=`). The code targets only with `=<name>`: the router reads `list-sessions`, `run.py` names its session with `new-session -s`, `attended.close` checks and kills recorded TUI sessions by exact target (`tui.status`/`tui.kill`).
 - Keep `logs/` (gitignored): it is router state, and launchd can't start a job whose log dir is missing.
 - Schedules are `orchestrator/*.plist`, installed as copies in `~/Library/LaunchAgents/` (reload: `launchctl bootout` + `bootstrap`). The router plist's `--now` skips the 01–06 h check.
 - Linear's lists can lag a just-made state change; re-read an issue's state before acting on it.
