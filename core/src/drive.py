@@ -49,7 +49,7 @@ OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
 NAME = re.compile(r"[\w-]+")
 POLL = 0.5   # seconds between reads of the channel while the host is quiet
 WAIT_LIMIT = 2 * 60 * 60   # seconds the tui runner waits for an outcome or a progress report before it gives up
-STOP_LIMIT = 3   # turn ends with no outcome and no pending background work, after its nudge, before the tui runner gives up
+STOP_LIMIT = 3   # turn ends with no outcome and no pending work, after its nudge, before the tui runner gives up
 NUDGE = ("Finish your task, then report its outcome with the report command your instructions name. "
          "If you are waiting for background work, wait for it first.")
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
@@ -422,7 +422,8 @@ class Tui:
     """The client's interactive command in a detached tmux session (tui.py), never killed after the outcome. Done once
     the outcome arrives, or once it gives up and leaves the session to a human. A turn end without an outcome
     (`stop`) with background work pending is ignored; any other gets one NUDGE, and STOP_LIMIT more, counted since the
-    last progress report, give up. So does WAIT_LIMIT seconds with no progress report (from the run's start until the first)."""
+    last progress report, give up. So does WAIT_LIMIT seconds since the last progress report, or the run's start,
+    without an outcome."""
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None):
