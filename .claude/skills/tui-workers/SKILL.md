@@ -31,7 +31,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - Follow up: `tui.py send <name> '<text>'`.
 - Rename: `tmux rename-session -t '=<old>' <new>`, then `tui.py send <new> '/rename <new>'`. Its events then carry `<new>`.
 - Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change.
-- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop each worker once its work is done, and the Monitor (TaskStop) once none is left.
+- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor (TaskStop) once no worker is left.
 
 ## Gotchas
 
