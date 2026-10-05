@@ -9,12 +9,12 @@ import tui  # noqa: E402
 ID = "TASK-12"
 A, B = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
 PANE = {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
-ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC"}
+ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
 
 
 class Tmux:
     """Fake tmux: live names answer status (RUNNING) and kill; fail names make kill-session fail."""
-    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004\n"):
+    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 /tmp/s\n"):
         self.live, self.fail, self.own, self.clients, self.calls = set(live), set(fail), own, clients, []
 
     def __call__(self, argv, **kw):
@@ -64,6 +64,10 @@ class LayoutTest(unittest.TestCase):
         got = self.call("below", "dev", tmux=Tmux(live=["dev"]))
         self.assertEqual(got, drive.Layout("below", "dev"))
 
+    def test_beside_not_shown(self):
+        with self.assertRaisesRegex(attended.Bad, r"^no pane to show the TUI beside \(no terminal shows tmux session dev\)$"):
+            self.call(beside="dev", tmux=Tmux(live=["dev"], clients=""))
+
     def test_inside_tmux(self):
         got = self.call(environ=PANE, tmux=Tmux(own="mine"))
         self.assertEqual(got, drive.Layout("right", "mine"))
@@ -86,9 +90,11 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(tmux.calls, [])
 
     def test_no_pane(self):
-        for environ in ({}, {"ITERM_SESSION_ID": "w0t0p0"}):
+        for environ in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": "w0t0p0:ABC"},
+                        {**ITERM, "TERM_PROGRAM": "Apple_Terminal"}):
             with self.subTest(environ=environ), self.assertRaisesRegex(
-                    attended.Bad, r"^no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION$"):
+                    attended.Bad, r"^no pane to show the TUI beside \(no anchor pane: not in tmux, .*\): run from tmux "
+                                  r"or iTerm2, or pass --beside SESSION$"):
                 self.call(environ=environ)
 
 

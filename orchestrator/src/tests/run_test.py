@@ -143,6 +143,8 @@ class Tmux:
 
     def __call__(self, argv, **kw):
         self.calls.append(argv[1:])
+        if argv[1] == "list-clients":  # -t =<name>
+            return subprocess.CompletedProcess(argv, 0, "5 /dev/ttys4 %1 /s\n" if argv[3][1:] in self.live else "", "")
         running = argv[1] == "display-message" and argv[4][1:-1] in self.live  # -t =<name>:
         return subprocess.CompletedProcess(argv, 0, "0  \n" if running else "\n", "")
 
@@ -426,11 +428,13 @@ class Outer(Base):
 
 
 class Attended(Base):
-    """The outer with the tui runner; attended.layout sees a fake tmux, and no $TMUX or $ITERM_SESSION_ID."""
+    """The outer with the tui runner; attended.layout sees a fake tmux, no $TMUX or $ITERM_SESSION_ID, and iTerm2's
+    $TERM_PROGRAM."""
     def setUp(self):
         super().setUp()
         for k in ("TMUX", "ITERM_SESSION_ID"):  # Base's patch.dict restores them
             os.environ.pop(k, None)
+        os.environ["TERM_PROGRAM"] = "iTerm.app"
 
     def tui(self, *extra, live=()):
         self.tmux = Tmux(live)
@@ -464,7 +468,8 @@ class Attended(Base):
         self.assertEqual(printed, [ATTACH])
 
     def test_no_place_for_the_pane_starts_nothing(self):
-        cases = [((), "no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION"),
+        cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
+                      "run from tmux or iTerm2, or pass --beside SESSION"),
                  (("--split", "left"), "split must be one of right, below"),
                  (("--beside", "gone"), "no tmux session gone")]
         for extra, msg in cases:
@@ -498,6 +503,7 @@ class AttendedEntry(Base):
         self.tmux = Tmux(live=["dev"])
         for k in ("TMUX", "ITERM_SESSION_ID"):  # Base's patch.dict restores them
             os.environ.pop(k, None)
+        os.environ["TERM_PROGRAM"] = "iTerm.app"
         p = mock.patch.object(attended, "layout", functools.partial(LAYOUT, proc=self.tmux))
         p.start()
         self.addCleanup(p.stop)
@@ -566,7 +572,8 @@ class AttendedEntry(Base):
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
     def test_no_place_for_the_pane_before_any_linear_call(self):
-        cases = [((), "no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION"),
+        cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
+                      "run from tmux or iTerm2, or pass --beside SESSION"),
                  (("--split", "left"), "split must be one of right, below"),
                  (("--beside", "gone"), "no tmux session gone")]
         for extra, msg in cases:

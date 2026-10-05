@@ -10,7 +10,7 @@
 #   gate       a usage-gate command a task runs before a costly step (deep research: before a second round); pre-approved; unset → none
 #   language   optional; the language reports and PRDs are written in (one line); unset → no language rule, the model's default
 #   show       tui runner: the shell command that shows the live session, {{session}} = the tmux session; one line, same trust as
-#              `commands`. unset → $TUI_SHOW, else the built-in iTerm2 split; "" → the attach line only (show > TUI_SHOW > iTerm2)
+#              `commands`. unset → $TUI_SHOW, else the built-in split (iTerm2, else tmux); "" → the attach line only (show > TUI_SHOW > split)
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 #   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
 

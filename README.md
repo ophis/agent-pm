@@ -74,7 +74,7 @@ claude -p '<prompt>' \
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
 
-`--runner tui` starts the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens an iTerm2 pane attached to the session, split right of the current pane (inside tmux: of the iTerm2 pane showing your tmux session, else `$ITERM_SESSION_ID`'s); `--split right|below` picks the side and `--beside <tmux session>` the pane to split (tui only); `core/config/config.toml`'s header says what replaces that split. The agent run is done once its outcome arrives; the session stays open.
+`--runner tui` starts the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to the session, split right of the anchor pane: the pane showing `--beside <tmux session>`, else your tmux pane when a terminal shows its session, else your iTerm2 pane (`$ITERM_SESSION_ID`; outside tmux only with `TERM_PROGRAM=iTerm.app`). An iTerm2 pane gets an iTerm2 split; any other tmux pane a `tmux split-window` running `tmux attach` (a nested client's pane: the tmux pane hosting it). No anchor → only the attach command, with the reason. `--split right|below` picks the side (tui only); `core/config/config.toml`'s header says what replaces that split. The agent run is done once its outcome arrives; the session stays open.
 
 The `Stop` hook reports each turn end with the agent run's pending background work (`report.py … stop --pending background_tasks`). A turn that ends with work pending is ignored. The first other turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. It gives up the same way once 2 h (`WAIT_LIMIT`) pass since the last progress report, or the agent run's start, with no outcome, whatever the hook reports; a dialog nobody answers waits in the pane until then.
 
@@ -92,8 +92,8 @@ In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s enviro
 `core/src/tui.py` hosts any command in a detached tmux session, so an agent or you can drive another agent's TUI. It is one file needing only tmux and Python 3.9+: copy it anywhere.
 
 ```bash
-python3 core/src/tui.py start a -- claude                         # a session running claude, in an iTerm2 pane right of this one
-python3 core/src/tui.py start b --beside a --split below -- cat   # an iTerm2 pane below a's
+python3 core/src/tui.py start a -- claude                         # a session running claude, in a pane right of this one
+python3 core/src/tui.py start b --beside a --split below -- cat   # a pane below a's
 python3 core/src/tui.py send a 'Summarize README.md'              # types the text, then Enter
 python3 core/src/tui.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui.py show a --show ''                          # only prints a's attach command
@@ -102,7 +102,7 @@ python3 core/src/tui.py --help                                    # options, and
 
 ### tui-workers skill
 
-`.claude/skills/tui-workers/` builds on `tui.py`: with `/tui-workers`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 panes and directs them. Each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps and gotchas: [SKILL.md](.claude/skills/tui-workers/SKILL.md). Its helper:
+`.claude/skills/tui-workers/` builds on `tui.py`: with `/tui-workers`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them. Each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps and gotchas: [SKILL.md](.claude/skills/tui-workers/SKILL.md). Its helper:
 
 ```bash
 python3 .claude/skills/tui-workers/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md'      # prints "a <session id>"; a pane right of this one
@@ -123,7 +123,7 @@ Nothing checks them; a missing one fails the agent run.
 - The `claude` CLI (claude client): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; for tui, interactive mode and `Stop` hooks in `--settings`; its subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research).
 - The `autopilot` plugin, with `superpowers` (engineering's build).
 - `python3` 3.11+ (stdlib only), `git` and `gh` logged in: `repo.py` and the `github` and `pull-request` destinations.
-- `tmux` 3.3+: the tui runner and `tui.py`. `osascript` and a running iTerm2 only for the default show, the iTerm2 split.
+- `tmux` 3.3+: the tui runner and `tui.py`. `osascript`, `pgrep` and a running iTerm2 only for the default show's iTerm2 split.
 - GitHub and the web.
 - Skills (`core/skills/`): `${CLAUDE_SKILL_DIR}`.
 
@@ -228,7 +228,7 @@ python3 orchestrator/src/router.py --now --tui [--split right|below] [--beside <
 - `run.py --issue … --tui` claims that ready Todo issue like `router.py --now --issue`, but with no hours, `max_runs` or usage gate.
 - `router.py --now --tui` is a normal tick (readiness, `max_runs`, usage gate, at most one agent run, resume too) started attended.
 - Sessions, with their attach commands printed to stderr: the driver `agent-pm-<role>-<ID>` holds the issue's lock and a `max_runs` slot only while the driver runs; the TUI `<role>-<task>-<sid[:8]>` holds neither.
-- The driver session always runs detached. The TUI pane opens beside your pane: your tmux session's when a terminal shows it, else your iTerm2 pane (`$ITERM_SESSION_ID`). Neither → pass `--beside`, else nothing is claimed (exit 2).
+- The driver session always runs detached. The TUI pane opens beside your pane, as `--runner tui` says: an iTerm2 split, else a tmux split. No such pane → pass `--beside`, else nothing is claimed (exit 2).
 - Stack attended runs: first `--split right`, next `--beside <first TUI session> --split below`.
 - `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run (and its TUI session); the issue stays In Progress and Recover resumes it.
 - After the outcome or a give-up the TUI session stays open, and nothing done in it is written back. The issue's next agent run (Recover's resume too) closes it; `prune.py` closes it 24 hours after Done or Canceled.

@@ -24,8 +24,8 @@ class Bad(Exception):
 
 
 def layout(split, beside, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: beside session `beside`, else the pane tui.anchor finds (the caller's tmux
-    session when a terminal shows it, else $ITERM_SESSION_ID's pane)."""
+    """The drive.Layout for the TUI pane: beside the pane tui.anchor finds (session `beside`'s, else the caller's tmux
+    session's when a terminal shows it, else $ITERM_SESSION_ID's iTerm2 pane)."""
     if split is not None and split not in tui.SPLITS:
         raise Bad(f"split must be one of {', '.join(tui.SPLITS)}")
     split = split or drive.Layout.split
@@ -34,16 +34,12 @@ def layout(split, beside, *, proc=subprocess.run):
             raise Bad("bad tmux session name")
         if tui.status(beside, proc=proc) is None:
             raise Bad(f"no tmux session {beside}")
-        return drive.Layout(split, beside)
     try:
-        own = tui.own_session(proc=proc)
+        found = tui.anchor(beside, proc=proc)
     except tui.TuiError as e:
-        raise Bad(one_line(e)) from e
-    try:
-        kind, _ = tui.anchor(proc=proc)
-    except tui.TuiError as e:
-        raise Bad("no pane to show the TUI beside: run from tmux or iTerm2, or pass --beside SESSION") from e
-    return drive.Layout(split, own if kind == "tty" else None)
+        hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
+        raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
+    return drive.Layout(split, found.session)
 
 
 def _path(ident, logs):

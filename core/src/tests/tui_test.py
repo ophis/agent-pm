@@ -16,12 +16,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tui  # noqa: E402
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
-CLIENTS = "#{client_activity} #{client_tty}"
+CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
+PGREP = ["pgrep", "-x", "iTerm2"]
+ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
 TMUX_KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 SH_KW = {"stdin": subprocess.DEVNULL, "timeout": 30}
 OSA_KW = {**TMUX_KW, "timeout": 30}
 TMUX = '/opt/a"b\\c/bin/tmux'   # the script text must never carry it
 ATTACH = "tui: session s: tmux attach -t '=s'\n"
+WATCH = "; watch it with tmux attach -t '=s'"
 
 
 def done(argv, rc=0, out="", err=""):
@@ -322,14 +325,14 @@ class Start(unittest.TestCase):
 
     def test_a_failed_show_is_only_printed(self):
         fake = Tmux(results={"osascript": FileNotFoundError(2, "No such file or directory", "osascript")})
-        with environ(ITERM_SESSION_ID="w0t0p0:ABC"), which():
+        with environ(**ITERM), which():
             self.start(fake)
-        self.assertEqual(fake.commands(), ["display-message", "new-session", "osascript"])
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "pgrep", "osascript"])
         self.assertEqual(self.stderr.getvalue(),
-                         ATTACH + "tui: show: osascript: [Errno 2] No such file or directory: 'osascript'\n")
+                         ATTACH + f"tui: show: osascript: [Errno 2] No such file or directory: 'osascript'{WATCH}\n")
 
     def test_bad_layout_refused_before_tmux(self):
-        with environ(ITERM_SESSION_ID="w0t0p0:ABC"), which():
+        with environ(**ITERM), which():
             for kw in ({"split": "up"}, {"beside": "a b"}):
                 with self.subTest(**kw):
                     fake = Tmux()
@@ -434,14 +437,13 @@ class Show(unittest.TestCase):
         self.assertEqual(fake.calls, [["/bin/sh", "-c", "open 'a;b c'"]])
 
     def test_argument_beats_tui_show_beats_iterm(self):
-        iterm = {"ITERM_SESSION_ID": "w0t0p0:ABC"}
-        for template, env, want in (("echo arg", {"TUI_SHOW": "echo env", **iterm}, ["/bin/sh", "-c", "echo arg"]),
-                                    (None, {"TUI_SHOW": "echo env", **iterm}, ["/bin/sh", "-c", "echo env"]),
-                                    (None, iterm, osa("right", "id", "s", "ABC"))):
+        for template, env, want in (("echo arg", {"TUI_SHOW": "echo env", **ITERM}, [["/bin/sh", "-c", "echo arg"]]),
+                                    (None, {"TUI_SHOW": "echo env", **ITERM}, [["/bin/sh", "-c", "echo env"]]),
+                                    (None, ITERM, [PGREP, osa("right", "id", "s", "ABC")])):
             with self.subTest(template=template, env=env):
                 fake = Tmux(results={"osascript": (0, "\n")})
                 self.assertIsNone(self.show(fake, template, env))
-                self.assertEqual(fake.calls, [want])
+                self.assertEqual(fake.calls, want)
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_empty_runs_nothing(self):
@@ -466,52 +468,80 @@ class Show(unittest.TestCase):
                 self.assertEqual(len(fake.calls), 1 if result else 0)
 
 
-class Iterm(unittest.TestCase):
+class Pane(unittest.TestCase):
     INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3", "ITERM_SESSION_ID": "w0t0p0:ABC"}
+    OWN = ["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]
+    SOCK = "/tmp/s p"
 
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
             return tui.show("s", proc=fake, **kw)
 
+    def clients(self, *rows):
+        return 0, "".join(f"{at} {tty} {pane} {self.SOCK}\n" for at, tty, pane in rows)
+
+    def split(self, flag, pane):
+        return ["tmux", "split-window", flag, "-t", pane, "env", "-u", "TMUX", TMUX, "-S", self.SOCK, "attach", "-t", "=s"]
+
     def test_anchor_by_iterm_session_id(self):
         for split in ("right", "below"):
             with self.subTest(split=split):
                 fake = Tmux(results={"osascript": (0, "\n")})
-                self.assertIsNone(self.show(fake, {"ITERM_SESSION_ID": "w0t0p0:ABC"}, split=split))
-                self.assertEqual(fake.calls, [osa(split, "id", "s", "ABC")])
-                self.assertEqual(fake.kwargs, [OSA_KW])
+                self.assertIsNone(self.show(fake, ITERM, split=split))
+                self.assertEqual(fake.calls, [PGREP, osa(split, "id", "s", "ABC")])
+                self.assertEqual(fake.kwargs, [TMUX_KW, OSA_KW])
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = Tmux(results={"osascript": (0, "")}), io.StringIO()
-        with environ(ITERM_SESSION_ID="w0t0p0:ABC"), which(), redirect_stderr(err):
-            self.assertIsNone(tui.iterm("s", split="below", proc=fake))
-        self.assertEqual((fake.calls, err.getvalue()), ([osa("below", "id", "s", "ABC")], ""))
+        with environ(**ITERM), which(), redirect_stderr(err):
+            self.assertIsNone(tui.open_pane("s", split="below", proc=fake))
+        self.assertEqual((fake.calls, err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], ""))
 
-    def test_anchor_by_own_session_inside_tmux(self):
+    def test_iterm2_pane_showing_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n"), "osascript": (0, "\n"),
-                             "list-clients": (0, "100 /dev/ttys001\n300 /dev/ttys003\n200 /dev/ttys002\n")})
+                             "list-clients": self.clients((100, "/dev/ttys001", "%1"), (300, "/dev/ttys003", "%2"),
+                                                          (200, "/dev/ttys002", "%9"))})
         self.assertIsNone(self.show(fake, self.INSIDE))
-        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"],
-                                      ["tmux", "list-clients", "-t", "=own", "-F", CLIENTS],
+        self.assertEqual(fake.calls, [self.OWN, ["tmux", "list-clients", "-t", "=own", "-F", CLIENTS], PGREP,
                                       osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys002", "/dev/ttys001")])
+
+    def test_tmux_split_of_own_pane_when_no_iterm2_pane_shows_it(self):
+        clients = self.clients((5, "/dev/ttys004", "%9"))
+        for split, flag in (("right", "-h"), ("below", "-v")):
+            for not_iterm in ({"pgrep": (1,)}, {"pgrep": FileNotFoundError(2, "No such file", "pgrep")},
+                              {"osascript": (0, "no iTerm2 pane shows the anchor\n")},
+                              {"osascript": (1, "", "syntax error\n")}):
+                with self.subTest(split=split, not_iterm=not_iterm):
+                    fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients, **not_iterm})
+                    self.assertIsNone(self.show(fake, self.INSIDE, split=split))
+                    self.assertEqual(fake.calls[-1], self.split(flag, "%3"))
+                    self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_detached_own_session_falls_back_to_iterm_session_id(self):
         fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": (0, ""), "osascript": (0, "\n")})
         self.assertIsNone(self.show(fake, self.INSIDE))
-        self.assertEqual(fake.calls[-1], osa("right", "id", "s", "ABC"))
+        self.assertEqual(fake.calls[-2:], [PGREP, osa("right", "id", "s", "ABC")])
 
     def test_anchor(self):
         own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
-        cases = [({"ITERM_SESSION_ID": "w0t0p0:ABC"}, {}, None, ("id", ["ABC"])),
-                 (self.INSIDE, {**own, "list-clients": (0, "5 /dev/ttys004\n")}, None, ("tty", ["/dev/ttys004"])),
-                 (self.INSIDE, own, None, ("id", ["ABC"])),
-                 ({}, {"list-clients": (0, "5 /dev/ttys004\n")}, "b", ("tty", ["/dev/ttys004"]))]
+        shown = self.clients((5, "/dev/ttys004", "%9"))
+        cases = [(ITERM, {}, None, tui.Anchor(("id", ["ABC"]))),
+                 (self.INSIDE, {**own, "list-clients": shown}, None,
+                  tui.Anchor(("tty", ["/dev/ttys004"]), "%3", self.SOCK, "own")),
+                 (self.INSIDE, own, None, tui.Anchor(("id", ["ABC"]))),
+                 ({}, {"list-clients": shown}, "b", tui.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b")),
+                 ({}, {"list-clients": shown, "list-panes": (0, "/dev/ttys001 %1\n/dev/ttys004 %5\n")}, "b",
+                  tui.Anchor(None, "%5", self.SOCK, "b")),
+                 ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk /s\n" + shown[1])}, "b",
+                  tui.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b"))]
         for env, results, beside, want in cases:
-            with self.subTest(env=env, beside=beside), environ(**env):
+            with self.subTest(env=env, results=results, beside=beside), environ(**env):
                 self.assertEqual(tui.anchor(beside, proc=Tmux(results=results)), want)
         no_iterm = {k: v for k, v in self.INSIDE.items() if k != "ITERM_SESSION_ID"}
-        cases = [({}, {}, None, "no anchor pane"),
+        cases = [({}, {}, None, "no anchor pane: not in tmux"),
                  ({"ITERM_SESSION_ID": "w0t0p0"}, {}, None, "no anchor pane"),
+                 ({"ITERM_SESSION_ID": "w0t0p0:ABC"}, {}, None, "no anchor pane"),
+                 ({"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "vscode"}, {}, None, "no anchor pane"),
                  (no_iterm, own, None, "no anchor pane: no terminal shows tmux session own"),
                  (self.INSIDE, {"list-clients": (0, "")}, "b", "^no terminal shows tmux session b$")]
         for env, results, beside, msg in cases:
@@ -522,7 +552,7 @@ class Iterm(unittest.TestCase):
         fake = Tmux(results={"display-message": (0, "own\n")})
         with environ(**self.INSIDE):
             self.assertEqual(tui.own_session(proc=fake), "own")
-        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]])
+        self.assertEqual(fake.calls, [self.OWN])
         fake = Tmux()
         with environ():
             self.assertIsNone(tui.own_session(proc=fake))
@@ -545,17 +575,36 @@ class Iterm(unittest.TestCase):
         self.assertRegex(self.show(fake, self.INSIDE), r"'a;'")
         self.assertEqual(fake.commands(), ["display-message"])
 
-    def test_anchor_beside(self):
-        fake = Tmux(results={"list-clients": (0, "5 /dev/ttys004\n"), "osascript": (0, "\n")})
+    def test_iterm2_pane_beside(self):
+        fake = Tmux(results={"list-clients": self.clients((5, "/dev/ttys004", "%9")), "osascript": (0, "\n")})
         self.assertIsNone(self.show(fake, self.INSIDE, beside="b", split="below"))
         self.assertEqual(fake.calls, [["tmux", "list-clients", "-t", "=b", "-F", CLIENTS],
-                                      osa("below", "tty", "s", "/dev/ttys004")])
+                                      ["tmux", "list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"],
+                                      PGREP, osa("below", "tty", "s", "/dev/ttys004")])
+
+    def test_tmux_split_beside(self):
+        clients = self.clients((5, "/dev/ttys004", "%9"), (9, "/dev/ttys005", "%7"))
+        fake = Tmux(results={"list-clients": clients, "pgrep": (1,)})
+        self.assertIsNone(self.show(fake, {}, beside="b", split="below"))
+        self.assertEqual(fake.calls[-1], self.split("-v", "%7"))
+        nested = Tmux(results={"list-clients": clients, "list-panes": (0, "/dev/ttys005 %5\n")})
+        self.assertIsNone(self.show(nested, {}, beside="b"))
+        self.assertEqual(nested.commands(), ["list-clients", "list-panes", "split-window"])
+        self.assertEqual(nested.calls[-1], self.split("-h", "%5"))
+
+    def test_tmux_split_failures(self):
+        clients = self.clients((5, "/dev/ttys004", "%9"))
+        fake = Tmux(results={"list-clients": clients, "pgrep": (1,), "split-window": (1, "", "no space for new pane\n")})
+        self.assertEqual(self.show(fake, {}, beside="b"), "tmux: no space for new pane")
+        fake = Tmux(results={"list-clients": (0, "5 /dev/ttys004 %9 /tmp/#s\n"), "pgrep": (1,)})
+        self.assertEqual(self.show(fake, {}, beside="b"), "tmux would misread '/tmp/#s'" + WATCH)
+        self.assertNotIn("split-window", fake.commands())
 
     def test_beside_not_shown_anywhere(self):
         for result in ((0, ""), (1, "", "can't find session: =b\n")):
             with self.subTest(result=result):
                 fake = Tmux(results={"list-clients": result})
-                self.assertTrue(self.show(fake, {}, beside="b"))
+                self.assertTrue(self.show(fake, {}, beside="b").endswith(WATCH))
                 self.assertEqual(fake.commands(), ["list-clients"])
 
     def test_bad_arguments_raise(self):
@@ -563,7 +612,7 @@ class Iterm(unittest.TestCase):
             with self.subTest(**kw):
                 fake = Tmux()
                 with self.assertRaises(tui.TuiError):
-                    self.show(fake, {"ITERM_SESSION_ID": "w0t0p0:ABC"}, **kw)
+                    self.show(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
     def test_template_ignores_split_and_beside(self):
@@ -574,16 +623,19 @@ class Iterm(unittest.TestCase):
                                             beside="a b"))
                 self.assertEqual(fake.calls, [["/bin/sh", "-c", "open s"]])
 
-    def test_no_anchor(self):
-        for env in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": ""}):
+    def test_no_anchor_refuses_with_the_attach_command(self):
+        for env in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": ""},
+                    {"ITERM_SESSION_ID": "w0t0p0:ABC"}, {**ITERM, "TERM_PROGRAM": "Apple_Terminal"}):
             with self.subTest(env=env):
                 fake = Tmux()
-                self.assertTrue(self.show(fake, env))
+                why = self.show(fake, env)
+                self.assertRegex(why, "^no anchor pane: not in tmux, .*" + WATCH + "$")
                 self.assertEqual(fake.calls, [])
+                self.assertEqual(self.stderr.getvalue(), ATTACH + f"tui: show: {why}\n")
 
     def test_no_tmux(self):
         fake = Tmux()
-        self.assertEqual(self.show(fake, {"ITERM_SESSION_ID": "w0t0p0:ABC"}, tmux=None), "tmux not found")
+        self.assertEqual(self.show(fake, ITERM, tmux=None), "tmux not found")
         self.assertEqual(fake.calls, [])
 
     def test_tmux_path_made_absolute(self):
@@ -591,19 +643,24 @@ class Iterm(unittest.TestCase):
         os.chdir(tempfile.gettempdir())
         self.addCleanup(os.chdir, here)
         fake = Tmux(results={"osascript": (0, "\n")})
-        self.show(fake, {"ITERM_SESSION_ID": "w0t0p0:ABC"}, tmux="bin/tmux")
-        self.assertEqual(fake.calls[0][5], os.path.join(os.getcwd(), "bin/tmux"))
+        self.show(fake, ITERM, tmux="bin/tmux")
+        self.assertEqual(fake.calls[1][5], os.path.join(os.getcwd(), "bin/tmux"))
 
-    def test_osascript_failures(self):
+    def test_iterm_session_id_failures_refuse(self):
         missing = FileNotFoundError(2, "No such file or directory", "osascript")
-        for result, why in ((missing, f"osascript: {missing}"),
-                            (subprocess.TimeoutExpired("osascript", 30), "osascript timed out after 30 s"),
-                            ((1, "", "execution error: boom (-1708)\n"), "osascript: execution error: boom (-1708)"),
-                            ((0, "no iTerm2 pane shows the anchor\n"), "no iTerm2 pane shows the anchor")):
+        for results, why in (({"pgrep": (1,)}, "iTerm2 is not running"),
+                             ({"osascript": missing}, f"osascript: {missing}"),
+                             ({"osascript": subprocess.TimeoutExpired("osascript", 30)},
+                              "osascript timed out after 30 s"),
+                             ({"osascript": (1, "", "execution error: boom (-1708)\n")},
+                              "osascript: execution error: boom (-1708)"),
+                             ({"osascript": (0, "no iTerm2 pane shows the anchor\n")},
+                              "no iTerm2 pane shows the anchor")):
             with self.subTest(why=why):
-                fake = Tmux(results={"osascript": result})
-                self.assertEqual(self.show(fake, {"ITERM_SESSION_ID": "w0t0p0:ABC"}), why)
-                self.assertEqual(self.stderr.getvalue(), ATTACH + f"tui: show: {why}\n")
+                fake = Tmux(results=results)
+                self.assertEqual(self.show(fake, ITERM), why + WATCH)
+                self.assertEqual(self.stderr.getvalue(), ATTACH + f"tui: show: {why}{WATCH}\n")
+                self.assertNotIn("split-window", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
         script = tui.APPLESCRIPT
