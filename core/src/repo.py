@@ -279,7 +279,9 @@ def remove(wt: str, prefix: str, *, run: Runner = sh) -> dict:
     branch = git(run, wt, "branch", "--show-current", pre=GUARD).strip()
     res = run(["git", *GUARD, "-C", clone, "worktree", "remove", wt], LONG)
     if res.returncode != 0:
-        raise Invalid(f"{wt}: {err_text(res)}")
+        if git(run, wt, "status", "--porcelain", "--ignore-submodules=none", timeout=LONG, pre=GUARD).strip():
+            raise Invalid(f"{wt}: {err_text(res)}")
+        raise RuntimeError(f"git worktree remove {wt}: {err_text(res)}")
     git(run, clone, "worktree", "prune", pre=GUARD)
     reason = kept(run, clone, branch, prefix) if branch else None
     if branch and not reason:

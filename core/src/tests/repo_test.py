@@ -453,7 +453,7 @@ class Remove(Clone):
         run = Real([])
         try:
             r = repo.remove(wt, prefix, run=run)
-        except repo.Invalid as e:
+        except (repo.Invalid, RuntimeError) as e:
             r = e
         for c in run.calls:
             self.assertEqual(c[:6], GUARD, c)
@@ -517,11 +517,21 @@ class Remove(Clone):
                 with open(path, "w") as f:
                     f.write("y")
                 before = self.state()
-                r, _ = self.remove(wt)
+                r, run = self.remove(wt)
                 self.assertIsInstance(r, repo.Invalid)
                 self.assertTrue(str(r).startswith(f"{wt}: "), r)
+                self.assertTrue(run.ran(*GUARD, wt, "status", "--porcelain", "--ignore-submodules=none"))
                 self.assertEqual(self.state(), before)
                 self.assertTrue(os.path.isfile(path))
+
+    def test_a_failed_removal_of_a_clean_worktree_is_an_error(self):
+        wt = self.add()
+        git("-C", self.clone, "worktree", "lock", wt)
+        before = self.state()
+        r, _ = self.remove(wt)
+        self.assertIs(type(r), RuntimeError)
+        self.assertEqual(self.state(), before)
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
     def test_ignored_files_do_not_block(self):
         wt = self.add()
