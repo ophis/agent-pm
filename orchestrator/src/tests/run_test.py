@@ -23,6 +23,7 @@ import linear  # noqa: E402
 import router  # noqa: E402
 import run  # noqa: E402
 import sessions  # noqa: E402
+import target  # noqa: E402
 import writeback  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
@@ -301,6 +302,40 @@ class Outer(Base):
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
                          f"Reference: TASK-7\nRepo: ophis/agent-pm\n\n{inputs.PRECEDENCE['design']}\n\n"
                          "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")
+
+    def local_clone(self):
+        """A real clone (no network) of the target in the temp root, configured under [local_clones]; its realpath."""
+        path = os.path.realpath(os.path.join(self.tmp, "clone"))
+        for argv in (["init", "-q", path], ["-C", path, "remote", "add", "origin", "https://github.com/ophis/agent-pm.git"]):
+            subprocess.run(["git", *argv], check=True)
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG + f'[local_clones]\n"Ophis/Agent-PM" = "{path}"\n')
+        return path
+
+    def test_a_configured_local_clone_is_the_inputs_repo(self):
+        clone = self.local_clone()
+        self.assertEqual(self.main(args()), 0)
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}"))
+        self.assertEqual(self.sh_calls[0][0][self.sh_calls[0][0].index("--target") + 1], "Ophis/Agent-PM")
+        self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
+        self.assertEqual(self.err, "")
+
+    def test_research_and_design_name_the_local_clone(self):
+        clone = self.local_clone()
+        for who, task, listing in ((RESEARCHER, "deep-research", LISTING), (PM, "product-design", DESIGN_LISTING)):
+            with self.subTest(task=task):
+                self.run.table = [(listing, res("[]"))]
+                self.assertEqual(self.main(args(who, task)), 0)
+                self.assertEqual(self.read(os.path.join(self.rd, "input.md")).splitlines()[1], f"Repo: {clone}")
+                self.assertNotIn("--target", self.sh_calls[-1][0])
+
+    def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
+        self.local_clone()
+        self.transcript()
+        os.makedirs(os.path.join(config.WORK, ID, config.CLONES[0], "Ophis", "Agent-PM", ".git"))
+        self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
+        self.assertEqual(self.main(args(mode="resume")), 0)
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+        self.assertEqual([argv[0] for argv, _ in self.run.calls], ["gh", "git", "git"])
 
     def test_resume_rebuilds_the_input(self):
         self.transcript()
