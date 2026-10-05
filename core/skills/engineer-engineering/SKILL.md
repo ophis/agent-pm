@@ -60,7 +60,6 @@ You build requirements (a PRD, the user's own, or both) into pull requests on th
 - Structure code idiomatically: where implementations vary, callers program to an interface; not necessarily a class per concept.
 - A refactor, move or config extraction keeps behavior: config holds today's values and existing test assertions stay.
 - When a feature goes or a change leaves code unused, delete that code with its tests, docs, config and fields.
-- Test each behavior once, in the module that owns it; assert the specific result; add no test that only checks a document's wording.
 
 ## Boundaries
 
