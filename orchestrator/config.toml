@@ -42,6 +42,12 @@ max_runs = 1
 "121166b1-191a-4461-bec4-42f1c2dc0ddd" = "ophis/agent-pm"           # Agent PM
 "ae72ede7-67a6-469d-a959-8ea51ab71fb8" = "ophis/claude-autopilot"   # Autopilot
 
+# Repo -> local clone: "<owner>/<name>" = "<path>" (absolute or ~). The input's Repo: line names the path, so the agent run gets a git
+# worktree of the clone, not a fresh clone. config.runnable checks the path is a clone of that repo.
+[local_clones]
+"ophis/agent-pm" = "~/playground/agent-pm"
+"ophis/claude-autopilot" = "~/playground/claude-autopilot"
+
 # Core run keys for the orchestrator's agent runs, in core/config/config.toml's layout under [core], applied after
 # core/config/clients/claude.toml (drive.plan layers). config.overlay() fills {{root}} with this repo's root.
 [core.roles.researcher.tasks.deep-research]

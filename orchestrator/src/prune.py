@@ -29,6 +29,7 @@ import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import config  # noqa: E402
 from config import CLONES, LOGS, WORK  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
@@ -60,7 +61,7 @@ class Pruner:
         no git run (default work/ and the temp dirs)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.logs, self.proc, self.run_git = team, roles, logs, proc, run
-        self.writable = (work, *repo.temp_dirs()) if writable is None else writable
+        self.writable = config.writable(work) if writable is None else writable
         self.errors = 0
 
     def say(self, msg):

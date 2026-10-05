@@ -1,4 +1,4 @@
-import json, os, shutil, sys, tempfile, unittest
+import json, os, shutil, subprocess, sys, tempfile, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import issues  # noqa: E402
@@ -142,6 +142,7 @@ class Check(unittest.TestCase):
     def test_constants(self):
         self.assertEqual(target.MAPPED, "project mapping ")
         self.assertEqual(target.Target("o", "n"), target.Target("o", "n", ""))
+        self.assertEqual(target.Target("o", "n").clone, "")
 
     def test_ok_without_a_local_clone_asks_the_remote(self):
         self.assertEqual(self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
@@ -328,6 +329,140 @@ class Check(unittest.TestCase):
     def test_mapping_failures_keep_the_prefix(self):
         want = target.Invalid(target.MAPPED + "ophis/agent-pm: not found or no access (HTTP 404)")
         self.assertEqual(self.check(api=ok(code=1, stderr="gh: Not Found (HTTP 404)"), **self.MAPPED), want)
+
+def git(*args):
+    subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+
+class WithClone(unittest.TestCase):
+    """Real git clones (no network) and hand-made checkouts in a realpath temp dir; `writable=()` unless a test is about it."""
+    T = target.Target("ophis", "agent-pm", "TASK-26-x")
+    HTTPS = "https://github.com/ophis/agent-pm.git"
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.work = os.path.join(self.tmp, "work")
+        self.checkout = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm")
+
+    def clone(self, name, origin=HTTPS):
+        path = os.path.join(self.tmp, name)
+        git("init", "-q", path)
+        git("-C", path, "remote", "add", "origin", origin)
+        return path
+
+    def fresh(self):
+        shutil.rmtree(self.checkout, ignore_errors=True)
+        os.makedirs(self.checkout)
+        return os.path.join(self.checkout, ".git")
+
+    def git_file(self, text):
+        with open(self.fresh(), "w") as f:
+            f.write(text)
+
+    def worktree(self, clone):
+        """A checkout whose `.git` file names a gitdir whose `commondir` names `clone`'s `.git`."""
+        admin = os.path.join(self.tmp, "admin")
+        os.makedirs(admin, exist_ok=True)
+        with open(os.path.join(admin, "commondir"), "w") as f:
+            f.write(os.path.join(clone, ".git") + "\n")
+        self.git_file(f"gitdir: {admin}\n")
+        return admin
+
+    def run_(self, clones, **kw):
+        kw.setdefault("writable", ())
+        return target.with_clone(self.T, "TASK-26", clones, work=self.work, **kw)
+
+    def want(self, clone):
+        return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
+
+    def test_without_a_checkout_the_table_entry_is_found_case_insensitively(self):
+        y = self.clone("y")
+        for key in ("ophis/agent-pm", "Ophis/Agent-PM"):
+            with self.subTest(key):
+                self.assertEqual(self.run_({"ophis/other": "/o", key: y}), self.want(y))
+
+    def test_without_a_checkout_and_without_an_entry_there_is_no_clone(self):
+        for clones in ({}, {"ophis/other": "/o", "ophis/agent-pm-2": "/p"}):
+            with self.subTest(clones):
+                self.assertEqual(self.run_(clones), self.want(""))
+        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
+        self.assertEqual(self.run_({}), self.want(""))
+
+    def test_a_clone_made_from_owner_name_beats_the_table(self):
+        os.makedirs(self.fresh())
+        self.assertEqual(self.run_({"ophis/agent-pm": self.clone("y")}), self.want(""))
+
+    def test_a_worktree_of_the_targets_clone_beats_the_table(self):
+        x, y = self.clone("x"), self.clone("y")
+        self.worktree(x)
+        for clones in ({"ophis/agent-pm": y}, {}):
+            with self.subTest(clones):
+                self.assertEqual(self.run_(clones), self.want(x))
+
+    def test_the_clones_origin_is_matched_case_insensitively(self):
+        x = self.clone("x", "git@github.com:Ophis/Agent-PM.git")
+        self.worktree(x)
+        self.assertEqual(self.run_({}), self.want(x))
+
+    def test_the_only_git_run_is_the_guarded_origin_read_of_the_clone(self):
+        x = self.clone("x")
+        self.worktree(x)
+        fake = FakeRun([(LOCAL, ok(self.HTTPS + "\n"))])
+        self.assertEqual(self.run_({}, run=fake), self.want(x))
+        self.assertEqual(fake.calls, [((*LOCAL, x, "remote", "get-url", "origin"), repo.SHORT)])
+        for setup in (lambda: os.makedirs(self.fresh()), lambda: shutil.rmtree(self.checkout)):
+            setup()
+            fake.calls.clear()
+            self.run_({"ophis/agent-pm": x}, run=fake)
+            self.assertEqual(fake.calls, [])
+
+    def test_a_clone_under_writable_is_not_used(self):
+        x, y = self.clone("x"), self.clone("y")
+        self.worktree(x)
+        self.assertEqual(self.run_({"ophis/agent-pm": y}, writable=(self.tmp,)), self.want(y))
+        self.assertEqual(self.run_({"ophis/agent-pm": y}, writable=(os.path.join(self.tmp, "elsewhere"),)), self.want(x))
+        self.assertEqual(self.run_({}, writable=(self.tmp,)), self.want(""))
+
+    def test_the_default_writable_holds_the_work_dir(self):
+        inside = os.path.join(self.work, "clone")
+        git("init", "-q", inside)
+        git("-C", inside, "remote", "add", "origin", self.HTTPS)
+        y = self.clone("y")
+        self.worktree(inside)
+        self.assertEqual(self.run_({"ophis/agent-pm": y}, writable=None), self.want(y))
+
+    def test_the_table_decides_when_the_worktrees_clone_is_not_usable(self):
+        y = self.clone("y")
+        other = self.clone("other", "https://github.com/ophis/other.git")
+        gone = self.clone("gone")
+        self.worktree(other)
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+        self.worktree(gone)
+        shutil.rmtree(gone)
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+        newline = self.clone("x\ny")
+        self.worktree(newline)
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+        self.git_file("nonsense\n")
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+        self.git_file("gitdir: " + os.path.join(self.tmp, "no-such-gitdir") + "\n")
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+
+    def test_a_symlinked_git_is_not_followed(self):
+        x, y = self.clone("x"), self.clone("y")
+        real_file = os.path.join(self.tmp, "dotgit-file")
+        self.worktree(x)
+        shutil.copy(os.path.join(self.checkout, ".git"), real_file)
+        for dest in (real_file, os.path.join(x, ".git")):
+            with self.subTest(dest):
+                os.symlink(dest, self.fresh())
+                self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
+                self.assertEqual(self.run_({}), self.want(""))
+
+    def test_owner_name_and_branch_are_unchanged(self):
+        y = self.clone("y")
+        r = self.run_({"ophis/agent-pm": y})
+        self.assertEqual((r.owner, r.name, r.branch, self.T.clone), ("ophis", "agent-pm", "TASK-26-x", ""))
 
 if __name__ == "__main__":
     unittest.main()

@@ -155,6 +155,8 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
             return 0
     else:
         repo = target.research_repo(issue, repos)
+    if repo is not None:
+        repo = target.with_clone(repo, a.issue, cfg["local_clones"], work=config.WORK, run=run)
     rd = run_dir(a.issue)
     docs = config.docs(roles, root)
     try:

@@ -24,6 +24,7 @@ PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
+import repo  # noqa: E402
 
 
 def session(role, issue):
@@ -74,7 +75,7 @@ def transcript(issue, sid, projects=PROJECTS):
     return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "core"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -187,6 +188,17 @@ def load_config(path=CONFIG):
     for k, v in repos.items():
         if not _uuid(k) or not repo_slug(v):
             raise SystemExit(f"orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
+    clones = cfg.setdefault("local_clones", {})
+    if not isinstance(clones, dict):
+        raise SystemExit('orchestrator/config.toml: local_clones must be a table of "<owner>/<name>" = "<path>"')
+    seen = {}
+    for k, v in clones.items():
+        if not repo_slug(k) or not isinstance(v, str) or not v.startswith(("/", "~")) or not v.isprintable():
+            raise SystemExit(f"orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}")
+        if k.lower() in seen:
+            raise SystemExit(f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo")
+        seen[k.lower()] = k
+        clones[k] = os.path.realpath(os.path.expanduser(v))
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
@@ -238,6 +250,29 @@ def run_config(role, task, root=ROOT):
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
 
+def writable(work=WORK):
+    """The dirs an agent run can write; a clone there gets no git run by the harness."""
+    return (work, *repo.temp_dirs())
+
+
+def clone_error(path, slug, *, run=sh_run):
+    """Why realpath `path` is not a local clone of github.com/<slug>, or None. The one git call is guarded: the clone's config
+    is not trusted."""
+    if not path.isprintable():
+        return f"{path!r} has a non-printable character"
+    if not os.path.exists(path):
+        return f"{path} does not exist"
+    try:
+        found, _ = repo.resolve(path, run=lambda argv, timeout: run(["git", *repo.GUARD, *argv[1:]], timeout))
+    except repo.Invalid as e:
+        return str(e)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:   # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
+        return f"git: {e}"
+    if found.host != "github.com" or f"{found.owner}/{found.name}".lower() != slug.lower():
+        return f"origin is {found.slug}, not github.com/{slug}"
+    return None
+
+
 def runnable(cfg, root=ROOT):
     """{role: Role} of orchestrator/config.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
     broken one stops the caller (fail loud). Core roles absent from orchestrator/config.toml are not orchestrated."""
@@ -276,6 +311,9 @@ def runnable(cfg, root=ROOT):
     for task in cfg["task_labels"]:
         if task not in tasks:
             raise SystemExit(f"orchestrator/config.toml: task_labels.{task} is not a task of a role in orchestrator/config.toml")
+    for key, path in cfg["local_clones"].items():
+        if reason := clone_error(path, key):
+            raise SystemExit(f"orchestrator/config.toml: local_clones.{key}: {reason}")
     docs(out, root)
     return out
 
@@ -284,10 +322,10 @@ def docs(roles, root=ROOT):
     """Docs of the github outputs among roles' tasks ({role: Role}); they must share one github.com repo and branch."""
     outs = {t: o for r, role in roles.items() for t in role.tasks if (o := run_config(r, t, root).output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
-    repo, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
-    if not repo or not branch or host != "github.com":
+    name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
+    if not name or not branch or host != "github.com":
         raise SystemExit("core: document tasks must publish to one github.com repo and branch")
-    return Docs(repo, branch, {t: o["dir"] for t, o in outs.items()})
+    return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
 
 
 def role_for(runs, email):
