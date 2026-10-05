@@ -24,6 +24,10 @@ ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
 MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
 SESSIONS = "#{session_name}\t#{session_attached}\t#{@events}\t#{@started}"
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
+# tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
+DIED = ("set-option @state dead ; "
+        "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'")
+BORDER = " #{session_name} #{@state} "
 
 
 class WorkersError(Exception):
@@ -31,17 +35,22 @@ class WorkersError(Exception):
 
 
 def hooks(events: str) -> str:
-    """The --settings JSON: Stop appends `done`, a blocking Notification `blocked`, to the events file."""
-    def command(word: str) -> str:
-        return ('[ -n "$TMUX_PANE" ] && echo "$(date +%H:%M:%S) $(tmux display -p -t "$TMUX_PANE" \'#S\') '
-                f'{word}" >> {shlex.quote(events)} || true')
+    """The --settings JSON: Stop appends `done`, a blocking Notification `blocked`, to the events file; each, and
+    UserPromptSubmit (`working`), sets the session's @state."""
+    def state(word: str) -> str:
+        return f'tmux set-option -t "$TMUX_PANE" @state {word} >/dev/null 2>&1'
 
-    def entry(word: str) -> list:
-        return [{"type": "command", "command": command(word)}]
+    def command(word: str) -> str:
+        return (f'[ -n "$TMUX_PANE" ] && {{ {state(word)}; echo "$(date +%H:%M:%S) '
+                f'$(tmux display -p -t "$TMUX_PANE" \'#S\') {word}" >> {shlex.quote(events)}; }} || true')
+
+    def entry(cmd: str) -> list:
+        return [{"type": "command", "command": cmd}]
 
     return json.dumps({"hooks": {
-        "Stop": [{"hooks": entry("done")}],
-        "Notification": [{"matcher": MATCHER, "hooks": entry("blocked")}]}})
+        "Stop": [{"hooks": entry(command("done"))}],
+        "Notification": [{"matcher": MATCHER, "hooks": entry(command("blocked"))}],
+        "UserPromptSubmit": [{"hooks": entry(f'[ -n "$TMUX_PANE" ] && {state("working")} || true')}]}})
 
 
 def _run(proc, argv, **kw):
@@ -67,6 +76,19 @@ def _touch(events: str) -> None:
         raise WorkersError(f"events file {events}: {e.strerror}") from e
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         raise WorkersError(f"events file {events}: not a regular file owned by you")
+
+
+def _decorations(name: str) -> list:
+    """The pane-died hook (`dead` event and @state) and the pane border showing `<name> <state>`."""
+    return [["tmux", "set-hook", "-p", "-t", f"={name}:", "pane-died", DIED],
+            ["tmux", "set-option", "-w", "-t", f"={name}:", "pane-border-status", "top"],
+            ["tmux", "set-option", "-w", "-t", f"={name}:", "pane-border-format", BORDER]]
+
+
+def _tmux(argv: list, proc) -> None:
+    res = _run(proc, argv)
+    if res.returncode != 0:
+        raise WorkersError(f"tmux {argv[1]} {argv[-2]}: {(res.stderr or '').strip()}")
 
 
 def _beside(name: str, events: str, proc) -> list:
@@ -117,18 +139,15 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     options = {"@sid": sid, "@cwd": cwd, "@events": events, "@claude": claude,
                "@env": json.dumps({k: child_env[k] for k in ENV_KEYS if k in child_env}),
                "@flags": json.dumps(list(flags)), "@started": str(time.time_ns())}
-    for key, value in options.items():
+    for argv in [*(["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()), *_decorations(name)]:
         try:
-            res = _run(proc, ["tmux", "set-option", "-t", f"={name}:", key, value])
-            failure = None if res.returncode == 0 else (res.stderr or "").strip()
+            _tmux(argv, proc)
         except WorkersError as e:
-            failure = str(e)
-        if failure is not None:
             try:
                 _run(proc, ["tmux", "kill-session", "-t", f"={name}"])
             except WorkersError:
                 pass
-            raise WorkersError(f"tmux set-option {key}: {failure}; start undone")
+            raise WorkersError(f"{e}; start undone") from e
     return sid
 
 
@@ -161,6 +180,8 @@ def restart(name: str, *, proc=subprocess.run) -> str:
              opt["claude"], "--resume", opt["sid"], "--name", name, "--settings", hooks(opt["events"]),
              *opt["flags"]]
     cmd = " ".join(shlex.quote(w) for w in words)
+    for argv in [*_decorations(name), ["tmux", "set-option", "-t", f"={name}:", "@state", ""]]:
+        _tmux(argv, proc)
     print(cmd, file=sys.stderr)
     res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
     if res.returncode != 0:
