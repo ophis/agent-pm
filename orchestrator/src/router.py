@@ -6,6 +6,9 @@
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
+  --tui [--split right|below] [--beside SESSION]
+                    Hand-run, not with --issue: the tick's run is attended (run.py --runner tui, with the given --split
+                    and --beside); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
 Needs Python 3.11+.
 """
@@ -20,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK, load_config, role_for, runnable, session,  # noqa: E402
                     stage_order, transcript)
+import attended  # noqa: E402
 import linear  # noqa: E402
 from linear import STAMP, append, humans, linear_gql, log, parse_time, role_ids, task_group, team  # noqa: E402
 import drive  # noqa: E402
@@ -35,7 +39,7 @@ PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format"
          "--setting-sources", "user", "--strict-mcp-config"]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous run was interrupted. Moving this issue back to the Todo queue."
-USAGE = "usage: router.py [--now] [--dry-run] [--issue ID] | --brake"
+USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake"
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
@@ -46,6 +50,11 @@ RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state
 Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
 Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
 Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
+
+
+def start_line(ident, sid, task, tdir):
+    """The runs.log line of a new run."""
+    return f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
 
 
 def local_time(s):
@@ -440,13 +449,42 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
             return 0
         issue, task = taken
         ident, sid = issue["identifier"], str(uuid.uuid4())
-        line = f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
+        line = start_line(ident, sid, task, tdir)
     append(runs, line)
     project = issue["project"]
+    tui = []
+    if opts["tui"]:
+        tui = ["--runner=tui"] + [f"--{k}={opts[k]}" for k in ("split", "beside") if opts[k] is not None]
     rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
-             "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind]).returncode
+             "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind, *tui]).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
     return 0
+
+
+def options(argv):
+    """The tick's options from argv, or None for a form USAGE doesn't allow."""
+    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "beside": None}
+    flags = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
+    valued = {"--issue": "issue", "--split": "split", "--beside": "beside"}
+    i = 0
+    while i < len(argv):
+        a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
+        name, eq, inline = a.partition("=")
+        if a in flags:
+            opts[flags[a]] = True
+        elif eq and name in ("--split", "--beside") and opts[valued[name]] is None:
+            opts[valued[name]] = inline
+        elif a in valued and opts[valued[a]] is None and value is not None and value not in flags | valued:
+            opts[valued[a]] = value
+            i += 1
+        else:
+            return None
+        i += 1
+    if opts["issue"] is not None and (not opts["now"] or opts["tui"]):
+        return None
+    if not opts["tui"] and (opts["split"] is not None or opts["beside"] is not None):
+        return None
+    return opts
 
 
 def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_LOG,
@@ -459,22 +497,20 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
         ok, summary = probe(sh, BRAKE_5H)
         print(summary)
         return 0 if ok else 1
-    args = [a for a in argv if a != "--dry-run"]
-    dry = len(args) < len(argv)
-    now = now or datetime.now(timezone.utc)
-    cfg = lambda: load_config(config) if config else load_config()  # noqa: E731
-    if not args or args[0] in ("--now", "--issue"):
-        opts = {"dry": dry, "now": "--now" in args, "issue": None}
-        rest = [a for a in args if a != "--now"]
-        if rest[:1] == ["--issue"] and len(rest) == 2 and opts["now"]:
-            opts["issue"] = rest[1]
-        elif rest:
-            print(USAGE, file=sys.stderr)
+    opts = options(argv)
+    if opts is None:
+        print(USAGE, file=sys.stderr)
+        return 2
+    os.environ["PATH"] = PATH
+    if opts["tui"]:
+        try:
+            attended.layout(opts["split"], opts["beside"])
+        except attended.Bad as e:
+            print(f"router.py: {e}", file=sys.stderr)
             return 2
-        os.environ["PATH"] = PATH
-        return tick(opts, gql, now, cfg(), tdir, runs, sh, datetime.now().hour if hour is None else hour, root)
-    print(USAGE, file=sys.stderr)
-    return 2
+    now = now or datetime.now(timezone.utc)
+    cfg = load_config(config) if config else load_config()
+    return tick(opts, gql, now, cfg, tdir, runs, sh, datetime.now().hour if hour is None else hour, root)
 
 
 if __name__ == "__main__":

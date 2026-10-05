@@ -1017,10 +1017,10 @@ class TuiRunner(Base):
                             sinks=[seen.append] if sinks is None else sinks)
         return r, self.fake.calls, [e.kind for e in seen], self.err.getvalue()
 
-    def main(self, *steps, api=None):
+    def main(self, *steps, api=None, extra=()):
         fake, err = FakeTui(os.path.join(self.work, ".report.jsonl"), steps), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
-                "--workdir", self.work, "--runner", "tui"]
+                "--workdir", self.work, "--runner", "tui", *extra]
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
             return drive.main(argv, root=CORE), fake.calls, err.getvalue()
 
@@ -1030,6 +1030,57 @@ class TuiRunner(Base):
         self.assertEqual((name, argv, kw["cwd"]), (self.NAME, ["claude", "hi"], self.work))
         self.assertEqual(kw["show"], "echo {{session}}")
         self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
+
+    def test_tui_session_name(self):
+        self.assertEqual(drive.tui_session("r", "t", SID), self.NAME)
+        self.assertIsNotNone(drive.TUI_SESSION.fullmatch(self.NAME))
+        self.assertIsNone(drive.TUI_SESSION.fullmatch("r-t-xyz"))
+
+    def test_layout_reaches_tui_start_and_defaults_to_right_beside_nothing(self):
+        for layout, want in ((None, ("right", None)), (drive.Layout("below", "s"), ("below", "s"))):
+            p = self.params()
+            fake = FakeTui(p.channel, [[outcome(DONE)]])
+            launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
+            with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
+                drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[])
+            (_, _, _, kw), = [c for c in fake.calls if c[0] == "start"]
+            self.assertEqual((kw["split"], kw["beside"]), want)
+
+    def test_a_bad_layout_is_a_config_error_before_files_or_channel(self):
+        marker = os.path.join(self.work, "marker")
+        cases = (("headless", drive.Layout(), "no layout"), ("tui", drive.Layout("left"), "split"),
+                 ("tui", drive.Layout(beside="a b"), "beside"), ("tui", drive.Layout(beside=""), "beside"))
+        for runner, layout, word in cases:
+            with self.subTest(runner=runner, layout=layout):
+                p = self.params()
+                launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], files={marker: "x"})
+                with self.assertRaisesRegex(drive.ConfigError, word):
+                    drive.start(launch, run(), p, client=claude(), runner=runner, layout=layout, sinks=[])
+                self.assertFalse(os.path.lexists(marker))
+                self.assertFalse(os.path.lexists(p.channel))
+
+    def test_main_split_and_beside_build_the_layout(self):
+        seen = []
+        real = drive.start
+
+        def start(*a, **kw):
+            seen.append(kw["layout"])
+            return real(*a, **kw)
+
+        for flags, want in ((["--split", "below", "--beside", "s"], drive.Layout("below", "s")),
+                            (["--beside", "s"], drive.Layout("right", "s")), ([], None)):
+            with unittest.mock.patch.object(drive, "start", start):
+                self.main([outcome(DONE)], extra=flags)
+            self.assertEqual(seen.pop(), want)
+
+    def test_main_layout_with_headless_exits_2(self):
+        err = io.StringIO()
+        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work, "--split", "below"]
+        with redirect_stderr(err), unittest.mock.patch.object(drive, "start") as start:
+            self.assertEqual(drive.main(argv, root=CORE), 2)
+        self.assertIn("no layout", err.getvalue())
+        start.assert_not_called()
 
     def test_done_on_the_first_outcome_without_waiting_for_a_stop_or_a_kill(self):
         r, calls, kinds, _ = self.start([progress("round", "x")], [outcome(DONE)])

@@ -487,6 +487,18 @@ class Iterm(unittest.TestCase):
                                       ["tmux", "list-clients", "-t", "=own", "-F", CLIENTS],
                                       osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys002", "/dev/ttys001")])
 
+    def test_own_session(self):
+        fake = Tmux(results={"display-message": (0, "own\n")})
+        with environ(**self.INSIDE):
+            self.assertEqual(tui.own_session(proc=fake), "own")
+        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]])
+        fake = Tmux()
+        with environ():
+            self.assertIsNone(tui.own_session(proc=fake))
+        self.assertEqual(fake.calls, [])
+        with environ(**{**self.INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tui.TuiError, "TMUX_PANE"):
+            tui.own_session(proc=fake)
+
     def test_bad_tmux_pane(self):
         for env in ({**self.INSIDE, "TMUX_PANE": pane} for pane in ("", "3", "%3;", "%x", "%3 ", "#{x}")):
             with self.subTest(pane=env["TMUX_PANE"]):

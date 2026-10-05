@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delete the clones of finished issues (TASK-49) and archive finished pm and engineer issues.
+"""Delete the clones of finished issues (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
 
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
@@ -9,19 +9,24 @@ An entry must be a real directory inside its own folder (not a symlink) with a .
 (a core clone); anything else is skipped. A clone is deleted with any uncommitted or unpushed
 work (shutil.rmtree). Remote branches and work/<ID>/ itself are never touched.
 
+TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its clones go, since a
+left-open claude may work in one.
+
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
-Runs at the end of promote's tick (Pruner); an issue is queried on its own only when it has such an entry.
+Runs at the end of promote's tick (Pruner); an issue is queried on its own only when it has such an entry or a record.
 """
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CLONES, WORK  # noqa: E402
+from config import CLONES, LOGS, WORK  # noqa: E402
+import attended  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -43,10 +48,10 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK, team, roles):
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run):
         """roles: {Linear user id: role} as linear.role_ids returns."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles = team, roles
+        self.team, self.roles, self.logs, self.proc = team, roles, logs, proc
         self.errors = 0
 
     def say(self, msg):
@@ -94,6 +99,25 @@ class Pruner:
             return
         self.say(f"prune-removed {key}: clone")
 
+    def close_sessions(self, ident):
+        if self.dry:
+            try:
+                names = attended.names(ident, logs=self.logs)
+            except OSError as e:
+                self.error(ident, one_line(e))
+                return
+            for name in names:
+                self.say(f"prune-plan {ident}/{name}: close the tui session")
+            return
+        for c in attended.close(ident, logs=self.logs, proc=self.proc):
+            key = ident if c.name is None else f"{ident}/{c.name}"
+            if c.status == "closed":
+                self.say(f"prune-closed {key}: tui session")
+            elif c.status == "skip":
+                self.say(f"prune-skip {key}: {c.msg}")
+            else:
+                self.error(key, c.msg)
+
     def archive(self, finished):
         try:
             ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
@@ -136,6 +160,7 @@ class Pruner:
                       if IDENT_RE.fullmatch(n) and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))]
         except OSError:
             idents = []
+        idents = sorted(set(idents) | set(attended.recorded(self.logs)))
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
@@ -148,6 +173,7 @@ class Pruner:
             if since is None:
                 self.say(f"prune-skip {ident}: finish time unknown")
             elif self.now - since >= QUARANTINE:
+                self.close_sessions(ident)
                 for parts in self.entries(ident):
                     self.prune(ident, parts)
         self.archive(finished)

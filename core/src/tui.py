@@ -14,6 +14,7 @@ show(session, template, split=, beside=)
                                   iterm(session, split=, beside=); returns the failure reason instead of raising
 iterm(session, split=, beside=)   the iTerm2 split: a pane split off right or below the one showing tmux session
                                   beside, else the caller's, attached to the session; returns the failure reason
+own_session()                     the tmux session of the caller's pane, None outside tmux
 kill(session)                     ends the session
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
 """
@@ -295,15 +296,23 @@ def _run(session: str, template: str, proc) -> str | None:
     return f"exit status {res.returncode}" if res.returncode else None
 
 
+def own_session(*, proc=subprocess.run) -> str | None:
+    """The tmux session of the caller's pane ($TMUX_PANE); None outside tmux."""
+    if not os.environ.get("TMUX"):
+        return None
+    pane = os.environ.get("TMUX_PANE", "")
+    if not re.fullmatch(r"%[0-9]+", pane):
+        raise TuiError(f"bad $TMUX_PANE {pane!r}")
+    name = _tmux_ok(["display-message", "-p", "-t", pane, "#{session_name}"], proc).stdout.strip()
+    if not NAME.fullmatch(name):
+        raise TuiError(f"own tmux session {name!r}: want [A-Za-z0-9_-]+")
+    return name
+
+
 def _anchor(beside: str | None, proc) -> tuple[str, list[str]]:
     """("tty", the ttys of the clients showing a tmux session, most recently active first), or ("id", [unique id])."""
-    if beside is None and os.environ.get("TMUX"):
-        pane = os.environ.get("TMUX_PANE", "")
-        if not re.fullmatch(r"%[0-9]+", pane):
-            raise TuiError(f"bad $TMUX_PANE {pane!r}")
-        beside = _tmux_ok(["display-message", "-p", "-t", pane, "#{session_name}"], proc).stdout.strip()
-        if not NAME.fullmatch(beside):
-            raise TuiError(f"own tmux session {beside!r}: want [A-Za-z0-9_-]+")
+    if beside is None:
+        beside = own_session(proc=proc)
     if beside is not None:
         out = _tmux_ok(["list-clients", "-t", f"={beside}", "-F", CLIENTS], proc).stdout
         clients = [(int(at), tty) for at, _, tty in (line.partition(" ") for line in out.splitlines())

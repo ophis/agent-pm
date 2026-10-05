@@ -4,7 +4,8 @@ channel the run reports its progress and outcome to (report.py, pre-approved for
 outcome.
 
 drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
-         [--sid UUID] [--resume] [--runner headless|tui] [--dry-run]
+         [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--beside SESSION]
+         [--dry-run]
 --out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
 (skill) the dir it writes under. By default (start's sinks) a run shows its text and progress on stderr and leaves
 <workdir>/outcome.json and <workdir>/progress.jsonl.
@@ -342,6 +343,21 @@ class Tail:
                 yield event
 
 
+TUI_SESSION = re.compile(r"[a-z][a-z0-9-]*-[0-9a-f]{8}")
+
+
+def tui_session(role: str, task: str, sid: str) -> str:
+    """The name of the tui runner's tmux session for a run."""
+    return f"{role}-{task}-{sid[:8]}"
+
+
+@dataclass(frozen=True)
+class Layout:
+    """The tui runner's default iTerm2 show: the split's side (tui.SPLITS) and the tmux session whose pane it splits."""
+    split: str = "right"
+    beside: str | None = None
+
+
 class Runner(Protocol):
     """How a run's command is hosted, and when the run counts as done; the driver loop is the same for every runner."""
     starts: str   # the Launch field holding the command it starts
@@ -359,7 +375,7 @@ class Headless:
     """The client's command on a pipe, its stdout turned into events by the client; ended at EOF."""
     starts = "argv"
 
-    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
+    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None):
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
@@ -406,14 +422,15 @@ class Tui:
     counted since the last progress report, leave the session to a human."""
     starts = "interactive"
 
-    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen):
-        self.run, self.name = run, f"{run.role}-{run.task}-{params.sid[:8]}"
+    def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None):
+        self.run, self.name, self.layout = run, tui_session(run.role, run.task, params.sid), layout or Layout()
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started = False
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
-            tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show)
+            tui.start(self.name, argv, cwd=cwd, env=env, show=self.run.show, split=self.layout.split,
+                      beside=self.layout.beside)
         except tui.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started = True
@@ -475,16 +492,30 @@ def command(launch: Launch, runner: str, client: Client) -> list[str]:
     raise ConfigError(f"{type(client).__name__} has no {runner} command")
 
 
+def check_layout(runner: str, layout: Layout | None) -> None:
+    """Raises ConfigError for a layout the runner can't take."""
+    if layout is None:
+        return
+    if runner == "headless":
+        raise ConfigError("the headless runner takes no layout")
+    if layout.split not in tui.SPLITS:
+        raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tui.SPLITS)}")
+    if layout.beside is not None and not tui.NAME.fullmatch(layout.beside):
+        raise ConfigError(f"layout beside {layout.beside!r}: want {tui.NAME.pattern}")
+
+
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
-          sinks: Sequence[Sink] | None = None, popen=subprocess.Popen) -> Result:
+          layout: Layout | None = None, sinks: Sequence[Sink] | None = None, popen=subprocess.Popen) -> Result:
     """Starts the run through `runner` (RUNNERS) and waits, handing `sinks` (default_sinks() when None) its host's
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
     and a `missing` event first. Raises ConfigError, before anything starts, when the client lacks the runner's
-    command; a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
+    command or the layout is one the runner can't take (check_layout); a RunnerError stops the runner and is the
+    Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
-    host = RUNNERS[runner](run=run, params=params, client=client, popen=popen)
+    check_layout(runner, layout)
+    host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout)
     write(launch.files)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(launch.cwd or workdir, exist_ok=True)
@@ -562,11 +593,14 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
+    ap.add_argument("--split", choices=tui.SPLITS, help=f"the tui runner's iTerm2 split (default: {Layout.split})")
+    ap.add_argument("--beside", metavar="SESSION", help="split the iTerm2 pane showing this tmux session")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.input == "-":
         a.input = sys.stdin.read()
     params = run = None
+    layout = Layout(a.split or Layout.split, a.beside) if a.split or a.beside is not None else None
     try:
         client = clients.get(a.client, root)
         if client.runs:
@@ -575,9 +609,12 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
             params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume)
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
             cmd = command(launch, a.runner, client)
+            check_layout(a.runner, layout)
         else:
             if a.runner != "headless":
                 raise ConfigError(f"{type(client).__name__} writes files; it takes no --runner {a.runner}")
+            if layout:
+                raise ConfigError(f"{type(client).__name__} writes files; it takes no layout")
             launch = export(root, client, a.role, a.task, dest=a.out)
             cmd = launch.argv
     except ConfigError as e:
@@ -594,7 +631,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
         for path in launch.files:
             print(f"drive.py: wrote {path}", file=sys.stderr)
         return 0
-    result = start(launch, run, params, client=client, runner=a.runner, popen=popen)
+    result = start(launch, run, params, client=client, runner=a.runner, layout=layout, popen=popen)
     if result.outcome is None:
         print(f"drive.py: {result.error}", file=sys.stderr)
         return 3 if result.returncode != 0 else 1

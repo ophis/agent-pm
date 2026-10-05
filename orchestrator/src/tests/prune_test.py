@@ -2,12 +2,14 @@ import ast, io, os, shutil, sys, tempfile, unittest
 from contextlib import redirect_stdout
 from datetime import timedelta
 from functools import partial
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
-import config, linear, promote, prune  # noqa: E402
+import attended, config, linear, promote, prune  # noqa: E402
 import promote_test as tp  # noqa: E402
+from attended_test import Tmux  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
@@ -65,6 +67,7 @@ class PruneTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.work = os.path.join(self.root, "work")
         os.makedirs(self.work)
+        self.logs = os.path.join(self.root, "logs")
         self.outside = os.path.join(self.root, "outside")
         os.makedirs(os.path.join(self.outside, "dotgit"))
         write(os.path.join(self.outside, "keep"), "x")
@@ -84,11 +87,17 @@ class PruneTest(unittest.TestCase):
     def assertOutsideKept(self):
         self.assertTrue(os.path.isfile(os.path.join(self.outside, "keep")))
 
-    def prune(self, gql, dry=False):
+    def prune(self, gql, dry=False, tmux=None):
         out = io.StringIO()
         with redirect_stdout(out):
-            code = prune.Pruner(gql, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES).run()
+            code = prune.Pruner(gql, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES,
+                                logs=self.logs, proc=tmux or Tmux()).run()
         return code, out.getvalue()
+
+    def record(self, ident, *names):
+        for n in names:
+            attended.record(ident, n, logs=self.logs)
+        return os.path.join(self.logs, attended.RECORD_DIR, ident)
 
     def mkg(self, ident, *parts, git="file"):
         """An entry at work/<ident>/<parts> whose .git is a file (a linked worktree) or absent (git=None)."""
@@ -307,6 +316,78 @@ class PruneTest(unittest.TestCase):
         self.assertNotIn(linear.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
+    def test_record_only_issue_closed_when_finished_24h(self):
+        a, b = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
+        path = self.record("TASK-7", a, b)
+        tmux = Tmux(live=[a])
+        gql = gql_for({"TASK-7": ("Done", [(24, "Done")])})
+        code, out = self.prune(gql, tmux=tmux)
+        self.assertEqual(code, 0)
+        self.assertEqual(msgs(out), [f"prune-closed TASK-7/{a}: tui session"])
+        self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
+        self.assertNotIn(a, tmux.live)
+        self.assertFalse(os.path.exists(path))
+
+    def test_clone_and_record_issue_queried_once_sessions_first(self):
+        a = "engineer-engineering-0b6f2c1e"
+        clone = self.mkc("TASK-7", "src", "repo")
+        self.record("TASK-7", a)
+        gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
+        code, out = self.prune(gql, tmux=Tmux(live=[a]))
+        self.assertEqual(code, 0)
+        self.assertEqual(msgs(out), [f"prune-closed TASK-7/{a}: tui session", "prune-removed TASK-7/src/repo: clone"])
+        self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
+        self.assertFalse(os.path.lexists(clone))
+
+    def test_young_and_unfinished_sessions_kept(self):
+        a = "engineer-engineering-0b6f2c1e"
+        paths = [self.record("TASK-7", a), self.record("TASK-8", a)]
+        gql = gql_for({"TASK-7": ("Done", [(24 - 1 / 3600, "Done")]), "TASK-8": ("In Progress", [(30, "In Progress")])})
+        tmux = Tmux(live=[a])
+        self.assertEqual(self.prune(gql, tmux=tmux), (0, ""))
+        self.assertEqual(tmux.calls, [])
+        self.assertTrue(all(os.path.exists(p) for p in paths))
+
+    def test_dry_run_plans_each_recorded_name_and_calls_no_tmux(self):
+        a, b = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
+        path = self.record("TASK-7", a, "bad name", b)
+        tmux = Tmux(live=[a, b])
+        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}), dry=True, tmux=tmux)
+        self.assertEqual(code, 0)
+        self.assertEqual(msgs(out), [f"dry-run: prune-plan TASK-7/{a}: close the tui session",
+                                     f"dry-run: prune-plan TASK-7/{b}: close the tui session"])
+        self.assertEqual(tmux.calls, [])
+        self.assertEqual(Path(path).read_text().count("\n"), 3)
+
+    def test_dry_run_counts_an_unreadable_record(self):
+        os.makedirs(os.path.join(self.logs, attended.RECORD_DIR, "TASK-8"))
+        code, out = self.prune(gql_for({"TASK-8": ("Done", [(30, "Done")])}), dry=True)
+        (line,) = msgs(out)
+        self.assertEqual(code, 3)
+        self.assertTrue(line.startswith("dry-run: prune-error TASK-8: IsADirectoryError"), line)
+
+    def test_kill_failure_counted_and_kept_recorded(self):
+        a, b = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
+        path = self.record("TASK-7", a, b)
+        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}), tmux=Tmux(live=[a, b], fail=[a]))
+        self.assertEqual(code, 3)
+        lines = msgs(out)
+        self.assertTrue(lines[0].startswith(f"prune-error TASK-7/{a}: "))
+        self.assertEqual(lines[1], f"prune-closed TASK-7/{b}: tui session")
+        self.assertEqual(Path(path).read_text(), a + "\n")
+
+    def test_bad_record_lines_skipped_and_unreadable_record_counted(self):
+        self.record("TASK-7", "evil name")
+        os.makedirs(os.path.join(self.logs, attended.RECORD_DIR, "TASK-8"))
+        done = ("Done", [(30, "Done")])
+        tmux = Tmux()
+        code, out = self.prune(gql_for({"TASK-7": done, "TASK-8": done}), tmux=tmux)
+        lines = msgs(out)
+        self.assertEqual(code, 3)
+        self.assertEqual(lines[0], "prune-skip TASK-7: not a TUI session name")
+        self.assertTrue(lines[1].startswith("prune-error TASK-8: ") and len(lines) == 2)
+        self.assertEqual(tmux.calls, [])
+
     def tick(self, prune_gql):
         """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output)."""
         fake = tp.FakeLinear()
@@ -324,7 +405,7 @@ class PruneTest(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             code = promote.main([], gql=gql, now=NOW, config=config,
-                                pruner=partial(prune.Pruner, work=self.work))
+                                pruner=partial(prune.Pruner, work=self.work, logs=self.logs, proc=Tmux()))
         return code, fake.issues["DR-1"]["state"], out.getvalue()
 
     def test_promote_tick_archives_with_its_roles(self):
