@@ -308,6 +308,15 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(rm.calls, [(p, "TASK-49-") for p in (a, b, c, d, os.path.join(self.work, "TASK-49", "src", "p", "e"))])
         self.assertFalse(any(os.path.lexists(os.path.join(self.work, "TASK-49", "src", o)) for o in "op"))
 
+    def test_dot_named_repos_under_an_owner_are_entries(self):
+        wt, clone = self.mkg("TASK-49", "src", "o", ".github"), self.mkc("TASK-49", "src", "p", ".github")
+        rm = Remove()
+        code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), remove=rm)
+        self.assertEqual(code, 0)
+        self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/.github: worktree", "prune-removed TASK-49/src/p/.github: clone"])
+        self.assertEqual(rm.calls, [(wt, "TASK-49-")])
+        self.assertFalse(any(os.path.lexists(os.path.join(self.work, "TASK-49", "src", o)) for o in "op"))
+
     def test_publish_worktree_removed_too(self):
         wt = self.mkg("TASK-49", "publish")
         rm = Remove()

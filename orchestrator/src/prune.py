@@ -79,7 +79,7 @@ class Pruner:
                     found.append((folder, n))
                     continue
                 try:
-                    found += [(folder, n, m) for m in sorted(os.listdir(entry)) if not m.startswith(".")]
+                    found += [(folder, n, m) for m in sorted(os.listdir(entry))]
                 except OSError:
                     pass
         if os.path.lexists(os.path.join(self.work, ident, PUBLISH)):
