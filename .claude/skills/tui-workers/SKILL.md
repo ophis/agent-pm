@@ -15,7 +15,7 @@ You, the commander, run each worker as an interactive `claude` in its own tmux s
 1. Events file: one for all your workers, e.g. `<scratchpad>/workers.events`.
 2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended), `HH:MM:SS <name> blocked` (it waits on a permission prompt, a dialog or input) or `HH:MM:SS <name> dead` (its `claude` exited; the pane stays).
 3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--prompt '<text>'] [--beside <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, the prompt is its first message, and the flags reach `claude` verbatim: pass only those the user's request warrants (e.g. `--permission-mode`).
-   The first worker's pane opens right of yours; later workers split below the newest worker on the same events file that a terminal shows. `--beside`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; `tmux attach -t '=<name>'` shows it. The pane's top border shows `<name> <state>` (working, done, blocked, dead) for the user.
+   The first worker's pane opens right of yours; each later one splits below the newest pane you opened that still shows. A worker that starts workers gets its own column right of its pane. `--beside`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; `tmux attach -t '=<name>'` shows it. The pane's top border shows `<name> <state>` (working, done, blocked, dead) for the user.
 4. Read its pane: `tui_claude.py read <name>`. In a folder claude doesn't trust yet it shows the trust dialog, which sends no event: handle it as blocked.
 
 ## Events
@@ -38,4 +38,4 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 
 - Never `/clear` a worker: it gets a new session id, which `reply` and `restart` lose. For a fresh context, stop it and start another.
 - Tmux targets are `'=<name>'` (session) or `'=<name>:'` (pane), quoted: zsh expands a leading `=`, and a bare name prefix-matches another session.
-- The automatic layout and `restart` see only workers that `workers.py start` started.
+- The automatic layout sees panes opened through `tui_claude.py` from your own tmux session or iTerm2 pane (workers and attended runs); `restart` sees only workers that `workers.py start` started.
