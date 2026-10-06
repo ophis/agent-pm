@@ -29,6 +29,7 @@ import target  # noqa: E402
 import writeback  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
+import repo  # noqa: E402
 import drive  # noqa: E402
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
@@ -58,6 +59,7 @@ DESIGN_LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Product%20Desi
 INPUT = f"""Reference: TASK-7
 Title: TASK-7: Session registry
 Repo: Ophis/Agent-PM
+Checkout: TASK-7
 Branch: TASK-7-session-registry
 Links: {URL}
 
@@ -283,7 +285,7 @@ class Outer(Base):
         self.assertNotIn("--target", argv)
         self.assertEqual(self.run.calls, [(LISTING, 60)])
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
-                         f"Reference: TASK-7\nRepo: ophis/agent-pm\n\n{inputs.PRECEDENCE['research']}\n\n"
+                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['research']}\n\n"
                          "## Question\n\nCompare queues\n\nWhich queue fits?")
 
     def test_design_gets_the_research_target(self):
@@ -294,7 +296,7 @@ class Outer(Base):
         self.assertNotIn("--target", argv)
         self.assertEqual(self.run.calls, [(DESIGN_LISTING, 60)])
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
-                         f"Reference: TASK-7\nRepo: ophis/agent-pm\n\n{inputs.PRECEDENCE['design']}\n\n"
+                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['design']}\n\n"
                          "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")
 
     def local_clone(self):
@@ -325,7 +327,9 @@ class Outer(Base):
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
         self.transcript()
-        os.makedirs(os.path.join(config.RUNS_DIR, ID, config.CLONES[0], "Ophis", "Agent-PM", ".git"))
+        name = re.search(r"^Checkout: (.+)$", INPUT, re.M).group(1)
+        # Where `repo.py worktree --dir <Workdir>/src --name <Checkout>` puts it, as core's tasks give the command.
+        os.makedirs(os.path.join(repo.checkout(os.path.join(self.rd, "src"), "Ophis", "Agent-PM", name), ".git"))
         self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
         self.assertEqual(self.main(args(mode="resume")), 0)
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)

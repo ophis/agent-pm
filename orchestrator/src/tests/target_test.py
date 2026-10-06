@@ -115,7 +115,7 @@ class Check(unittest.TestCase):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm")
+        self.clone = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm-TASK-26")
         self.ls_remote = ["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                           "ls-remote", "--heads", "https://github.com/ophis/agent-pm.git", "TASK-26-*"]
 
@@ -188,11 +188,15 @@ class Check(unittest.TestCase):
                 self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
             os.unlink(git)
 
-    def test_legacy_src_name_path_is_not_read(self):
-        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "agent-pm", ".git"))
-        r = self.check(local=ok("TASK-26-old\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-        self.assertEqual(r.branch, "TASK-26-remote")
-        self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
+    def test_legacy_checkout_paths_are_not_read(self):
+        for parts in (("agent-pm",), ("ophis", "agent-pm")):
+            with self.subTest(parts=parts):
+                legacy = os.path.join(self.work, "TASK-26", config.CLONES[0], *parts)
+                os.makedirs(os.path.join(legacy, ".git"))
+                r = self.check(local=ok("TASK-26-old\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+                self.assertEqual(r.branch, "TASK-26-remote")
+                self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
+                shutil.rmtree(legacy)
 
     def test_read_only_task_branches_are_not_the_build_branch(self):
         read_only = [f"TASK-26-{t}" for t, spec in config.TASKS.items() if spec.kind != "build"]
@@ -310,7 +314,7 @@ class Check(unittest.TestCase):
                 self.assertEqual(self.argvs(), [("gh", "api", "repos/ophis/agent-pm")])
 
     def test_o_and_n_come_from_full_name(self):
-        renamed = os.path.join(self.work, "TASK-26", config.CLONES[0], "Ophis", "Agent-PM-2")
+        renamed = os.path.join(self.work, "TASK-26", config.CLONES[0], "Ophis", "Agent-PM-2-TASK-26")
         os.makedirs(os.path.join(renamed, ".git"))
         for desc, asked in (("Repo: OPHIS/agent-pm", "OPHIS/agent-pm"), ("Repo: https://github.com/ophis/Agent-PM.git", "ophis/Agent-PM")):
             with self.subTest(desc):
@@ -334,7 +338,7 @@ class WithClone(unittest.TestCase):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         self.work = os.path.join(self.tmp, "work")
-        self.checkout = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm")
+        self.checkout = os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm-TASK-26")
 
     def clone(self, name, origin=HTTPS):
         path = os.path.join(self.tmp, name)
@@ -366,6 +370,17 @@ class WithClone(unittest.TestCase):
 
     def want(self, clone):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
+
+    def test_the_checkout_is_cores_rule_with_the_issue_id(self):
+        want = repo.checkout(os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26")
+        self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)
+        self.assertEqual(want, self.checkout)
+
+    def test_a_worktree_at_the_old_owner_name_path_is_not_read(self):
+        x, y = self.clone("x"), self.clone("y")
+        self.worktree(x)
+        os.rename(self.checkout, os.path.join(os.path.dirname(self.checkout), "agent-pm"))
+        self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
 
     def test_without_a_checkout_the_table_entry_is_found_case_insensitively(self):
         y = self.clone("y")

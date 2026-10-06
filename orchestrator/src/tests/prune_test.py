@@ -339,7 +339,7 @@ class PruneTest(unittest.TestCase):
     def test_finished_worktrees_go_with_their_records_and_pushed_branches(self):
         with self.git_env():
             clone = self.real_clone()
-            x, y = os.path.join(self.work, "TASK-49", "src", "o", "n"), os.path.join(self.work, "TASK-49", "src", "p", "m")
+            x, y = os.path.join(self.work, "TASK-49", "src", "o", "n-TASK-49"), os.path.join(self.work, "TASK-49", "src", "p", "m-TASK-49")
             git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", x, "origin/main")
             git("-C", x, "commit", "-q", "--allow-empty", "-m", "x")
             git("-C", x, "push", "-q", "origin", "TASK-49-x")
@@ -356,7 +356,8 @@ class PruneTest(unittest.TestCase):
             run = Git(real=True)
             code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=run, writable=(self.work,))
             self.assertEqual(code, 0, out)
-            self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/n: worktree", "prune-removed TASK-49/src/p/m: worktree",
+            self.assertEqual(msgs(out), ["prune-removed TASK-49/src/o/n-TASK-49: worktree",
+                                         "prune-removed TASK-49/src/p/m-TASK-49: worktree",
                                          f"prune-removed TASK-49: branch TASK-49-x in {clone}",
                                          f"prune-skip TASK-49: branch TASK-49-y in {clone} kept: not pushed",
                                          f"prune-removed TASK-49: branch TASK-49-z in {clone}"])

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>, on the run's own branch.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG> (checkout()), on the run's branch.
 
-repo.py worktree --dir DIR --branch B REPO  prints {"repo", "host", "default", "branch", "commit", "worktree",
-                                           "permalink_base", "push"}; no push permission is no error
-repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", "since", "user", "others"}, `user` and
-                                           `others` being PR comments and reviews by the user (core config's `users`,
-                                           else the gh login) and by anyone else since the latest plan doc commit
+repo.py worktree --dir DIR --branch B [--name SLUG] REPO
+    prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
+    no error
+repo.py status --dir DIR --branch B [--name SLUG] REPO
+    after worktree with the same SLUG: {"pr", "plan_docs", "since", "user", "others"}, `user` and `others` being PR
+    comments and reviews by the user (core config's `users`, else the gh login) and by anyone else since the latest plan
+    doc commit
+SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs (prune runs no git in a clone there). A local clone gets a git worktree after a fetch that
 moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig),
@@ -15,7 +18,8 @@ from origin/<default>.
 Git lock failures (runs sharing a clone) are retried.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
-Exits 2 when REPO or B is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other failure.
+Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
+failure.
 Errors mask URL userinfo.
 Core config: config.toml beside src/, with config.local.toml on top (read_config); a skill's copy has none.
 """
@@ -42,6 +46,7 @@ FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 USERINFO = re.compile(r"//[^@/\s]+@")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
+SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
@@ -208,9 +213,16 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
     return Repo.parse(slug), clone
 
 
-def place(repo: Repo, base: str, clone: str | None, *, run: Runner) -> tuple[str, bool]:
+def checkout(base: str, owner: str, name: str, slug: str) -> str:
+    """The checkout path of repo owner/name under `base`; Invalid unless `slug` is a SLUG."""
+    if not SLUG.fullmatch(slug):
+        raise Invalid(f"unsafe checkout name {slug[:80]!r}")
+    return os.path.join(os.path.abspath(base), owner, f"{name}-{slug}")
+
+
+def place(repo: Repo, base: str, clone: str | None, branch: str, slug: str | None, *, run: Runner) -> tuple[str, bool]:
     """(worktree, whether it exists); Invalid if it holds anything but a clone of the repo or a worktree of `clone`."""
-    wt = os.path.join(os.path.abspath(base), repo.owner, repo.name)
+    wt = checkout(base, repo.owner, repo.name, branch.replace("/", "-") if slug is None else slug)
     if not os.path.lexists(wt):
         return wt, False
     dotgit = os.path.join(wt, ".git")
@@ -251,7 +263,8 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
     return found
 
 
-def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None, links=frozenset()) -> dict:
+def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh, temp=None,
+             links=frozenset()) -> dict:
     """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
     clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
     local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
@@ -260,7 +273,7 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None, 
     if clone and (d := under(clone, temp_dirs() if temp is None else temp)):
         raise Invalid(f"{clone} is under the temp dir {d}: keep local clones outside temp dirs")
     symlinks = "true" if clone is not None and clone in links else "false"
-    wt, exists = place(repo, base, clone, run=run)
+    wt, exists = place(repo, base, clone, branch, slug, run=run)
     if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
         index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
         if not os.path.isfile(index):   # its checkout never finished: it holds nothing
@@ -367,10 +380,11 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: datetime.fromisoformat(e["at"]))
 
 
-def status(spec: str, branch: str, base: str, *, run: Runner = sh, users: list[str] | None = None) -> dict:
+def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
+           users: list[str] | None = None) -> dict:
     """The branch's PR, plan docs and PR feedback since the latest plan doc commit; raises Invalid or RuntimeError."""
     repo, clone = resolve(spec, run=run)
-    wt, exists = place(repo, base, clone, run=run)
+    wt, exists = place(repo, base, clone, branch, slug, run=run)
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
@@ -408,14 +422,15 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p = sub.add_parser(cmd)
         p.add_argument("--dir", required=True, action=Once)
         p.add_argument("--branch", required=True, action=Once)
+        p.add_argument("--name", action=Once)
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
         cfg = read_config(config) if os.path.isfile(config) else {}   # a skill's copy has no config.toml beside it
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, run=run, temp=temp, links=trusted_dirs(cfg))
+            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
         else:
-            r = status(a.repo, a.branch, a.dir, run=run, users=cfg.get("users"))
+            r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"))
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2

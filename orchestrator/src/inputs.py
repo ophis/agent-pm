@@ -169,8 +169,13 @@ def _repo(target):
     return "Repo: " + (target.clone or f"{target.owner}/{target.name}")
 
 
+def _checkout(issue):
+    """The run's `repo.py --name`; target.checkout uses the same slug."""
+    return "Checkout: " + issue.identifier
+
+
 def _reference(issue, target):
-    return "\n".join(["Reference: " + issue.identifier] + ([_repo(target)] if target else []))
+    return "\n".join(["Reference: " + issue.identifier, *([_repo(target)] if target else []), _checkout(issue)])
 
 
 def _research(issue, sources, humans, target, docs):
@@ -211,7 +216,7 @@ def _build(issue, sources, humans, target, docs):
     prd = next((d for d in sources.docs if d.path.startswith(dirs)), None)
     instructions = h.instructions if h else _join([issue.title, _head(issue.description).strip()])
     head = ["Reference: " + issue.identifier, "Title: " + pr_title(issue.identifier, issue.title),
-            _repo(target), f"Branch: {target.branch}",
+            _repo(target), _checkout(issue), f"Branch: {target.branch}",
             "Links: " + ", ".join([issue.url, *([prd.url] if prd else [])])]
     return _join([
         "\n".join(head), PRECEDENCE["build"],
