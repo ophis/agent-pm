@@ -130,7 +130,7 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual((runs["researcher"].max_runs, runs["engineer"].max_runs), (3, 1))
 
     def test_role_not_in_core(self):
-        self.fails("orchestrator/config.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
+        self.fails("orchestrator/config.toml: role 'ghost' is not in core/config.toml", PIPELINE + role("ghost"))
 
     def test_task_without_tasks_entry(self):
         self.fails("orchestrator/config.toml: dummy-tester's task 'echo' has no entry in config.TASKS", PIPELINE + role("dummy-tester"))
@@ -180,7 +180,7 @@ class Runnable(ConfigFile, unittest.TestCase):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(os.path.join(config.CORE, "config", "config.toml")) as f:
+        with open(os.path.join(config.CORE, config.compose.CONFIG)) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
@@ -221,7 +221,7 @@ DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-de
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
-    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config/config.toml; core's text and
+    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config.toml; core's text and
     [clients.*] tables are the real ones."""
     def setUp(self):
         super().setUp()
@@ -234,9 +234,9 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.core(CORE_TOML)
 
     def core(self, text):
-        with open(os.path.join(config.CORE, "config", "config.toml")) as f:
+        with open(os.path.join(config.CORE, config.compose.CONFIG)) as f:
             real = f.read()
-        with open(os.path.join(self.root, "core", "config", "config.toml"), "w") as f:
+        with open(os.path.join(self.root, "core", config.compose.CONFIG), "w") as f:
             f.write(text + real[real.index("\n[clients."):])
 
     def runs(self, text=PIPELINE):

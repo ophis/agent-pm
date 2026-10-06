@@ -78,7 +78,7 @@ class Client:
 
 
 def load_config(name: str, root: str) -> dict:
-    """<root>/config/config.toml's [clients.<name>] table."""
+    """<root>/config.toml's [clients.<name>] table."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")

@@ -9,7 +9,7 @@ python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orc
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
 python3 -m unittest discover -s .claude/skills/tui-workers/scripts -p "*_test.py"   # tui-workers skill tests
-core/regen_skills.sh                                              # after editing core/team, core/output, core/config or core/src/repo.py; commit core/skills/
+core/regen_skills.sh                                              # after editing core/team, core/output, core/config.toml or core/src/repo.py; commit core/skills/
 python3 orchestrator/src/router.py --now --dry-run                         # one tick: plan + usage probe, changes nothing
 python3 orchestrator/src/run.py --issue TASK-12 --tui                      # run one issue attended (README › Attended runs)
 python3 orchestrator/src/promote.py --dry-run                              # what Handoff and prune would do
@@ -37,14 +37,14 @@ Python 3.11+ (`tomllib`); launchd uses `/opt/homebrew/bin/python3`, since macOS'
 
 ## Roles, tasks, rules
 
-- Roles, tasks, methods, principles and templates are core's: `core/team/` (text), `core/config/config.toml` (tier, effort, `read`/`write`, `commands`, `output`, `language`; `[clients.claude]`). A role's default task is its `default_task`.
-- `orchestrator/config.toml` adds what core must not know: `work_dir`, `[roles.<role>]` (`account`, `key`, `next`, `require_instructions`, `max_runs`), `[task_labels]`, `[project_repos]`, `[local_clones]` (repo → local clone path; the input's `Repo:` names it, `config.runnable` checks it), and `[core]`, the overlay: core run keys for the orchestrator's agent runs, layered after `core/config/config.toml`'s `[clients.claude]` (`config.overlay()` fills `{{root}}`). Title prefixes and write-back differences per task are `config.TASKS`. An invalid or inconsistent config stops router, run and promote (`config.runnable`).
+- Roles, tasks, methods, principles and templates are core's: `core/team/` (text), `core/config.toml` (tier, effort, `read`/`write`, `commands`, `output`, `language`; `[clients.claude]`). A role's default task is its `default_task`.
+- `orchestrator/config.toml` adds what core must not know: `work_dir`, `[roles.<role>]` (`account`, `key`, `next`, `require_instructions`, `max_runs`), `[task_labels]`, `[project_repos]`, `[local_clones]` (repo → local clone path; the input's `Repo:` names it, `config.runnable` checks it), and `[core]`, the overlay: core run keys for the orchestrator's agent runs, layered after `core/config.toml`'s `[clients.claude]` (`config.overlay()` fills `{{root}}`). Title prefixes and write-back differences per task are `config.TASKS`. An invalid or inconsistent config stops router, run and promote (`config.runnable`).
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py` / `config.TASKS`. One rule, one place. Precedence: principles > charter > task.
 - Every task has a `## Resume` section; the shared resume text is `compose.RESUME`.
 
 ## Gotchas
 
-- Agent runs get `--setting-sources user --strict-mcp-config` (`core/config/config.toml`'s `[clients.claude]`), so this file and project settings never load in them. An agent run reaches only `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
+- Agent runs get `--setting-sources user --strict-mcp-config` (`core/config.toml`'s `[clients.claude]`), so this file and project settings never load in them. An agent run reaches only `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `run_test.py` pins the tmux argv.
 - Each pipeline task (deep-research, light-research, product-design, engineering) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks). Without it write-back posts no start comment, and engineering's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.

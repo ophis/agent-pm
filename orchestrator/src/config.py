@@ -266,7 +266,7 @@ def overlay(root=ROOT):
 
 
 def layers(root=ROOT):
-    """The orchestrator's config layers, applied after `core/config/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
+    """The orchestrator's config layers, applied after `core/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
     return [overlay(root)]
 
 
@@ -307,7 +307,7 @@ def runnable(cfg, root=ROOT):
     out = {}
     for name, p in cfg["roles"].items():
         if name not in core_roles:
-            raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config/config.toml")
+            raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config.toml")
         default, tasks = core_roles[name].get("default_task"), list(core_roles[name].get("tasks", {}))
         tasks = tuple(dict.fromkeys([default, *tasks] if default else tasks))
         for t in tasks:

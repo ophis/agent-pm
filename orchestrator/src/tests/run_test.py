@@ -474,7 +474,7 @@ class Attended(Base):
         """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
         core, roles = os.path.join(self.root, "core"), os.path.join("team", "roles")
         os.remove(core)
-        for parent, own in (("", {"config", "team"}), ("team", {"roles"}), (roles, set())):
+        for parent, own in (("", {compose.CONFIG, "team"}), ("team", {"roles"}), (roles, set())):
             os.makedirs(os.path.join(core, parent), exist_ok=True)
             for n in set(os.listdir(os.path.join(config.CORE, parent))) - own:
                 os.symlink(os.path.join(config.CORE, parent, n), os.path.join(core, parent, n))
