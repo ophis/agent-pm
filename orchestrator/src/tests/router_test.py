@@ -193,17 +193,16 @@ class Base(unittest.TestCase):
     def moved(self, ident, minutes_ago, state=STATES["In Progress"], actor=AGENT):
         self.hist.setdefault(ident, []).insert(0, {"createdAt": ago(minutes=minutes_ago), "actorId": actor, "toStateId": state})
 
-    def resumable(self, ident, sid, minutes_ago, task=None):
+    def resumable(self, ident, sid, minutes_ago, task="deep-research"):
         """A start line for sid, an old <sid>.jsonl, and a move to In Progress just before the start."""
         self.moved(ident, minutes_ago + 1)
         self.add("start", ident, sid, minutes_ago, task)
         self.touch(ident, sid, 40)
 
-    def add(self, kind, ident, sid, minutes_ago, task=None):
-        """A runs.log line; without task it is a line from before task= was recorded."""
+    def add(self, kind, ident, sid, minutes_ago, task="deep-research"):
+        """A runs.log line."""
         ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        s = self.sid(sid)
-        self.lines.append(f"{ts} {kind} {ident} session={s}" + (f" task={task}" if task else ""))
+        self.lines.append(f"{ts} {kind} {ident} session={self.sid(sid)} task={task}")
 
     def touch(self, ident, sid, minutes_ago, sub=None):
         """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
@@ -278,9 +277,8 @@ class ParseAndLiveness(Base):
 
     def test_fr9_parse_task(self):
         self.add("start", "TASK-1", "a", 60, "deep-research")
-        self.add("start", "TASK-2", "b", 50)
+        self.add("start", "TASK-2", "b", 50, "product-design")
         self.add("resume", "TASK-1", "a", 40, "light-research")
-        self.add("resume", "TASK-1", "a", 30)
         self.lines += ["2026-09-26 23:00:00 resume TASK-3 session=c n=1 task=x extra",
                        "pick: TASK-1 (3 in queue)", "2026-09-26 13:04:05 start --dry-run log=/x.jsonl",
                        "2026-09-26 20:45:59 skip: queue empty", "recover: TASK-2 (last updated x)",
@@ -289,12 +287,19 @@ class ParseAndLiveness(Base):
             f.write("\n".join(self.lines) + "\n")
         entries = router.parse_log(self.log)
         self.assertEqual([e[1:] for e in entries], [("start", "TASK-1", self.sid("a"), "deep-research"),
-                                                    ("start", "TASK-2", self.sid("b"), None),
-                                                    ("resume", "TASK-1", self.sid("a"), "light-research"),
-                                                    ("resume", "TASK-1", self.sid("a"), None)])
+                                                    ("start", "TASK-2", self.sid("b"), "product-design"),
+                                                    ("resume", "TASK-1", self.sid("a"), "light-research")])
         self.assertAlmostEqual(entries[0][0].timestamp(), (NOW - timedelta(minutes=60)).timestamp())
-        self.assertEqual([router.logged_task(entries, s) for s in (self.sid("a"), self.sid("b"), "c", "nope")],
-                         ["light-research", None, None, None])
+        self.assertEqual([router.logged_task(entries, s) for s in (self.sid("a"), self.sid("b"), "nope")],
+                         ["light-research", "product-design", None])
+
+    def test_a_line_without_task_is_ignored(self):
+        self.add("start", "TASK-1", "a", 60)
+        ts = (NOW - timedelta(minutes=30)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        self.lines += [f"{ts} start TASK-2 session={self.sid('b')}", f"{ts} resume TASK-1 session={self.sid('a')}"]
+        with open(self.log, "w") as f:
+            f.write("\n".join(self.lines) + "\n")
+        self.assertEqual([e[1:] for e in router.parse_log(self.log)], [("start", "TASK-1", self.sid("a"), "deep-research")])
 
     def test_liveness(self):
         s, t = self.sid("s"), self.sid("t")
@@ -406,7 +411,7 @@ class Plan(Base):
         for m in (390, 380, 370, 360):
             self.add("start", "TASK-1", f"a{m}", m)
         self.resumable("TASK-3", "c", 100)
-        self.resumable("TASK-4", "d", 200)
+        self.resumable("TASK-4", "d", 200, "product-design")
         cands = self.board(fake, lambda b: b.recover({"TASK-1"}))
         self.assertEqual([(i["identifier"], self.unmap(sid), task) for i, sid, task in cands],
                          [("TASK-3", "c", "deep-research"), ("TASK-4", "d", "product-design")])
@@ -426,8 +431,8 @@ class Plan(Base):
             with self.subTest(specs=specs):
                 self.lines, self.hist = [], {}
                 fake = self.fake(*[issue(i, "In Progress", role, priority=p, project=proj) for i, p, _, role, proj in specs])
-                for ident, _, m, _, _ in specs:
-                    self.resumable(ident, ident.lower(), m)
+                for ident, _, m, role, _ in specs:
+                    self.resumable(ident, ident.lower(), m, "product-design" if role == "pm" else "deep-research")
                 self.assertEqual(self.plan(fake), f"resume TASK-2 task-2 https://linear.app/x/TASK-2 {project}")
 
     def test_no_current_sid_never_outranks(self):
@@ -1027,7 +1032,7 @@ class Tick(Base):
     def test_full_role_resume_not_launched(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "pm", priority=1, project=PD),
                            issue("TASK-2", "In Progress", "researcher", priority=3), issue("TASK-3", "Todo", "engineer", priority=1)], self.hist)
-        self.resumable("TASK-1", "a", 120)
+        self.resumable("TASK-1", "a", 120, "product-design")
         self.resumable("TASK-2", "b", 60)
         self.tick(fake, shell=FakeShell(["agent-pm-pm-TASK-9"]))
         self.assertEqual(self.said()[:2], ["live: pm 1/1", "plan: resume TASK-2 session=b"])
@@ -1086,7 +1091,7 @@ class Tick(Base):
                            issue("TASK-2", "Todo", "researcher", priority=1), issue("TASK-3", "Todo", "pm", priority=2, project=PD),
                            issue("TASK-4", "Todo", "engineer", priority=2, project=PD)], self.hist)
         self.resumable("TASK-1", "a", 60)
-        self.resumable("TASK-8", "h", 70)
+        self.resumable("TASK-8", "h", 70, "build")
         self.tick(fake)
         self.assertEqual(self.said(), ["plan: resume TASK-1 session=a", "launch TASK-1 (Deep Research) exit=0"])
         self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
@@ -1462,23 +1467,12 @@ class TaskLabels(Base):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
         self.moved("TASK-1", 61)
         self.add("resume", "TASK-1", "a", 60, "light-research")
-        self.add("resume", "TASK-1", "a", 50)
         self.touch("TASK-1", "a", 40)
         self.tick(fake)
         (launch,) = self.sh.launches()
         self.assertEqual(launch[launch.index("--sid"):], ["--sid", self.sid("a"), "--task", "light-research", "--mode", "resume"])
         self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=light-research\n"))
         self.assertIn("plan: resume TASK-1 session=a", self.said())
-
-    def test_fr14_no_record_resumes_the_assignee_roles_default(self):
-        for role, project, task in (("researcher", DR, "deep-research"), ("pm", PD, "product-design")):
-            self.lines, self.hist = [], {}
-            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project, labels=[label("Light Research", LIGHT)])], self.hist)
-            self.resumable("TASK-1", "a", 60)
-            self.tick(fake)
-            (launch,) = self.sh.launches()
-            self.assertEqual(launch[-4:], ["--task", task, "--mode", "resume"], role)
-            self.assertTrue(self.state.endswith(f" resume TASK-1 session=a task={task}\n"), role)
 
     def test_fr15_recorded_task_no_longer_the_roles_goes_to_review(self):
         for role, project, task, tasks in (("researcher", DR, "orphan", "deep-research, light-research"),
