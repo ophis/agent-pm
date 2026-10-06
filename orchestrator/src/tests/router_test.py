@@ -291,8 +291,7 @@ class ParseAndLiveness(Base):
         self.assertEqual([e[1:] for e in entries], [("start", "TASK-1", self.sid("a"), "deep-research"),
                                                     ("start", "TASK-2", self.sid("b"), None),
                                                     ("resume", "TASK-1", self.sid("a"), "light-research"),
-                                                    ("resume", "TASK-1", self.sid("a"), None),
-                                                    ("resume", "TASK-3", "c", None)])
+                                                    ("resume", "TASK-1", self.sid("a"), None)])
         self.assertAlmostEqual(entries[0][0].timestamp(), (NOW - timedelta(minutes=60)).timestamp())
         self.assertEqual([router.logged_task(entries, s) for s in (self.sid("a"), self.sid("b"), "c", "nope")],
                          ["light-research", None, None, None])
@@ -643,18 +642,18 @@ class Prune(Base):
 
     def test_drops_old_lines(self):
         self.write(["pick: TASK-1 (3 in queue)\n",
-                    f"{self.stamp(days=8)} start TASK-1 session=a transcript=x\n",
+                    f"{self.stamp(days=8)} start TASK-1 session=a task=x\n",
                     "recover: TASK-2 (last updated x)\n",
                     f"{self.stamp(days=6)} skip: queue empty\n",
                     "plan: new\n",
-                    f"{self.stamp(hours=1)} start TASK-1 session=b transcript=x\n"])
+                    f"{self.stamp(hours=1)} start TASK-1 session=b task=x\n"])
         with mock.patch.object(router.drive.os, "replace", wraps=os.replace) as rep:
             router.prune(self.log, NOW)
         [(src, dst), _] = rep.call_args
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp.name, self.log))
         with open(self.log) as f:
             self.assertEqual(f.read(), f"{self.stamp(days=6)} skip: queue empty\nplan: new\n"
-                                       f"{self.stamp(hours=1)} start TASK-1 session=b transcript=x\n")
+                                       f"{self.stamp(hours=1)} start TASK-1 session=b task=x\n")
         self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.log", "transcripts"])
 
     def test_no_temp_left_when_the_rewrite_fails(self):
@@ -1251,13 +1250,6 @@ class Tick(Base):
     def test_start_line(self):
         sid = self.sid("a")
         self.assertEqual(router.start_line("TASK-1", sid, "deep-research"), f"start TASK-1 session={sid} task=deep-research")
-
-    def test_a_logged_transcript_field_still_parses(self):
-        self.lines.append(f"{(NOW - timedelta(minutes=5)).astimezone():%Y-%m-%d %H:%M:%S} start TASK-1 session=s "
-                          "transcript=/p/x.jsonl task=light-research")
-        with open(self.log, "w") as f:
-            f.write("\n".join(self.lines) + "\n")
-        self.assertEqual([e[1:] for e in router.parse_log(self.log)], [("start", "TASK-1", "s", "light-research")])
 
     def test_resume_finds_the_transcript_under_the_recorded_cwd(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)

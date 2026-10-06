@@ -42,7 +42,7 @@ INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to
 USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake"
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
+LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?: task=(\S+))?$")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
