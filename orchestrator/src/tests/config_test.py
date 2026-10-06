@@ -536,23 +536,20 @@ class RepoSlug(unittest.TestCase):
                 self.assertEqual(config.repo_slug(value), want)
 
 
-class StateDirs(ConfigFile, unittest.TestCase):
+class DataDir(ConfigFile, unittest.TestCase):
     def test_unset_is_next_to_the_repo(self):
-        real = os.path.realpath(config.ROOT)
-        self.assertEqual((config.WORK_DIR, config.LOGS_DIR, config.RUNS_LOG),
-                         (real + "-work", real + "-logs", os.path.join(real + "-logs", "runs.log")))
+        data = os.path.realpath(config.ROOT) + "-data"
+        self.assertEqual((config.DATA_DIR, config.WORK_DIR, config.LOGS_DIR, config.RUNS_LOG),
+                         (data, data + "/work", data + "/logs", data + "/logs/runs.log"))
         root = os.path.join(self.dir, "repo")
-        self.assertEqual(config.state_dirs({}, root), (os.path.realpath(root) + "-work", os.path.realpath(root) + "-logs"))
+        self.assertEqual(config.data_dir({}, root), os.path.realpath(root) + "-data")
 
     def test_set(self):
         home = os.path.realpath(self.dir)
         with mock.patch.dict(os.environ, {"HOME": home}):
-            got = config.state_dirs({"work_dir": "~/w", "logs_dir": os.path.join(home, "l")}, os.path.join(home, "repo"))
-        self.assertEqual(got, (os.path.join(home, "w"), os.path.join(home, "l")))
-        self.assertEqual(self.load(f'work_dir = "{home}/w"\nlogs_dir = "~/l"\n' + BASE)["work_dir"], f"{home}/w")
-        cfg = self.load(f'work_dir = "{home}/w"\nlogs_dir = "{home}/w-l"\n' + BASE + f'[local_clones]\n"ophis/x" = "{home}/w-c"\n'
-                        f'"ophis/y" = "{home}/w-l-c"\n')
-        self.assertEqual(cfg["logs_dir"], f"{home}/w-l")
+            self.assertEqual(config.data_dir({"data_dir": "~/d"}, os.path.join(home, "repo")), os.path.join(home, "d"))
+        cfg = self.load(f'data_dir = "{home}/d"\n' + BASE + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n')
+        self.assertEqual(cfg["data_dir"], f"{home}/d")
 
     def test_refused(self):
         real = os.path.realpath(config.ROOT)
@@ -561,24 +558,28 @@ class StateDirs(ConfigFile, unittest.TestCase):
         os.symlink(real, link)
         os.makedirs(os.path.join(d, "c"))
         os.symlink(os.path.join(d, "c"), clink)
-        inside = f"must neither lie in nor contain the repo {real}: "
+        repo = f"data_dir must neither lie in nor contain the repo {real}: "
         clone = lambda path: f'[local_clones]\n"ophis/x" = "{path}"\n'
-        apart = "work_dir and logs_dir must be separate dirs, neither inside the other: "
-        cases = [(f'work_dir = "{real}"\n', "", f"work_dir {inside}{real!r}"),
-                 (f'logs_dir = "{real}/logs"\n', "", f"logs_dir {inside}{real + '/logs'!r}"),
-                 (f'work_dir = "{link}/work"\n', "", f"work_dir {inside}{link + '/work'!r}"),
-                 (f'logs_dir = "{os.path.dirname(real)}"\n', "", f"logs_dir {inside}{os.path.dirname(real)!r}"),
-                 (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"work_dir must not contain local_clones.ophis/x {d}/c: {d + '/c'!r}"),
-                 (f'logs_dir = "{clink}"\n', clone(f"{d}/c/x"), f"logs_dir must not contain local_clones.ophis/x {d}/c/x: {clink!r}"),
-                 (f'work_dir = "{d}/s"\nlogs_dir = "{d}/s"\n', "", f"{apart}{d + '/s'!r}, {d + '/s'!r}"),
-                 (f'work_dir = "{d}/s"\nlogs_dir = "{d}/s/l"\n', "", f"{apart}{d + '/s'!r}, {d + '/s/l'!r}"),
-                 (f'work_dir = "{clink}/w"\nlogs_dir = "{d}/c"\n', "", f"{apart}{d + '/c/w'!r}, {d + '/c'!r}"),
-                 ('work_dir = "work"\n', "", "work_dir must be a printable absolute or ~ path: 'work'"),
-                 ("logs_dir = 5\n", "", "logs_dir must be a printable absolute or ~ path: 5")]
+        in_clone = lambda path: f"data_dir must neither lie in nor contain local_clones.ophis/x {path}: "
+        cases = [(f'data_dir = "{real}"\n', "", f"{repo}{real!r}"),
+                 (f'data_dir = "{real}/data"\n', "", f"{repo}{real + '/data'!r}"),
+                 (f'data_dir = "{link}/data"\n', "", f"{repo}{link + '/data'!r}"),
+                 (f'data_dir = "{os.path.dirname(real)}"\n', "", f"{repo}{os.path.dirname(real)!r}"),
+                 (f'data_dir = "{d}/c"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{d + '/c'!r}"),
+                 (f'data_dir = "{clink}"\n', clone(f"{d}/c/x"), f"{in_clone(d + '/c/x')}{clink!r}"),
+                 (f'data_dir = "{clink}/data"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{clink + '/data'!r}"),
+                 ('data_dir = "data"\n', "", "data_dir must be a printable absolute or ~ path: 'data'"),
+                 ("data_dir = 5\n", "", "data_dir must be a printable absolute or ~ path: 5")]
         for text, tail, msg in cases:
             with self.subTest(text=text, tail=tail), self.assertRaises(SystemExit) as cm:
                 self.load(text + BASE + tail)
             self.assertEqual(cm.exception.code, f"orchestrator/config.toml: {msg}")
+
+    def test_the_old_keys_are_unknown(self):
+        for key in ("work_dir", "logs_dir"):
+            with self.subTest(key=key), self.assertRaises(SystemExit) as cm:
+                self.load(f'{key} = "/x"\n' + BASE)
+            self.assertEqual(cm.exception.code, f"orchestrator/config.toml: unknown keys: {key}")
 
 
 class Paths(unittest.TestCase):

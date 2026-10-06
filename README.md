@@ -31,11 +31,12 @@ agent-pm/
         ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
         ├── linear.py      # Linear client and lookups, shared helpers
         └── tests/
-agent-pm-work/<ID>/        # <work_dir>/<ID>/: an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
-agent-pm-logs/             # <logs_dir>: router state and agent run output
+agent-pm-data/             # <data_dir>
+├── work/<ID>/             # <work_dir>/<ID>/: an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
+└── logs/                  # <logs_dir>: router state and agent run output
 ```
 
-Runtime state lives outside the repo, in `<work_dir>` and `<logs_dir>`: `orchestrator/config.toml`'s `work_dir` and `logs_dir` (absolute or `~`; real paths that lie in or contain the repo, contain a `[local_clones]` clone, or overlap each other stop router, run and promote), unset → `<repo path>-work` and `<repo path>-logs` next to the checkout. An agent run's cwd, `<work_dir>/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
+Runtime state lives outside the repo, in `<data_dir>`: `orchestrator/config.toml`'s `data_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `<repo path>-data` next to the checkout. `<work_dir>` is `<data_dir>/work`, `<logs_dir>` is `<data_dir>/logs`. An agent run's cwd, `<work_dir>/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
 
 ## Core pack
 
@@ -70,8 +71,8 @@ claude -p '<prompt>' \
   --model opus --effort high \
   --permission-mode auto --setting-sources user --strict-mcp-config \
   --output-format stream-json --verbose \
-  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm-work/TASK-142/src *)' \
-    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm-work/TASK-142/.report.jsonl *)'
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm-data/work/TASK-142/src *)' \
+    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm-data/work/TASK-142/.report.jsonl *)'
 ```
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
@@ -178,14 +179,14 @@ Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under orchestrator/config.toml's harness_key
-mkdir -p ~/playground/agent-pm-logs                                   # <logs_dir>, the plists' log dir; launchd can't start a job without it
+mkdir -p ~/playground/agent-pm-data/logs                              # <logs_dir>, the plists' log dir; launchd can't start a job without it
 for job in router promote; do
   cp orchestrator/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
 done
 ```
 
-The plists log to `/Users/francis/playground/agent-pm-logs/`; with another `logs_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+The plists log to `/Users/francis/playground/agent-pm-data/logs/`; with another `data_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ### Migration (one time)
 
@@ -194,11 +195,12 @@ Before TASK-182, `work/` and `logs/` sat inside the repo. launchd runs `main`, s
 ```bash
 for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done   # no tick (nor prune) mid-move
 git -C ~/playground/agent-pm pull
-mv ~/playground/agent-pm/work ~/playground/agent-pm-work
-mv ~/playground/agent-pm/logs ~/playground/agent-pm-logs
+mkdir ~/playground/agent-pm-data
+mv ~/playground/agent-pm/work ~/playground/agent-pm-data/work
+mv ~/playground/agent-pm/logs ~/playground/agent-pm-data/logs
 for clone in ~/playground/agent-pm ~/playground/claude-autopilot; do   # each [local_clones] path
   git -C "$clone" worktree list --porcelain \
-    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/playground/agent-pm-work/|p' \
+    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/playground/agent-pm-data/work/|p' \
     | xargs git -C "$clone" worktree repair
 done
 ```
@@ -238,7 +240,7 @@ To open an agent run's session, copy the command from the code block of its issu
 | `<logs_dir>/promote.log` | Handoff and prune actions |
 | `<logs_dir>/runs.log` | Agent run start/resume/end; the router needs it to resume, so keep it |
 
-Every agent run works in `<work_dir>/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<work_dir>`, or the repo while `work_dir` is unset, breaks resuming in-progress agent runs; moving the repo or `<logs_dir>` breaks the installed plists.
+Every agent run works in `<work_dir>/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<data_dir>`, or the repo while `data_dir` is unset, breaks resuming in-progress agent runs; moving the repo or `<data_dir>` breaks the installed plists.
 
 ### Attended runs
 
@@ -271,7 +273,7 @@ Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issu
 
 Core's configuration is under Core pack.
 
-- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role, `require_instructions` and `max_runs` (default 1); `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `work_dir` and `logs_dir` (see Files); `[core]`, the overlay: core run keys for the orchestrator's agent runs in `core/config/config.toml`'s layout, applied after `core/config/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
+- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role, `require_instructions` and `max_runs` (default 1); `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `data_dir` (see Files); `[core]`, the overlay: core run keys for the orchestrator's agent runs in `core/config/config.toml`'s layout, applied after `core/config/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
 - `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development

@@ -24,34 +24,30 @@ import compose  # noqa: E402
 import repo  # noqa: E402
 
 
-def _within(path, top):
-    return os.path.commonpath([path, top]) == top
+def _overlap(a, b):
+    return os.path.commonpath([a, b]) in (a, b)
 
 
-def state_dirs(cfg, root=ROOT, clones=None):
-    """(work_dir, logs_dir) of a config table, real paths: each its absolute or ~ value, else <root>-work / <root>-logs. A path
-    in or containing root, one containing a clone of `clones` (repo → real path), or the two nested stop the caller."""
-    real, out = os.path.realpath(root), []
-    for key, suffix in (("work_dir", "-work"), ("logs_dir", "-logs")):
-        v = cfg.get(key, real + suffix)
-        path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
-        if not os.path.isabs(path):
-            raise SystemExit(f"orchestrator/config.toml: {key} must be a printable absolute or ~ path: {v!r}")
-        path = os.path.realpath(path)
-        if _within(path, real) or _within(real, path):
-            raise SystemExit(f"orchestrator/config.toml: {key} must neither lie in nor contain the repo {real}: {v!r}")
-        for k, clone in (clones or {}).items():
-            if _within(clone, path):
-                raise SystemExit(f"orchestrator/config.toml: {key} must not contain local_clones.{k} {clone}: {v!r}")
-        out.append(path)
-    if _within(*out) or _within(*out[::-1]):
-        raise SystemExit(f"orchestrator/config.toml: work_dir and logs_dir must be separate dirs, neither inside the other: "
-                         f"{out[0]!r}, {out[1]!r}")
-    return tuple(out)
+def data_dir(cfg, root=ROOT, clones=None):
+    """data_dir of a config table, a real path: its absolute or ~ value, else <root>-data. One that lies in or contains root
+    or a clone of `clones` (repo → real path) stops the caller."""
+    real = os.path.realpath(root)
+    v = cfg.get("data_dir", real + "-data")
+    path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
+    if not os.path.isabs(path):
+        raise SystemExit(f"orchestrator/config.toml: data_dir must be a printable absolute or ~ path: {v!r}")
+    path = os.path.realpath(path)
+    if _overlap(path, real):
+        raise SystemExit(f"orchestrator/config.toml: data_dir must neither lie in nor contain the repo {real}: {v!r}")
+    for k, clone in (clones or {}).items():
+        if _overlap(path, clone):
+            raise SystemExit(f"orchestrator/config.toml: data_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}")
+    return path
 
 
 with open(CONFIG, "rb") as _f:
-    WORK_DIR, LOGS_DIR = state_dirs(tomllib.load(_f))
+    DATA_DIR = data_dir(tomllib.load(_f))
+WORK_DIR, LOGS_DIR = os.path.join(DATA_DIR, "work"), os.path.join(DATA_DIR, "logs")
 RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
 
 
@@ -104,7 +100,7 @@ def transcript(issue, sid, projects=PROJECTS):
 
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
-            "work_dir", "logs_dir"}
+            "data_dir"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -228,7 +224,7 @@ def load_config(path=CONFIG):
             raise SystemExit(f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo")
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
-    state_dirs(cfg, clones=clones)
+    data_dir(cfg, clones=clones)
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
