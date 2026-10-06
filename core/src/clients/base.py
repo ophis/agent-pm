@@ -13,6 +13,8 @@ class Access:
     """An agent run's client-neutral constraints, as absolute paths and commands to pre-approve."""
     dirs: list[str]       # extra dirs the agent run may reach
     commands: list[str]   # shell commands to pre-approve
+    cwd: str = ""         # the dir the agent run starts in (drive.place)
+    project: bool = False   # whether the client loads cwd's project settings and instructions (drive.place)
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,9 @@ class Launch:
     cwd: str = ""
     files: dict[str, str] = field(default_factory=dict)    # path → text, written by the driver
     interactive: list[str] = field(default_factory=list)   # the same agent run's interactive command; empty: none
+    transcript: str = ""   # where the client saves the session; "": unknown
+    resume: str = ""       # the shell command a human resumes the session with; "": none
+    project: bool = False  # Access.project, set by drive.plan
 
 
 @dataclass(frozen=True)

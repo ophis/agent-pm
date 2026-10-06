@@ -33,9 +33,9 @@ CONFIG_ENG2 = HEADER + role_table("researcher", 'next = "pm"') + role_table("pm"
 def setUpModule():
     tmp = tempfile.TemporaryDirectory()
     unittest.addModuleCleanup(tmp.cleanup)
-    p = mock.patch.object(router, "RUNS_DIR", tmp.name)
-    p.start()
-    unittest.addModuleCleanup(p.stop)
+    for p in (mock.patch.object(router, "RUNS_DIR", tmp.name), mock.patch.object(config, "RUNS_DIR", tmp.name)):
+        p.start()
+        unittest.addModuleCleanup(p.stop)
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 LIGHT, DEEP, STRAY, ORPHAN_LABEL = (f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24))   # label ids; STRAY maps to no task
 # ORPHAN_LABEL picks pm's task, none of researcher's.
@@ -203,8 +203,7 @@ class Base(unittest.TestCase):
         """A runs.log line; without task it is a line from before task= was recorded."""
         ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         s = self.sid(sid)
-        extra = "" if kind == "resume" else f" transcript={config.transcript(ident, s, self.tdir)}"
-        self.lines.append(f"{ts} {kind} {ident} session={s}{extra}" + (f" task={task}" if task else ""))
+        self.lines.append(f"{ts} {kind} {ident} session={s}" + (f" task={task}" if task else ""))
 
     def touch(self, ident, sid, minutes_ago, sub=None):
         """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
@@ -945,8 +944,7 @@ class Tick(Base):
         self.assertEqual(router.RUN, os.path.join(config.ROOT, "orchestrator", "src", "run.py"))
         self.assertEqual(launch[2:], ["--issue", "TASK-1", "--project", IDS[DR],
                                       "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
-        self.assertRegex(self.state, rf"start TASK-1 session={sid} transcript={re.escape(config.transcript('TASK-1', sid, self.tdir))}"
-                                     r" task=deep-research\n$")
+        self.assertRegex(self.state, rf"start TASK-1 session={sid} task=deep-research\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
     def test_live_sessions_exact_names(self):
@@ -1252,9 +1250,27 @@ class Tick(Base):
 
     def test_start_line(self):
         sid = self.sid("a")
-        self.assertEqual(router.start_line("TASK-1", sid, "deep-research", "/p"),
-                         f"start TASK-1 session={sid} transcript=/p/{config.escape(config.run_dir('TASK-1'))}/{sid}.jsonl "
-                         "task=deep-research")
+        self.assertEqual(router.start_line("TASK-1", sid, "deep-research"), f"start TASK-1 session={sid} task=deep-research")
+
+    def test_a_logged_transcript_field_still_parses(self):
+        self.lines.append(f"{(NOW - timedelta(minutes=5)).astimezone():%Y-%m-%d %H:%M:%S} start TASK-1 session=s "
+                          "transcript=/p/x.jsonl task=light-research")
+        with open(self.log, "w") as f:
+            f.write("\n".join(self.lines) + "\n")
+        self.assertEqual([e[1:] for e in router.parse_log(self.log)], [("start", "TASK-1", "s", "light-research")])
+
+    def test_resume_finds_the_transcript_under_the_recorded_cwd(self):
+        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
+        self.moved("TASK-1", 61)
+        self.add("start", "TASK-1", "a", 60)
+        os.makedirs(config.run_dir("TASK-1"), exist_ok=True)
+        with open(os.path.join(config.run_dir("TASK-1"), "run.json"), "w") as f:
+            json.dump({"sessions": [{"sid": self.sid("a"), "cwd": self.tmp.name, "project": False}]}, f)
+        self.addCleanup(os.remove, os.path.join(config.run_dir("TASK-1"), "run.json"))
+        self.touch("TASK-1", "a", 40)
+        self.assertTrue(config.transcript("TASK-1", self.sid("a"), self.tdir).startswith(
+            os.path.join(self.tdir, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(self.tmp.name)))))
+        self.assertEqual(self.plan(fake), f"resume TASK-1 a {fake.issues['TASK-1']['url']} {DR}")
 
     def test_driver_session_counts_toward_max_runs_and_a_tui_session_does_not(self):
         tui = drive.tui_session("engineer", "engineering", self.sid("a"))
@@ -1293,7 +1309,7 @@ class TuiTick(Base):
                 self.assertEqual(launch, [sys.executable, router.RUN, "--issue", "TASK-1", "--project", IDS[DR],
                                           "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research",
                                           "--mode", "new", *tail])
-                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", sid, "deep-research", self.tdir) + "\n"))
+                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", sid, "deep-research") + "\n"))
                 self.assertEqual(self.layout, [mock.call(split, beside)])
                 self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 

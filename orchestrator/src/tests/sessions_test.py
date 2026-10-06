@@ -1,4 +1,4 @@
-import functools, os, re, shlex, subprocess, sys, threading, time, unittest
+import functools, json, os, re, shlex, subprocess, sys, tempfile, threading, time, unittest
 from datetime import datetime
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,8 +10,8 @@ ISSUE = "TASK-12"
 T1, T2 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00"
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 
-def record(started_at=T1, cwd="/w/TASK-12"):
-    return sessions.base(sid=SID, cwd=cwd, started_at=started_at)
+def record(started_at=T1, workdir="/w/TASK-12"):
+    return sessions.base(sid=SID, workdir=workdir, started_at=started_at)
 
 def comment(id, created_at, body, mine=True):
     return {"id": id, "createdAt": created_at, "body": body, "mine": mine}
@@ -61,13 +61,21 @@ class Record(unittest.TestCase):
         c = linear.only()
         self.assertEqual(c["body"], f"Run {SID} · running · {T1}\n\n```\n{CMD}\n```")
 
-    def test_record_is_sid_cwd_and_start(self):
-        self.assertEqual(record(), {"sid": SID, "cwd": "/w/TASK-12", "started_at": T1})
+    def test_record_is_sid_workdir_and_start(self):
+        self.assertEqual(record(), {"sid": SID, "workdir": "/w/TASK-12", "started_at": T1})
 
-    def test_command_quotes_the_cwd(self):
-        cwd = "/Users/x/my work/it's/TASK-12"
-        self.assertEqual(shlex.split(sessions.command(record(cwd=cwd))),
-                         ["cd", cwd, "&&", "claude", "--resume", SID])
+    def test_command_quotes_the_workdir(self):
+        workdir = "/Users/x/my work/it's/TASK-12"
+        self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
+                         ["cd", workdir, "&&", "claude", "--resume", SID])
+
+    def test_command_runs_in_the_recorded_cwd_never_the_recorded_command(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            cwd = "/data/my repo"
+            with open(os.path.join(workdir, "run.json"), "w") as f:
+                json.dump({"sessions": [{"sid": SID, "cwd": cwd, "project": True, "resume": "rm -rf ~"}]}, f)
+            self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
+                             ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", workdir])
 
     def test_recover_resume_updates_the_one_comment(self):
         linear = FakeLinear()

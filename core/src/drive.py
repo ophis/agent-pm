@@ -7,8 +7,9 @@ drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir D
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--beside SESSION] [--prefix PREFIX]
          [--events FILE] [--dry-run]
 --out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
-(skill) the dir it writes under. By default (start's sinks) a run shows its text and progress on stderr and leaves
-<workdir>/outcome.json and <workdir>/progress.jsonl.
+(skill) the dir it writes under. The run starts in the `cwd` run key, unset → the caller's current directory; a resume
+in its session's recorded one (place()). By default (start's sinks) a run shows its text and progress on stderr; every
+run leaves the record <workdir>/run.json (Record).
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
 command in a detached tmux session <prefix>-<sid[:8]> (tui_claude.py; --prefix, default <role>-<task>), shown as the
 `show` run key says (by default stacked with the panes of the same opener; --split/--beside place it explicitly), done
@@ -31,6 +32,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -39,15 +41,16 @@ from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
+import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render,  # noqa: E402
-                     report_command)
+from compose import (CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema,  # noqa: E402
+                     render, report_command)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
 SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
-OUTCOME, PROGRESS = "outcome.json", "progress.jsonl"
+RECORD = "run.json"   # in the workdir: the driver's record of the agent run (Record)
 NAME = re.compile(r"[\w-]+")
 POLL = 0.5   # seconds between reads of the channel while the host is quiet
 WAIT_LIMIT = 2 * 60 * 60   # seconds the tui runner waits for an outcome or a progress report before it gives up
@@ -90,12 +93,14 @@ def bind(entry: str, repo: str | None) -> str | None:
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str) -> Access:
+def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, cwd: str | None = None,
+           project: bool = False) -> Access:
     """The agent run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands
-    filled, then the report command and the gate (used verbatim) pre-approved too. Edit limits are left to the client's
-    permission mode (auto)."""
+    filled, then the report command and the gate (used verbatim) pre-approved too; the workdir is the first dir when
+    `cwd` (default the workdir) is another. Edit limits are left to the client's permission mode (auto)."""
     workdir = os.path.abspath(params.workdir)
-    dirs = []
+    cwd = cwd or workdir
+    dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, {"methods": methods}, key), repo)
@@ -103,20 +108,57 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
                 dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
     commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params)} *"]
-    return Access(dirs, commands + ([run.gate] if run.gate else []))
+    return Access(dirs, commands + ([run.gate] if run.gate else []), cwd=cwd, project=project)
+
+
+def trusted_dirs(root: str) -> frozenset[str]:
+    """Real paths of <root>/config.toml's global `trusted_dirs`; ConfigError when it is malformed."""
+    with open(os.path.join(root, CONFIG), "rb") as f:
+        cfg = tomllib.load(f)
+    try:
+        return repos.trusted_dirs(cfg)
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+
+
+def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
+    """(the agent run's cwd, whether its client loads the cwd's project settings and instructions). A new run's cwd is
+    the `cwd` run key, else `cwd`, else the caller's current directory; project is on when trusted_dirs holds its real
+    path or a parent. A resume reuses its session's record (none: the workdir, project off). ConfigError when the cwd
+    is no directory, or project would be on with the cwd in the workdir or no longer trusted. An untrusted cwd other
+    than the workdir gets a stderr notice."""
+    workdir, trusted = os.path.abspath(params.workdir), trusted_dirs(root)
+    if params.resume:
+        entry = session(workdir, params.sid)
+        here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
+        if project and not repos.under(os.path.realpath(here), trusted):
+            raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
+    else:
+        here = os.path.abspath(os.path.expanduser(run.cwd or cwd or os.getcwd()))
+        project = repos.under(os.path.realpath(here), trusted) is not None
+    real, real_work = os.path.realpath(here), os.path.realpath(workdir)
+    if real != real_work and not os.path.isdir(here):
+        raise ConfigError(f"cwd {here} is not a directory")
+    if project and repos.under(real, [real_work]):
+        raise ConfigError(f"cwd {here} is in trusted_dirs and in the workdir: project settings must not load from it")
+    if not project and real != real_work:
+        print(f"drive.py: cwd {here} is not in trusted_dirs: its project settings are off", file=sys.stderr)
+    return here, project
 
 
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
-         repo: str | None = None, layers: Sequence[Mapping] = ()) -> tuple[Launch, RunConfig]:
+         repo: str | None = None, layers: Sequence[Mapping] = (), cwd: str | None = None) -> tuple[Launch, RunConfig]:
     """The Launch for one agent run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after
-    the client's config."""
+    the client's config; `cwd` is the cwd when the run key is unset (place())."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
     run = load_run(root, role, task, layers=[client.config, *layers])
+    here, project = place(root, run, params, cwd)
     prompt = render(root, run, params, client=client)
-    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root))
+    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root), cwd=here,
+                 project=project)
     launch = client.launch(prompt, run, params=params, access=acc)
-    return launch, run
+    return replace(launch, project=project), run
 
 
 def export(root: str, client: Client, role: str, task: str | None = None, *, dest: str) -> Launch:
@@ -265,33 +307,71 @@ def terminal(log=sys.stderr) -> Sink:
     return sink
 
 
-def progress_file(path: str, *, append: bool = False) -> Sink:
-    """Appends each progress report to a JSON-lines file, emptied first unless `append` (a resume)."""
-    if not append:
-        save(path, "")
-
-    def sink(event: Event) -> None:
-        if event.kind == "progress":
-            line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "name": event.name, "text": event.text}
-            append_line(path, json.dumps(line, ensure_ascii=False) + "\n")
-    return sink
+def stamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-def outcome_file(path: str) -> Sink:
-    """Writes the checked outcome as JSON; an earlier one is removed first, so it is never read as this agent run's."""
-    Path(path).unlink(missing_ok=True)
+def record(workdir: str) -> dict:
+    """<workdir>/run.json as written by Record; {} when it is missing or no JSON object. A symlink or anything but a
+    regular file at the path is never read."""
+    try:
+        fd = os.open(os.path.join(workdir, RECORD), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return {}
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            return {}
+        try:
+            data = json.loads(f.read())
+        except ValueError:
+            return {}
+    return data if isinstance(data, dict) else {}
 
-    def sink(event: Event) -> None:
-        if event.kind == "outcome":
-            save(path, json.dumps(event.outcome, ensure_ascii=False, indent=1) + "\n")
-    return sink
+
+def session(workdir: str, sid: str) -> dict | None:
+    """The record's entry for session `sid`, when it names a printable absolute cwd and project as a bool; else None.
+    The agent run can write its workdir: no other field is checked."""
+    entries = record(workdir).get("sessions")
+    for e in entries if isinstance(entries, list) else ():
+        if (isinstance(e, dict) and e.get("sid") == sid and isinstance(e.get("cwd"), str) and os.path.isabs(e["cwd"])
+                and e["cwd"].isprintable() and isinstance(e.get("project"), bool)):
+            return e
+    return None
 
 
-def default_sinks(params: RunParams) -> list[Sink]:
-    """The terminal, <workdir>/progress.jsonl and <workdir>/outcome.json."""
-    workdir = os.path.abspath(params.workdir)
-    return [terminal(), progress_file(os.path.join(workdir, PROGRESS), append=params.resume),
-            outcome_file(os.path.join(workdir, OUTCOME))]
+class Record:
+    """<workdir>/run.json, written only here, each write replacing the file (save): `sessions`, one entry per session
+    (sid, cwd, project, transcript, resume, started, ended; a resume keeps its entry's started), the
+    `progress` reports (a new session starts them anew) and the last validated `outcome` (null until one holds)."""
+    def __init__(self, launch: Launch, params: RunParams):
+        workdir = os.path.abspath(params.workdir)
+        self.path, old = os.path.join(workdir, RECORD), record(workdir)
+        entries = [e for e in old.get("sessions") or [] if isinstance(e, dict)] if isinstance(old.get("sessions"), list) else []
+        prior = session(workdir, params.sid) if params.resume else None
+        entry = {"sid": params.sid, "cwd": launch.cwd or workdir, "project": launch.project,
+                 "transcript": launch.transcript, "resume": launch.resume, "started": stamp(), "ended": None}
+        if prior and isinstance(prior.get("started"), str):
+            entry["started"] = prior["started"]
+        at = next((i for i, e in enumerate(entries) if e.get("sid") == params.sid), len(entries))
+        entries[at:at + 1] = [entry]
+        progress = old.get("progress") if params.resume and isinstance(old.get("progress"), list) else []
+        self.data, self.entry = {"sessions": entries, "progress": progress, "outcome": None}, entry
+        self.write()
+
+    def write(self) -> None:
+        save(self.path, json.dumps(self.data, ensure_ascii=False, indent=1) + "\n")
+
+    def progress(self, event: Event) -> None:
+        self.data["progress"].append({"ts": stamp(), "name": event.name, "text": event.text})
+        self.write()
+
+    def outcome(self, outcome: dict) -> None:
+        self.data["outcome"] = outcome
+        self.write()
+
+    def end(self) -> None:
+        self.entry["ended"] = stamp()
+        self.write()
 
 
 def report_event(line: str) -> Event | None:
@@ -538,11 +618,13 @@ def check_naming(runner: str, prefix: str | None, events: str | None) -> None:
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
           layout: Layout | None = None, prefix: str | None = None, events: str | None = None,
-          sinks: Sequence[Sink] | None = None, popen=subprocess.Popen) -> Result:
-    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (default_sinks() when None) its host's
+          sinks: Sequence[Sink] | None = None, begun: Callable[[], None] | None = None,
+          popen=subprocess.Popen) -> Result:
+    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its host's
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
-    this call began count. A done or failed new run whose task marks `start` but never reported it gets a stderr line
+    this call began count. The Record holds the session, its progress and the checked outcome; `begun` is called once
+    its first write is done, before the host starts. A done or failed new run whose task marks `start` but never reported it gets a stderr line
     and a `missing` event first. The tui runner names its session `prefix` (default <role>-<task>) and sid, and
     appends its state events to the `events` file. Raises ConfigError, before anything starts, when the client lacks
     the runner's command or the layout, prefix or events is one the runner can't take (check_layout, check_naming);
@@ -554,13 +636,25 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
                            events=events)
     write(launch.files)
     workdir = os.path.abspath(params.workdir)
-    os.makedirs(launch.cwd or workdir, exist_ok=True)
     os.makedirs(workdir, exist_ok=True)
-    sinks = default_sinks(params) if sinks is None else sinks
+    sinks = [terminal()] if sinks is None else sinks
     out = Path(params.out).absolute()
     if not out.is_dir():
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this agent run's
     append_line(params.channel, "")   # created before launch, so the agent run's report command finds it
+    rec = Record(launch, params)
+    try:
+        if begun:
+            begun()
+        return _drive(launch, run, params, host=host, argv=argv, runner=runner, sinks=sinks, rec=rec, out=out)
+    finally:
+        rec.end()
+
+
+def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, argv: list[str], runner: str,
+           sinks: Sequence[Sink], rec: Record, out: Path) -> Result:
+    """start()'s loop, from the host's begin to the checked outcome."""
+    workdir = os.path.abspath(params.workdir)
     tail, raw, seen = Tail(params.channel), None, set()
 
     def hand(event: Event) -> None:
@@ -572,6 +666,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
             return
         if event.kind == "progress":
             seen.add(event.name)
+            rec.progress(event)
         for sink in sinks:
             sink(event)
 
@@ -613,6 +708,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         print("drive.py: missing progress mark: start", file=sys.stderr)
         for sink in sinks:
             sink(Event("missing", name="start"))
+    rec.outcome(asdict(outcome))
     for sink in sinks:
         sink(Event("outcome", outcome=asdict(outcome)))
     return Result(rc, outcome)

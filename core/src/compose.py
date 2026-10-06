@@ -23,8 +23,9 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "symlink_clones"}
+RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
+                      "cwd"})
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
@@ -62,6 +63,7 @@ class RunConfig:
     gate: str = ""
     language: str = ""
     show: str | None = None
+    cwd: str = ""   # "" → the caller's default (drive.place)
     role_title: str = ""
     task_title: str = ""
     task_summary: str = ""
@@ -81,6 +83,9 @@ class RunConfig:
             raise ConfigError("language must be one line of text")
         if self.show is not None and (not isinstance(self.show, str) or "\n" in self.show):
             raise ConfigError("show must be one line of shell command")
+        if self.cwd and (not isinstance(self.cwd, str) or not self.cwd.isprintable()
+                         or not os.path.isabs(os.path.expanduser(self.cwd))):
+            raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
 
 
 @dataclass(frozen=True, kw_only=True)

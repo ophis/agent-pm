@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
 import config  # noqa: E402
+import clients  # noqa: E402
 import repo  # noqa: E402
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
@@ -264,6 +265,23 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual((run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}"))
         self.assertEqual(config.run_config("pm", "product-design", self.root).gate, "")
 
+    def test_a_bad_trusted_dirs_or_cwd_stops_the_caller(self):
+        self.core('trusted_dirs = ["rel/dir"]\n' + CORE_TOML)
+        self.fails("core: trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path")
+        self.core(CORE_TOML)
+        self.fails("core: cwd must be a printable absolute or ~ path, got 'rel'", PIPELINE + '[core]\ncwd = "rel"\n')
+
+    def test_a_trusted_dir_holding_the_work_dir_stops_the_caller(self):
+        work = os.path.join(os.path.realpath(self.dir), "state", "agent-pm")
+        os.makedirs(work)
+        with mock.patch.object(config, "WORK_DIR", work):
+            for entry in (work, os.path.dirname(work)):
+                with self.subTest(entry):
+                    self.core(f'trusted_dirs = ["{entry}"]\n' + CORE_TOML)
+                    self.fails(f"core: trusted_dirs: {entry} is or contains work_dir {work}")
+            self.core(f'trusted_dirs = ["{os.path.join(work, "x")}", "{self.dir}/other"]\n' + CORE_TOML)
+            self.runs()
+
     def test_overlay_language_reaches_run_config(self):
         self.load(PIPELINE + '[core.roles.pm]\nlanguage = "French"\n')
         self.assertEqual(config.run_config("pm", "product-design", self.root).language, "French")
@@ -276,7 +294,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
     def test_overlay_unknown_keys(self):
         cases = [("[core]\nfoo = 1\n", "'foo' in the global table"),
                  ('[core]\nusers = ["octocat"]\n', "'users' in the global table"),
-                 ('[core]\nsymlink_clones = ["~/x"]\n', "'symlink_clones' in the global table"),
+                 ('[core]\ntrusted_dirs = ["~/x"]\n', "'trusted_dirs' in the global table"),
                  ("[core.clients.claude]\nflags = []\n", "'clients' in the global table"),
                  ('[core.roles.researcher]\ndefault_task = "light-research"\n', "'default_task' in roles.researcher"),
                  ('[core.roles.researcher.tasks.deep-research]\ntasks = 1\n', "'tasks' in roles.researcher.tasks.deep-research")]
@@ -598,10 +616,14 @@ class Paths(unittest.TestCase):
 
     def test_run_dir_and_transcript(self):
         self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.RUNS_DIR, "TASK-9"))
-        self.assertEqual(config.escape("/Users/a_b/x.y"), "-Users-a-b-x-y")
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
-        self.assertEqual(config.transcript("TASK-9", sid, projects="/p"),
-                         "/p/" + config.escape(config.run_dir("TASK-9")) + f"/{sid}.jsonl")
+        with tempfile.TemporaryDirectory() as work, mock.patch.object(config, "RUNS_DIR", work):
+            rd = config.run_dir("TASK-9")
+            self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), clients.claude.transcript(rd, sid, "/p"))
+            os.makedirs(rd)
+            with open(os.path.join(rd, "run.json"), "w") as f:
+                json.dump({"sessions": [{"sid": sid, "cwd": "/data/x.y", "project": True}]}, f)
+            self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), f"/p/-data-x-y/{sid}.jsonl")
         self.assertIsNone(config.transcript("TASK-9", "../x"))
 
 

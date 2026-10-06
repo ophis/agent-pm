@@ -69,6 +69,6 @@ max_runs = 3
 # The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
 # [core], applied after core/config.toml's [clients.claude] (drive.plan layers). config.overlay() fills {{root}}
 # with this repo's root.
-#   <run key>  as in core/config.toml; users, symlink_clones and clients are refused
+#   <run key>  as in core/config.toml; users, trusted_dirs and clients are refused
 [core.roles.researcher.tasks.deep-research]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"

@@ -52,9 +52,9 @@ Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { 
 Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
-def start_line(ident, sid, task, tdir):
+def start_line(ident, sid, task):
     """The runs.log line of a new agent run."""
-    return f"start {ident} session={sid} transcript={transcript(ident, sid, tdir)} task={task}"
+    return f"start {ident} session={sid} task={task}"
 
 
 def local_time(s):
@@ -449,7 +449,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
             return 0
         issue, task = taken
         ident, sid = issue["identifier"], str(uuid.uuid4())
-        line = start_line(ident, sid, task, tdir)
+        line = start_line(ident, sid, task)
     append(runs, line)
     project = issue["project"]
     tui = []

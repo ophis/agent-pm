@@ -26,6 +26,7 @@ import run  # noqa: E402
 import sessions  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
+import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
@@ -606,7 +607,7 @@ class AttendedEntry(Base):
                 (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
                 sid = line.split(" ")[2].removeprefix("session=")
                 self.assertRegex(sid, config.UUID_RE)
-                self.assertEqual(line, router.start_line(ID, sid, "engineering", self.projects))
+                self.assertEqual(line, router.start_line(ID, sid, "engineering"))
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
                 self.assertEqual(self.sh_calls, [
                     (LIST, {"capture_output": True, "text": True}),
@@ -696,7 +697,7 @@ class Inner(Base):
                           *forwarded(assignee, task, mode), *extra])
 
     def rec(self):
-        return sessions.base(sid=SID, cwd=self.rd, started_at=NOW)
+        return sessions.base(sid=SID, workdir=self.rd, started_at=NOW)
 
     def harness(self, rc):
         """The session start and end posts: harness account, bounded by sessions.LIMIT."""
@@ -845,15 +846,37 @@ class Inner(Base):
         self.assertIn(f"Bash(python3 {shlex.quote(self.root)}/orchestrator/src/router.py --brake)", argv)
         self.assertEqual(self.plog("deep-research")[0], "<ts> launch TASK-7 mode=new session=" + SID)
 
+    def record(self):
+        return json.loads(self.read(os.path.join(self.rd, "run.json")))
+
     def test_resume(self):
-        self.write(os.path.join(self.rd, "progress.jsonl"), '{"name": "start"}\n')
-        self.write(os.path.join(self.rd, "outcome.json"), "{}")
+        start = {"ts": "t", "name": "start", "text": "x"}
+        self.write(os.path.join(self.rd, "run.json"), json.dumps(
+            {"sessions": [{"sid": SID, "cwd": self.rd, "project": False}], "progress": [start], "outcome": {"status": "done"}}))
         self.assertEqual(self.inner(mode="resume"), 0)
         (argv, _), = self.popen_calls
         self.assertEqual((argv[3:5], argv[2].startswith(compose.RESUME)), (["--resume", SID], True))
-        self.assertEqual(self.read(os.path.join(self.rd, "progress.jsonl")), '{"name": "start"}\n')
-        self.assertFalse(os.path.exists(os.path.join(self.rd, "outcome.json")))
+        self.assertEqual((self.record()["progress"], self.record()["outcome"]), ([start], None))
         self.assertEqual(self.plog()[0], "<ts> launch TASK-7 mode=resume session=" + SID)
+
+    def test_an_overlay_cwd_runs_the_agent_there_and_its_resume_stays_there(self):
+        there, later = os.path.join(self.tmp, "data repo"), os.path.join(self.tmp, "later")
+        os.makedirs(there)
+        os.makedirs(later)
+        for cwd, mode in ((there, "new"), (later, "resume")):
+            self.write(os.path.join(self.root, "orchestrator", "config.toml"),
+                       CONFIG + f'[core.roles.engineer]\ncwd = "{cwd}"\n')
+            self.popen_calls, self.gql = [], Gql(node())
+            self.assertEqual(self.inner(mode=mode), 0)
+            (argv, kw), = self.popen_calls
+            self.assertEqual((kw["cwd"], argv[argv.index("--add-dir") + 1]), (there, self.rd))
+            self.assertEqual(argv[argv.index("--setting-sources") + 1], "user")
+            self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"))
+            self.assertIn(f"drive.py: cwd {there} is not in trusted_dirs", self.err)
+            (entry,) = self.record()["sessions"]
+            self.assertEqual((entry["cwd"], entry["project"]), (there, False))
+            self.assertIn(f"cd '{there}' && claude --resume {SID} --add-dir '{self.rd}'", self.gql.calls[1][2]["b"])
+        self.assertEqual(config.transcript(ID, SID, self.projects), clients.claude.transcript(there, SID, self.projects))
 
     def test_run_error(self):
         def popen(argv, **kw):

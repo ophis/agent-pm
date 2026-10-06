@@ -32,15 +32,15 @@ agent-pm/
         ├── linear.py      # Linear client and lookups, shared helpers
         └── tests/
 ~/.agent-pm/               # <work_dir>
-├── work/<ID>/             # an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
+├── work/<ID>/             # an agent run's workdir: input.md, run.json, writeback.json, worktrees and clones in src/ and publish/
 └── logs/                  # router state and agent run output
 ```
 
-Runtime state lives outside the repo, in `<work_dir>`: `orchestrator/config.toml`'s `work_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `~/.agent-pm`. An agent run's cwd, `<work_dir>/work/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
+Runtime state lives outside the repo, in `<work_dir>`: `orchestrator/config.toml`'s `work_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone, or that a `trusted_dirs` entry is or contains, stops router, run and promote), unset → `~/.agent-pm`. An agent run's workdir, `<work_dir>/work/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
 
 ## Core pack
 
-`core/` turns a role, a task and an input into one agent run, and knows nothing of Linear. `src/compose.py` builds the prompt from `team/` (guide, principles, the role's charter, the task, its templates) and `output/` (what to return and where to deliver it); `src/drive.py` starts the agent run through a client (`src/clients/`) and a runner (`headless`, the default, or `tui`; see An agent run's command), turns its output and what it reports through `src/report.py` into events for sinks (terminal, `progress.jsonl`, `outcome.json`, and whatever the caller adds) and checks the outcome. `core/regen_skills.sh` also exports each role/task as a skill in `core/skills/`.
+`core/` turns a role, a task and an input into one agent run, and knows nothing of Linear. `src/compose.py` builds the prompt from `team/` (guide, principles, the role's charter, the task, its templates) and `output/` (what to return and where to deliver it); `src/drive.py` starts the agent run through a client (`src/clients/`) and a runner (`headless`, the default, or `tui`; see An agent run's command), turns its output and what it reports through `src/report.py` into events for sinks (terminal, and whatever the caller adds) and checks the outcome. `<workdir>/run.json` records each run's sessions (cwd, settings, transcript, resume command, start, end), progress and last outcome. `core/regen_skills.sh` also exports each role/task as a skill in `core/skills/`.
 
 ### Roles
 
@@ -54,7 +54,7 @@ A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibili
 
 ### Tasks
 
-A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config.toml`. A task gets a target repo through `core/src/repo.py worktree`: at `<Workdir>/src/<owner>/<name>`, on the agent run's own branch, as a git worktree of the local clone path the input names (it must lie outside `<work_dir>/work` and the temp dirs; the worktree's own config, which turns on that clone's `extensions.worktreeConfig`, checks out symlinks as plain files unless `core/config.toml`'s `symlink_clones` lists the clone's real path; an existing worktree whose setting disagrees is refused: remove it and run again), or a fresh blobless clone for an `<owner>/<name>` or URL. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The `Repo:` line the orchestrator writes for the repo it resolves names that repo's `[local_clones]` path; on later agent runs of an issue its existing checkout's form wins.
+A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config.toml`. A task gets a target repo through `core/src/repo.py worktree`: at `<Workdir>/src/<owner>/<name>`, on the agent run's own branch, as a git worktree of the local clone path the input names (it must lie outside `<work_dir>/work` and the temp dirs; the worktree's own config, which turns on that clone's `extensions.worktreeConfig`, checks out symlinks as plain files unless `core/config.toml`'s `trusted_dirs` lists the clone's real path; an existing worktree whose setting disagrees is refused: remove it and run again), or a fresh blobless clone for an `<owner>/<name>` or URL. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The `Repo:` line the orchestrator writes for the repo it resolves names that repo's `[local_clones]` path; on later agent runs of an issue its existing checkout's form wins.
 
 - **`deep-research`:** for a web question, runs the built-in `/deep-research` Workflow once over all its subquestions; for a local one, writes and runs one workflow of its own (ultracode, ≤ 100 agents, verification inside) over the worktrees; for a mixed one, at most that workflow plus one `/deep-research` run for the web part, skipping the second round when the `gate` command fails. Without a Workflow tool it follows `core/team/methods/` instead. Writes the report from `core/team/templates/research-report.md` to `Research/` in the docs repo.
 - **`light-research`:** sends 3–6 angles in one round, one agent each (web angles, worktree angles, or both), each checking its own sources, with no separate verification. Publishes a shorter report marked Light Research. A later `deep-research` agent run given that report rewrites the same file.
@@ -63,19 +63,19 @@ A task is the steps an agent run follows (`core/team/tasks/<task>.md`), includin
 
 ### An agent run's command
 
-What `drive.py` starts for a product-design agent run on TASK-142 (cwd `<work_dir>/work/TASK-142/`, env `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000`):
+What `drive.py` starts for a product-design agent run on TASK-142 (cwd and workdir `<work_dir>/work/TASK-142/`, env `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000`):
 
 ```bash
 claude -p '<prompt>' \
   --session-id <sid> \
   --model opus --effort high \
-  --permission-mode auto --setting-sources user --strict-mcp-config \
+  --permission-mode auto --strict-mcp-config --setting-sources user \
   --output-format stream-json --verbose \
   --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/.agent-pm/work/TASK-142/src *)' \
     'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/.agent-pm/work/TASK-142/.report.jsonl *)'
 ```
 
-`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
+`<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. The `cwd` run key moves the start dir (unset: `drive.py`'s caller's current directory; the orchestrator's runs: the workdir); another dir than the workdir adds `--add-dir <workdir>`, and prompt paths stay absolute. A cwd that is, or lies under, a `trusted_dirs` entry gets `--setting-sources user,project,local` and, with a `.mcp.json`, `--mcp-config <cwd>/.mcp.json`; any other gets `user` and, unless it is the workdir, a stderr notice; a trusted cwd in the workdir is refused. A resume reuses the session's recorded cwd and settings. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
 
 `--runner tui` starts the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<prefix>-<sid[:8]>`, through `src/tui_claude.py`; `--prefix` sets the prefix (default `<role>-<task>`) and `--events FILE` appends the session's `done`, `blocked` and `dead` lines to FILE (both tui only). `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to the session, stacked as the tui_claude.py section says; `--beside <tmux session>` and `--split right|below` place it explicitly (tui only). No pane to split → only the attach command, with the reason. `core/config.toml`'s `show` comment says what replaces the split. The agent run is done once its outcome arrives; the session stays open.
 
@@ -135,7 +135,7 @@ Nothing checks them; a missing one fails the agent run.
 - GitHub and the web.
 - Skills (`core/skills/`): `${CLAUDE_SKILL_DIR}`.
 
-Agent runs load your user settings (`--setting-sources user`): `~/.claude/CLAUDE.md`, your skills, plugins and permissions reach every agent run; MCP servers don't (`--strict-mcp-config`).
+Agent runs load your user settings: `~/.claude/CLAUDE.md`, your skills, plugins and permissions reach every agent run; MCP servers don't (`--strict-mcp-config`), except a trusted cwd's `.mcp.json`. Only a trusted cwd adds its project settings, `CLAUDE.md` and skills, e.g. `trusted_dirs = ["~/data-repo"]` in `core/config.toml` and `[core.roles.researcher] cwd = "~/data-repo"` in `orchestrator/config.toml`.
 
 ## Orchestrator
 
@@ -221,7 +221,7 @@ To open an agent run's session, copy the command from the code block of its issu
 | `<work_dir>/logs/promote.log` | Handoff and prune actions |
 | `<work_dir>/logs/runs.log` | Agent run start/resume/end; the router needs it to resume, so keep it |
 
-Every agent run works in `<work_dir>/work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<work_dir>` breaks resuming in-progress agent runs; moving the repo or `<work_dir>` breaks the installed plists.
+Every agent run's workdir is `<work_dir>/work/<ID>/`, where `input.md`, `run.json` and `writeback.json` stay for inspection. Moving `<work_dir>` breaks resuming in-progress agent runs; moving the repo or `<work_dir>` breaks the installed plists.
 
 ### Attended runs
 
@@ -242,7 +242,7 @@ python3 orchestrator/src/router.py --now --tui [--split right|below] [--beside <
 
 ### Session records
 
-Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <work_dir>/work/<ID> && claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
+Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <cwd> && claude --resume <sid>` (plus `--add-dir <workdir>` when the cwd `run.json` records is not the workdir). The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
 
 - A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, agent runs skip them, and the router never reads them: it still resumes from `<work_dir>/logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.
