@@ -197,7 +197,7 @@ class Worktree(Base):
                       run.calls)
 
     def test_a_bad_symlink_clones_fails_worktree_before_the_repo_is_read(self):
-        for text, want in (("symlink_clones = [\n", ""), ('symlink_clones = "/a"\n', "symlink_clones"),
+        for text, want in (("symlink_clones = [\n", "(at "), ('symlink_clones = "/a"\n', "symlink_clones"),
                            ("symlink_clones = [1]\n", "symlink_clones"), ('symlink_clones = ["a/b"]\n', "symlink_clones"),
                            ('symlink_clones = ["~nosuchuser/x"]\n', "symlink_clones")):
             with self.subTest(text=text):
@@ -593,6 +593,15 @@ class LocalSafety(Clone):
         self.assertEqual(self.worktree(), (0, ""))
         self.assertGood()
 
+    def test_a_half_made_worktree_of_a_listed_clone_is_made_again_with_symlinks(self):
+        link = self.link_commit()
+        git("-C", self.clone, "fetch", "-q")
+        git("-C", self.clone, "config", "extensions.worktreeConfig", "true")
+        git("-C", self.clone, "worktree", "add", "-q", "--no-checkout", "-b", "TASK-1-x", self.wt, "origin/main")
+        self.assertEqual(self.worktree(config=self.listing(self.clone)), (0, ""))
+        self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "true")
+        self.assertEqual(os.readlink(link), "/etc/passwd")
+
     def test_a_worktree_with_symlinks_on_is_refused(self):
         self.file_commit()
         git("-C", self.clone, "worktree", "add", "-q", "-b", "TASK-1-x", self.wt, "origin/main")
@@ -624,10 +633,12 @@ class LocalSafety(Clone):
         os.symlink(self.clone, alias)
         for i, (listed, spec) in enumerate(((alias, self.clone), (self.clone, alias))):
             with self.subTest(listed=listed, spec=spec):
-                self.assertEqual(self.worktree(f"TASK-1-{i}", config=self.listing(listed), spec=spec), (0, ""))
-                self.assertTrue(os.path.islink(link))
-                shutil.rmtree(self.wt)
-                git("-C", self.clone, "worktree", "prune")
+                try:
+                    self.assertEqual(self.worktree(f"TASK-1-{i}", config=self.listing(listed), spec=spec), (0, ""))
+                    self.assertTrue(os.path.islink(link))
+                finally:
+                    shutil.rmtree(self.wt, ignore_errors=True)
+                    git("-C", self.clone, "worktree", "prune")
 
     def test_listing_another_clone_of_the_same_origin_trusts_no_other(self):
         link = self.link_commit()
@@ -645,10 +656,18 @@ class LocalSafety(Clone):
         self.assertEqual(code, 2)
         for text in ("symlinks", "false", "true", "symlink_clones", "remove it and run again"):
             self.assertIn(text, err)
+        self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "false")
         shutil.rmtree(self.wt)
         git("-C", self.clone, "worktree", "prune")
         self.assertEqual(self.worktree(config=listed), (0, ""))
         self.assertEqual(self.worktree(config=listed), (0, ""))
+
+    def test_a_worktree_made_while_listed_is_refused_once_unlisted(self):
+        self.file_commit()
+        self.assertEqual(self.worktree(config=self.listing(self.clone)), (0, ""))
+        code, err = self.worktree()
+        self.assertEqual(code, 2)
+        self.assertIn("symlinks", err)
 
     def test_a_worktree_deleted_by_hand_is_added_again(self):
         other = os.path.join(self.tmp, "users-own")

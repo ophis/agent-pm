@@ -83,9 +83,10 @@ class ClientConfig(unittest.TestCase):
         for text in ("tier = 2\n", "clients = 1\n", "[clients]\nclaude = 1\n", "[clients.skill]\n"):
             with open(path, "w") as f:
                 f.write(text)
-            with self.subTest(text), self.assertRaises(compose.ConfigError) as cm:
-                clients.load_config("claude", tmp.name)
-            self.assertIn("[clients.claude]", str(cm.exception))
+            with self.subTest(text):
+                with self.assertRaises(compose.ConfigError) as cm:
+                    clients.load_config("claude", tmp.name)
+                self.assertIn("[clients.claude]", str(cm.exception))
 
 
 class Claude(Base):

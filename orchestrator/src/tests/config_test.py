@@ -237,7 +237,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         with open(os.path.join(config.CORE, "config", "config.toml")) as f:
             real = f.read()
         with open(os.path.join(self.root, "core", "config", "config.toml"), "w") as f:
-            f.write(text + real[real.index("# ── Clients"):])
+            f.write(text + real[real.index("\n[clients."):])
 
     def runs(self, text=PIPELINE):
         return config.runnable(self.load(text), root=self.root)

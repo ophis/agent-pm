@@ -240,12 +240,12 @@ def overlay(root=ROOT):
 
 
 def layers(root=ROOT):
-    """The orchestrator's config layers, applied after core's client config; the one source for run_config and run.py."""
+    """The orchestrator's config layers, applied after `core/config/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
     return [overlay(root)]
 
 
 def run_config(role, task, root=ROOT):
-    """compose.RunConfig of role/task: core config, then the claude client config, then layers(root)."""
+    """compose.RunConfig of role/task: core config, then its `[clients.claude]`, then layers(root)."""
     core = os.path.join(root, "core")
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
