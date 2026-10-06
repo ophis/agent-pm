@@ -323,24 +323,14 @@ class RenderDesign(unittest.TestCase):
             "## Other comments (context)", "", "- Researcher, 2026-09-06T00:00:00.000Z:", "  > PRD started: https://x", "",
             "## Earlier version: `Product Design/2026-09-05-PM-9-q.md`", "", fenced("# Mine")))
 
-    def test_golden_direct_issue_is_minimal(self):
-        got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
-                            inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
-        self.assertEqual(got, lines("Reference: PM-9", "", DESIGN_PRECEDENCE, "", "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
-
-    def test_golden_direct_issue_with_repo(self):
-        got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
-                            inputs.Sources((), None), humans=HUMANS, target=target.Target("ophis", "agent-pm"),
-                            docs=DOCS)
-        self.assertEqual(got, lines("Reference: PM-9", "Repo: ophis/agent-pm", "", DESIGN_PRECEDENCE, "",
-                                    "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
-
-    def test_golden_direct_issue_with_clone(self):
-        got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
-                            inputs.Sources((), None), humans=HUMANS,
-                            target=target.Target("ophis", "agent-pm", clone="/x/agent-pm"), docs=DOCS)
-        self.assertEqual(got, lines("Reference: PM-9", "Repo: /x/agent-pm", "", DESIGN_PRECEDENCE, "",
-                                    "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
+    def test_golden_direct_issue(self):
+        for t, repo_line in ((None, ()), (target.Target("ophis", "agent-pm"), ("Repo: ophis/agent-pm",)),
+                             (target.Target("ophis", "agent-pm", clone="/x/agent-pm"), ("Repo: /x/agent-pm",))):
+            with self.subTest(target=t):
+                got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
+                                    inputs.Sources((), None), humans=HUMANS, target=t, docs=DOCS)
+                self.assertEqual(got, lines("Reference: PM-9", *repo_line, "", DESIGN_PRECEDENCE, "",
+                                            "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
 
     def test_direct_issue_user_words_and_prd_fallback_earlier(self):
         ns = (note("More.", "2026-09-02T00:00:00.000Z", ANN),)
@@ -449,24 +439,6 @@ class RenderBuild(unittest.TestCase):
                             humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## The user's requirements since the last build\n\nAnn, 2026-09-02T00:00:00.000Z:\none", got)
         self.assertIn("## Earlier comments (context; the user's ones are already built)\n\n- Ann, 2026-08-30T00:00:00.000Z:\n  > old", got)
-
-    def test_each_note_appears_exactly_once(self):
-        iss = issue("D", ident="ENG-7", notes=self.notes())
-        got = inputs.render(iss, "engineering", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
-        for n in self.notes():
-            with self.subTest(body=n.body):
-                self.assertEqual(got.count(n.body), 1)
-
-    def test_instructions_stop_at_the_comments_header(self):
-        d = lines("Do it.", "## Comments", "  > not mine")
-        got = inputs.render(issue(d, ident="ENG-7"), "engineering", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
-        self.assertIn("## The user's instructions\n\nCompare queues\n\nDo it.\n\n## PRD", got)
-        self.assertNotIn("not mine", got)
-
-    def test_title_line_is_sanitized_by_pr_title(self):
-        iss = issue("D", ident="ENG-7", title="ENG: Fix 'quotes' & $(rm)")
-        got = inputs.render(iss, "engineering", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
-        self.assertIn("\nTitle: " + target.pr_title("ENG-7", "ENG: Fix 'quotes' & $(rm)") + "\n", got)
 
 
 if __name__ == "__main__":

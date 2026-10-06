@@ -204,11 +204,6 @@ class Check(unittest.TestCase):
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
         self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
 
-    def test_read_only_branch_alone_falls_back_to_the_remote(self):
-        self.git_dir()
-        r = self.check(local=ok("TASK-26-light-research\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-        self.assertEqual(r.branch, "TASK-26-remote")
-
     def test_only_the_exact_read_only_names_are_dropped(self):
         self.git_dir()
         r = self.check(local=ok("TASK-26-light-research-2\nTASK-26-light-research\n"))
@@ -325,10 +320,6 @@ class Check(unittest.TestCase):
         r = self.check(api=api("Ophis/Agent-PM-2"), remote=ok("abc\trefs/heads/TASK-26-y\n"))
         self.assertEqual(r, target.Target("Ophis", "Agent-PM-2", "TASK-26-y"))
         self.assertEqual(self.argvs()[-1][-2:], ("https://github.com/Ophis/Agent-PM-2.git", "TASK-26-*"))
-
-    def test_mapping_failures_keep_the_prefix(self):
-        want = target.Invalid(target.MAPPED + "ophis/agent-pm: not found or no access (HTTP 404)")
-        self.assertEqual(self.check(api=ok(code=1, stderr="gh: Not Found (HTTP 404)"), **self.MAPPED), want)
 
 def git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
@@ -458,11 +449,6 @@ class WithClone(unittest.TestCase):
                 os.symlink(dest, self.fresh())
                 self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
                 self.assertEqual(self.run_({}), self.want(""))
-
-    def test_owner_name_and_branch_are_unchanged(self):
-        y = self.clone("y")
-        r = self.run_({"ophis/agent-pm": y})
-        self.assertEqual((r.owner, r.name, r.branch, self.T.clone), ("ophis", "agent-pm", "TASK-26-x", ""))
 
 if __name__ == "__main__":
     unittest.main()

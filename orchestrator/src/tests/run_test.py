@@ -344,15 +344,10 @@ class Outer(Base):
         self.assertEqual(self.sh_calls[0][0][-6:], forwarded(mode="resume"))
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
-    def test_argparse_error(self):
-        with self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
-            run.main(args()[:-2])
-        self.assertEqual(cm.exception.code, 2)
-
-    def test_k_and_url_are_rejected(self):
-        for extra in (["--k", "1"], ["--url", URL]):
-            with self.subTest(extra=extra), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
-                run.main(args() + extra)
+    def test_argparse_errors(self):
+        for argv in (args()[:-2], args() + ["--k", "1"], args() + ["--url", URL]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
+                run.main(argv)
             self.assertEqual(cm.exception.code, 2)
         self.assertEqual(self.sh_calls, [])
 

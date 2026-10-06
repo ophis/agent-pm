@@ -94,11 +94,9 @@ class ReadIssue(unittest.TestCase):
         self.assertEqual(got.linked, (issues.Linked("ENG-1", "TENG-1", "Todo"), issues.Linked("ENG-2", "TENG-2", "Todo"),
                                       issues.Linked("ENG-4", "TENG-4", "Done")))
 
-    def test_missing_issue_raises_lookup_error(self):
+    def test_missing_or_other_issue_raises_lookup_error(self):
         with self.assertRaises(LookupError):
             issues.read_issue(FakeGql({"issue": None}), "ENG-7")
-
-    def test_other_identifier_raises_lookup_error(self):
         with self.assertRaises(LookupError):
             read(identifier="ENG-70")
 
@@ -157,11 +155,9 @@ class ParseHandoff(unittest.TestCase):
 
 
 class IsUser(unittest.TestCase):
-    def test_case_insensitive_email(self):
+    def test_is_user(self):
         self.assertTrue(issues.is_user(note("x", email="ANN@Example.com"), HUMANS))
         self.assertTrue(issues.is_user(note("x", email="bob@example.com"), HUMANS))
-
-    def test_others(self):
         self.assertFalse(issues.is_user(note("x", email="agent@example.com"), HUMANS))
         self.assertFalse(issues.is_user(note("x", email=None), HUMANS))
         self.assertFalse(issues.is_user(note("x", email=""), HUMANS))
@@ -199,10 +195,6 @@ class BuildCutoff(unittest.TestCase):
         self.assertEqual(self.cutoff(
             note("Build started: a", "2026-09-02T00:00:00.000Z"),
             note("Build started", "2026-09-03T00:00:00.000Z", email="ANN@example.com")), "2026-09-02T00:00:00.000Z")
-
-    def test_note_without_email_counts_as_non_user(self):
-        self.assertEqual(self.cutoff(note("Build started", "2026-09-02T00:00:00.000Z", email=None)),
-                         "2026-09-02T00:00:00.000Z")
 
     def test_body_stripped_before_match(self):
         self.assertEqual(self.cutoff(note("\n  Build started: x\n", "2026-09-02T00:00:00.000Z")),

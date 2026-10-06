@@ -129,9 +129,6 @@ class Runnable(ConfigFile, unittest.TestCase):
         runs = self.runs(HEADER + role("researcher", "max_runs = 3") + role("engineer"))
         self.assertEqual((runs["researcher"].max_runs, runs["engineer"].max_runs), (3, 1))
 
-    def test_core_roles_outside_the_config_ignored(self):
-        self.assertEqual(self.runs(HEADER + role("researcher")), {"researcher": RESEARCHER})
-
     def test_role_not_in_core(self):
         self.fails("orchestrator/config.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
 

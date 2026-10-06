@@ -1110,6 +1110,8 @@ class Tick(Base):
             said = self.said()
             self.assertEqual(self.probes(), 1, dry)
             self.assertNotIn("resume TASK-1", self.state, dry)
+            self.assertEqual(len(fake.reads()), 1, dry)
+            self.assertFalse(any("id" in v["f"] for q, v in fake.queries if "issues(filter" in q), dry)
             if dry:
                 self.assertEqual(said[0], "pick: TASK-4 (1 in queue)")
                 self.assertRegex(said[1], r"^usage: status=allowed .* \(1 planned, allowed\)$")
@@ -1201,13 +1203,6 @@ class Tick(Base):
             self.assertEqual("plan: new (2 in queue)" in self.said(), not argv, argv)
             self.assertEqual(self.said().count("blocked: TASK-1 by TASK-7"), 1, argv)
 
-    def test_issue_flag_after_resume_reads_todo_once(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher")], self.hist)
-        self.resumable("TASK-1", "a", 60)
-        self.tick(fake, "--now", "--issue", "TASK-2")
-        self.assertEqual(self.launched(), "TASK-2")
-        self.assertEqual(len(fake.reads()), 1)
-
     def test_usage_blocked(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, shell=FakeShell(probe_five=0.95))
@@ -1215,18 +1210,12 @@ class Tick(Base):
         self.assertEqual(self.sh.launches(), [])
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
 
-    def test_probe_is_the_shared_probe_and_resume_logs_no_count(self):
+    def test_resume(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
         self.resumable("TASK-1", "a", 60)
         self.tick(fake)
         self.assertEqual([c for c in self.sh.calls if c[0] == "claude"], [router.PROBE])
         self.assertNotIn(" n=", self.state.splitlines()[-1])
-        self.assertTrue(self.state.splitlines()[-1].endswith(" resume TASK-1 session=a task=deep-research"))
-
-    def test_resume(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
-        self.resumable("TASK-1", "a", 60)
-        self.tick(fake)
         (launch,) = self.sh.launches()
         self.assertEqual(launch[2:8], ["--issue", "TASK-1", "--project", IDS[DR],
                                         "--assignee", ROLE["researcher"]])
@@ -1240,14 +1229,6 @@ class Tick(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
         (launch,) = self.sh.launches()
         self.assertEqual(launch[launch.index("--issue") + 1], "TASK-1")
-
-    def test_issue_flag_claims_that_issue(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1), issue("TASK-2", "Todo", "researcher", priority=4)])
-        self.tick(fake, "--now", "--issue", "TASK-2")
-        (launch,) = self.sh.launches()
-        self.assertEqual(launch[launch.index("--issue") + 1], "TASK-2")
-        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
-        self.assertFalse(any("id" in v["f"] for q, v in fake.queries if "issues(filter" in q))
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)

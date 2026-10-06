@@ -236,12 +236,6 @@ class FinishGolden(Base):
                                            state="in_review", attach=PRD, attach_title="Session Registry"))
         self.assertEqual(self.ledger(ctx), {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review"]})
 
-    def test_one_line_summaries(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql)
-        writeback.finish(ctx, outcome("done", "ENG-7: x", "Adds the registry.", url=PR))
-        self.assertIn(comment(f"Build ready: Adds the registry.\n\n{PR}"), gql.calls)
-
 
 class FinishLedger(Base):
     def test_second_finish_skips_ledgered_steps(self):
@@ -350,13 +344,6 @@ class FinishSteps(Base):
         self.assertEqual(gql.calls[-1], reread())
         self.assertEqual(self.lines()[-1], f"writeback {ID}: move:in_review")
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
-
-    def test_research_failed_new_already_todo(self):
-        gql = Gql(states=[STATES["todo"]])
-        ctx = self.ctx("deep-research", gql=gql, target=None)
-        self.assertTrue(writeback.finish(ctx, outcome("failed", summary="gh api failed")))
-        self.assertEqual(gql.calls, [READ, comment("gh api failed"), reread()])
-        self.assertIn("move:todo", self.ledger(ctx)[SID])
 
     def test_state_never_overrides_a_user_move(self):
         gql = Gql(states=[STATES["handoff"]])

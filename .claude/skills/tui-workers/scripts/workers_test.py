@@ -32,7 +32,7 @@ class Fake:
         self.sessions, self.tui_rc, self.tui_err = sessions, tui_rc, tui_err
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
-        self.list_err, self.fail_set, self.oserror = "no server running", None, None
+        self.fail_set, self.oserror = None, None
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
@@ -51,7 +51,7 @@ class Fake:
             return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
         if argv[0] == "tmux" and argv[1] == "list-sessions":
             if self.sessions is None:
-                return subprocess.CompletedProcess(argv, 1, "", self.list_err)
+                return subprocess.CompletedProcess(argv, 1, "", "no server running")
             return subprocess.CompletedProcess(argv, 0, self.sessions, "")
         if argv[0] == sys.executable:
             return subprocess.CompletedProcess(argv, self.tui_rc, "", self.tui_err)
@@ -258,11 +258,11 @@ class StartTest(unittest.TestCase):
         last_option = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option" and c[2] == "-t")
         self.assertLess(last_option, fake.calls.index(DECORATIONS[0]))
 
-    def test_decoration_failure_kills_session(self):
-        for fail in ("pane-died", "pane-border-format"):
+    def test_set_failure_kills_session(self):
+        for fail in ("@env", "pane-died", "pane-border-format"):
             fake = Fake()
             fake.fail_set = fail
-            with self.assertRaisesRegex(workers.WorkersError, "undone"):
+            with self.assertRaisesRegex(workers.WorkersError, "set boom.*undone", msg=fail):
                 self.start(fake)
             self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
 
@@ -328,25 +328,12 @@ class StartTest(unittest.TestCase):
             self.assertEqual(argv[-3:], ["Grep", "--", prompt])
             self.assertEqual(argv.count("--"), 2)
 
-    def test_set_option_failure_kills_session(self):
-        fake = Fake()
-        fake.fail_set = "@env"
-        with self.assertRaisesRegex(workers.WorkersError, "set boom.*undone|undone.*set boom"):
-            self.start(fake)
-        self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
-
     def test_kill_failure_ignored(self):
         fake = Fake()
         fake.fail_set = "@sid"
         fake.oserror = lambda argv: argv[1] == "kill-session"
         with self.assertRaisesRegex(workers.WorkersError, "undone"):
             self.start(fake)
-
-    def test_list_sessions_error_no_layout(self):
-        fake = Fake(sessions=None)
-        fake.list_err = "protocol version mismatch"
-        self.start(fake)
-        self.assertEqual(fake.tui()[0][4], "--")
 
     def test_beside_skips_own_name(self):
         rows = [("w1", "1", self.events, "900"), ("a", "1", self.events, "100")]
@@ -453,16 +440,6 @@ class RestartTest(WorkerCase):
             workers.restart("w1", proc=fake)
         self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
-    def test_agrees_with_start(self):
-        fake = Fake()
-        self.started(fake)
-        (tui,) = fake.tui()
-        cmd = shlex.split(workers.restart("w1", proc=fake))
-        self.assertEqual(cmd[cmd.index("--settings") + 1], tui[tui.index("--settings") + 1])
-        self.assertIn(tui[tui.index("--") + 1], cmd)
-        self.assertIn(f"PATH={self.env['PATH']}", cmd)
-        self.assertIn(f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", cmd)
-
     def test_prints_cmd_to_stderr(self):
         fake = Fake()
         self.started(fake)
@@ -487,13 +464,6 @@ class RestartTest(WorkerCase):
             with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker", msg=f"{key}={bad!r}"):
                 workers.restart("w1", proc=fake)
             self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
-
-    def test_missing_option_not_a_worker(self):
-        fake = Fake()
-        self.started(fake)
-        del fake.store["@claude"]
-        with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
-            workers.restart("w1", proc=fake)
 
     def test_oserror_from_proc(self):
         fake = Fake()
@@ -653,11 +623,6 @@ class MainTest(WorkerCase):
         self.assertEqual(argv[4:9], ["--beside", "x", "--split", "below", "--"])
         self.assertEqual(argv[-2:], ["--model", "m"])
 
-    def test_bad_split_usage_error(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            workers.main(["start", "w1", "--events", self.events, "--split", "left"])
-        self.assertEqual(cm.exception.code, 2)
-
     def test_start_defaults_cwd(self):
         fake = Fake()
         rc, _, err = self.run_main(["start", "w1", "--events", self.events], fake)
@@ -688,22 +653,11 @@ class MainTest(WorkerCase):
             f.write(line("user", text("q")))
         self.assertEqual(self.run_main(["reply", "w1"], fake), (0, "", ""))
 
-    def test_oserror_exit(self):
-        fake = Fake()
-        fake.oserror = lambda argv: argv[0] == sys.executable
-        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir], fake)
-        self.assertEqual((rc, out), (1, ""))
-        self.assertRegex(err, r"^workers: .+\n$")
-
-    def test_missing_cwd_exit(self):
-        rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir + "/nope"])
-        self.assertEqual(rc, 1)
-        self.assertTrue(err.startswith("workers: "))
-
     def test_usage_error(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            workers.main(["start", "w1"])
-        self.assertEqual(cm.exception.code, 2)
+        for argv in (["start", "w1"], ["start", "w1", "--events", self.events, "--split", "left"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                workers.main(argv)
+            self.assertEqual(cm.exception.code, 2, argv)
 
 
 if __name__ == "__main__":

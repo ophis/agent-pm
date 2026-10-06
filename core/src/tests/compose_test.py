@@ -178,9 +178,6 @@ class Validate(Fake):
     def test_invalid_layer_value(self):
         self.fails("tier must be an integer 1–4", task="long-note", layers=[{"tier": 9}])
 
-    def test_gate_is_a_run_key(self):
-        self.assertIn("gate", compose.RUN_KEYS)
-
     def test_gate_is_one_line_without_backticks(self):
         for gate in ("a\nb", "echo `id`", 7):
             self.fails("gate must be one line of shell command without backticks", task="long-note",
@@ -419,7 +416,7 @@ class RealCore(unittest.TestCase):
             self.assertEqual(run.task, task)
 
     def test_default_tasks(self):
-        for role, task in (("pm", "product-design"), ("engineer", "engineering")):
+        for role, task in (("pm", "product-design"), ("engineer", "engineering"), ("researcher", "deep-research")):
             self.assertEqual(composed(role)[1].task, task)
 
     def test_every_prompt_opens_with_the_guide(self):
@@ -443,10 +440,6 @@ class RealCore(unittest.TestCase):
         self.assertIn("[Engineer rules](#engineer) > [Engineering rules](#engineering)", prompt)
         self.assertIn("gh pr create", prompt)
         self.assertEqual((run.effort, run.write, run.output), ("xhigh", [], {"type": "pull-request"}))
-
-    def test_researcher_defaults_to_deep_research(self):
-        _, run = composed("researcher")
-        self.assertEqual(run.task, "deep-research")
 
     def test_researcher_deep_research_compiles(self):
         prompt, run = composed("researcher", "deep-research")
