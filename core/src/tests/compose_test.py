@@ -276,6 +276,21 @@ class Prompt(Fake):
         self.assertEqual(prompt.count("On conflict:"), 1)
         self.assertIn("On conflict:", guide)
 
+    def test_task_frontmatter_gives_the_description_and_never_reaches_the_prompt(self):
+        self.write({"team/tasks/short-note.md": '---\ndescription: "Notes: short. Use for \\"x\\"."\n---\n\n# Short Note\n\nWrite a note.\n'})
+        prompt, run = self.compose(task="short-note")
+        self.assertEqual((run.task_description, run.task_title, run.task_summary),
+                         ('Notes: short. Use for "x".', "Short Note", "Write a note."))
+        self.assertNotIn("description:", prompt)
+        self.assertIn("# Writer\n\nWrite well.\n\n# Short Note\n\nWrite a note.\n", prompt)
+        self.assertEqual(self.compose(task="long-note")[1].task_description, "")
+
+    def test_bad_task_frontmatter(self):
+        for front in ("title: \"x\"", "description: x", "description: 3", 'description: "x"\nother: "y"'):
+            with self.subTest(front):
+                self.write({"team/tasks/short-note.md": f"---\n{front}\n---\n\n# Short Note\n"})
+                self.fails("tasks/short-note.md: frontmatter must be", task="short-note")
+
     def test_missing_guide(self):
         os.remove(os.path.join(self.root, "team", "guide.md"))
         self.fails("missing file guide.md")
@@ -422,6 +437,13 @@ class RealCore(unittest.TestCase):
     def test_every_prompt_has_the_progress_rule_once(self):
         for role, task in ALL:
             self.assertEqual(composed(role, task)[0].count("is a point to tell the user your progress"), 1, task)
+
+    def test_every_task_has_a_description_its_prompt_never_shows(self):
+        for role, task in ALL:
+            prompt, run = composed(role, task)
+            self.assertTrue(run.task_description, task)
+            self.assertNotIn(run.task_description, prompt, task)
+            self.assertIn(f"\n# {run.task_title}\n", prompt, task)
 
     def test_every_task_compiles_without_placeholders(self):
         for role, task in ALL:

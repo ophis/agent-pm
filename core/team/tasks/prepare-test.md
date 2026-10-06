@@ -1,3 +1,7 @@
+---
+description: "Open a worktree of the named repo and report it. Use only to check that repo.py worktree works end to end."
+---
+
 # Prepare Test
 
 Prepare the input's repo and nothing else.

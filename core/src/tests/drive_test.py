@@ -7,7 +7,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -374,12 +373,11 @@ class Skill(Base):
         (_, text), = clients.SkillClient({}).export("p", r, dest="o").files.items()
         self.assertIn('description: "T as R: Do it."', text)
 
-    def test_every_task_has_a_skill_description(self):
-        skill = clients.load_config("skill", CORE)["roles"]
-        with open(os.path.join(CORE, "config", "config.toml"), "rb") as f:
-            pairs = [(r, t) for r, role in tomllib.load(f)["roles"].items() for t in role.get("tasks", {})]
-        for r, t in pairs:
-            self.assertTrue(skill.get(r, {}).get("tasks", {}).get(t, {}).get("description"), (r, t))
+    def test_description_is_the_task_frontmatters(self):
+        r = run(role_title="R", task_title="T", task_summary="Do it.", task_description='Does "it".',
+                output={"type": "orchestrator"})
+        (_, text), = clients.SkillClient({}).export("p", r, dest="o").files.items()
+        self.assertIn('description: "Does \\"it\\"."', text)
 
     def test_every_task_becomes_a_skill(self):
         for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "engineering"),

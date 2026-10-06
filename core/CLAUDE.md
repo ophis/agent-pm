@@ -17,6 +17,7 @@ Commit the regenerated `core/skills/` with the change that caused it.
 ## Rules
 
 - `team/` and `output/` say what an agent run does and what it reports, client-neutrally. How a client starts a run and how the run's outcome and progress come back live in that client's class.
+- A task file may open with YAML frontmatter holding only `description: "<JSON string>"`: what the task does and when to use it, the skill's description (without one: `<Task> as <Role>: <the task's first line>`). `compose` strips it; no prompt sees it.
 - A task marks where an agent run reports progress with a line `[agent-pm-progress:<name>] what to report`, under its own **Report progress** item (a step, or a bullet under the parent it belongs to), never inside another item; how the run reports it is the client's `handover()` (Claude: `report.py progress <name> <report>`; skill: before the next tool call, a text message holding only that line, the report after the mark). A done or failed run whose task marks `start` but never reported it gets a `missing` event (`drive.start`).
 - Config is layered (`compose.load_run`): `config/config.toml`'s neutral part (top level and `roles`) is valid on its own; each `[clients.<name>]` table has the same layout and its run keys replace the neutral ones.
 - `src/repo.py` is stdlib-only and imports nothing from `src/`: the skill client copies it into each skill, and `team/methods/` into a skill that names it.

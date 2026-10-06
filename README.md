@@ -163,7 +163,7 @@ To upgrade a Light Research issue, remove the label, comment the claims to verif
 
 The task is recorded in `logs/runs.log`, so a resumed agent run keeps it whatever the labels say (none recorded: the role's default). An interrupted agent run whose task is no longer one of the role's goes to In Review with a comment.
 
-To add a task to a role: create `core/team/tasks/<task>.md`, add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
+To add a task to a role: create `core/team/tasks/<task>.md` (its frontmatter `description` is the skill's; `core/CLAUDE.md`), add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 

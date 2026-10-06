@@ -1,3 +1,7 @@
+---
+description: "Deep, verified research on a question about the web, a codebase, or both: research workflows, key claims checked by independent votes, a sourced Markdown report with its gaps listed. Use when the answer must be reliable or a quick pass left gaps; for a fast answer use researcher-light-research."
+---
+
 # Deep Research
 
 Run research workflows, then write a verified report. These steps, not the workflows, own the report.
