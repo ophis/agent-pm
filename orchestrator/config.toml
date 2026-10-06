@@ -38,19 +38,19 @@ light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
 account = "frank.agent.w+researcher@gmail.com"
 key = "linear-api-key-researcher"
 next = "pm"
-max_runs = 1
+max_runs = 3
 
 [roles.pm]
 account = "frank.agent.w+pm@gmail.com"
 key = "linear-api-key-pm"
 next = "engineer"
 require_instructions = false       # a PRD carries enough context
-max_runs = 1
+max_runs = 3
 
 [roles.engineer]
 account = "frank.agent.w+engineer@gmail.com"
 key = "linear-api-key-engineer"
-max_runs = 1
+max_runs = 3
 
 # Project repos; optional.
 #   "<project id>"  "<owner>/<name>": target repo of the Linear project's Engineering, research or product-design
