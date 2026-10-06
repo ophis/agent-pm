@@ -1271,6 +1271,13 @@ class HostFailure(Base):
 class TuiRunner(Base):
     NAME = f"r-t-{SID[:8]}"
 
+    def setUp(self):
+        super().setUp()
+        p = unittest.mock.patch.dict(os.environ)
+        p.start()
+        self.addCleanup(p.stop)
+        os.environ.pop("TUI_ATTACH_PREFIX", None)
+
     def start(self, *steps, sinks=None, progress=(), show=None, api=None, **params):
         """drive.start with the tui runner over FakeTui(steps), `api` replacing its functions; stderr in self.err."""
         p = self.params(**params)
@@ -1505,6 +1512,13 @@ class TuiRunner(Base):
                       f"tmux attach -t '={self.NAME}'\n", err)
         code, calls, _ = self.main(*[[STOP]] * (1 + drive.STOP_LIMIT))
         self.assertEqual((code, [c[0] for c in calls]), (1, ["start", "send"]))
+
+    def test_the_left_open_line_takes_the_attach_prefix(self):
+        for env, prefix in (({}, ""), ({"TUI_ATTACH_PREFIX": " "}, ""),
+                            ({"TUI_ATTACH_PREFIX": "docker exec -it box"}, "docker exec -it box ")):
+            with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
+                *_, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT))
+                self.assertIn(f"left open: {prefix}tmux attach -t '={self.NAME}'\n", err)
 
     def test_progress_resets_the_count(self):
         again = [[STOP]] * (drive.STOP_LIMIT - 1)

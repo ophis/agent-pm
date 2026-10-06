@@ -185,8 +185,8 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         iterm = ["-e", f"ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID', '')}"]  # tmux's own may be stale
         given = (("split", layout.split), ("beside", layout.beside), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
-        print(f"run.py: driver: tmux attach -t '={session(name, a.issue)}'", file=sys.stderr)
-        print(f"run.py: tui: tmux attach -t '={tui}'", file=sys.stderr)
+        print(f"run.py: driver: {tui_claude.attach_command(session(name, a.issue))}", file=sys.stderr)
+        print(f"run.py: tui: {tui_claude.attach_command(tui)}", file=sys.stderr)
     try:
         sh(["tmux", "new-session", "-d", *iterm, "-s", session(name, a.issue), "-c", rd, sys.executable, RUN,
             "--inner", "--uuid", issue.id, *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
@@ -217,7 +217,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
         return 2
     live = router.live_sessions(roles, sh)
     if role := next((r for r, ids in live.items() if a.issue in ids), None):
-        print(f"run.py: {a.issue} has a live agent run: tmux attach -t '={session(role, a.issue)}'", file=sys.stderr)
+        print(f"run.py: {a.issue} has a live agent run: {tui_claude.attach_command(session(role, a.issue))}", file=sys.stderr)
         return 1
     board = router.Board(gql, router.parse_log(runs), projects, datetime.now(timezone.utc), dry=False, cfg=cfg, root=root)
     taken = board.take(a.issue)

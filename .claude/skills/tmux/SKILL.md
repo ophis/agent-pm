@@ -34,6 +34,15 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change.
 - Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor (TaskStop) once no worker is left.
 
+## In a container
+
+Workers in a Linux container on a Mac (no iTerm2 there):
+
+- You run inside tmux session `<commander>` in the container. Before you start workers, have the user attach iTerm2 on the Mac to it: `docker exec -it <container> tmux -CC new -A -s <commander>` (or `… tmux -CC attach -t '=<commander>'`); worker panes then show as native iTerm2 splits. Unattached, a worker gets no pane (`no anchor pane: no terminal shows tmux session …`) and runs unseen. To watch one without `-CC`: `docker exec -it <container> tmux attach -t '=<name>'`.
+- Set `TUI_ATTACH_PREFIX='docker exec -it <container>'` in the container's environment (e.g. `docker run -e`): printed attach commands then work on the Mac.
+- Pre-trust the workers' folders, or start workers in a trusted one: each worker otherwise stops at the "Quick safety check" trust dialog.
+- Quote targets `'=<name>'` in hand-written tmux commands on the Mac too: its default shell, zsh, expands an unquoted `=<name>`.
+
 ## Gotchas
 
 - Never `/clear` a worker: it gets a new session id, which `reply` and `restart` lose. For a fresh context, stop it and start another.

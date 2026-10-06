@@ -556,7 +556,7 @@ class Tui:
 
     def give_up(self, reason: str) -> None:
         self.gave_up = True
-        print(f"drive.py: {reason}; session {self.name} left open: tmux attach -t '={self.name}'", file=sys.stderr)
+        print(f"drive.py: {reason}; session {self.name} left open: {tui_claude.attach_command(self.name)}", file=sys.stderr)
 
     def done(self, outcome_arrived: bool) -> bool:
         if outcome_arrived:

@@ -47,6 +47,8 @@ TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 TUI_NAME = "engineer-TASK-7-0b6f2c1e"
 ATTACH = ("run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'\n"
           f"run.py: tui: tmux attach -t '={TUI_NAME}'\n")
+# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before a printed `tmux attach`
+PREFIXES = ((None, ""), (" \t", ""), (" docker exec -it box ", "docker exec -it box "))
 LAYOUT, CLOSE = attended.layout, attended.close
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
@@ -186,6 +188,7 @@ class Base(unittest.TestCase):
                   mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
+        os.environ.pop("TUI_ATTACH_PREFIX", None)
         self.rd = os.path.join(self.root, "work", ID)
         self.runs = os.path.join(self.root, "logs", "runs.log")
         self.projects = os.path.join(self.tmp, "projects")
@@ -541,6 +544,15 @@ class Attended(Base):
         self.assertEqual(self.tui(), 0)
         self.assertEqual(printed, [ATTACH])
 
+    def test_attach_lines_take_the_prefix(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        for value, prefix in PREFIXES:
+            with self.subTest(value=value):
+                if value is not None:
+                    os.environ["TUI_ATTACH_PREFIX"] = value
+                self.assertEqual(self.tui(), 0)
+                self.assertEqual(self.err, ATTACH.replace("tmux attach", prefix + "tmux attach"))
+
     def test_no_place_for_the_pane_starts_nothing(self):
         cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
                       "run from tmux or iTerm2, or pass --beside SESSION"),
@@ -668,6 +680,16 @@ class AttendedEntry(Base):
                 self.assertEqual(self.err, f"run.py: {ID} has a live agent run: tmux attach -t '=agent-pm-{role}-{ID}'\n")
                 self.assertEqual(self.sh_calls, [(LIST, {"capture_output": True, "text": True})])
         self.assertEqual((self.gql.queries, os.path.exists(self.runs)), ([], False))
+
+    def test_the_live_run_refusal_takes_the_prefix(self):
+        self.tmux_sessions = [f"agent-pm-engineer-{ID}"]
+        for value, prefix in PREFIXES:
+            with self.subTest(value=value):
+                if value is not None:
+                    os.environ["TUI_ATTACH_PREFIX"] = value
+                self.assertEqual(self.entry("--beside", "dev"), 1)
+                self.assertEqual(self.err, f"run.py: {ID} has a live agent run: {prefix}tmux attach -t "
+                                           f"'=agent-pm-engineer-{ID}'\n")
 
     def test_nothing_claimed_exits_1_without_a_start_line(self):
         cases = [(dict(state="In Progress"), "pick: TASK-7 is not a Todo issue assigned to a role account", "In Progress"),

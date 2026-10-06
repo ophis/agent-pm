@@ -40,11 +40,12 @@ def decorate_calls(events):
 
 
 class Fake:
-    """Records proc calls; `new_err` makes new-session fail. On new-session it reads the handover file tui_claude wrote
-    and unlinks it as the pane's wrapper would."""
+    """Records proc calls; `new_err` makes new-session fail; `results` maps a tmux command to a function of the argv
+    giving its stdout. On new-session it reads the handover file tui_claude wrote and unlinks it as the pane's wrapper
+    would."""
 
-    def __init__(self, new_err=""):
-        self.new_err = new_err
+    def __init__(self, new_err="", results=None):
+        self.new_err, self.results = new_err, results or {}
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
         self.fail_set, self.oserror, self.handover = None, None, None
@@ -71,6 +72,8 @@ class Fake:
             os.unlink(path)
             if self.new_err:
                 return subprocess.CompletedProcess(argv, 1, "", self.new_err)
+        if argv[1] in self.results:
+            return subprocess.CompletedProcess(argv, 0, self.results[argv[1]](argv), "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     def new_sessions(self):
@@ -312,6 +315,36 @@ class WorkerCase(unittest.TestCase):
 
     def started(self, fake, flags=("--model", "m c")):
         return workers.start("w1", self.events, cwd=self.dir, flags=flags, env=self.env, proc=fake)
+
+
+class ContainerTest(WorkerCase):
+    def test_workers_stack_in_tmux_splits(self):
+        """In a Linux container: the commander in tmux session cmd, pane %0, shown on /dev/pts/1; no pgrep or iTerm2
+        variables."""
+        sock = "/tmp/tmux-0/default"
+        tmux = os.path.join(self.bin, "tmux")
+        executable(tmux, "#!/bin/sh\n")
+        new = iter(["%5\n", "%6\n"])
+
+        def sessions(argv):
+            shown = [(c[3][1:-1], c[5]) for c in fake.calls if c[1:3] == ["set-option", "-t"] and c[4] == "@pane"]
+            return "".join(f"${i}\t{name}\tcmd\t{pane}\t{sock}\n" for i, (name, pane) in enumerate(shown, 1))
+        fake = Fake(results={"display-message": lambda argv: "cmd\n", "list-sessions": sessions,
+                             "list-clients": lambda argv: f"100 /dev/pts/1 %0 {sock}\n",
+                             "list-panes": lambda argv: "%0\n%5\n" if argv[-1] == "#{pane_id}" else "0 /dev/pts/0 %0\n",
+                             "split-window": lambda argv: next(new)})
+        fake.oserror = lambda argv: argv[0] == "pgrep"
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"TMUX": f"{sock},42,0", "TMUX_PANE": "%0", "PATH": self.bin}, clear=True), \
+                contextlib.redirect_stderr(err):
+            for name in ("w1", "w2"):
+                workers.start(name, self.events, cwd=self.dir, env=self.env, proc=fake)
+        self.assertEqual([c for c in fake.calls if c[1] == "split-window"], [
+            ["tmux", "split-window", "-d", flag, "-P", "-F", "#{pane_id}", "-t", pane,
+             "env", "-u", "TMUX", tmux, "-S", sock, "attach", "-t", f"={name}"]
+            for flag, pane, name in (("-h", "%0", "w1"), ("-v", "%5", "w2"))])
+        self.assertNotIn("osascript", [c[0] for c in fake.calls])
+        self.assertEqual(err.getvalue(), "tui: session w1: tmux attach -t '=w1'\ntui: session w2: tmux attach -t '=w2'\n")
 
 
 class RestartTest(WorkerCase):
