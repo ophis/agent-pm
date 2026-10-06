@@ -4,7 +4,7 @@ one the router resumes).
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--beside SESSION] [--events FILE]
-  Outer: checks the agent run can start, bounces an engineering issue whose repo check fails, writes work/<ID>/input.md,
+  Outer: checks the agent run can start, bounces an engineering issue whose repo check fails, writes <work_dir>/<ID>/input.md,
   then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
   input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
   failure is also logged to the task's project log. --runner tui (--split, --beside and --events need it) checks first
@@ -108,7 +108,7 @@ def setup(a, root):
     name = role_for(roles, a.assignee)
     if name is None:
         raise Setup(f"{a.assignee!r} is not a role account", 2)
-    role, logs = roles[name], os.path.join(root, "logs")
+    role, logs = roles[name], config.LOGS_DIR
     if a.task not in role.tasks:
         raise Setup(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2,
                     project_log(role.default, logs))
@@ -151,7 +151,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     kind, repos, repo = TASKS[a.task].kind, cfg["project_repos"], None
     if kind == "build":
         try:
-            repo = target.check(issue, repos, run=run, work=config.WORK)
+            repo = target.check(issue, repos, run=run, work=config.WORK_DIR)
         except Exception as e:  # a gh/git timeout or OS error
             return fail(plog, a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
@@ -166,7 +166,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     else:
         repo = target.research_repo(issue, repos)
     if repo is not None:
-        repo = target.with_clone(repo, a.issue, cfg["local_clones"], work=config.WORK, run=run)
+        repo = target.with_clone(repo, a.issue, cfg["local_clones"], work=config.WORK_DIR, run=run)
     rd = run_dir(a.issue)
     docs = config.docs(roles, root)
     try:
@@ -232,7 +232,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
 
 
 def inner(a, *, layout, gql, popen, runs, root):
-    """In tmux, cwd work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to the end lines.
+    """In tmux, cwd <work_dir>/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to the end lines.
     `layout` is the tui runner's, None for headless."""
     os.environ["PATH"] = PATH
 

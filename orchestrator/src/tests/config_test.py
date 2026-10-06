@@ -523,7 +523,7 @@ class Writable(unittest.TestCase):
     def test_work_then_the_temp_dirs(self):
         with mock.patch.object(repo, "temp_dirs", return_value=("/t1", "/t2")):
             self.assertEqual(config.writable("/w"), ("/w", "/t1", "/t2"))
-            self.assertEqual(config.writable(), (config.WORK, "/t1", "/t2"))
+            self.assertEqual(config.writable(), (config.WORK_DIR, "/t1", "/t2"))
 
 
 class RepoSlug(unittest.TestCase):
@@ -536,6 +536,37 @@ class RepoSlug(unittest.TestCase):
                 self.assertEqual(config.repo_slug(value), want)
 
 
+class StateDirs(ConfigFile, unittest.TestCase):
+    def test_unset_is_next_to_the_repo(self):
+        real = os.path.realpath(config.ROOT)
+        self.assertEqual((config.WORK_DIR, config.LOGS_DIR, config.RUNS_LOG),
+                         (real + "-work", real + "-logs", os.path.join(real + "-logs", "runs.log")))
+        root = os.path.join(self.dir, "repo")
+        self.assertEqual(config.state_dirs({}, root), (os.path.realpath(root) + "-work", os.path.realpath(root) + "-logs"))
+
+    def test_set(self):
+        home = os.path.realpath(self.dir)
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            got = config.state_dirs({"work_dir": "~/w", "logs_dir": os.path.join(home, "l")}, os.path.join(home, "repo"))
+        self.assertEqual(got, (os.path.join(home, "w"), os.path.join(home, "l")))
+        self.assertEqual(self.load(f'work_dir = "{home}/w"\nlogs_dir = "~/l"\n' + BASE)["work_dir"], f"{home}/w")
+
+    def test_refused(self):
+        real = os.path.realpath(config.ROOT)
+        link = os.path.join(self.dir, "link")
+        os.symlink(real, link)
+        inside = f"must lie outside the repo {real}: "
+        cases = [(f'work_dir = "{real}"\n', f"work_dir {inside}{real!r}"),
+                 (f'logs_dir = "{real}/logs"\n', f"logs_dir {inside}{real + '/logs'!r}"),
+                 (f'work_dir = "{link}/work"\n', f"work_dir {inside}{link + '/work'!r}"),
+                 ('work_dir = "work"\n', "work_dir must be a printable absolute or ~ path: 'work'"),
+                 ("logs_dir = 5\n", "logs_dir must be a printable absolute or ~ path: 5")]
+        for text, msg in cases:
+            with self.subTest(text=text), self.assertRaises(SystemExit) as cm:
+                self.load(text + BASE)
+            self.assertEqual(cm.exception.code, f"orchestrator/config.toml: {msg}")
+
+
 class Paths(unittest.TestCase):
     def test_slug_and_project_log(self):
         self.assertEqual(config.slug("Deep Research"), "deep-research")
@@ -545,8 +576,7 @@ class Paths(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.dirname(path)))
 
     def test_run_dir_and_transcript(self):
-        self.assertEqual(config.WORK, os.path.join(config.ROOT, "work"))
-        self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.WORK, "TASK-9"))
+        self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.WORK_DIR, "TASK-9"))
         self.assertEqual(config.escape("/Users/a_b/x.y"), "-Users-a-b-x-y")
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
         self.assertEqual(config.transcript("TASK-9", sid, projects="/p"),
