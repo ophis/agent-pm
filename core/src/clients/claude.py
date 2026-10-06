@@ -1,4 +1,4 @@
-"""Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config/config.toml. The run
+"""Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config.toml. The run
 reports progress and its outcome with the driver's report command; its stream-json output gives only the text to show.
 """
 import json
@@ -31,9 +31,9 @@ class ClaudeClient(Client):
         c = self.config
         model, effort = c.get("tiers", {}).get(str(run.tier)), c.get("efforts", {}).get(run.effort)
         if model is None:
-            raise ConfigError(f"no model for tier {run.tier} in [clients.claude] in config/config.toml")
+            raise ConfigError(f"no model for tier {run.tier} in [clients.claude] in config.toml")
         if effort is None:
-            raise ConfigError(f"no effort for {run.effort!r} in [clients.claude] in config/config.toml")
+            raise ConfigError(f"no effort for {run.effort!r} in [clients.claude] in config.toml")
         head = ["--resume" if params.resume else "--session-id", params.sid, "--model", model, "--effort", effort,
                 *c.get("flags", [])]
         tail = []

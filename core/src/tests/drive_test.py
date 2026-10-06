@@ -69,16 +69,15 @@ class ClientConfig(unittest.TestCase):
     def test_the_real_tables(self):
         self.assertLessEqual({"flags", "tiers"}, set(clients.load_config("claude", CORE)))
         self.assertIn("roles", clients.load_config("skill", CORE))
-        self.assertFalse(os.path.exists(os.path.join(CORE, "config", "clients")))
+        self.assertFalse(os.path.exists(os.path.join(CORE, "config")))
 
     def test_missing_or_bad_table(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        path = os.path.join(tmp.name, "config", "config.toml")
+        path = os.path.join(tmp.name, "config.toml")
         with self.assertRaises(compose.ConfigError) as cm:
             clients.load_config("claude", tmp.name)
         self.assertIn(path, str(cm.exception))
-        os.makedirs(os.path.dirname(path))
         for text in ("tier = 2\n", "clients = 1\n", "[clients]\nclaude = 1\n", "[clients.skill]\n"):
             with open(path, "w") as f:
                 f.write(text)

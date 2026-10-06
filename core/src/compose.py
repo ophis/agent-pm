@@ -18,7 +18,7 @@ from typing import Literal, Protocol, get_args
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
 OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how an agent run hands back
-CONFIG = os.path.join("config", "config.toml")
+CONFIG = "config.toml"
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]

@@ -4,9 +4,9 @@
 #   harness_key       required: Keychain service of the harness account's Linear API key (router, promote, prune)
 #   task_label_group  required: Linear id of the `Tasks` label group; its labels pick an issue's task through
 #                     [task_labels]
-#   work_dir          agent runs' workdirs, <work_dir>/<ID>/ (absolute or ~, outside this repo); unset → <repo path>-work
-#   logs_dir          router state and logs (absolute or ~, outside this repo); unset → <repo path>-logs. The plists
-#                     hard-code it
+#   work_dir          runtime state: agent runs' workdirs in <work_dir>/work/<ID>/, router state and logs in
+#                     <work_dir>/logs/ (the plists hard-code it); absolute or ~, neither in nor containing this repo or a
+#                     [local_clones] clone; unset → ~/.agent-pm
 team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents
 human_members = ["ophis.w@outlook.com"]
 harness_key = "linear-api-key"
@@ -27,7 +27,7 @@ canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 [task_labels]
 light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
 
-# A role to orchestrate. Its tasks are core/config/config.toml's roles.<role>.tasks, default_task first. An issue
+# A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. An issue
 # assigned to its account runs the role's default task unless its Tasks label picks another through [task_labels].
 #   account               required: the role's Linear account (email)
 #   key                   required: Keychain service of that account's API key; write-back acts as it
@@ -66,9 +66,9 @@ max_runs = 1
 "ophis/agent-pm" = "~/playground/agent-pm"
 "ophis/claude-autopilot" = "~/playground/claude-autopilot"
 
-# The overlay; optional: core run keys for the orchestrator's agent runs, in core/config/config.toml's layout under
-# [core], applied after core/config/config.toml's [clients.claude] (drive.plan layers). config.overlay() fills {{root}}
+# The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
+# [core], applied after core/config.toml's [clients.claude] (drive.plan layers). config.overlay() fills {{root}}
 # with this repo's root.
-#   <run key>  as in core/config/config.toml; users, symlink_clones and clients are refused
+#   <run key>  as in core/config.toml; users, symlink_clones and clients are refused
 [core.roles.researcher.tasks.deep-research]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"

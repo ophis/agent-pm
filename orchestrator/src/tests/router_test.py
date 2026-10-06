@@ -33,7 +33,7 @@ CONFIG_ENG2 = HEADER + role_table("researcher", 'next = "pm"') + role_table("pm"
 def setUpModule():
     tmp = tempfile.TemporaryDirectory()
     unittest.addModuleCleanup(tmp.cleanup)
-    p = mock.patch.object(router, "WORK_DIR", tmp.name)
+    p = mock.patch.object(router, "RUNS_DIR", tmp.name)
     p.start()
     unittest.addModuleCleanup(p.stop)
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
@@ -356,7 +356,7 @@ class Brake(unittest.TestCase):
         self.assertEqual(router.PROBE, ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json",
                                         "--verbose", "--setting-sources", "user", "--strict-mcp-config"])
         self.assertEqual(self.brake(event(five=0.79, seven_day=0.3)), (0, "status=allowed five_hour=0.79 seven_day=0.3\n"))
-        self.sh.assert_called_once_with(router.PROBE, cwd=router.WORK_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.sh.assert_called_once_with(router.PROBE, cwd=router.RUNS_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True)
         self.assertEqual(self.path, router.PATH)
 
     def test_blocks_at_brake_5h(self):

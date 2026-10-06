@@ -24,24 +24,30 @@ import compose  # noqa: E402
 import repo  # noqa: E402
 
 
-def state_dirs(cfg, root=ROOT):
-    """(work_dir, logs_dir) of a config table, real paths: each its absolute or ~ value, else <root>-work / <root>-logs. A path
-    in root stops the caller."""
-    real, out = os.path.realpath(root), []
-    for key, suffix in (("work_dir", "-work"), ("logs_dir", "-logs")):
-        v = cfg.get(key, real + suffix)
-        path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
-        if not os.path.isabs(path):
-            raise SystemExit(f"orchestrator/config.toml: {key} must be a printable absolute or ~ path: {v!r}")
-        path = os.path.realpath(path)
-        if os.path.commonpath([path, real]) == real:
-            raise SystemExit(f"orchestrator/config.toml: {key} must lie outside the repo {real}: {v!r}")
-        out.append(path)
-    return tuple(out)
+def _overlap(a, b):
+    return os.path.commonpath([a, b]) in (a, b)
+
+
+def work_dir(cfg, root=ROOT, clones=None):
+    """work_dir of a config table, a real path: its absolute or ~ value, else ~/.agent-pm. One that lies in or contains root
+    or a clone of `clones` (repo → real path) stops the caller."""
+    real = os.path.realpath(root)
+    v = cfg.get("work_dir", "~/.agent-pm")
+    path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
+    if not os.path.isabs(path):
+        raise SystemExit(f"orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}")
+    path = os.path.realpath(path)
+    if _overlap(path, real):
+        raise SystemExit(f"orchestrator/config.toml: work_dir must neither lie in nor contain the repo {real}: {v!r}")
+    for k, clone in (clones or {}).items():
+        if _overlap(path, clone):
+            raise SystemExit(f"orchestrator/config.toml: work_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}")
+    return path
 
 
 with open(CONFIG, "rb") as _f:
-    WORK_DIR, LOGS_DIR = state_dirs(tomllib.load(_f))
+    WORK_DIR = work_dir(tomllib.load(_f))
+RUNS_DIR, LOGS_DIR = os.path.join(WORK_DIR, "work"), os.path.join(WORK_DIR, "logs")
 RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
 
 
@@ -71,7 +77,7 @@ def escape(path):
 
 
 def run_dir(issue):
-    return os.path.join(WORK_DIR, issue)
+    return os.path.join(RUNS_DIR, issue)
 
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -94,7 +100,7 @@ def transcript(issue, sid, projects=PROJECTS):
 
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
-            "work_dir", "logs_dir"}
+            "work_dir"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -184,7 +190,6 @@ def load_config(path=CONFIG):
         raise SystemExit(f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}")
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
-    state_dirs(cfg)
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
@@ -219,6 +224,7 @@ def load_config(path=CONFIG):
             raise SystemExit(f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo")
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
+    work_dir(cfg, clones=clones)
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
@@ -260,7 +266,7 @@ def overlay(root=ROOT):
 
 
 def layers(root=ROOT):
-    """The orchestrator's config layers, applied after `core/config/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
+    """The orchestrator's config layers, applied after `core/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
     return [overlay(root)]
 
 
@@ -270,7 +276,7 @@ def run_config(role, task, root=ROOT):
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
 
-def writable(work=WORK_DIR):
+def writable(work=RUNS_DIR):
     """The dirs an agent run can write; a clone there gets no git run by the harness."""
     return (work, *repo.temp_dirs())
 
@@ -301,7 +307,7 @@ def runnable(cfg, root=ROOT):
     out = {}
     for name, p in cfg["roles"].items():
         if name not in core_roles:
-            raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config/config.toml")
+            raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config.toml")
         default, tasks = core_roles[name].get("default_task"), list(core_roles[name].get("tasks", {}))
         tasks = tuple(dict.fromkeys([default, *tasks] if default else tasks))
         for t in tasks:

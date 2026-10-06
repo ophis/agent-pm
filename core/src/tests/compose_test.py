@@ -85,7 +85,7 @@ class Fake(unittest.TestCase):
                 f.write(text)
 
     def config(self, text):
-        self.write({"config/config.toml": textwrap.dedent(text)})
+        self.write({compose.CONFIG: textwrap.dedent(text)})
 
     def compose(self, role="writer", task=None, *, layers=(), **params):
         run = compose.load_run(self.root, role, task, layers=layers)
@@ -384,7 +384,7 @@ class Anchor(unittest.TestCase):
         self.assertEqual(compose.anchor("Template: `x.md`"), "template-xmd")
 
 
-with open(os.path.join(CORE, "config", "config.toml"), "rb") as _f:
+with open(os.path.join(CORE, compose.CONFIG), "rb") as _f:
     ALL = [(r, t) for r, role in tomllib.load(_f)["roles"].items() for t in role.get("tasks", {})]
 
 

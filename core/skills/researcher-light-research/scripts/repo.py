@@ -43,7 +43,7 @@ LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "config.toml")
+CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 

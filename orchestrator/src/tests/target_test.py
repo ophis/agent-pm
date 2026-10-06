@@ -414,7 +414,7 @@ class WithClone(unittest.TestCase):
         self.assertEqual(self.run_({"ophis/agent-pm": y}, writable=(os.path.join(self.tmp, "elsewhere"),)), self.want(x))
         self.assertEqual(self.run_({}, writable=(self.tmp,)), self.want(""))
 
-    def test_the_default_writable_holds_the_work_dir(self):
+    def test_the_default_writable_holds_the_runs_dir(self):
         inside = os.path.join(self.work, "clone")
         git("init", "-q", inside)
         git("-C", inside, "remote", "add", "origin", self.HTTPS)

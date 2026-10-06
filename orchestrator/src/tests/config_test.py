@@ -130,7 +130,7 @@ class Runnable(ConfigFile, unittest.TestCase):
         self.assertEqual((runs["researcher"].max_runs, runs["engineer"].max_runs), (3, 1))
 
     def test_role_not_in_core(self):
-        self.fails("orchestrator/config.toml: role 'ghost' is not in core/config/config.toml", PIPELINE + role("ghost"))
+        self.fails("orchestrator/config.toml: role 'ghost' is not in core/config.toml", PIPELINE + role("ghost"))
 
     def test_task_without_tasks_entry(self):
         self.fails("orchestrator/config.toml: dummy-tester's task 'echo' has no entry in config.TASKS", PIPELINE + role("dummy-tester"))
@@ -180,7 +180,7 @@ class Runnable(ConfigFile, unittest.TestCase):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(os.path.join(config.CORE, "config", "config.toml")) as f:
+        with open(os.path.join(config.CORE, config.compose.CONFIG)) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
@@ -221,7 +221,7 @@ DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-de
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
-    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config/config.toml; core's text and
+    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config.toml; core's text and
     [clients.*] tables are the real ones."""
     def setUp(self):
         super().setUp()
@@ -234,9 +234,9 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.core(CORE_TOML)
 
     def core(self, text):
-        with open(os.path.join(config.CORE, "config", "config.toml")) as f:
+        with open(os.path.join(config.CORE, config.compose.CONFIG)) as f:
             real = f.read()
-        with open(os.path.join(self.root, "core", "config", "config.toml"), "w") as f:
+        with open(os.path.join(self.root, "core", config.compose.CONFIG), "w") as f:
             f.write(text + real[real.index("\n[clients."):])
 
     def runs(self, text=PIPELINE):
@@ -423,12 +423,14 @@ class LocalClones(Clones):
         self.assertEqual(self.load(BASE)["local_clones"], {})
 
     def test_entries_stored_as_realpaths(self):
-        real = os.path.join(self.dir, "real")
+        home = os.path.join(self.dir, "home")
+        real = os.path.join(home, "real")
         os.makedirs(real)
         os.symlink(real, os.path.join(self.dir, "link"))
-        with mock.patch.dict(os.environ, {"HOME": self.dir}):
-            cfg = self.load(BASE + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
-        self.assertEqual(cfg["local_clones"], {SLUG: real, "ophis/x": real, "ophis/y": self.dir})
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            cfg = self.load(f'work_dir = "{self.dir}/w"\n' + BASE
+                            + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
+        self.assertEqual(cfg["local_clones"], {SLUG: real, "ophis/x": real, "ophis/y": home})
 
     def test_bad_entry_rejected(self):
         cases = [("agent-pm", "/x"), ("https://github.com/ophis/agent-pm", "/x"), ("ophis/..", "/x"), (SLUG, 42), (SLUG, True),
@@ -523,7 +525,7 @@ class Writable(unittest.TestCase):
     def test_work_then_the_temp_dirs(self):
         with mock.patch.object(repo, "temp_dirs", return_value=("/t1", "/t2")):
             self.assertEqual(config.writable("/w"), ("/w", "/t1", "/t2"))
-            self.assertEqual(config.writable(), (config.WORK_DIR, "/t1", "/t2"))
+            self.assertEqual(config.writable(), (config.RUNS_DIR, "/t1", "/t2"))
 
 
 class RepoSlug(unittest.TestCase):
@@ -536,35 +538,54 @@ class RepoSlug(unittest.TestCase):
                 self.assertEqual(config.repo_slug(value), want)
 
 
-class StateDirs(ConfigFile, unittest.TestCase):
-    def test_unset_is_next_to_the_repo(self):
-        real = os.path.realpath(config.ROOT)
-        self.assertEqual((config.WORK_DIR, config.LOGS_DIR, config.RUNS_LOG),
-                         (real + "-work", real + "-logs", os.path.join(real + "-logs", "runs.log")))
-        root = os.path.join(self.dir, "repo")
-        self.assertEqual(config.state_dirs({}, root), (os.path.realpath(root) + "-work", os.path.realpath(root) + "-logs"))
+class WorkDir(ConfigFile, unittest.TestCase):
+    def test_unset_is_in_home(self):
+        work = os.path.realpath(os.path.expanduser("~/.agent-pm"))
+        self.assertEqual((config.WORK_DIR, config.RUNS_DIR, config.LOGS_DIR, config.RUNS_LOG),
+                         (work, work + "/work", work + "/logs", work + "/logs/runs.log"))
+        home = os.path.realpath(self.dir)
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            self.assertEqual(config.work_dir({}, os.path.join(home, "repo")), home + "/.agent-pm")
+            with self.assertRaises(SystemExit) as cm:
+                self.load(BASE + '[local_clones]\n"ophis/x" = "~"\n')
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml: work_dir must neither lie in nor contain "
+                                            f"local_clones.ophis/x {home}: '~/.agent-pm'")
 
     def test_set(self):
         home = os.path.realpath(self.dir)
         with mock.patch.dict(os.environ, {"HOME": home}):
-            got = config.state_dirs({"work_dir": "~/w", "logs_dir": os.path.join(home, "l")}, os.path.join(home, "repo"))
-        self.assertEqual(got, (os.path.join(home, "w"), os.path.join(home, "l")))
-        self.assertEqual(self.load(f'work_dir = "{home}/w"\nlogs_dir = "~/l"\n' + BASE)["work_dir"], f"{home}/w")
+            self.assertEqual(config.work_dir({"work_dir": "~/d"}, os.path.join(home, "repo")), os.path.join(home, "d"))
+        cfg = self.load(f'work_dir = "{home}/d"\n' + BASE + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n')
+        self.assertEqual(cfg["work_dir"], f"{home}/d")
 
     def test_refused(self):
         real = os.path.realpath(config.ROOT)
-        link = os.path.join(self.dir, "link")
+        d = os.path.realpath(self.dir)
+        link, clink = os.path.join(d, "link"), os.path.join(d, "clink")
         os.symlink(real, link)
-        inside = f"must lie outside the repo {real}: "
-        cases = [(f'work_dir = "{real}"\n', f"work_dir {inside}{real!r}"),
-                 (f'logs_dir = "{real}/logs"\n', f"logs_dir {inside}{real + '/logs'!r}"),
-                 (f'work_dir = "{link}/work"\n', f"work_dir {inside}{link + '/work'!r}"),
-                 ('work_dir = "work"\n', "work_dir must be a printable absolute or ~ path: 'work'"),
-                 ("logs_dir = 5\n", "logs_dir must be a printable absolute or ~ path: 5")]
-        for text, msg in cases:
-            with self.subTest(text=text), self.assertRaises(SystemExit) as cm:
-                self.load(text + BASE)
+        os.makedirs(os.path.join(d, "c"))
+        os.symlink(os.path.join(d, "c"), clink)
+        repo = f"work_dir must neither lie in nor contain the repo {real}: "
+        clone = lambda path: f'[local_clones]\n"ophis/x" = "{path}"\n'
+        in_clone = lambda path: f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "
+        cases = [(f'work_dir = "{real}"\n', "", f"{repo}{real!r}"),
+                 (f'work_dir = "{real}/w"\n', "", f"{repo}{real + '/w'!r}"),
+                 (f'work_dir = "{link}/w"\n', "", f"{repo}{link + '/w'!r}"),
+                 (f'work_dir = "{os.path.dirname(real)}"\n', "", f"{repo}{os.path.dirname(real)!r}"),
+                 (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{d + '/c'!r}"),
+                 (f'work_dir = "{clink}"\n', clone(f"{d}/c/x"), f"{in_clone(d + '/c/x')}{clink!r}"),
+                 (f'work_dir = "{clink}/w"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{clink + '/w'!r}"),
+                 ('work_dir = "w"\n', "", "work_dir must be a printable absolute or ~ path: 'w'"),
+                 ("work_dir = 5\n", "", "work_dir must be a printable absolute or ~ path: 5")]
+        for text, tail, msg in cases:
+            with self.subTest(text=text, tail=tail), self.assertRaises(SystemExit) as cm:
+                self.load(text + BASE + tail)
             self.assertEqual(cm.exception.code, f"orchestrator/config.toml: {msg}")
+
+    def test_logs_dir_is_unknown(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.load('logs_dir = "/x"\n' + BASE)
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml: unknown keys: logs_dir")
 
 
 class Paths(unittest.TestCase):
@@ -576,7 +597,7 @@ class Paths(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.dirname(path)))
 
     def test_run_dir_and_transcript(self):
-        self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.WORK_DIR, "TASK-9"))
+        self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.RUNS_DIR, "TASK-9"))
         self.assertEqual(config.escape("/Users/a_b/x.y"), "-Users-a-b-x-y")
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
         self.assertEqual(config.transcript("TASK-9", sid, projects="/p"),
