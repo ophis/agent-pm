@@ -2,6 +2,8 @@ import ast
 import io
 import json
 import os
+import re
+import shlex
 import shutil
 import signal
 import stat
@@ -25,6 +27,10 @@ OSA_KW = {**TMUX_KW, "timeout": 30}
 TMUX = '/opt/a"b\\c/bin/tmux'   # the script text must never carry it
 ATTACH = "tui: session s: tmux attach -t '=s'\n"
 WATCH = "; watch it with tmux attach -t '=s'"
+MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
+DIED = "set-option @state dead"
+DIED_EVENTS = DIED + " ; run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
+DECORATE = ["set-hook", "set-option", "set-option"]
 
 
 def done(argv, rc=0, out="", err=""):
@@ -43,6 +49,14 @@ def which(tmux=TMUX):
 
 def osa(split, kind, session, *anchors):
     return ["osascript", "-e", tui_claude.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+
+
+def decorations(session, events=None):
+    target = f"={session}:"
+    return [*([["tmux", "set-option", "-t", target, "@events", events]] if events else []),
+            ["tmux", "set-hook", "-p", "-t", target, "pane-died", DIED_EVENTS if events else DIED],
+            ["tmux", "set-option", "-w", "-t", target, "pane-border-status", "top"],
+            ["tmux", "set-option", "-w", "-t", target, "pane-border-format", " #{session_name} #{@state} "]]
 
 
 class Tmux:
@@ -112,13 +126,13 @@ class Start(unittest.TestCase):
     def test_one_tmux_call_runs_the_wrapper_and_keeps_a_dead_pane(self):
         fake = Tmux()
         self.start(fake)
-        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
         self.assertEqual(fake.calls[1], ["tmux", "new-session", "-d", "-s", "s", "-x", "120", "-y", "40",
                                          sys.executable, "-I", "-c", tui_claude.EXEC, fake.path,
                                          ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on"])
         self.assertNotIn("-c", fake.calls[1][:fake.calls[1].index(sys.executable)])
         self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
-        self.assertEqual(fake.kwargs, [TMUX_KW, TMUX_KW])
+        self.assertEqual(fake.kwargs, [TMUX_KW] * 5)
         self.sleep.assert_not_called()
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
@@ -127,7 +141,7 @@ class Start(unittest.TestCase):
                **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
-        self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"],
+        self.assertEqual(fake.handover, {"argv": [self.tool, "--settings", tui_claude.hooks(), "-x", "a b"],
                                          "env": {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1"}, "cwd": self.cwd})
         self.assertEqual(fake.mode, 0o600)
         self.assertEqual(fake.dir_mode, 0o700)
@@ -185,7 +199,7 @@ class Start(unittest.TestCase):
         for argv0, path in (("bin/tool", "/nonexistent"), ("tool", "bin")):
             fake = Tmux()
             self.start(fake, argv=(argv0,), env={"PATH": path})
-            self.assertEqual(fake.handover["argv"], [self.tool])
+            self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks()])
 
     def test_live_session_is_refused(self):
         fake = Tmux(pane="0  ")
@@ -197,7 +211,7 @@ class Start(unittest.TestCase):
     def test_dead_session_is_killed_then_started(self):
         fake = Tmux(pane="1 0 ")
         self.start(fake)
-        self.assertEqual(fake.commands(), ["display-message", "kill-session", "new-session"])
+        self.assertEqual(fake.commands(), ["display-message", "kill-session", "new-session", *DECORATE])
         self.assertEqual(fake.calls[1], ["tmux", "kill-session", "-t", "=s"])
 
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
@@ -226,7 +240,8 @@ class Start(unittest.TestCase):
                 with unittest.mock.patch.object(tui_claude, "show", side_effect=interrupt), \
                         self.assertRaises(KeyboardInterrupt):
                     self.start(fake)
-                self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+                self.assertEqual(fake.commands(), ["display-message", "new-session",
+                                                   *(DECORATE if where == "show" else []), "kill-session"])
                 self.assertIs(fake.dir_at_kill, False)
                 self.assertEqual(os.listdir(self.temp), [])
 
@@ -262,7 +277,7 @@ class Start(unittest.TestCase):
         self.sleep = sleep
         self.start(fake)
         self.assertEqual(len(slept), 3)
-        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_unsafe_tmux_argument(self):
@@ -301,13 +316,13 @@ class Start(unittest.TestCase):
         with unittest.mock.patch.object(tui_claude, "show", side_effect=show):
             self.start(fake, template="tmpl", split="below", beside="b")
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "proc": fake}, False,
-                                 ["display-message", "new-session"])])
+                                 ["display-message", "new-session", *DECORATE])])
 
     def test_a_failed_show_is_only_printed(self):
         fake = Tmux(results={"osascript": FileNotFoundError(2, "No such file or directory", "osascript")})
         with environ(**ITERM), which():
             self.start(fake, template=None)
-        self.assertEqual(fake.commands(), ["display-message", "new-session", "pgrep", "osascript"])
+        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE, "pgrep", "osascript"])
         self.assertEqual(self.stderr.getvalue(),
                          ATTACH + f"tui: show: osascript: [Errno 2] No such file or directory: 'osascript'{WATCH}\n")
 
@@ -321,7 +336,213 @@ class Start(unittest.TestCase):
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
             self.start(fake, template="", split="up", beside="a b")
-            self.assertEqual(fake.commands(), ["display-message", "new-session"])
+            self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+
+    def test_hooks_events_and_decorations(self):
+        here = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, here)
+        events = os.path.join(self.root, "ev")
+        for given, path in ((None, None), ("ev", events)):
+            with self.subTest(events=given):
+                fake = Tmux()
+                self.start(fake, events=given)
+                self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks(path), "-x", "a b"])
+                self.assertEqual(fake.calls[2:], decorations("s", path))
+        self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
+
+    def test_a_failed_decoration_kills_the_session(self):
+        fake = Tmux(fail={"set-hook"})
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "set-hook", "kill-session"])
+        self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=s"])
+        self.assertEqual(os.listdir(self.temp), [])
+        self.assertEqual(self.stderr.getvalue(), "")
+
+    def test_bad_events_file_or_settings_refused_before_tmux(self):
+        link = os.path.join(self.root, "link")
+        os.symlink(self.tool, link)
+        for kw in ({"events": self.cwd}, {"events": link}, {"argv": ("tool", "--settings", "s.json")}):
+            with self.subTest(**kw):
+                fake = Tmux()
+                with self.assertRaises(tui_claude.TuiError):
+                    self.start(fake, **kw)
+                self.assertEqual(fake.calls, [])
+        self.assertEqual(os.listdir(self.temp), [])
+
+
+class Hooks(unittest.TestCase):
+    """Runs each hook's command with sh and a fake tmux on PATH that logs its arguments and prints w1 (#S)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        bin_dir = os.path.join(self.root, "bin")
+        os.makedirs(bin_dir)
+        self.log = os.path.join(self.root, "tmux.log")
+        with open(os.path.join(bin_dir, "tmux"), "w") as f:
+            f.write(f'#!/bin/sh\necho "$*" >> {shlex.quote(self.log)}\necho w1\n')
+        os.chmod(os.path.join(bin_dir, "tmux"), 0o755)
+        self.path = f"{bin_dir}:/usr/bin:/bin"
+
+    def run_hook(self, events, event, pane="%1"):
+        """The hook's sh result and the fake tmux's calls."""
+        cmd = json.loads(tui_claude.hooks(events))["hooks"][event][0]["hooks"][0]["command"]
+        env = {"PATH": self.path, **({"TMUX_PANE": pane} if pane else {})}
+        res = subprocess.run(["/bin/sh", "-c", cmd], env=env, cwd=self.root, capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL, timeout=30)
+        calls = []
+        if os.path.exists(self.log):
+            with open(self.log) as f:
+                calls = f.read().splitlines()
+            os.unlink(self.log)
+        return res, calls
+
+    def test_shape(self):
+        for events in (None, "/e"):
+            with self.subTest(events=events):
+                hooks = json.loads(tui_claude.hooks(events))
+                self.assertEqual(list(hooks), ["hooks"])
+                self.assertEqual({k: [set(e) for e in v] for k, v in hooks["hooks"].items()},
+                                 {"Stop": [{"hooks"}], "Notification": [{"matcher", "hooks"}],
+                                  "UserPromptSubmit": [{"hooks"}]})
+                self.assertEqual(hooks["hooks"]["Notification"][0]["matcher"], MATCHER)
+                for entries in hooks["hooks"].values():
+                    self.assertEqual([h["type"] for h in entries[0]["hooks"]], ["command"])
+
+    def test_state_without_events(self):
+        for event, word in (("Stop", "done"), ("Notification", "blocked"), ("UserPromptSubmit", "working")):
+            with self.subTest(event=event):
+                res, calls = self.run_hook(None, event)
+                self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
+                self.assertEqual(calls, [f"set-option -t %1 @state {word}"])
+        self.assertEqual(os.listdir(self.root), ["bin"])
+
+    def test_state_and_event_lines_with_events(self):
+        for sub in ("a b", "it's", "$(touch x)"):
+            events = os.path.join(self.root, sub, "e")
+            os.makedirs(os.path.dirname(events))
+            for event, word in (("Stop", "done"), ("Notification", "blocked"), ("UserPromptSubmit", "working")):
+                with self.subTest(sub=sub, event=event):
+                    res, calls = self.run_hook(events, event)
+                    self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
+                    self.assertEqual(calls[0], f"set-option -t %1 @state {word}")
+            with open(events) as f:
+                lines = f.readlines()
+            self.assertEqual(len(lines), 2)
+            for line, word in zip(lines, ("done", "blocked")):
+                self.assertRegex(line, rf"^\d\d:\d\d:\d\d w1 {word}\n$")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "x")))
+
+    def test_outside_tmux_a_no_op(self):
+        events = os.path.join(self.root, "e")
+        for event in ("Stop", "Notification", "UserPromptSubmit"):
+            with self.subTest(event=event):
+                res, calls = self.run_hook(events, event, pane=None)
+                self.assertEqual((res.returncode, calls), (0, []))
+        self.assertFalse(os.path.exists(events))
+
+
+class WithHooks(unittest.TestCase):
+    STOP = {"hooks": [{"type": "command", "command": "report.py stop"}]}
+
+    def test_added_after_the_command(self):
+        for events in (None, "/e"):
+            with self.subTest(events=events):
+                rest = ["-p", "x", "--", "--settings", "{}"]
+                argv = ["claude", *rest]
+                want = ["claude", "--settings", tui_claude.hooks(events), *rest]
+                self.assertEqual(tui_claude.with_hooks(argv, events), want)
+                self.assertEqual(argv, ["claude", *rest])
+
+    def test_merged_into_settings(self):
+        ours = json.loads(tui_claude.hooks("/e"))["hooks"]
+        pre = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}]
+        for settings, want in (({"model": "m", "hooks": {"Stop": [self.STOP], "PreToolUse": pre}},
+                                {"model": "m", "hooks": {"Stop": [self.STOP, *ours["Stop"]], "PreToolUse": pre,
+                                                         "Notification": ours["Notification"],
+                                                         "UserPromptSubmit": ours["UserPromptSubmit"]}}),
+                               ({"model": "m"}, {"model": "m", "hooks": ours})):
+            value = json.dumps(settings)
+            for inline in (False, True):
+                with self.subTest(settings=settings, inline=inline):
+                    flag = [f"--settings={value}"] if inline else ["--settings", value]
+                    argv = ["claude", "hi", "--allowedTools", "Bash(x)", *flag, "--settings", "second"]
+                    got = tui_claude.with_hooks(argv, "/e")
+                    i, prefix = (4, "--settings=") if inline else (5, "")
+                    self.assertEqual(got[:i] + got[i + 1:], argv[:i] + argv[i + 1:])
+                    self.assertTrue(got[i].startswith(prefix))
+                    self.assertEqual(json.loads(got[i][len(prefix):]), want)
+                    self.assertEqual(argv[4:], [*flag, "--settings", "second"])
+
+    def test_refuses_a_value_it_cannot_merge_into(self):
+        for argv in (["claude", "--settings", "s.json"], ["claude", "x", "--settings=[]"],
+                     ["claude", "--settings", "{"], ["claude", "--settings"], ["claude", "--settings", '{"hooks": []}'],
+                     ["claude", "--settings", '{"hooks": {"Stop": {}}}']):
+            with self.subTest(argv=argv), self.assertRaisesRegex(tui_claude.TuiError, "--settings"):
+                tui_claude.with_hooks(argv)
+        with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
+            tui_claude.with_hooks([])
+
+
+class EventsFile(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+
+    def test_created_0600_and_made_absolute(self):
+        here = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, here)
+        path = os.path.join(self.root, "e")
+        self.assertEqual(tui_claude.events_file("e"), path)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        with open(path, "a") as f:
+            f.write("x\n")
+        self.assertEqual(tui_claude.events_file(path), path)
+        with open(path) as f:
+            self.assertEqual(f.read(), "x\n")
+
+    def test_refused(self):
+        target = os.path.join(self.root, "target")
+        open(target, "w").close()
+        link = os.path.join(self.root, "link")
+        os.symlink(target, link)
+        for path in (link, self.root, os.path.join(self.root, "missing", "e")):
+            with self.subTest(path=path), self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: "):
+                tui_claude.events_file(path)
+        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
+        for patch in (unittest.mock.patch("os.getuid", return_value=os.getuid() + 1),
+                      unittest.mock.patch("os.fstat", return_value=fifo)):
+            with self.subTest(patch=patch), patch, self.assertRaisesRegex(tui_claude.TuiError, "owned by you"):
+                tui_claude.events_file(target)
+
+
+class Decorate(unittest.TestCase):
+    def test_tmux_calls(self):
+        for events in (None, "/a b/e"):
+            with self.subTest(events=events):
+                fake = Tmux()
+                tui_claude.decorate("s", events, proc=fake)
+                self.assertEqual(fake.calls, decorations("s", events))
+                self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
+
+    def test_failure(self):
+        for events, step in ((None, "set-hook"), ("/e", "set-option")):
+            with self.subTest(events=events):
+                fake = Tmux(fail={step})
+                with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+                    tui_claude.decorate("s", events, proc=fake)
+                self.assertEqual(len(fake.calls), 1)
+
+    def test_invalid_session_name(self):
+        fake = Tmux()
+        with self.assertRaises(tui_claude.TuiError):
+            tui_claude.decorate("a b", proc=fake)
+        self.assertEqual(fake.calls, [])
 
 
 class Status(unittest.TestCase):
@@ -686,16 +907,18 @@ class Cli(unittest.TestCase):
 
     def test_start_forms(self):
         start = self.patch("start")
-        for argv, session, command, template, split, beside in (
-                ("start a -- cmd", "a", ["cmd"], None, "right", None),
-                ("start b --beside a --split below -- cmd -x", "b", ["cmd", "-x"], None, "below", "a"),
-                ("start --split below b --show T -- cmd", "b", ["cmd"], "T", "below", None),
-                ("start a -- cmd -- x", "a", ["cmd", "--", "x"], None, "right", None),
-                ("start b --beside a -- claude --x -- -p", "b", ["claude", "--x", "--", "-p"], None, "right", "a")):
+        for argv, session, command, events, template, split, beside in (
+                ("start a -- cmd", "a", ["cmd"], None, None, "right", None),
+                ("start b --beside a --split below -- cmd -x", "b", ["cmd", "-x"], None, None, "below", "a"),
+                ("start --split below b --show T -- cmd", "b", ["cmd"], None, "T", "below", None),
+                ("start a -- cmd -- x", "a", ["cmd", "--", "x"], None, None, "right", None),
+                ("start a --events e -- claude", "a", ["claude"], "e", None, "right", None),
+                ("start b --beside a -- claude --x -- -p", "b", ["claude", "--x", "--", "-p"], None, None, "right",
+                 "a")):
             with self.subTest(argv=argv):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
-                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ),
+                start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ), events=events,
                                               template=template, split=split, beside=beside)
         self.main("start", "--show", "", "a", "--", "cmd")
         self.assertEqual(start.call_args.kwargs["template"], "")
@@ -718,8 +941,10 @@ class Cli(unittest.TestCase):
         self.assertIn("{start,send,read,show}", out)
         rc, out, _ = self.main("start", "-h")
         self.assertEqual(rc, 0)
-        self.assertIn("session -- cmd", out)
-        for option in ("--show", "--split", "--beside"):
+        out = " ".join(out.split())
+        self.assertIn("session -- claude", out)
+        self.assertIn("must be claude", out)
+        for option in ("--show", "--split", "--beside", "--events FILE"):
             self.assertIn(option, out)
 
     def test_subcommands(self):

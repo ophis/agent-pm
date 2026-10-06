@@ -1,4 +1,4 @@
-"""Hosts Claude Code TUIs: runs a command in a detached tmux session another agent or a person can watch and drive.
+"""Hosts Claude Code TUIs: runs claude in a detached tmux session another agent or a person can watch and drive.
 
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui_claude.py --help.
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,11 @@ SHOW_TIMEOUT = 30
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
+MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
+DIED = "set-option @state dead"
+# tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
+DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
+BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
 PANES = "#{pane_tty} #{pane_id}"
 # before osascript, whose script needs iTerm2 installed; -a includes ancestors (the caller usually runs inside iTerm2)
@@ -92,11 +98,13 @@ class Anchor(NamedTuple):
     session: str | None = None
 
 
-def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], template: str | None = None,
-          split: str = "right", beside: str | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
-    """Run argv in a new detached session, in cwd with env minus CHILD_SESSION plus the pane's terminal keys; show it
-    once started. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it leaves
-    no session of its own."""
+def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
+          template: str | None = None, split: str = "right", beside: str | None = None, proc=subprocess.run,
+          sleep=time.sleep) -> None:
+    """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
+    CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session, then show it. events goes through
+    events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it
+    leaves no session of its own."""
     _name(session)
     if template is None:
         _layout(split, beside)
@@ -105,6 +113,9 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
     exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
     if exe is None:
         raise TuiError(f"command not found: {argv[0]}")
+    if events is not None:
+        events = events_file(events)
+    argv = with_hooks(argv, events)
     tmp = None
     may_run = False
     try:
@@ -138,6 +149,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
             sleep(POLL)
         if os.path.exists(path):
             raise TuiError("the session did not start")
+        decorate(session, events, proc=proc)
         show(session, template, split=split, beside=beside, proc=proc)
         may_run = False
     except OSError as e:
@@ -148,6 +160,77 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
+
+
+def hooks(events: str | None = None) -> str:
+    """The --settings JSON: Stop, a blocking Notification and UserPromptSubmit set the session's @state to done, blocked
+    and working; with events, Stop and Notification also append `HH:MM:SS <session> done|blocked` to it. Each is a
+    no-op outside tmux."""
+    def entry(word: str, log: bool = True) -> list:
+        cmd = f'tmux set-option -t "$TMUX_PANE" @state {word} >/dev/null 2>&1'
+        if log and events is not None:
+            cmd = (f'{{ {cmd}; echo "$(date +%H:%M:%S) $(tmux display -p -t "$TMUX_PANE" \'#S\') {word}" '
+                   f'>> {shlex.quote(events)}; }}')
+        return [{"type": "command", "command": f'[ -n "$TMUX_PANE" ] && {cmd} || true'}]
+
+    return json.dumps({"hooks": {
+        "Stop": [{"hooks": entry("done")}],
+        "Notification": [{"matcher": MATCHER, "hooks": entry("blocked")}],
+        "UserPromptSubmit": [{"hooks": entry("working", log=False)}]}})
+
+
+def with_hooks(argv: list[str], events: str | None = None) -> list[str]:
+    """argv with hooks(events) appended to the hook lists of its first --settings JSON before a bare --, else with
+    --settings added after argv[0]."""
+    if not argv:
+        raise TuiError("no command")
+    add = json.loads(hooks(events))["hooks"]
+    for i, arg in enumerate(argv[1:], 1):
+        if arg == "--":
+            break
+        if arg != "--settings" and not arg.startswith("--settings="):
+            continue
+        at, prefix = (i, "--settings=") if arg != "--settings" else (i + 1, "")
+        value = argv[at][len(prefix):] if at < len(argv) else ""
+        try:
+            settings = json.loads(value)
+        except ValueError:
+            settings = None
+        own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
+        if not isinstance(own, dict) or not all(isinstance(own.get(e, []), list) for e in add):
+            raise TuiError(f"--settings {value!r}: want a JSON object with a list of hooks per event")
+        for e, entries in add.items():
+            own[e] = [*own.get(e, []), *entries]
+        return [*argv[:at], prefix + json.dumps(settings), *argv[at + 1:]]
+    return [argv[0], "--settings", hooks(events), *argv[1:]]
+
+
+def events_file(path: str) -> str:
+    """The absolute path; creates the file 0600 when missing. Not a regular file of the caller's: TuiError."""
+    path = os.path.abspath(path)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        try:
+            st = os.fstat(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        raise TuiError(f"events file {path}: {e.strerror}") from e
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        raise TuiError(f"events file {path}: not a regular file owned by you")
+    return path
+
+
+def decorate(session: str, events: str | None = None, *, proc=subprocess.run) -> None:
+    """On the session: @events (when given), the pane-died hook (@state dead; with events, `HH:MM:SS <session> dead`
+    appended to @events) and the pane border showing `<session> <state>`."""
+    target = f"={_name(session)}:"
+    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
+    for args in [*([["set-option", "-t", target, "@events", events]] if events is not None else []),
+                 ["set-hook", "-p", "-t", target, "pane-died", died],
+                 ["set-option", "-w", "-t", target, "pane-border-status", "top"],
+                 ["set-option", "-w", "-t", target, "pane-border-format", BORDER]]:
+        _tmux_ok(args, proc)
 
 
 def status(session: str, *, proc=subprocess.run):
@@ -260,14 +343,17 @@ def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], pr
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host a command in a detached tmux session: start it, "
+    ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host claude in a detached tmux session: start it, "
                                  "type into it, read it, show it. The show: --show T, else an iTerm2 split, else a tmux "
                                  "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
-                             description="session -- cmd [args...]: everything after the first -- is the "
-                                         "command, passed through verbatim.")
+    start_p = sub.add_parser("start", help="run claude in a new detached session, then show it",
+                             description="session -- claude [args...]: everything after the first -- is the "
+                                         "command, passed through verbatim but for the hooks start merges into its "
+                                         "--settings, so it must be claude.")
     _show_options(start_p)
+    start_p.add_argument("--events", metavar="FILE",
+                         help="append `HH:MM:SS <session> done|blocked|dead` lines to FILE (created 0600)")
     start_p.add_argument("session", type=_session_arg)
     p = sub.add_parser("send", help="type text into the session, then Enter")
     p.add_argument("session", type=_session_arg)
@@ -290,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         start_p.error("a command must follow --")
     try:
         if a.cmd == "start":
-            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), template=a.show,
+            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), events=a.events, template=a.show,
                   split=a.split, beside=a.beside)
         elif a.cmd == "send":
             send(a.session, a.text)
