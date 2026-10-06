@@ -334,7 +334,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(config.docs(runs, self.root), config.Docs("acme/notes", "trunk", DIRS))
 
     def test_docs_mismatch(self):
-        message = "core: document tasks must publish to one github.com repo and branch"
+        message = "core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)"
         for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
                        DESIGN.replace(" }", ', host = "ghe.example.com" }')):
             with self.subTest(design):

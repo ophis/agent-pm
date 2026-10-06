@@ -427,10 +427,10 @@ class RealCore(unittest.TestCase):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
             with open(os.path.join(CORE, compose.CONFIG)) as f:
                 cfg = f.read()
-            self.assertIn('\nlanguage = "Chinese"\n', cfg)
+            self.assertIn('\nlanguage = "English"\n', cfg)
             os.makedirs(os.path.join(root, "config"))
             with open(os.path.join(root, compose.CONFIG), "w") as f:
-                f.write(cfg.replace('\nlanguage = "Chinese"\n', "\n"))
+                f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
             for role, task in ALL:
                 run = compose.load_run(root, role, task)
                 prompt = compose.render(root, run, PARAMS, client=Plain())

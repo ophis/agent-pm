@@ -28,7 +28,8 @@
 #                   (no flag; the overlay rejects it)
 tier = 2
 effort = "high"
-language = "Chinese"
+language = "English"
+# local: language = "Chinese"
 # local: show = ""   # e.g. on a server: no window, attach by hand
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
@@ -41,6 +42,8 @@ language = "Chinese"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
+# Every task saves locally unless config.local.toml gives it a destination. The orchestrator needs deep-research,
+# light-research and product-design on one github.com repo and branch (local: their [output] below).
 [output]
 type = "local"
 
@@ -66,26 +69,20 @@ read = ["{{methods}}"]
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 # local: [roles.researcher.tasks.deep-research]
 # local: cwd = "~/src/<name>"
-
-[roles.researcher.tasks.deep-research.output]
-type = "github"
-repo = "ophis/private_docs"
-# host = "github.com"
-branch = "main"
-dir = "Research/"
 # local: [roles.researcher.tasks.deep-research.output]
+# local: type = "github"
 # local: repo = "<owner>/<name>"
+# local: branch = "main"
+# local: dir = "Research/"
 
 [roles.researcher.tasks.light-research]
 templates = ["research-report"]
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-
-[roles.researcher.tasks.light-research.output]
-type = "github"
-repo = "ophis/private_docs"
-# host = "github.com"
-branch = "main"
-dir = "Research/"
+# local: [roles.researcher.tasks.light-research.output]
+# local: type = "github"
+# local: repo = "<owner>/<name>"
+# local: branch = "main"
+# local: dir = "Research/"
 
 # ── PM ──────────────────────────────────────────────────
 [roles.pm]
@@ -94,13 +91,11 @@ default_task = "product-design"
 [roles.pm.tasks.product-design]
 templates = ["prd"]
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-
-[roles.pm.tasks.product-design.output]
-type = "github"
-repo = "ophis/private_docs"
-# host = "github.com"
-branch = "main"
-dir = "Product Design/"
+# local: [roles.pm.tasks.product-design.output]
+# local: type = "github"
+# local: repo = "<owner>/<name>"
+# local: branch = "main"
+# local: dir = "Product Design/"
 
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]

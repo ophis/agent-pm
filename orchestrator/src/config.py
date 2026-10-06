@@ -365,7 +365,7 @@ def docs(roles, root=ROOT):
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise SystemExit("core: document tasks must publish to one github.com repo and branch")
+        raise SystemExit("core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)")
     return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
 
 

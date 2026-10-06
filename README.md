@@ -90,8 +90,8 @@ python3 .claude/skills/tmux/scripts/workers.py restart a                        
 ### Core configuration
 
 - `core/team/`: `guide.md` (the prompt's opening: what each section is, and precedence), `principles.md` (rules for every agent run), one charter per role, one file per task, `methods/` (steps a task follows when its harness lacks the native tool), and the report (numbered `[n]` sources) and PRD (stable `FR-<n>`, `NFR-<n>`, `P<n>` ids) templates.
-- `core/config.toml`: per role and task, `tier`, `effort`, extra `read`/`write` dirs, pre-approved `commands`, the `output` (the docs repo, branch and folder of the document tasks; they must share one github.com repo and branch) and `language`. Its `[clients.claude]` maps tiers and efforts to models and holds the `claude` flags. See `core/CLAUDE.md`.
-- `core/config.local.toml` (gitignored; `core/config.toml` marks its keys `# local:`): this machine's `show`, `cwd`, `users` and `trusted_dirs`, and any override of `core/config.toml`, read on top of it: tables merge key by key, the local value wins, a list is replaced whole. Without it, `core/config.toml` alone applies.
+- `core/config.toml`: per role and task, `tier`, `effort`, extra `read`/`write` dirs, pre-approved `commands`, the `output` (default `local`) and `language`. Its `[clients.claude]` maps tiers and efforts to models and holds the `claude` flags. See `core/CLAUDE.md`.
+- `core/config.local.toml` (gitignored; `core/config.toml` marks its keys `# local:`): this machine's `show`, `cwd`, `users` and `trusted_dirs`, the document tasks' `output` (for the orchestrator: one github.com docs repo and branch, a folder per task), and any override of `core/config.toml`, read on top of it: tables merge key by key, the local value wins, a list is replaced whole. Without it, `core/config.toml` alone applies.
 
 ### Dependencies
 
