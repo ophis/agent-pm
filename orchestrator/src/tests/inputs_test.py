@@ -1,10 +1,12 @@
-import json, os, sys, unittest
+import json, os, re, sys, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402,F401
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
+import clients  # noqa: E402
+import compose  # noqa: E402
 import repo  # noqa: E402
 import target  # noqa: E402
 
@@ -455,11 +457,22 @@ class RenderBuild(unittest.TestCase):
 
 
 class Checkout(unittest.TestCase):
-    def test_core_turns_the_checkout_line_into_repo_py_name(self):
-        with open(os.path.join(config.CORE, "team", "principles.md")) as f:
-            text = f.read()
-        for want in ("`Checkout: <name>`", "`repo.py worktree`", "`repo.py status`", "`--name <name>`"):
-            self.assertIn(want, text)
+    def test_a_build_prompts_repo_py_commands_take_the_inputs_checkout(self):
+        t = target.Target("ophis", "agent-pm", "ENG-7-x")
+        text = inputs.render(issue("D", ident="ENG-7"), "build", inputs.Sources((), None), humans=HUMANS, target=t, docs=DOCS)
+        name = re.search(r"^Checkout: (.+)$", text, re.M).group(1)
+        self.assertEqual(os.path.basename(target.checkout("ENG-7", "ophis", "agent-pm")), f"agent-pm-{name}")
+        client = clients.get("claude", config.CORE)
+        for task in ("build", "light-build"):
+            with self.subTest(task=task):
+                run = compose.load_run(config.CORE, "engineer", task)
+                params = compose.RunParams(input=text, out="/w/out.md", workdir="/w")
+                prompt = compose.render(config.CORE, run, params, client=client)
+                self.assertIn(f"\nCheckout: {name}\n", prompt)
+                self.assertIn("`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
+                              "`Checkout:`", prompt)
+                for cmd in ("worktree", "status"):
+                    self.assertIn(f"/repo.py {cmd} --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`", prompt)
 
 
 if __name__ == "__main__":

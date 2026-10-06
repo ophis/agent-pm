@@ -602,6 +602,15 @@ class Local(Clone):
                                  err=err, config=self.none)
                 self.assertEqual(code, want, err.getvalue())
 
+    def test_a_bad_name_is_refused_before_the_clone_is_read(self):
+        for cmd in ("worktree", "status"):
+            with self.subTest(cmd=cmd):
+                run, err = Real([]), io.StringIO()
+                code = repo.main([cmd, "--dir", self.dir, "--branch", "TASK-1-x", "--name", "a/b", self.clone], run=run,
+                                 out=io.StringIO(), err=err, config=self.none, temp=())
+                self.assertEqual((code, run.calls), (2, []), err.getvalue())
+                self.assertIn("unsafe checkout name", err.getvalue())
+
 
 class LocalSafety(Clone):
     def worktree(self, branch="TASK-1-x", fail_on=None, temp=(), config=None, spec=None):

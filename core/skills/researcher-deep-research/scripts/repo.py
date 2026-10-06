@@ -213,16 +213,22 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
     return Repo.parse(slug), clone
 
 
-def checkout(base: str, owner: str, name: str, slug: str) -> str:
-    """The checkout path of repo owner/name under `base`; Invalid unless `slug` is a SLUG."""
+def check_slug(slug: str | None, branch: str = "") -> str:
+    """The checkout slug: `slug`, else `branch` with / → -; Invalid unless a SLUG."""
+    slug = branch.replace("/", "-") if slug is None else slug
     if not SLUG.fullmatch(slug):
         raise Invalid(f"unsafe checkout name {slug[:80]!r}")
-    return os.path.join(os.path.abspath(base), owner, f"{name}-{slug}")
+    return slug
 
 
-def place(repo: Repo, base: str, clone: str | None, branch: str, slug: str | None, *, run: Runner) -> tuple[str, bool]:
+def checkout(base: str, owner: str, name: str, slug: str) -> str:
+    """The checkout path of repo owner/name under `base`; Invalid unless `slug` is a SLUG."""
+    return os.path.join(os.path.abspath(base), owner, f"{name}-{check_slug(slug)}")
+
+
+def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
     """(worktree, whether it exists); Invalid if it holds anything but a clone of the repo or a worktree of `clone`."""
-    wt = checkout(base, repo.owner, repo.name, branch.replace("/", "-") if slug is None else slug)
+    wt = checkout(base, repo.owner, repo.name, slug)
     if not os.path.lexists(wt):
         return wt, False
     dotgit = os.path.join(wt, ".git")
@@ -269,11 +275,12 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
     clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
     local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
     check_branch(branch)
+    slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     if clone and (d := under(clone, temp_dirs() if temp is None else temp)):
         raise Invalid(f"{clone} is under the temp dir {d}: keep local clones outside temp dirs")
     symlinks = "true" if clone is not None and clone in links else "false"
-    wt, exists = place(repo, base, clone, branch, slug, run=run)
+    wt, exists = place(repo, base, clone, slug, run=run)
     if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
         index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
         if not os.path.isfile(index):   # its checkout never finished: it holds nothing
@@ -383,8 +390,9 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
 def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
            users: list[str] | None = None) -> dict:
     """The branch's PR, plan docs and PR feedback since the latest plan doc commit; raises Invalid or RuntimeError."""
+    slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
-    wt, exists = place(repo, base, clone, branch, slug, run=run)
+    wt, exists = place(repo, base, clone, slug, run=run)
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
