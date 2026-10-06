@@ -9,16 +9,17 @@ import json
 import os
 import re
 import shlex
-import tomllib
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
+import repo
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
 OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how an agent run hands back
-CONFIG = "config.toml"
+CONFIG = "config.toml"   # config.local.toml beside it goes on top (repo.read_config)
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -118,10 +119,9 @@ def lookup(layer: Mapping, role: str, task: str, key: str):
 
 
 def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = ()) -> RunConfig:
-    """The run config for role/task from config.toml, each later layer (same layout) replacing the run keys it sets.
-    config.toml must be valid on its own; each layer is checked again once applied."""
-    with open(os.path.join(root, CONFIG), "rb") as f:
-        cfg = tomllib.load(f)
+    """The run config for role/task from config.toml with config.local.toml on top, each later layer (same layout)
+    replacing the run keys it sets. That config must be valid on its own; each layer is checked again once applied."""
+    cfg = repo.read_config(os.path.join(root, CONFIG))
     task = _check(cfg, role, task)
     values = _run_keys(cfg, role, task)
     run = RunConfig(role=role, task=task, tier=values.pop("tier", None), effort=values.pop("effort", None),
@@ -199,7 +199,7 @@ def anchor(heading: str) -> str:
 
 
 def _check(cfg: Mapping, role: str, task: str | None) -> str:
-    """The task to run (the role's default when None), once config.toml's keys, role and task are valid."""
+    """The task to run (the role's default when None), once the config's keys, role and task are valid."""
     _check_keys(cfg, GLOBAL_KEYS, "the global table")
     roles = cfg.get("roles", {})
     if role not in roles:

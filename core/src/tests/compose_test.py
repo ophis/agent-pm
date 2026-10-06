@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import sys
 import tempfile
 import textwrap
@@ -8,6 +9,7 @@ import unittest
 from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 import clients  # noqa: E402
 import compose  # noqa: E402
 
@@ -161,6 +163,15 @@ class Resolve(Fake):
         self.assertEqual(self.compose(task="short-note")[1].progress, ["start", "round-1"])
         self.assertEqual(self.compose(task="long-note")[1].progress, [])
 
+    def test_config_local_toml_goes_on_top(self):
+        self.write({"config.local.toml": 'language = "French"\nshow = ""\ncwd = "/srv"\n'
+                    '[roles.writer.tasks.long-note]\ntier = 3\n[roles.writer.tasks.long-note.output]\nbranch = "trunk"\n'
+                    '[roles.writer.tasks.short-note]\nread = ["/data"]\n'})
+        _, run = self.compose(task="long-note")
+        self.assertEqual((run.language, run.show, run.cwd, run.tier, run.effort), ("French", "", "/srv", 3, "medium"))
+        self.assertEqual(run.output, {"type": "github", "repo": "o/docs", "branch": "trunk"})
+        self.assertEqual(self.compose(task="short-note")[1].read, ["/data"])
+
     def test_layers_ignore_their_own_keys(self):
         _, run = self.compose(task="long-note", layers=[{"flags": ["-x"], "description": "d"}])
         self.assertEqual(run.tier, 1)
@@ -170,6 +181,10 @@ class Validate(Fake):
     def test_config_toml_must_be_valid_on_its_own(self):
         self.config(CONFIG.replace("tier = 1", "tier = 9"))
         self.fails("tier must be an integer 1–4", task="long-note", layers=[{"tier": 2}])
+
+    def test_config_local_toml_is_checked_with_config_toml(self):
+        self.write({"config.local.toml": '[roles.writer.tasks.long-note]\nmodel = "opus"\n'})
+        self.fails("unknown key 'model' in roles.writer.tasks.long-note", task="long-note")
 
     def test_config_errors_come_before_missing_rule_files(self):
         self.config(CONFIG.replace("tier = 1", "tier = 9"))
@@ -421,18 +436,20 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
 
-    def test_a_set_trusted_dirs_is_accepted(self):
+    def test_a_local_users_and_trusted_dirs_are_accepted(self):
         with tempfile.TemporaryDirectory() as root:
             for d in ("team", "output"):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
-            with open(os.path.join(CORE, compose.CONFIG)) as f:
-                cfg = f.read()
-            self.assertIn('\n# trusted_dirs = ["~/data-repo"]\n', cfg)
-            os.makedirs(os.path.join(root, "config"))
-            with open(os.path.join(root, compose.CONFIG), "w") as f:
-                f.write(cfg.replace('\n# trusted_dirs = ["~/data-repo"]\n', '\ntrusted_dirs = ["~/data-repo"]\n'))
+            shutil.copy(os.path.join(CORE, compose.CONFIG), root)
+            with open(os.path.join(root, "config.local.toml"), "w") as f:
+                f.write('users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\n')
             for role, task in ALL:
-                self.assertEqual(compose.load_run(root, role, task).task, task)
+                run = compose.load_run(root, role, task)
+                self.assertEqual((run.task, run.show), (task, ""))
+
+    def test_local_example_is_comments_only(self):
+        with open(os.path.join(CORE, "config.local.example.toml"), "rb") as f:
+            self.assertEqual(tomllib.load(f), {})
 
     def test_every_prompt_has_the_progress_rule_once(self):
         for role, task in ALL:

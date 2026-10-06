@@ -8,6 +8,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table, team_node  # noqa: E402
 import config  # noqa: E402
 import linear  # noqa: E402

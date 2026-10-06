@@ -2,6 +2,7 @@ import functools, json, os, re, shlex, subprocess, sys, tempfile, threading, tim
 from datetime import datetime
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 import sessions  # noqa: E402
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

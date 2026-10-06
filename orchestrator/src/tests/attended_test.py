@@ -1,6 +1,7 @@
 import os, subprocess, sys, unittest
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 import attended  # noqa: E402
 import drive  # noqa: E402
 import tui_claude  # noqa: E402

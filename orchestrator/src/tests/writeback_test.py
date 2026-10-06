@@ -2,6 +2,7 @@ import hashlib, json, os, re, shutil, sys, tempfile, unittest
 from dataclasses import replace
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 import board_ids  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
@@ -617,7 +618,7 @@ class Bounce(Base):
         gql = Gql(issue=self.src())
         reason = "project mapping ophis/x: not found or no access (HTTP 404)"
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), reason)
-        self.assertIn(comment(self.text(reason, " Or fix orchestrator/config.toml's [project_repos] entry.")), gql.calls)
+        self.assertIn(comment(self.text(reason, " Or fix orchestrator/config.local.toml's [project_repos] entry.")), gql.calls)
 
     def test_unarchive_failure_ignored(self):
         for err in (SystemExit("linear api error: not archived"), False):

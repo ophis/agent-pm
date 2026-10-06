@@ -1,6 +1,7 @@
 import json, os, sys, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402

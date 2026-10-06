@@ -1,17 +1,17 @@
-"""Paths, orchestrator/config.toml, core config with its [core] overlay, and TASKS; imports no other orchestrator module.
-Needs Python 3.11+ (tomllib).
+"""Paths, orchestrator/config.toml (config.local.toml on top), core config with its [core] overlay, and TASKS; imports no
+other orchestrator module. Needs Python 3.11+ (tomllib).
 """
 import os
 import re
 import shlex
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from typing import Literal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
+EXAMPLE = "orchestrator/config.local.example.toml"
 CORE = os.path.join(ROOT, "core")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
@@ -46,8 +46,7 @@ def work_dir(cfg, root=ROOT, clones=None):
     return path
 
 
-with open(CONFIG, "rb") as _f:
-    WORK_DIR = work_dir(tomllib.load(_f))
+WORK_DIR = work_dir(repo.read_config(CONFIG))
 RUNS_DIR, LOGS_DIR = os.path.join(WORK_DIR, "work"), os.path.join(WORK_DIR, "logs")
 RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
 
@@ -167,11 +166,7 @@ def _uuid(v):
 def _check_ids(cfg):
     if not _uuid(cfg.get("team")):
         raise SystemExit(f"orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}")
-    states = cfg.get("states")
-    if not isinstance(states, dict):
-        states = {}
-    if missing := [k for k in STATES if k not in states]:
-        raise SystemExit(f"orchestrator/config.toml: [states] is missing: {', '.join(missing)}")
+    states = cfg["states"]
     if extra := sorted(set(states) - set(STATES)):
         raise SystemExit(f"orchestrator/config.toml: [states] has unknown keys: {', '.join(extra)}")
     for k in STATES:
@@ -181,10 +176,24 @@ def _check_ids(cfg):
         raise SystemExit(f"orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
 
 
+def _missing(cfg):
+    """The required deployment keys cfg lacks, dotted."""
+    missing = [k for k in ("team", "harness_key", "task_label_group") if k not in cfg]
+    states = cfg.get("states")
+    missing += [f"states.{k}" for k in STATES if not isinstance(states, dict) or k not in states]
+    roles = cfg.get("roles")
+    for name, p in roles.items() if isinstance(roles, dict) else ():
+        missing += [f"roles.{name}.{k}" for k in ("account", "key") if isinstance(p, dict) and k not in p]
+    return missing
+
+
 def load_config(path=CONFIG):
-    """Checks every consumer needs; the checks against core config are in runnable(), which every consumer calls."""
-    with open(path, "rb") as f:
-        cfg = tomllib.load(f)
+    """`path` with config.local.toml beside it on top (repo.read_config), with the checks every consumer needs; the
+    checks against core config are in runnable(), which every consumer calls."""
+    cfg = repo.read_config(path)
+    if missing := _missing(cfg):
+        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in orchestrator/config.local.toml, "
+                         f"a copy of {EXAMPLE}")
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
@@ -255,9 +264,9 @@ def _check_overlay_keys(table, allowed, where):
 
 
 def overlay(root=ROOT):
-    """<root>/orchestrator/config.toml's [core] table ({} without one) with {{root}} filled; keys are checked here, since core checks
-    only its own config's."""
-    layer = _fill_root(load_config(os.path.join(root, "orchestrator", "config.toml")).get("core", {}), root)
+    """[core] of <root>/orchestrator/config.toml with config.local.toml on top ({} without one), {{root}} filled; its keys are
+    checked here, since core checks only its own config's, the rest by load_config, which every consumer calls first."""
+    layer = _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml")).get("core", {}), root)
     _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
     for r, role in layer.get("roles", {}).items():
         _check_overlay_keys(role, compose.RUN_KEYS | {"tasks"}, f"roles.{r}")
@@ -303,8 +312,7 @@ def clone_error(path, slug, *, run=sh_run):
 def runnable(cfg, root=ROOT):
     """{role: Role} of orchestrator/config.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
     broken one stops the caller (fail loud). Core roles absent from orchestrator/config.toml are not orchestrated."""
-    with open(os.path.join(root, "core", compose.CONFIG), "rb") as f:
-        core_roles = tomllib.load(f).get("roles", {})
+    core_roles = repo.read_config(os.path.join(root, "core", compose.CONFIG)).get("roles", {})
     try:
         trusted = drive.trusted_dirs(os.path.join(root, "core"))
     except compose.ConfigError as e:

@@ -13,6 +13,7 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import HEADER, STATES, role  # noqa: E402
 from router_test import STRAY, FakeLinear, blocker, issue as todo_issue, label  # noqa: E402
 from attended_test import Tmux  # noqa: E402
@@ -911,7 +912,7 @@ class Inner(Base):
         os.remove(os.path.join(self.root, "orchestrator", "config.toml"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
         self.assertEqual(self.inner(), 1)
-        self.assertTrue(self.err.startswith("run.py: orchestrator/config.toml: team must be"), self.err)
+        self.assertTrue(self.err.startswith("run.py: orchestrator/config.toml: missing harness_key"), self.err)
         self.assertEqual([TS.sub("<ts> ", x) for x in self.read(self.runs).splitlines()],
                          ["<ts> end TASK-7 session=" + SID + " exit=1"])
 

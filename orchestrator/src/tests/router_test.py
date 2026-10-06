@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
@@ -1359,7 +1360,7 @@ class TaskLabels(Base):
         role_tasks = ["deep-research", "light-research"]
         label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "product-design"}
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in orchestrator/config.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in orchestrator/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (([], ("deep-research", None)),
                  (outside, ("deep-research", None)),
                  ([label("Light Research", LIGHT)], ("light-research", None)),
