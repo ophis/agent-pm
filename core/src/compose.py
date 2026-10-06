@@ -24,9 +24,10 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "symlink_clones"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
+FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
 # A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
@@ -64,6 +65,7 @@ class RunConfig:
     role_title: str = ""
     task_title: str = ""
     task_summary: str = ""
+    task_description: str = ""   # the task file's frontmatter `description`; "" without one
     progress: list[str] = field(default_factory=list)   # the task's progress point names, in order
 
     def __post_init__(self):
@@ -121,9 +123,12 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
                     output=values.pop("output", {}), **values)
     for layer in layers:
         run = replace(run, **_run_keys(layer, role, task))
-    role_md, task_md = (_read(os.path.join(root, TEXT), rel) for rel in _rule_files(role, task))
-    return replace(run, role_title=_title(role_md, f"roles/{role}.md"), task_title=_title(task_md, f"tasks/{task}.md"),
-                   task_summary=_summary(task_md), progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
+    role_rel, task_rel = _rule_files(role, task)
+    role_md = _read(os.path.join(root, TEXT), role_rel)
+    description, task_md = _task(os.path.join(root, TEXT), task_rel)
+    return replace(run, role_title=_title(role_md, role_rel), task_title=_title(task_md, task_rel),
+                   task_summary=_summary(task_md), task_description=description,
+                   progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:
@@ -137,7 +142,8 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
     parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names, "principles.md")]
-    parts += [fill(_read(text, rel), paths, rel) for rel in _rule_files(run.role, run.task)]
+    role_rel, task_rel = _rule_files(run.role, run.task)
+    parts += [fill(_read(text, role_rel), paths, role_rel), fill(_task(text, task_rel)[1], paths, task_rel)]
     for name in run.templates:
         rel = f"templates/{name}.md"
         body = _read(text, rel)
@@ -225,6 +231,22 @@ def _read(root: str, rel: str) -> str:
         raise ConfigError(f"missing file {rel}")
     with open(path) as f:
         return f.read().strip() + "\n"
+
+
+def _task(root: str, rel: str) -> tuple[str, str]:
+    """(description, body) of a task file. Its optional YAML frontmatter holds only `description: "<JSON string>"`
+    (a skill's description) and never reaches a prompt."""
+    text = _read(root, rel)
+    if not (m := FRONTMATTER.match(text)):
+        return "", text
+    key, _, value = m.group(1).partition(": ")
+    try:
+        description = json.loads(value) if key == "description" and "\n" not in m.group(1) else None
+    except ValueError:
+        description = None
+    if not isinstance(description, str):
+        raise ConfigError(f'{rel}: frontmatter must be one line, description: "<JSON string>"')
+    return description, text[m.end():]
 
 
 def _title(text: str, rel: str) -> str:

@@ -21,7 +21,7 @@ REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling
 
 
 class SkillClient(Client):
-    keys = frozenset({"description", "roles"})
+    keys = frozenset({"roles"})
     runs = False
 
     def scripts_path(self, root: str) -> str:
@@ -36,7 +36,7 @@ class SkillClient(Client):
 
     def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
         name = f"{run.role}-{run.task}"
-        description = self.value(run, "description") or f"{run.task_title} as {run.role_title}: {run.task_summary}"
+        description = run.task_description or f"{run.task_title} as {run.role_title}: {run.task_summary}"
         head = f"---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n"
         text = head + RESUME.sub("\n", prompt).rstrip() + "\n" + TAIL
         skill = os.path.join(os.path.abspath(dest), name)

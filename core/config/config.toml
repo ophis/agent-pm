@@ -1,28 +1,49 @@
-# Core pack config. A task's value overrides its role's, which overrides the global one.
-#   tier       model tier 1–4 (1 = strongest); each client config (config/clients/<name>.toml) maps it to a model
-#   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
-#   templates  files under templates/ inlined into the prompt
-#   read       extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/ dir.
-#              Read-only by the prompt only: no deny rules
-#   write      extra dirs the agent run writes; the workdir is always reachable
-#   commands   shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any arguments);
-#              {{scripts}} is core's src/ dir, {{workdir}} the agent run's workdir
-#   gate       a usage-gate command a task runs before a costly step (deep research: before a second round); pre-approved; unset → none
-#   language   optional; the language reports and PRDs are written in (one line); unset → no language rule, the model's default
-#   show       tui runner: the shell command that shows the live session, {{session}} = the tmux session; one line, same trust as
-#              `commands`. unset → $TUI_SHOW, else the built-in split (iTerm2, else tmux); "" → the attach line only (show > TUI_SHOW > split)
-#   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
-#   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
+# Core pack config. A run key's value resolves in order, each step replacing what the earlier ones set:
+#   layers  this file → the client's [clients.<name>] → the orchestrator's [core] overlay; so a later layer's global
+#           value beats an earlier layer's task value
+#   levels  within a layer: global → role ([roles.<role>]) → task ([roles.<role>.tasks.<task>])
 
 # ── Global ──────────────────────────────────────────────
+#   tier            required: model tier 1–4 (1 = strongest); [clients.<name>] maps it to a model
+#   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
+#   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
+#   show            tui runner only: how the agent run's TUI window opens.
+#                   unset        → split the current pane (iTerm2, else tmux)
+#                   ""           → open nothing; print the `tmux attach` command
+#                   "<command>"  → run it; {{session}} is the tmux session name
+#   users           global only: GitHub logins whose PR comments are the user's; unset → the gh login
+#   symlink_clones  global only: local clones (absolute or ~ path, matched by real path) whose worktrees check out
+#                   symlinks as links; unset → none. Every other checkout, a skill's bundled repo.py included, gets
+#                   core.symlinks=false. A listed clone trusts every link in fetched origin/<branch> commits, which may
+#                   point outside the worktree: list only stable paths only you write. An agent run cannot add one (no
+#                   flag; the overlay rejects it)
 tier = 2
 effort = "high"
 language = "Chinese"
-# show = "my-show {{session}}"
+# show = ""   # e.g. on a server: no window, attach by hand
 # users = ["octocat"]
+# symlink_clones = ["~/data-repo"]
 
+# Destination; a lower level's [output] replaces the whole table.
+#   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on
+#           the target repo) | orchestrator (return it in the outcome only)
+#   repo    github: required; <owner>/<name>
+#   branch  github: required
+#   dir     github: required; the folder in the repo
+#   host    github: unset → github.com; set for GitHub Enterprise
 [output]
 type = "local"
+
+# Roles: [roles.<role>] and its tasks, [roles.<role>.tasks.<task>].
+#   default_task  role only: the task run when none is named; unset → one must be named
+#   templates     names of team/templates/*.md inlined into the prompt; unset → none
+#   read          extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/
+#                 dir. Read-only by the prompt only: no deny rules. unset → none
+#   write         extra dirs the agent run writes; the workdir is always reachable; unset → none
+#   commands      shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any
+#                 arguments); {{scripts}} is core's src/ dir, {{workdir}} the agent run's workdir; unset → none
+#   gate          a usage-gate command a task runs before a costly step (deep research: before a second round);
+#                 pre-approved; unset → none
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]
@@ -36,7 +57,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 [roles.researcher.tasks.deep-research.output]
 type = "github"
 repo = "ophis/private_docs"
-# host = "github.com"       # default; set for GitHub Enterprise
+# host = "github.com"
 branch = "main"
 dir = "Research/"
 
@@ -47,7 +68,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 [roles.researcher.tasks.light-research.output]
 type = "github"
 repo = "ophis/private_docs"
-# host = "github.com"       # default; set for GitHub Enterprise
+# host = "github.com"
 branch = "main"
 dir = "Research/"
 
@@ -62,7 +83,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 [roles.pm.tasks.product-design.output]
 type = "github"
 repo = "ophis/private_docs"
-# host = "github.com"       # default; set for GitHub Enterprise
+# host = "github.com"
 branch = "main"
 dir = "Product Design/"
 
@@ -89,3 +110,56 @@ effort = "low"
 tier = 4
 effort = "low"
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+
+# ── Clients ─────────────────────────────────────────────
+# [clients.<name>], global only: a client's data, plus run keys in the layout above.
+# Claude Code, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
+#   flags    [clients.claude] only: flags on every claude command; unset → none
+#   allow    extra --allowedTools rules in Claude Code syntax, at any level; unset → none
+#   tiers    [clients.claude] only: tier → model; required for each tier a run uses
+#   efforts  [clients.claude] only: effort → claude's --effort value; required for each effort a run uses
+#   env      [clients.claude] only: variables added to the run's environment; unset → none.
+#            CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: claude -p otherwise kills a workflow after 10 idle minutes
+[clients.claude]
+flags = ["--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config"]
+# allow = ["<rule>"]
+
+[clients.claude.tiers]
+1 = "fable"
+2 = "opus"
+3 = "sonnet"
+4 = "haiku"
+
+[clients.claude.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+[clients.claude.env]
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
+
+# Skill client, read by SkillClient (src/clients/skill.py). A skill's description is its task file's frontmatter
+# `description` (core/CLAUDE.md).
+#   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
+#           tasks without an entry keep their own (engineering: pull-request)
+[clients.skill]
+
+# ── Researcher ─────────────────────────────────────────
+[clients.skill.roles.researcher.tasks.deep-research.output]
+type = "orchestrator"
+
+[clients.skill.roles.researcher.tasks.light-research.output]
+type = "orchestrator"
+
+# ── PM ─────────────────────────────────────────────────
+[clients.skill.roles.pm.tasks.product-design.output]
+type = "orchestrator"
+
+# ── Dummy Tester ───────────────────────────────────────
+[clients.skill.roles.dummy-tester.tasks.echo.output]
+type = "orchestrator"
+
+[clients.skill.roles.dummy-tester.tasks.prepare-test.output]
+type = "orchestrator"

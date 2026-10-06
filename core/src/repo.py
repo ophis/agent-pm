@@ -8,9 +8,10 @@ repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", 
                                            else the gh login) and by anyone else since the latest plan doc commit
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs (prune runs no git in a clone there). A local clone gets a git worktree after a fetch that
-moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig);
-any other REPO a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new from
-origin/<default>.
+moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig),
+true if config.toml's `symlink_clones` lists the clone's real path; an existing worktree with the other setting is
+refused. Any other REPO gets a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new
+from origin/<default>.
 Git lock failures (runs sharing a clone) are retried.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
@@ -103,6 +104,17 @@ def redact(text: str) -> str:
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
+
+
+def symlink_clones(cfg: dict) -> frozenset[str]:
+    """Realpaths of config.toml's `symlink_clones`; ValueError unless it is a list of absolute or expandable ~ paths."""
+    paths = cfg.get("symlink_clones", [])
+    if not isinstance(paths, list):
+        raise ValueError("symlink_clones: want a list of local clone paths")
+    for p in paths:
+        if not isinstance(p, str) or not p.startswith(("/", "~")) or os.path.expanduser(p).startswith("~"):
+            raise ValueError(f"symlink_clones: {p!r:.80} is not an absolute or expandable ~ path")
+    return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
 
 
 def temp_dirs() -> tuple[str, ...]:
@@ -218,21 +230,26 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
     return found
 
 
-def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None) -> dict:
+def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None, links=frozenset()) -> dict:
     """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
-    clone may not live in (default temp_dirs()), since prune treats their clones as untrusted."""
+    clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
+    local clones whose worktrees get symlinks (symlink_clones())."""
     check_branch(branch)
     repo, clone = resolve(spec, run=run)
     if clone and (d := under(clone, temp_dirs() if temp is None else temp)):
         raise Invalid(f"{clone} is under the temp dir {d}: keep local clones outside temp dirs")
+    symlinks = "true" if clone is not None and clone in links else "false"
     wt, exists = place(repo, base, clone, run=run)
     if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
         index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
         if not os.path.isfile(index):   # its checkout never finished: it holds nothing
             git(run, clone, "worktree", "remove", "--force", wt, timeout=LONG)
             exists = False
-        elif run(["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT).stdout.strip() != "false":
-            raise Invalid(f"{wt} has symlinks on: remove it and run again")
+        else:
+            found = run(["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT).stdout.strip()
+            if found != symlinks:
+                raise Invalid(f"{wt} has core.symlinks={found or 'unset'}, symlink_clones gives {symlinks}: "
+                              "remove it and run again")
     push, default = info(repo, run=run)
     if not isinstance(default, str) or not BRANCH.fullmatch(default):
         raise Invalid(f"{repo.slug}: unsafe default branch name")
@@ -267,7 +284,7 @@ def worktree(spec: str, branch: str, base: str, *, run: Runner = sh, temp=None) 
             force = ["--force"] if mine in trees else []
             git(run, clone, "worktree", "add", "--no-checkout", *force, *opts, wt, start, timeout=LONG)
             try:
-                git(run, wt, "config", "--worktree", "core.symlinks", "false")
+                git(run, wt, "config", "--worktree", "core.symlinks", symlinks)
                 git(run, wt, "reset", "-q", "--hard", timeout=LONG)
             except (RuntimeError, subprocess.TimeoutExpired):
                 run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
@@ -373,14 +390,14 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
+        cfg = {}
+        if os.path.isfile(config):   # a skill's copy of this script has no config.toml beside it
+            with open(config, "rb") as f:
+                cfg = tomllib.load(f)
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, run=run, temp=temp)
+            r = worktree(a.repo, a.branch, a.dir, run=run, temp=temp, links=symlink_clones(cfg))
         else:
-            users = None
-            if os.path.isfile(config):   # a skill's copy of this script has no config.toml beside it
-                with open(config, "rb") as f:
-                    users = tomllib.load(f).get("users")
-            r = status(a.repo, a.branch, a.dir, run=run, users=users)
+            r = status(a.repo, a.branch, a.dir, run=run, users=cfg.get("users"))
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2

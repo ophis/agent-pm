@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import clients  # noqa: E402
 import compose  # noqa: E402
 
 class Plain:
@@ -275,6 +276,21 @@ class Prompt(Fake):
         self.assertEqual(prompt.count("On conflict:"), 1)
         self.assertIn("On conflict:", guide)
 
+    def test_task_frontmatter_gives_the_description_and_never_reaches_the_prompt(self):
+        self.write({"team/tasks/short-note.md": '---\ndescription: "Notes: short. Use for \\"x\\"."\n---\n\n# Short Note\n\nWrite a note.\n'})
+        prompt, run = self.compose(task="short-note")
+        self.assertEqual((run.task_description, run.task_title, run.task_summary),
+                         ('Notes: short. Use for "x".', "Short Note", "Write a note."))
+        self.assertNotIn("description:", prompt)
+        self.assertIn("# Writer\n\nWrite well.\n\n# Short Note\n\nWrite a note.\n", prompt)
+        self.assertEqual(self.compose(task="long-note")[1].task_description, "")
+
+    def test_bad_task_frontmatter(self):
+        for front in ("title: \"x\"", "description: x", "description: 3", 'description: "x"\nother: "y"'):
+            with self.subTest(front):
+                self.write({"team/tasks/short-note.md": f"---\n{front}\n---\n\n# Short Note\n"})
+                self.fails("tasks/short-note.md: frontmatter must be", task="short-note")
+
     def test_missing_guide(self):
         os.remove(os.path.join(self.root, "team", "guide.md"))
         self.fails("missing file guide.md")
@@ -405,9 +421,29 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
 
+    def test_a_set_symlink_clones_is_accepted(self):
+        with tempfile.TemporaryDirectory() as root:
+            for d in ("team", "output"):
+                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+            with open(os.path.join(CORE, compose.CONFIG)) as f:
+                cfg = f.read()
+            self.assertIn('\n# symlink_clones = ["~/data-repo"]\n', cfg)
+            os.makedirs(os.path.join(root, "config"))
+            with open(os.path.join(root, compose.CONFIG), "w") as f:
+                f.write(cfg.replace('\n# symlink_clones = ["~/data-repo"]\n', '\nsymlink_clones = ["~/data-repo"]\n'))
+            for role, task in ALL:
+                self.assertEqual(compose.load_run(root, role, task).task, task)
+
     def test_every_prompt_has_the_progress_rule_once(self):
         for role, task in ALL:
             self.assertEqual(composed(role, task)[0].count("is a point to tell the user your progress"), 1, task)
+
+    def test_every_task_has_a_description_its_prompt_never_shows(self):
+        for role, task in ALL:
+            prompt, run = composed(role, task)
+            self.assertTrue(run.task_description, task)
+            self.assertNotIn(run.task_description, prompt, task)
+            self.assertIn(f"\n# {run.task_title}\n", prompt, task)
 
     def test_every_task_compiles_without_placeholders(self):
         for role, task in ALL:
@@ -518,8 +554,7 @@ class RealCore(unittest.TestCase):
         self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
     def test_a_run_reads_the_methods_dir_its_text_names(self):
-        with open(os.path.join(CORE, "config", "clients", "claude.toml"), "rb") as f:
-            claude = tomllib.load(f)
+        claude = clients.load_config("claude", CORE)
         named = []
         for role, task in ALL:
             text = ""

@@ -7,7 +7,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -64,6 +63,29 @@ class Base(unittest.TestCase):
 
     def report(self):
         return f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl"
+
+
+class ClientConfig(unittest.TestCase):
+    def test_the_real_tables(self):
+        self.assertLessEqual({"flags", "tiers"}, set(clients.load_config("claude", CORE)))
+        self.assertIn("roles", clients.load_config("skill", CORE))
+        self.assertFalse(os.path.exists(os.path.join(CORE, "config", "clients")))
+
+    def test_missing_or_bad_table(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "config", "config.toml")
+        with self.assertRaises(compose.ConfigError) as cm:
+            clients.load_config("claude", tmp.name)
+        self.assertIn(path, str(cm.exception))
+        os.makedirs(os.path.dirname(path))
+        for text in ("tier = 2\n", "clients = 1\n", "[clients]\nclaude = 1\n", "[clients.skill]\n"):
+            with open(path, "w") as f:
+                f.write(text)
+            with self.subTest(text):
+                with self.assertRaises(compose.ConfigError) as cm:
+                    clients.load_config("claude", tmp.name)
+                self.assertIn("[clients.claude]", str(cm.exception))
 
 
 class Claude(Base):
@@ -351,12 +373,11 @@ class Skill(Base):
         (_, text), = clients.SkillClient({}).export("p", r, dest="o").files.items()
         self.assertIn('description: "T as R: Do it."', text)
 
-    def test_every_task_has_a_skill_description(self):
-        skill = clients.load_config("skill", CORE)["roles"]
-        with open(os.path.join(CORE, "config", "config.toml"), "rb") as f:
-            pairs = [(r, t) for r, role in tomllib.load(f)["roles"].items() for t in role.get("tasks", {})]
-        for r, t in pairs:
-            self.assertTrue(skill.get(r, {}).get("tasks", {}).get(t, {}).get("description"), (r, t))
+    def test_description_is_the_task_frontmatters(self):
+        r = run(role_title="R", task_title="T", task_summary="Do it.", task_description='Does "it".',
+                output={"type": "orchestrator"})
+        (_, text), = clients.SkillClient({}).export("p", r, dest="o").files.items()
+        self.assertIn('description: "Does \\"it\\"."', text)
 
     def test_every_task_becomes_a_skill(self):
         for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "engineering"),

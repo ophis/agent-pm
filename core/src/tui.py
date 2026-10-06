@@ -98,7 +98,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], templ
     once started. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it leaves
     no session of its own."""
     _name(session)
-    if _template(template) is None:
+    if template is None:
         _layout(split, beside)
     if not argv:
         raise TuiError("no command")
@@ -197,10 +197,9 @@ def read(session: str, lines: int | None = None, *, proc=subprocess.run) -> str:
 
 def show(session: str, template: str | None = None, *, split: str = "right", beside: str | None = None,
          proc=subprocess.run) -> str | None:
-    """Print how to attach, then run the show: template, else $TUI_SHOW, else open_pane; "" runs nothing.
+    """Print how to attach, then run the show: template, else open_pane; "" runs nothing.
     A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split or beside."""
     print(f"tui: session {session}: tmux attach -t '={session}'", file=sys.stderr)
-    template = _template(template)
     if template is None:
         why = open_pane(session, split=split, beside=beside, proc=proc)
     else:
@@ -262,8 +261,8 @@ def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], pr
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tui.py", description="Host a command in a detached tmux session: start it, "
-                                 "type into it, read it, show it. The show: --show T, else $TUI_SHOW, else an iTerm2 "
-                                 "split, else a tmux split; T may use {{session}}; '' prints only the attach command.")
+                                 "type into it, read it, show it. The show: --show T, else an iTerm2 split, else a tmux "
+                                 "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     start_p = sub.add_parser("start", help="run a command in a new detached session, then show it",
                              description="session -- cmd [args...]: everything after the first -- is the "
@@ -305,10 +304,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"tui: {e}", file=sys.stderr)
         return 1
     return 0
-
-
-def _template(template: str | None) -> str | None:
-    return os.environ.get("TUI_SHOW") if template is None else template
 
 
 def _layout(split: str, beside: str | None) -> None:
@@ -378,7 +373,7 @@ def anchor(beside: str | None = None, *, proc=subprocess.run) -> Anchor:
 
 
 def _show_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--show", metavar="T", help="the show command; overrides $TUI_SHOW")
+    p.add_argument("--show", metavar="T", help="the show command, instead of the split")
     p.add_argument("--split", choices=SPLITS, default="right", help="the split's side (default: right)")
     p.add_argument("--beside", metavar="S", type=_session_arg,
                    help="split the pane showing tmux session S (default: the current pane)")

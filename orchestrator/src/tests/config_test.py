@@ -221,21 +221,23 @@ DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-de
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
-    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config/config.toml; core's text and client
-    configs are the real ones."""
+    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config/config.toml; core's text and
+    [clients.*] tables are the real ones."""
     def setUp(self):
         super().setUp()
         self.root = os.path.join(self.dir, "my root")
         self.dir = os.path.join(self.root, "orchestrator")
         os.makedirs(self.dir)
         os.makedirs(os.path.join(self.root, "core", "config"))
-        for rel in ("team", "output", os.path.join("config", "clients")):
+        for rel in ("team", "output"):
             os.symlink(os.path.join(config.CORE, rel), os.path.join(self.root, "core", rel))
         self.core(CORE_TOML)
 
     def core(self, text):
+        with open(os.path.join(config.CORE, "config", "config.toml")) as f:
+            real = f.read()
         with open(os.path.join(self.root, "core", "config", "config.toml"), "w") as f:
-            f.write(text)
+            f.write(text + real[real.index("\n[clients."):])
 
     def runs(self, text=PIPELINE):
         return config.runnable(self.load(text), root=self.root)
@@ -274,6 +276,8 @@ class OtherRoot(ConfigFile, unittest.TestCase):
     def test_overlay_unknown_keys(self):
         cases = [("[core]\nfoo = 1\n", "'foo' in the global table"),
                  ('[core]\nusers = ["octocat"]\n', "'users' in the global table"),
+                 ('[core]\nsymlink_clones = ["~/x"]\n', "'symlink_clones' in the global table"),
+                 ("[core.clients.claude]\nflags = []\n", "'clients' in the global table"),
                  ('[core.roles.researcher]\ndefault_task = "light-research"\n', "'default_task' in roles.researcher"),
                  ('[core.roles.researcher.tasks.deep-research]\ntasks = 1\n', "'tasks' in roles.researcher.tasks.deep-research")]
         for text, message in cases:

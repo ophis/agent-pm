@@ -1,3 +1,7 @@
+---
+description: "Return the input unchanged. Use only to check that a role, a task and their output work end to end."
+---
+
 # Echo
 
 Return the input unchanged.

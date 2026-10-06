@@ -1,3 +1,7 @@
+---
+description: "Quick research on a question about the web, a codebase, or both: one round of parallel agents and a short sourced Markdown report. Use when a fast, good-enough answer will do; for verified depth use researcher-deep-research."
+---
+
 # Light Research
 
 Run one round of parallel agents, then write a short report.
