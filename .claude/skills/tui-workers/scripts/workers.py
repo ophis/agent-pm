@@ -1,4 +1,4 @@
-"""Starts and directs Claude Code workers in tmux panes through core/src/tui.py. Stdlib only."""
+"""Starts and directs Claude Code workers in tmux panes through core/src/tui_claude.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ import time
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-TUI = os.path.join(ROOT, "core", "src", "tui.py")
+TUI = os.path.join(ROOT, "core", "src", "tui_claude.py")
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
@@ -92,7 +92,7 @@ def _tmux(argv: list, proc) -> None:
 
 
 def _beside(name: str, events: str, proc) -> list:
-    """tui.py layout flags: below the newest attached other worker on the events file, else none."""
+    """tui_claude.py layout flags: below the newest attached other worker on the events file, else none."""
     res = _run(proc, ["tmux", "list-sessions", "-F", SESSIONS])
     best = None
     if res.returncode == 0:
@@ -112,7 +112,7 @@ def _beside(name: str, events: str, proc) -> list:
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
           beside: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `beside` or `split` replaces the automatic placement; tui.py defaults the other."""
+    `beside` or `split` replaces the automatic placement; tui_claude.py defaults the other."""
     _check(name)
     if beside is not None:
         _check(beside)
@@ -132,7 +132,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
             *(["--", prompt] if prompt else [])]
     res = _run(proc, argv, cwd=cwd, env=child_env)
     if res.returncode != 0:
-        raise WorkersError((res.stderr or "").strip() or f"tui.py exited {res.returncode}")
+        raise WorkersError((res.stderr or "").strip() or f"tui_claude.py exited {res.returncode}")
     for line in (res.stderr or "").splitlines():
         if line.startswith("tui: show:"):
             print(line, file=sys.stderr)

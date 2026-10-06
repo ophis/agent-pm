@@ -1,6 +1,6 @@
-"""Generic tmux host: runs a command in a detached tmux session another agent or a person can watch and drive.
+"""Hosts Claude Code TUIs: runs a command in a detached tmux session another agent or a person can watch and drive.
 
-One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui.py --help.
+One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui_claude.py --help.
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
 """
 from __future__ import annotations
@@ -260,7 +260,7 @@ def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], pr
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="tui.py", description="Host a command in a detached tmux session: start it, "
+    ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host a command in a detached tmux session: start it, "
                                  "type into it, read it, show it. The show: --show T, else an iTerm2 split, else a tmux "
                                  "split; T may use {{session}}; '' prints only the attach command.")
     sub = ap.add_subparsers(dest="cmd", required=True)

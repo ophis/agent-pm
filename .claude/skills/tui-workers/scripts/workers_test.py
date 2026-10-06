@@ -26,7 +26,7 @@ def executable(path, text):
 
 
 class Fake:
-    """Records proc calls; `sessions` is the list-sessions stdout, `tui_rc` tui.py's exit status."""
+    """Records proc calls; `sessions` is the list-sessions stdout, `tui_rc` tui_claude.py's exit status."""
 
     def __init__(self, sessions=None, tui_rc=0, tui_err=""):
         self.sessions, self.tui_rc, self.tui_err = sessions, tui_rc, tui_err
@@ -161,7 +161,7 @@ class StartTest(unittest.TestCase):
 
     def test_paths(self):
         self.assertTrue(os.path.isfile(workers.TUI))
-        self.assertEqual(os.path.basename(workers.TUI), "tui.py")
+        self.assertEqual(os.path.basename(workers.TUI), "tui_claude.py")
 
     def test_argv_no_siblings(self):
         fake = Fake()

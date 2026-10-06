@@ -4,7 +4,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import attended  # noqa: E402
 import drive  # noqa: E402
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 
 ID = "TASK-12"
 A, B = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"

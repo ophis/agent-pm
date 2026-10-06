@@ -13,7 +13,7 @@ import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
@@ -42,7 +42,7 @@ def which(tmux=TMUX):
 
 
 def osa(split, kind, session, *anchors):
-    return ["osascript", "-e", tui.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+    return ["osascript", "-e", tui_claude.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
 class Tmux:
@@ -107,14 +107,14 @@ class Start(unittest.TestCase):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, template="", **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            tui.start(session, list(argv), cwd=self.cwd, env=env, template=template, proc=fake, sleep=self.sleep, **kw)
+            tui_claude.start(session, list(argv), cwd=self.cwd, env=env, template=template, proc=fake, sleep=self.sleep, **kw)
 
     def test_one_tmux_call_runs_the_wrapper_and_keeps_a_dead_pane(self):
         fake = Tmux()
         self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(fake.calls[1], ["tmux", "new-session", "-d", "-s", "s", "-x", "120", "-y", "40",
-                                         sys.executable, "-I", "-c", tui.EXEC, fake.path,
+                                         sys.executable, "-I", "-c", tui_claude.EXEC, fake.path,
                                          ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on"])
         self.assertNotIn("-c", fake.calls[1][:fake.calls[1].index(sys.executable)])
         self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
@@ -124,7 +124,7 @@ class Start(unittest.TestCase):
 
     def test_handover_file(self):
         env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
-               **{k: "x" for k in tui.TERMINAL_KEYS}}
+               **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
         self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"],
@@ -135,7 +135,7 @@ class Start(unittest.TestCase):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_terminal_keys(self):
-        self.assertEqual(set(tui.TERMINAL_KEYS), {
+        self.assertEqual(set(tui_claude.TERMINAL_KEYS), {
             "TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
             "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES"})
 
@@ -149,23 +149,23 @@ class Start(unittest.TestCase):
 
     def test_command_resolved_with_the_envs_path(self):
         fake = Tmux()
-        with self.assertRaisesRegex(tui.TuiError, "sh"):
+        with self.assertRaisesRegex(tui_claude.TuiError, "sh"):
             self.start(fake, argv=("sh", "-c", "true"))
-        with self.assertRaisesRegex(tui.TuiError, "no-such-tool"):
+        with self.assertRaisesRegex(tui_claude.TuiError, "no-such-tool"):
             self.start(fake, argv=("no-such-tool",))
         self.assertEqual(fake.calls, [])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_empty_argv(self):
         fake = Tmux()
-        with self.assertRaisesRegex(tui.TuiError, "no command"):
+        with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
             self.start(fake, argv=())
         self.assertEqual(fake.calls, [])
 
     def test_handover_file_unwritable(self):
         fake = Tmux()
         with unittest.mock.patch.object(tempfile, "tempdir", os.path.join(self.root, "missing")), \
-                self.assertRaisesRegex(tui.TuiError, "^handover: "):
+                self.assertRaisesRegex(tui_claude.TuiError, "^handover: "):
             self.start(fake)
         real = os.open
 
@@ -173,7 +173,7 @@ class Start(unittest.TestCase):
             if str(path).endswith("handover.json"):
                 raise PermissionError(13, "Permission denied", path)
             return real(path, *args, **kw)
-        with unittest.mock.patch("os.open", side_effect=refuse), self.assertRaisesRegex(tui.TuiError, "^handover: "):
+        with unittest.mock.patch("os.open", side_effect=refuse), self.assertRaisesRegex(tui_claude.TuiError, "^handover: "):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
         self.assertEqual(os.listdir(self.temp), [])
@@ -189,7 +189,7 @@ class Start(unittest.TestCase):
 
     def test_live_session_is_refused(self):
         fake = Tmux(pane="0  ")
-        with self.assertRaisesRegex(tui.TuiError, r"^session s is running; tmux attach -t '=s'$"):
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^session s is running; tmux attach -t '=s'$"):
             self.start(fake)
         self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
         self.assertEqual(os.listdir(self.temp), [])
@@ -202,7 +202,7 @@ class Start(unittest.TestCase):
 
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
         fake = Tmux(fail={"new-session"})   # e.g. the chained set-option failed after new-session made the session
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
@@ -211,7 +211,7 @@ class Start(unittest.TestCase):
 
     def test_a_duplicate_session_is_not_killed(self):
         fake = Tmux(results={"new-session": (1, "", "duplicate session: s\n")})   # another start took the name
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: duplicate session: s$"):
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: duplicate session: s$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(os.listdir(self.temp), [])
@@ -223,7 +223,7 @@ class Start(unittest.TestCase):
             with self.subTest(where=where):
                 fake = Tmux(hand_over=where == "show")
                 self.sleep = interrupt
-                with unittest.mock.patch.object(tui, "show", side_effect=interrupt), \
+                with unittest.mock.patch.object(tui_claude, "show", side_effect=interrupt), \
                         self.assertRaises(KeyboardInterrupt):
                     self.start(fake)
                 self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
@@ -233,7 +233,7 @@ class Start(unittest.TestCase):
     def test_tmux_missing(self):
         def missing(argv, **kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: "):
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: "):
             self.start(missing)
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -242,12 +242,12 @@ class Start(unittest.TestCase):
             with self.subTest(fail=fail):
                 self.sleep.reset_mock()
                 fake = Tmux(fail=fail, hand_over=False)
-                with self.assertRaisesRegex(tui.TuiError, r"^the session did not start$"):
+                with self.assertRaisesRegex(tui_claude.TuiError, r"^the session did not start$"):
                     self.start(fake)
                 self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
                 self.assertIs(fake.dir_at_kill, False)
-                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui.HANDOVER_TIMEOUT)
+                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui_claude.HANDOVER_TIMEOUT)
                 self.assertEqual(os.listdir(self.temp), [])
                 self.assertEqual(self.stderr.getvalue(), "")
 
@@ -269,13 +269,13 @@ class Start(unittest.TestCase):
         for exe in ("/opt/py#3/bin/python3", "/opt/bin/python3;"):
             with self.subTest(exe=exe), unittest.mock.patch.object(sys, "executable", exe):
                 fake = Tmux()
-                with self.assertRaises(tui.TuiError):
+                with self.assertRaises(tui_claude.TuiError):
                     self.start(fake)
                 self.assertNotIn("new-session", fake.commands())
         hashed = os.path.join(self.root, "t#mp")
         os.makedirs(hashed)
         fake = Tmux()
-        with unittest.mock.patch.object(tempfile, "tempdir", hashed), self.assertRaises(tui.TuiError):
+        with unittest.mock.patch.object(tempfile, "tempdir", hashed), self.assertRaises(tui_claude.TuiError):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
         self.assertEqual(os.listdir(hashed), [])
@@ -285,10 +285,10 @@ class Start(unittest.TestCase):
         for name in ("", "a b", "a.b", "a:b", "=a", "#{x}", "a;", "a\n", "é"):
             with self.subTest(name=name):
                 fake = Tmux()
-                for call in (lambda: self.start(fake, session=name), lambda: tui.status(name, proc=fake),
-                             lambda: tui.kill(name, proc=fake), lambda: tui.send(name, "x", proc=fake, sleep=self.sleep),
-                             lambda: tui.read(name, proc=fake)):
-                    with self.assertRaises(tui.TuiError):
+                for call in (lambda: self.start(fake, session=name), lambda: tui_claude.status(name, proc=fake),
+                             lambda: tui_claude.kill(name, proc=fake), lambda: tui_claude.send(name, "x", proc=fake, sleep=self.sleep),
+                             lambda: tui_claude.read(name, proc=fake)):
+                    with self.assertRaises(tui_claude.TuiError):
                         call()
                 self.assertEqual(fake.calls, [])
 
@@ -298,7 +298,7 @@ class Start(unittest.TestCase):
 
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
-        with unittest.mock.patch.object(tui, "show", side_effect=show):
+        with unittest.mock.patch.object(tui_claude, "show", side_effect=show):
             self.start(fake, template="tmpl", split="below", beside="b")
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "proc": fake}, False,
                                  ["display-message", "new-session"])])
@@ -316,7 +316,7 @@ class Start(unittest.TestCase):
             for kw in ({"split": "up"}, {"beside": "a b"}):
                 with self.subTest(**kw):
                     fake = Tmux()
-                    with self.assertRaises(tui.TuiError):
+                    with self.assertRaises(tui_claude.TuiError):
                         self.start(fake, template=None, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
@@ -326,11 +326,11 @@ class Start(unittest.TestCase):
 
 class Status(unittest.TestCase):
     def test_states(self):
-        for pane, want in (("0  ", tui.RUNNING), ("1 3 ", 3), ("1 0 ", 0), ("1  kill", 137), ("1  9", 137),
-                           ("1  ", tui.RUNNING), ("  ", None), (None, None)):
+        for pane, want in (("0  ", tui_claude.RUNNING), ("1 3 ", 3), ("1 0 ", 0), ("1  kill", 137), ("1  9", 137),
+                           ("1  ", tui_claude.RUNNING), ("  ", None), (None, None)):
             with self.subTest(pane=pane):
                 fake = Tmux(pane=pane)
-                self.assertEqual(tui.status("s", proc=fake), want)
+                self.assertEqual(tui_claude.status("s", proc=fake), want)
                 self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
                 self.assertEqual(fake.kwargs, [TMUX_KW])
 
@@ -338,18 +338,18 @@ class Status(unittest.TestCase):
 class Kill(unittest.TestCase):
     def test_kill(self):
         fake = Tmux()
-        tui.kill("s", proc=fake)
+        tui_claude.kill("s", proc=fake)
         self.assertEqual(fake.calls, [["tmux", "kill-session", "-t", "=s"]])
         self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
-            tui.kill("s", proc=Tmux(fail={"kill-session"}))
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+            tui_claude.kill("s", proc=Tmux(fail={"kill-session"}))
 
 
 class Send(unittest.TestCase):
     def send(self, fake, text):
-        tui.send("s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
+        tui_claude.send("s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
         buffer = fake.calls[0][3]
         self.assertRegex(buffer, r"^tui-s-[0-9a-f]{32}$")
         return buffer
@@ -361,7 +361,7 @@ class Send(unittest.TestCase):
                                       ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"], ("sleep", 0.5),
                                       ["tmux", "send-keys", "-t", "=s:", "Enter"]])
         self.assertEqual(fake.kwargs, [{"capture_output": True, "text": True, "input": "-x hi"}, TMUX_KW, TMUX_KW])
-        self.assertEqual(tui.PAUSE, 0.5)
+        self.assertEqual(tui_claude.PAUSE, 0.5)
 
     def test_text_goes_through_stdin_verbatim(self):
         long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
@@ -382,8 +382,8 @@ class Send(unittest.TestCase):
         for step, calls in (("load-buffer", 1), ("paste-buffer", 2)):
             with self.subTest(step=step):
                 fake, sleep = Tmux(fail={step}), unittest.mock.Mock()
-                with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
-                    tui.send("s", "hi", proc=fake, sleep=sleep)
+                with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+                    tui_claude.send("s", "hi", proc=fake, sleep=sleep)
                 self.assertEqual(len(fake.calls), calls)
                 sleep.assert_not_called()
 
@@ -391,35 +391,35 @@ class Send(unittest.TestCase):
 class Read(unittest.TestCase):
     def test_visible_pane(self):
         fake = Tmux(results={"capture-pane": (0, "a\n  b\n\n \n")})
-        self.assertEqual(tui.read("s", proc=fake), "a\n  b")
+        self.assertEqual(tui_claude.read("s", proc=fake), "a\n  b")
         self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:"]])
         self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_last_lines(self):
         fake = Tmux(results={"capture-pane": (0, "1\n2\n\n3\n4\n\n\n")})
-        self.assertEqual(tui.read("s", 3, proc=fake), "\n3\n4")
+        self.assertEqual(tui_claude.read("s", 3, proc=fake), "\n3\n4")
         self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:", "-S", "-3"]])
 
     def test_lines_must_be_a_positive_int(self):
         fake = Tmux()
         for lines in (0, -1, True, 1.5, "3"):
-            with self.subTest(lines=lines), self.assertRaises(tui.TuiError):
-                tui.read("s", lines, proc=fake)
+            with self.subTest(lines=lines), self.assertRaises(tui_claude.TuiError):
+                tui_claude.read("s", lines, proc=fake)
         self.assertEqual(fake.calls, [])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
-            tui.read("s", proc=Tmux(fail={"capture-pane"}))
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+            tui_claude.read("s", proc=Tmux(fail={"capture-pane"}))
 
 
 class Show(unittest.TestCase):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return tui.show(session, template, proc=fake, **kw)
+            return tui_claude.show(session, template, proc=fake, **kw)
 
     def test_constants(self):
-        self.assertEqual((tui.SHOW_TIMEOUT, tui.PLACEHOLDERS), (30, {"session"}))
+        self.assertEqual((tui_claude.SHOW_TIMEOUT, tui_claude.PLACEHOLDERS), (30, {"session"}))
 
     def test_attach_line_then_the_template(self):
         fake = Tmux()
@@ -471,7 +471,7 @@ class Pane(unittest.TestCase):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return tui.show("s", proc=fake, **kw)
+            return tui_claude.show("s", proc=fake, **kw)
 
     def clients(self, *rows):
         return 0, "".join(f"{at} {tty} {pane} {self.SOCK}\n" for at, tty, pane in rows)
@@ -489,7 +489,7 @@ class Pane(unittest.TestCase):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = Tmux(results={"osascript": (0, "")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(tui.open_pane("s", split="below", proc=fake))
+            self.assertIsNone(tui_claude.open_pane("s", split="below", proc=fake))
         self.assertEqual((fake.calls, err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], ""))
 
     def test_iterm2_pane_showing_own_session(self):
@@ -520,18 +520,18 @@ class Pane(unittest.TestCase):
     def test_anchor(self):
         own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
         shown = self.clients((5, "/dev/ttys004", "%9"))
-        cases = [(ITERM, {}, None, tui.Anchor(("id", ["ABC"]))),
+        cases = [(ITERM, {}, None, tui_claude.Anchor(("id", ["ABC"]))),
                  (self.INSIDE, {**own, "list-clients": shown}, None,
-                  tui.Anchor(("tty", ["/dev/ttys004"]), "%3", self.SOCK, "own")),
-                 (self.INSIDE, own, None, tui.Anchor(("id", ["ABC"]))),
-                 ({}, {"list-clients": shown}, "b", tui.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b")),
+                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%3", self.SOCK, "own")),
+                 (self.INSIDE, own, None, tui_claude.Anchor(("id", ["ABC"]))),
+                 ({}, {"list-clients": shown}, "b", tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b")),
                  ({}, {"list-clients": shown, "list-panes": (0, "/dev/ttys001 %1\n/dev/ttys004 %5\n")}, "b",
-                  tui.Anchor(None, "%5", self.SOCK, "b")),
+                  tui_claude.Anchor(None, "%5", self.SOCK, "b")),
                  ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk /s\n" + shown[1])}, "b",
-                  tui.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b"))]
+                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", self.SOCK, "b"))]
         for env, results, beside, want in cases:
             with self.subTest(env=env, results=results, beside=beside), environ(**env):
-                self.assertEqual(tui.anchor(beside, proc=Tmux(results=results)), want)
+                self.assertEqual(tui_claude.anchor(beside, proc=Tmux(results=results)), want)
         no_iterm = {k: v for k, v in self.INSIDE.items() if k != "ITERM_SESSION_ID"}
         cases = [({}, {}, None, "no anchor pane: not in tmux"),
                  ({"ITERM_SESSION_ID": "w0t0p0"}, {}, None, "no anchor pane"),
@@ -540,20 +540,20 @@ class Pane(unittest.TestCase):
                  (no_iterm, own, None, "no anchor pane: no terminal shows tmux session own"),
                  (self.INSIDE, {"list-clients": (0, "")}, "b", "^no terminal shows tmux session b$")]
         for env, results, beside, msg in cases:
-            with self.subTest(env=env, beside=beside), environ(**env), self.assertRaisesRegex(tui.TuiError, msg):
-                tui.anchor(beside, proc=Tmux(results=results))
+            with self.subTest(env=env, beside=beside), environ(**env), self.assertRaisesRegex(tui_claude.TuiError, msg):
+                tui_claude.anchor(beside, proc=Tmux(results=results))
 
     def test_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n")})
         with environ(**self.INSIDE):
-            self.assertEqual(tui.own_session(proc=fake), "own")
+            self.assertEqual(tui_claude.own_session(proc=fake), "own")
         self.assertEqual(fake.calls, [self.OWN])
         fake = Tmux()
         with environ():
-            self.assertIsNone(tui.own_session(proc=fake))
+            self.assertIsNone(tui_claude.own_session(proc=fake))
         self.assertEqual(fake.calls, [])
-        with environ(**{**self.INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tui.TuiError, "TMUX_PANE"):
-            tui.own_session(proc=fake)
+        with environ(**{**self.INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tui_claude.TuiError, "TMUX_PANE"):
+            tui_claude.own_session(proc=fake)
 
     def test_bad_tmux_pane(self):
         for env in ({**self.INSIDE, "TMUX_PANE": pane} for pane in ("", "3", "%3;", "%x", "%3 ", "#{x}")):
@@ -606,7 +606,7 @@ class Pane(unittest.TestCase):
         for kw in ({"beside": "a b"}, {"beside": "=b"}, {"split": "up"}, {"split": "vertically"}):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaises(tui.TuiError):
+                with self.assertRaises(tui_claude.TuiError):
                     self.show(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
@@ -655,7 +655,7 @@ class Pane(unittest.TestCase):
                 self.assertNotIn("split-window", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = tui.APPLESCRIPT
+        script = tui_claude.APPLESCRIPT
         self.assertNotIn(TMUX, script)
         for part in ("on run argv", 'if application "iTerm2" is running', 'tell application "iTerm2"',
                      "quoted form of tmuxPath", 'quoted form of ("=" & sessionName)',
@@ -664,9 +664,9 @@ class Pane(unittest.TestCase):
             self.assertIn(part, script)
 
     def test_panes_end_with_their_tmux_session(self):
-        self.assertEqual(tui.APPLESCRIPT.count("with default profile command paneCommand"), 2)
+        self.assertEqual(tui_claude.APPLESCRIPT.count("with default profile command paneCommand"), 2)
         for word in ("write text", "close"):
-            self.assertNotIn(word, tui.APPLESCRIPT)
+            self.assertNotIn(word, tui_claude.APPLESCRIPT)
 
 
 class Cli(unittest.TestCase):
@@ -674,13 +674,13 @@ class Cli(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                rc = tui.main(list(argv))
+                rc = tui_claude.main(list(argv))
             except SystemExit as e:
                 rc = e.code
         return rc, out.getvalue(), err.getvalue()
 
     def patch(self, name, **kw):
-        p = unittest.mock.patch.object(tui, name, **kw)
+        p = unittest.mock.patch.object(tui_claude, name, **kw)
         self.addCleanup(p.stop)
         return p.start()
 
@@ -724,7 +724,7 @@ class Cli(unittest.TestCase):
 
     def test_subcommands(self):
         send, read, show, status = (self.patch(n) for n in ("send", "read", "show", "status"))
-        read.return_value, show.return_value, status.return_value = "pane\ntext", None, tui.RUNNING
+        read.return_value, show.return_value, status.return_value = "pane\ntext", None, tui_claude.RUNNING
         self.assertEqual(self.main("send", "s", "hi there"), (0, "", ""))
         send.assert_called_once_with("s", "hi there")
         self.assertEqual(self.main("send", "s", "--", "-x")[0], 0)
@@ -740,14 +740,14 @@ class Cli(unittest.TestCase):
 
     def test_exit_1(self):
         for name in ("start", "send", "read"):
-            self.patch(name, side_effect=tui.TuiError("tmux: boom"))
+            self.patch(name, side_effect=tui_claude.TuiError("tmux: boom"))
         for argv in ("start a -- cmd", "send s hi", "read s"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split()), (1, "", "tui: tmux: boom\n"))
         status, show = self.patch("status", return_value=None), self.patch("show", return_value="boom")
         self.assertEqual(self.main("show", "s"), (1, "", "tui: no session s\n"))
         show.assert_not_called()
-        status.return_value = tui.RUNNING
+        status.return_value = tui_claude.RUNNING
         self.assertEqual(self.main("show", "s")[0], 1)
 
     def test_exit_2(self):
@@ -763,7 +763,7 @@ class Cli(unittest.TestCase):
 
 class SingleFile(unittest.TestCase):
     def setUp(self):
-        with open(tui.__file__) as f:
+        with open(tui_claude.__file__) as f:
             self.source = f.read()
 
     def test_imports_only_the_stdlib(self):
@@ -780,7 +780,7 @@ class SingleFile(unittest.TestCase):
 
     def test_runs_alone(self):
         with tempfile.TemporaryDirectory() as d:
-            copy = shutil.copy(tui.__file__, d)
+            copy = shutil.copy(tui_claude.__file__, d)
             res = subprocess.run([sys.executable, "-I", copy, "--help"], cwd=d, capture_output=True, text=True,
                                  stdin=subprocess.DEVNULL, timeout=30)
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -790,8 +790,8 @@ class SingleFile(unittest.TestCase):
 
 class Exec(unittest.TestCase):
     def test_safe_for_tmux(self):
-        self.assertNotIn("#", tui.EXEC)
-        self.assertFalse(tui.EXEC.rstrip().endswith(";"))
+        self.assertNotIn("#", tui_claude.EXEC)
+        self.assertFalse(tui_claude.EXEC.rstrip().endswith(";"))
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -803,7 +803,7 @@ class Exec(unittest.TestCase):
         """The wrapper as tmux runs it, given a handover file naming argv."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd}, f)
-        return subprocess.run([sys.executable, "-I", "-c", tui.EXEC, self.path], env=pane, capture_output=True,
+        return subprocess.run([sys.executable, "-I", "-c", tui_claude.EXEC, self.path], env=pane, capture_output=True,
                               text=True, stdin=subprocess.DEVNULL, timeout=30)
 
     def test_runs_the_handover(self):

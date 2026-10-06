@@ -460,7 +460,7 @@ class FakeTui:
         """tui's start, status, kill and send replaced by this fake's, or by `api`'s; time.monotonic by its clock."""
         stack = ExitStack()
         stack.enter_context(unittest.mock.patch.multiple(
-            drive.tui, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
+            drive.tui_claude, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
         stack.enter_context(unittest.mock.patch.object(time, "monotonic", lambda: self.now))
         return stack
 
@@ -477,7 +477,7 @@ class FakeTui:
             return step
         for item in step:
             drive.append_line(self.channel, json.dumps(item) + "\n")
-        return drive.tui.RUNNING
+        return drive.tui_claude.RUNNING
 
     def kill(self, name):
         self.calls.append(("kill", name))
@@ -767,7 +767,7 @@ class Start(Base):
         self.assertEqual((r.returncode, seen), (0, ["progress", "outcome"]))
 
     def test_headless_ignores_stops(self):
-        with unittest.mock.patch.object(drive.tui, "send") as send:
+        with unittest.mock.patch.object(drive.tui_claude, "send") as send:
             r, _, _ = self.start([*[{"kind": "stop"}] * (drive.STOP_LIMIT + 1), said("still going"), outcome(DONE)])
         self.assertEqual((r.returncode, r.outcome.status, send.called), (0, "done", False))
 
@@ -1153,14 +1153,14 @@ class TuiRunner(Base):
         def sink(event):
             raise RuntimeError("sink")
 
-        kill = unittest.mock.Mock(side_effect=drive.tui.TuiError("gone"))
+        kill = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("gone"))
         with self.assertRaises(RuntimeError):
             self.start([progress("round", "x")], sinks=[sink], api={"kill": kill})
         self.assertEqual(kill.call_args, unittest.mock.call(self.NAME))
         self.assertIn("drive.py: tui: gone\n", self.err.getvalue())
 
     def test_a_tui_error_on_start_is_the_result(self):
-        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui.TuiError("no tmux"))})
+        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no tmux"))})
         self.assertEqual((r, calls), (drive.Result(1, None, "tui: no tmux"), []))
 
     def test_an_interrupted_start_kills_no_session_it_did_not_start(self):
@@ -1169,7 +1169,7 @@ class TuiRunner(Base):
         self.assertEqual(self.fake.calls, [])
 
     def test_a_tui_error_reading_the_session_kills_it_and_is_the_result(self):
-        status = unittest.mock.Mock(side_effect=drive.tui.TuiError("no server"))
+        status = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no server"))
         r, calls, _, _ = self.start(api={"status": status})
         self.assertEqual((r, [c[0] for c in calls]), (drive.Result(1, None, "tui: no server"), ["start", "kill"]))
         code, calls, err = self.main(api={"status": status})
@@ -1242,14 +1242,14 @@ class TuiRunner(Base):
         self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls], err), (0, "done", ["start"], ""))
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
-        send = unittest.mock.Mock(side_effect=drive.tui.TuiError("no pane"))
+        send = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no pane"))
         r, _, _, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT), api={"send": send})
         self.assertEqual((r.error, send.call_count), ("the agent run returned no outcome", 1))
         self.assertIn("drive.py: tui: no pane\n", err)
 
     def test_start_refuses_a_client_without_the_command_before_anything_starts(self):
         popen = unittest.mock.Mock()
-        with unittest.mock.patch.object(drive.tui, "start") as start, self.assertRaises(compose.ConfigError):
+        with unittest.mock.patch.object(drive.tui_claude, "start") as start, self.assertRaises(compose.ConfigError):
             drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), runner="tui", popen=popen)
         self.assertEqual((popen.called, start.called, os.path.exists(self.work)), (False, False, False))
 

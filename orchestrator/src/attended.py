@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
 import drive  # noqa: E402
 import linear  # noqa: E402
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 from linear import one_line  # noqa: E402
 
 RECORD_DIR = "tui"
@@ -24,19 +24,19 @@ class Bad(Exception):
 
 
 def layout(split, beside, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: beside the pane tui.anchor finds (session `beside`'s, else the caller's tmux
+    """The drive.Layout for the TUI pane: beside the pane tui_claude.anchor finds (session `beside`'s, else the caller's tmux
     session's when a terminal shows it, else $ITERM_SESSION_ID's iTerm2 pane)."""
-    if split is not None and split not in tui.SPLITS:
-        raise Bad(f"split must be one of {', '.join(tui.SPLITS)}")
+    if split is not None and split not in tui_claude.SPLITS:
+        raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
     split = split or drive.Layout.split
     if beside is not None:
-        if not tui.NAME.fullmatch(beside):
+        if not tui_claude.NAME.fullmatch(beside):
             raise Bad("bad tmux session name")
-        if tui.status(beside, proc=proc) is None:
+        if tui_claude.status(beside, proc=proc) is None:
             raise Bad(f"no tmux session {beside}")
     try:
-        found = tui.anchor(beside, proc=proc)
-    except tui.TuiError as e:
+        found = tui_claude.anchor(beside, proc=proc)
+    except tui_claude.TuiError as e:
         hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
         raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
     return drive.Layout(split, found.session)
@@ -86,11 +86,11 @@ def close(ident, *, logs=config.LOGS, proc=subprocess.run):
         out += [Closed("skip", msg="not a TUI session name")] * malformed
         for name in found:
             try:
-                if tui.status(name, proc=proc) is None:
+                if tui_claude.status(name, proc=proc) is None:
                     continue
-                tui.kill(name, proc=proc)
+                tui_claude.kill(name, proc=proc)
                 out.append(Closed("closed", name))
-            except tui.TuiError as e:
+            except tui_claude.TuiError as e:
                 kept.append(name)
                 out.append(Closed("error", name, one_line(e)))
         if kept:

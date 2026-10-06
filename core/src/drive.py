@@ -10,7 +10,7 @@ drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir D
 (skill) the dir it writes under. By default (start's sinks) a run shows its text and progress on stderr and leaves
 <workdir>/outcome.json and <workdir>/progress.jsonl.
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
-command in a detached tmux session <role>-<task>-<sid[:8]> (tui.py), shown as the `show` run key says, done once the
+command in a detached tmux session <role>-<task>-<sid[:8]> (tui_claude.py), shown as the `show` run key says, done once the
 outcome arrives or it gives up, and left open for the user.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env", "files"} and changes
 nothing. Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config
@@ -37,7 +37,7 @@ from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema, render,  # noqa: E402
                      report_command)
@@ -355,7 +355,7 @@ def tui_session(role: str, task: str, sid: str) -> str:
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default show, a split: the split's side (tui.SPLITS) and the tmux session whose pane it splits."""
+    """The tui runner's default show, a split: the split's side (tui_claude.SPLITS) and the tmux session whose pane it splits."""
     split: str = "right"
     beside: str | None = None
 
@@ -420,7 +420,7 @@ class Headless:
 
 
 class Tui:
-    """The client's interactive command in a detached tmux session (tui.py), never killed after the outcome. Done once
+    """The client's interactive command in a detached tmux session (tui_claude.py), never killed after the outcome. Done once
     the outcome arrives, or once it gives up and leaves the session to a human. A turn end without an outcome
     (`stop`) with background work pending is ignored; any other gets one NUDGE, and STOP_LIMIT more, counted since the
     last progress report, give up. So does WAIT_LIMIT seconds since the last progress report, or the agent run's start,
@@ -434,19 +434,19 @@ class Tui:
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
-            tui.start(self.name, argv, cwd=cwd, env=env, template=self.run.show, split=self.layout.split,
-                      beside=self.layout.beside)
-        except tui.TuiError as e:
+            tui_claude.start(self.name, argv, cwd=cwd, env=env, template=self.run.show, split=self.layout.split,
+                             beside=self.layout.beside)
+        except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started, self.since = True, time.monotonic()
 
     def poll(self, timeout: float) -> tuple[list[Event], bool]:
         time.sleep(timeout)
         try:
-            state = tui.status(self.name)
-        except tui.TuiError as e:
+            state = tui_claude.status(self.name)
+        except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
-        if state == tui.RUNNING:
+        if state == tui_claude.RUNNING:
             return [], False
         self.rc = state or 0   # None: the session is gone
         return [], True
@@ -460,8 +460,8 @@ class Tui:
             if not self.nudged:
                 self.nudged = True
                 try:
-                    tui.send(self.name, NUDGE)
-                except tui.TuiError as e:
+                    tui_claude.send(self.name, NUDGE)
+                except tui_claude.TuiError as e:
                     print(f"drive.py: tui: {e}", file=sys.stderr)
                 return
             self.stops += 1
@@ -483,11 +483,11 @@ class Tui:
         return 0 if self.outcome else self.rc
 
     def stop(self) -> None:
-        if not self.started:   # tui.start leaves no session when it raises; a live one of that name isn't this agent run's
+        if not self.started:   # tui_claude.start leaves no session when it raises; a live one of that name isn't this agent run's
             return
         try:
-            tui.kill(self.name)
-        except tui.TuiError as e:   # the driver's own exception is the one to raise
+            tui_claude.kill(self.name)
+        except tui_claude.TuiError as e:   # the driver's own exception is the one to raise
             print(f"drive.py: tui: {e}", file=sys.stderr)
 
 
@@ -509,10 +509,10 @@ def check_layout(runner: str, layout: Layout | None) -> None:
         return
     if runner == "headless":
         raise ConfigError("the headless runner takes no layout")
-    if layout.split not in tui.SPLITS:
-        raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tui.SPLITS)}")
-    if layout.beside is not None and not tui.NAME.fullmatch(layout.beside):
-        raise ConfigError(f"layout beside {layout.beside!r}: want {tui.NAME.pattern}")
+    if layout.split not in tui_claude.SPLITS:
+        raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tui_claude.SPLITS)}")
+    if layout.beside is not None and not tui_claude.NAME.fullmatch(layout.beside):
+        raise ConfigError(f"layout beside {layout.beside!r}: want {tui_claude.NAME.pattern}")
 
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
@@ -550,7 +550,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         for sink in sinks:
             sink(event)
 
-    env = {k: v for k, v in os.environ.items() if k != tui.CHILD_SESSION}
+    env = {k: v for k, v in os.environ.items() if k != tui_claude.CHILD_SESSION}
     try:
         host.begin(argv, cwd=launch.cwd or workdir, env={**env, **launch.env})
         while True:
@@ -605,7 +605,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
-    ap.add_argument("--split", choices=tui.SPLITS, help=f"the tui runner's split (default: {Layout.split})")
+    ap.add_argument("--split", choices=tui_claude.SPLITS, help=f"the tui runner's split (default: {Layout.split})")
     ap.add_argument("--beside", metavar="SESSION", help="split the pane showing this tmux session")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
