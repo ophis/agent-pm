@@ -25,24 +25,26 @@ def executable(path, text):
 
 
 def isolate(case):
-    """No show command runs, and tui_claude's stderr lines stay out of the output."""
-    for p in (mock.patch.dict(os.environ, {"TUI_SHOW": ""}), contextlib.redirect_stderr(io.StringIO())):
+    """Outside tmux and iTerm2, so the show finds no pane and runs nothing; its stderr lines stay out of the output."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM")}
+    for p in (mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO())):
         p.__enter__()
         case.addCleanup(p.__exit__, None, None, None)
 
 
-def decorations(events):
-    return [["tmux", "set-hook", "-p", "-t", "=w1:", "pane-died", f"{tui_claude.DIED} ; {tui_claude.DEAD_EVENT}"],
-            ["tmux", "set-option", "-w", "-t", "=w1:", "pane-border-status", "top"],
-            ["tmux", "set-option", "-w", "-t", "=w1:", "pane-border-format", tui_claude.BORDER]]
+def decorate_calls(events):
+    """The tmux calls tui_claude.decorate makes for worker w1."""
+    fake = Fake()
+    tui_claude.decorate("w1", events, proc=fake)
+    return fake.calls
 
 
 class Fake:
-    """Records proc calls; `sessions` is the list-sessions stdout, `new_err` makes new-session fail. On new-session it
-    reads the handover file tui_claude wrote and unlinks it as the pane's wrapper would."""
+    """Records proc calls; `new_err` makes new-session fail. On new-session it reads the handover file tui_claude wrote
+    and unlinks it as the pane's wrapper would."""
 
-    def __init__(self, sessions=None, new_err=""):
-        self.sessions, self.new_err = sessions, new_err
+    def __init__(self, new_err=""):
+        self.new_err = new_err
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
         self.fail_set, self.oserror, self.handover = None, None, None
@@ -62,10 +64,6 @@ class Fake:
             return subprocess.CompletedProcess(argv, 0, self.store[argv[5]] + "\n", "")
         if argv[1] == "respawn-pane":
             return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
-        if argv[1] == "list-sessions":
-            if self.sessions is None:
-                return subprocess.CompletedProcess(argv, 1, "", "no server running")
-            return subprocess.CompletedProcess(argv, 0, self.sessions, "")
         if argv[1] == "new-session":
             path = argv[argv.index(";") - 1]
             with open(path) as f:
@@ -80,9 +78,6 @@ class Fake:
 
     def options(self):
         return {c[4]: c[5] for c in self.calls if c[1] == "set-option" and c[2] == "-t"}
-
-    def decorations(self):
-        return [c for c in self.calls if c[1] == "set-hook" or c[1] == "set-option" and c[2] != "-t"]
 
 
 class StartTest(unittest.TestCase):
@@ -122,32 +117,13 @@ class StartTest(unittest.TestCase):
         self.assertEqual(str(uuid.UUID(sid)), sid)
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
         env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
-        self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split="right",
+        self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
                                          beside=None, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
     def test_no_prompt(self):
         self.start(Fake(), flags=("--x",))
         self.assertEqual(self.tui.call_args.args[1][-1], "--x")
-
-    def test_layout_beside_largest_started_attached_same_events(self):
-        rows = [
-            ("a", "1", self.events, "100"),
-            ("b", "2", self.events, "300"),
-            ("c", "0", self.events, "900"),
-            ("d", "1", "/other", "800"),
-            ("e", "1", "", ""),
-            ("f", "1", self.events, "1000"[:2]),
-        ]
-        fake = Fake(sessions="".join("\t".join(r) + "\n" for r in rows))
-        self.start(fake)
-        self.assertEqual(self.layout(), ("b", "below"))
-        self.assertEqual(fake.calls[0], ["tmux", "list-sessions", "-F",
-                                         "#{session_name}\t#{session_attached}\t#{@events}\t#{@started}"])
-
-    def test_no_server_no_layout(self):
-        self.start(Fake(sessions=None))
-        self.assertEqual(self.layout(), (None, "right"))
 
     def test_env_cwd_in_the_handover(self):
         fake = Fake()
@@ -173,14 +149,13 @@ class StartTest(unittest.TestCase):
         fake = Fake()
         sid = self.start(fake, flags=("--model", "m"), prompt="p")
         opts = fake.options()
-        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@claude", "@env", "@flags", "@started"})
+        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@claude", "@env", "@flags"})
         self.assertEqual(opts["@sid"], sid)
         self.assertEqual(opts["@cwd"], self.dir)
         self.assertEqual(opts["@events"], self.events)
         self.assertEqual(opts["@claude"], self.claude)
         self.assertEqual(json.loads(opts["@env"]), {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg"})
         self.assertEqual(json.loads(opts["@flags"]), ["--model", "m"])
-        self.assertTrue(opts["@started"].isdigit())
         for c in fake.calls:
             if c[1] == "set-option" and c[2] == "-t":
                 self.assertEqual(c[:4], ["tmux", "set-option", "-t", "=w1:"])
@@ -190,12 +165,13 @@ class StartTest(unittest.TestCase):
     def test_decorated_by_tui_claude_before_the_worker_options(self):
         fake = Fake()
         self.start(fake)
-        self.assertEqual(fake.decorations(), decorations(self.events))
-        first = min(i for i, c in enumerate(fake.calls) if c[1] == "set-option" and c[4:5] == ["@sid"])
-        self.assertLess(fake.calls.index(decorations(self.events)[-1]), first)
+        want = decorate_calls(self.events)
+        at = fake.calls.index(want[0])
+        self.assertEqual(fake.calls[at:at + len(want)], want)
+        self.assertEqual(fake.calls[at + len(want)][:5], ["tmux", "set-option", "-t", "=w1:", "@sid"])
 
     def test_option_failure_kills_session(self):
-        for fail in ("@sid", "@env", "@started"):
+        for fail in ("@sid", "@env", "@flags"):
             fake = Fake()
             fake.fail_set = fail
             with self.assertRaisesRegex(workers.WorkersError, "set boom.*undone", msg=fail):
@@ -281,23 +257,13 @@ class StartTest(unittest.TestCase):
         with self.assertRaisesRegex(workers.WorkersError, "undone"):
             self.start(fake)
 
-    def test_beside_skips_own_name(self):
-        rows = [("w1", "1", self.events, "900"), ("a", "1", self.events, "100")]
-        self.start(Fake(sessions="".join("\t".join(r) + "\n" for r in rows)))
-        self.assertEqual(self.layout(), ("a", "below"))
-        self.start(Fake(sessions="\t".join(rows[0]) + "\n"))
-        self.assertEqual(self.layout(), (None, "right"))
-
-    def test_explicit_layout_overrides(self):
-        rows = [("a", "1", self.events, "100")]
-        for kw, layout in (({"beside": "x", "split": "below"}, ("x", "below")),
-                           ({"beside": "x"}, ("x", "right")),
-                           ({"split": "right"}, (None, "right")),
-                           ({"split": "below"}, (None, "below"))):
-            fake = Fake(sessions="".join("\t".join(r) + "\n" for r in rows))
-            self.start(fake, **kw)
-            self.assertEqual(self.layout(), layout, kw)
-            self.assertNotIn("list-sessions", [c[1] for c in fake.calls])
+    def test_layout_passed_through(self):
+        for kw in ({}, {"beside": "x"}, {"split": "below"}, {"beside": "x", "split": "right"}):
+            with self.subTest(**kw):
+                fake = Fake()
+                self.start(fake, **kw)
+                self.assertEqual(self.layout(), (kw.get("beside"), kw.get("split")))
+                self.assertNotIn("list-sessions", [c[1] for c in fake.calls])
 
     def test_bad_beside(self):
         fake = Fake()
@@ -310,7 +276,7 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.new_sessions(), [])
 
     def test_oserror_from_proc(self):
-        for pick in (lambda a: a[1] == "list-sessions", lambda a: a[1] == "new-session",
+        for pick in (lambda a: a[1] == "new-session",
                      lambda a: a[1] == "set-option" and "@events" in a, lambda a: a[1] == "set-option" and "@sid" in a):
             fake = Fake()
             fake.oserror = pick
@@ -389,8 +355,7 @@ class RestartTest(WorkerCase):
         n = len(fake.calls)
         workers.restart("w1", proc=fake)
         tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
-        self.assertEqual(tail[:-1], [["tmux", "set-option", "-t", "=w1:", "@events", self.events],
-                                     *decorations(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
+        self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
         self.assertEqual(tail[-1][1], "respawn-pane")
 
     def test_decoration_failure_no_respawn(self):

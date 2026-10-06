@@ -10,7 +10,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import time
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -22,7 +21,6 @@ STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAU
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
 ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
-SESSIONS = "#{session_name}\t#{session_attached}\t#{@events}\t#{@started}"
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 
 
@@ -48,28 +46,10 @@ def _tmux(argv: list, proc) -> None:
         raise WorkersError(f"tmux {argv[1]} {argv[-2]}: {(res.stderr or '').strip()}")
 
 
-def _beside(name: str, events: str, proc) -> str | None:
-    """The newest attached other worker on the events file, else None."""
-    res = _run(proc, ["tmux", "list-sessions", "-F", SESSIONS])
-    best = None
-    if res.returncode == 0:
-        for line in res.stdout.splitlines():
-            fields = line.split("\t")
-            if len(fields) != 4 or fields[2] != events or fields[0] == name:
-                continue
-            try:
-                attached, started = int(fields[1]), int(fields[3])
-            except ValueError:
-                continue
-            if attached > 0 and (best is None or started > best[0]):
-                best = (started, fields[0])
-    return best[1] if best else None
-
-
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
           beside: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `beside` or `split` replaces the automatic placement; tui_claude.start defaults the other."""
+    `beside` or `split` replaces tui_claude's automatic placement; it defaults the other."""
     _check(name)
     if beside is not None:
         _check(beside)
@@ -82,18 +62,15 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     claude = os.path.abspath(claude)
     sid = str(uuid.uuid4())
     child_env = {k: v for k, v in env.items() if k not in STRIP}
-    if beside is None and split is None:
-        beside = _beside(name, events, proc)
-        split = "below" if beside else None
     try:
         tui_claude.start(name, [claude, "--session-id", sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
-                         cwd=cwd, env=child_env, events=events, split=split or "right", beside=beside, proc=proc)
+                         cwd=cwd, env=child_env, events=events, split=split, beside=beside, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
     options = {"@sid": sid, "@cwd": cwd, "@claude": claude,
                "@env": json.dumps({k: child_env[k] for k in ENV_KEYS if k in child_env}),
-               "@flags": json.dumps(list(flags)), "@started": str(time.time_ns())}
+               "@flags": json.dumps(list(flags))}
     for argv in (["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()):
         try:
             _tmux(argv, proc)
