@@ -4,7 +4,7 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, <work_dir>/work/<ID>/src/<owner>/<name>, <work_dir>/work/<ID>/publish and
+Entries: for each finished issue, <work_dir>/work/<ID>/src/<owner>/*, <work_dir>/work/<ID>/publish and
 <work_dir>/work/<ID>/tmp, each a real directory inside its own folder (not a symlink); a src or publish entry must be a clone
 or a worktree (.git a directory or a file), else it is skipped. Each goes with shutil.rmtree, uncommitted work included;
 the rest of <work_dir>/work/<ID>/ and <work_dir>/logs stay. A worktree's .git file is read first (repo.common_dir, no git) for its

@@ -1,10 +1,12 @@
-import json, os, sys, unittest
+import json, os, re, sys, unittest
 from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402,F401
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import config  # noqa: E402
+import clients  # noqa: E402
+import compose  # noqa: E402
 import repo  # noqa: E402
 import target  # noqa: E402
 
@@ -251,7 +253,7 @@ class RenderResearch(unittest.TestCase):
                              inputs.Doc(BASE + "Research/2026-09-01-RES-4-q.md", "Research/2026-09-01-RES-4-q.md", "# Earlier"))
         got = inputs.render(iss, "deep-research", src, humans=HUMANS, target=target.Target("ophis", "agent-pm"), docs=DOCS)
         self.assertEqual(got, lines(
-            "Reference: RES-4", "Repo: ophis/agent-pm", "", RESEARCH_PRECEDENCE, "",
+            "Reference: RES-4", "Repo: ophis/agent-pm", "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "",
             "## Question", "", "Compare queues", "", f"Which queue fits?\nBackground: {BASE}Research/2026-08-01-RES-2-queues.md", "",
             "## The user's comments", "", "Ann, 2026-09-02T00:00:00.000Z:\nFocus on cost.", "",
             "## Other comments (context)", "",
@@ -263,12 +265,13 @@ class RenderResearch(unittest.TestCase):
 
     def test_minimal_without_repo_or_optional_sections(self):
         got = inputs.render(issue("Which?"), "light-research", inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
-        self.assertEqual(got, lines("Reference: RES-4", "", RESEARCH_PRECEDENCE, "", "## Question", "", "Compare queues", "", "Which?"))
+        self.assertEqual(got, lines("Reference: RES-4", "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "", "## Question", "", "Compare queues", "",
+                                    "Which?"))
 
     def test_golden_repo_names_the_local_clone(self):
         got = inputs.render(issue("Which?"), "deep-research", inputs.Sources((), None), humans=HUMANS,
                             target=target.Target("ophis", "agent-pm", clone="/x/agent-pm"), docs=DOCS)
-        self.assertEqual(got, lines("Reference: RES-4", "Repo: /x/agent-pm", "", RESEARCH_PRECEDENCE, "",
+        self.assertEqual(got, lines("Reference: RES-4", "Repo: /x/agent-pm", "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "",
                                     "## Question", "", "Compare queues", "", "Which?"))
 
     def test_empty_description_leaves_only_the_title(self):
@@ -316,7 +319,7 @@ class RenderDesign(unittest.TestCase):
                              inputs.Doc(BASE + "Product%20Design/2026-09-05-PM-9-q.md", "Product Design/2026-09-05-PM-9-q.md", "# Mine"))
         got = inputs.render(iss, "product-design", src, humans=HUMANS, target=None, docs=DOCS)
         self.assertEqual(got, lines(
-            "Reference: PM-9", "", DESIGN_PRECEDENCE, "",
+            "Reference: PM-9", "Checkout: PM-9", "", DESIGN_PRECEDENCE, "",
             "## Brief", "", "PRD: Compare queues", "", "Ann, 2026-09-01T00:00:00.000Z:\nWrite the PRD.", "",
             "## The user's later words", "", "Ann, 2026-09-07T00:00:00.000Z:\nAlso mobile.", "",
             "## Reports", "", "### `Research/2026-09-01-RES-4-queues.md`", "", fenced("# Report"), "",
@@ -332,7 +335,7 @@ class RenderDesign(unittest.TestCase):
             with self.subTest(target=t):
                 got = inputs.render(issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"), "product-design",
                                     inputs.Sources((), None), humans=HUMANS, target=t, docs=DOCS)
-                self.assertEqual(got, lines("Reference: PM-9", *repo_line, "", DESIGN_PRECEDENCE, "",
+                self.assertEqual(got, lines("Reference: PM-9", *repo_line, "Checkout: PM-9", "", DESIGN_PRECEDENCE, "",
                                             "## Brief", "", "Queues PRD", "", "Build a PRD for X."))
 
     def test_direct_issue_user_words_and_prd_fallback_earlier(self):
@@ -369,7 +372,8 @@ class RenderBuild(unittest.TestCase):
         src = inputs.Sources((inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None)
         got = inputs.render(iss, "build", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertEqual(got, lines(
-            "Reference: ENG-7", "Title: ENG-7: Session Registry", "Repo: ophis/agent-pm", "Branch: ENG-7-session-registry",
+            "Reference: ENG-7", "Title: ENG-7: Session Registry", "Repo: ophis/agent-pm", "Checkout: ENG-7",
+            "Branch: ENG-7-session-registry",
             f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}", "", BUILD_PRECEDENCE, "",
             "## The user's requirements since the last build", "",
             "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\nBob, 2026-09-08T00:00:00.000Z:\nBob says more", "",
@@ -397,7 +401,8 @@ class RenderBuild(unittest.TestCase):
         iss = issue(d, ident="ENG-7", title="ENG: Registry")
         got = inputs.render(iss, "build", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertEqual(got, lines(
-            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: ophis/agent-pm", "Branch: ENG-7-session-registry",
+            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: ophis/agent-pm", "Checkout: ENG-7",
+            "Branch: ENG-7-session-registry",
             "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
             "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
             "## PRD", "", "None linked.", "",
@@ -409,7 +414,8 @@ class RenderBuild(unittest.TestCase):
         got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "build", inputs.Sources((), None),
                             humans=HUMANS, target=t, docs=DOCS)
         self.assertEqual(got, lines(
-            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Branch: ENG-7-session-registry",
+            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Checkout: ENG-7",
+            "Branch: ENG-7-session-registry",
             "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
             "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
             "## PRD", "", "None linked."))
@@ -448,6 +454,25 @@ class RenderBuild(unittest.TestCase):
                             humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## The user's requirements since the last build\n\nAnn, 2026-09-02T00:00:00.000Z:\none", got)
         self.assertIn("## Earlier comments (context; the user's ones are already built)\n\n- Ann, 2026-08-30T00:00:00.000Z:\n  > old", got)
+
+
+class Checkout(unittest.TestCase):
+    def test_a_build_prompts_repo_py_commands_take_the_inputs_checkout(self):
+        t = target.Target("ophis", "agent-pm", "ENG-7-x")
+        text = inputs.render(issue("D", ident="ENG-7"), "build", inputs.Sources((), None), humans=HUMANS, target=t, docs=DOCS)
+        name = re.search(r"^Checkout: (.+)$", text, re.M).group(1)
+        self.assertEqual(os.path.basename(target.checkout("ENG-7", "ophis", "agent-pm")), f"agent-pm-{name}")
+        client = clients.get("claude", config.CORE)
+        for task in ("build", "light-build"):
+            with self.subTest(task=task):
+                run = compose.load_run(config.CORE, "engineer", task)
+                params = compose.RunParams(input=text, out="/w/out.md", workdir="/w")
+                prompt = compose.render(config.CORE, run, params, client=client)
+                self.assertIn(f"\nCheckout: {name}\n", prompt)
+                self.assertIn("`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
+                              "`Checkout:`", prompt)
+                for cmd in ("worktree", "status"):
+                    self.assertIn(f"/repo.py {cmd} --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`", prompt)
 
 
 if __name__ == "__main__":

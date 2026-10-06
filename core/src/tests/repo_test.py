@@ -87,7 +87,7 @@ class Base(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.wt = os.path.join(self.dir, "o", "n")
+        self.wt = os.path.join(self.dir, "o", "n-TASK-1-x")
         self.none = os.path.join(self.dir, "none.toml")
 
     def existing(self, url=URL):
@@ -262,7 +262,32 @@ class Worktree(Base):
     def test_same_name_under_two_owners(self):
         for owner in ("a", "b"):
             code, out, _ = self.main(["worktree", f"{owner}/n", "--branch", "TASK-1-x", "--dir", self.dir], Fake([info(), HEAD]))
-            self.assertEqual((code, json.loads(out)["worktree"]), (0, os.path.join(self.dir, owner, "n")))
+            self.assertEqual((code, json.loads(out)["worktree"]), (0, os.path.join(self.dir, owner, "n-TASK-1-x")))
+
+    def test_the_checkout_is_named_by_name_else_by_the_branch(self):
+        for argv, base in (([], "n-feat-x"), (["--name", "TASK-1"], "n-TASK-1")):
+            with self.subTest(argv=argv):
+                run = Fake([info(), HEAD])
+                code, out, err = self.main(["worktree", "o/n", "--branch", "feat/x", *argv, "--dir", self.dir], run)
+                wt = os.path.join(self.dir, "o", base)
+                self.assertEqual((code, json.loads(out)["worktree"]), (0, wt), err)
+                self.assertTrue(run.ran("gh", "repo", "clone", "github.com/o/n", wt))
+
+    def test_a_bad_name_is_refused(self):
+        for cmd in ("worktree", "status"):
+            for name in ("", "a/b", "../x", "a b", "x;y", "~", "x" * 101):
+                with self.subTest(cmd=cmd, name=name):
+                    run = Fake([])
+                    code, _, err = self.main([cmd, "o/n", "--branch", "TASK-1-x", "--name", name, "--dir", self.dir], run)
+                    self.assertEqual((code, run.calls), (2, []))
+                    self.assertIn("unsafe checkout name", err)
+        self.assertEqual(os.listdir(self.dir), [])
+
+    def test_checkout_is_the_path_rule(self):
+        self.assertEqual(repo.checkout("/b", "o", "n", "TASK-1"), "/b/o/n-TASK-1")
+        self.assertEqual(repo.checkout("b", "o", "n", "x.y_z-1"), os.path.join(os.getcwd(), "b", "o", "n-x.y_z-1"))
+        with self.assertRaises(repo.Invalid):
+            repo.checkout("/b", "o", "n", "a/b")
 
     def test_other_repo_in_the_way_is_invalid(self):
         (code, _, err), _ = self.worktree(self.existing("https://github.com/x/n"), info())
@@ -331,7 +356,8 @@ class Worktree(Base):
     def test_an_option_given_twice_is_refused(self):
         for cmd in ("worktree", "status"):
             for argv, opt in ((["--dir", self.dir, "--branch", "b", "o/n", "--dir", os.path.expanduser("~/.claude")], "--dir"),
-                              (["--dir", self.dir, "--branch", "b", "o/n", "--branch", "c"], "--branch")):
+                              (["--dir", self.dir, "--branch", "b", "o/n", "--branch", "c"], "--branch"),
+                              (["--dir", self.dir, "--branch", "b", "--name", "x", "o/n", "--name", "y"], "--name")):
                 err = io.StringIO()
                 with self.subTest(cmd=cmd, opt=opt), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
                     repo.main([cmd, *argv], run=Fake([]), config=self.none)
@@ -417,7 +443,7 @@ class Clone(unittest.TestCase):
         git("-C", self.seed, "remote", "add", "origin", self.bare)
         git("clone", "-q", self.bare, self.clone)
         self.dir = os.path.join(self.tmp, "work", "src")
-        self.wt = os.path.join(self.dir, "o", "n")
+        self.wt = os.path.join(self.dir, "o", "n-TASK-1-x")
         self.none = os.path.join(self.tmp, "none.toml")
 
     def listing(self, *paths):
@@ -446,7 +472,7 @@ class Local(Clone):
             for i, spec in enumerate((self.clone, "~/clone")):
                 with self.subTest(spec=spec):
                     base = os.path.join(self.tmp, f"w{i}")
-                    wt = os.path.join(base, "o", "n")
+                    wt = os.path.join(base, "o", f"n-TASK-1-{i}")
                     code, r, _ = self.worktree(f"TASK-1-{i}", spec=spec, base=base)
                     self.assertEqual(code, 0, r)
                     self.assertEqual(r, {"repo": "o/n", "host": "github.com", "default": "main", "branch": f"TASK-1-{i}",
@@ -490,7 +516,7 @@ class Local(Clone):
                                        ("TASK-1-new", new, None)):
             with self.subTest(branch=branch):
                 base = os.path.join(self.tmp, branch)
-                wt = os.path.join(base, "o", "n")
+                wt = os.path.join(base, "o", f"n-{branch}")
                 code, r, run = self.worktree(branch, base=base)
                 self.assertEqual((code, r["commit"], r["worktree"]), (0, commit, wt))
                 self.assertEqual(run.timeout("git", "-C", self.clone, "worktree", "add"), repo.LONG)
@@ -557,6 +583,33 @@ class Local(Clone):
         self.assertEqual(code, 0, err.getvalue())
         self.assertIsNone(json.loads(out.getvalue())["pr"])
         self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
+
+
+    def test_name_names_the_worktree_for_worktree_and_status(self):
+        wt = os.path.join(self.dir, "o", "n-TASK-7")
+        run, out, err = Real([info()]), io.StringIO(), io.StringIO()
+        code = repo.main(["worktree", "--dir", self.dir, "--branch", "TASK-7-x", "--name", "TASK-7", self.clone], run=run,
+                         out=out, err=err, config=self.none, temp=())
+        self.assertEqual((code, json.loads(out.getvalue())["worktree"]), (0, wt), err.getvalue())
+        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+        self.assertEqual(admin, os.path.join(self.clone, ".git", "worktrees", "n-TASK-7"))
+        for argv, want in ((["--name", "TASK-7"], 0), ([], 2)):
+            with self.subTest(argv=argv):
+                run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
+                            (["gh", "pr", "list"], ok("[]"))])
+                out, err = io.StringIO(), io.StringIO()
+                code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-7-x", *argv, self.clone], run=run, out=out,
+                                 err=err, config=self.none)
+                self.assertEqual(code, want, err.getvalue())
+
+    def test_a_bad_name_is_refused_before_the_clone_is_read(self):
+        for cmd in ("worktree", "status"):
+            with self.subTest(cmd=cmd):
+                run, err = Real([]), io.StringIO()
+                code = repo.main([cmd, "--dir", self.dir, "--branch", "TASK-1-x", "--name", "a/b", self.clone], run=run,
+                                 out=io.StringIO(), err=err, config=self.none, temp=())
+                self.assertEqual((code, run.calls), (2, []), err.getvalue())
+                self.assertIn("unsafe checkout name", err.getvalue())
 
 
 class LocalSafety(Clone):
@@ -663,11 +716,12 @@ class LocalSafety(Clone):
         os.symlink(self.clone, alias)
         for i, (listed, spec) in enumerate(((alias, self.clone), (self.clone, alias))):
             with self.subTest(listed=listed, spec=spec):
+                wt = os.path.join(self.dir, "o", f"n-TASK-1-{i}")
                 try:
                     self.assertEqual(self.worktree(f"TASK-1-{i}", config=self.listing(listed), spec=spec), (0, ""))
-                    self.assertTrue(os.path.islink(link))
+                    self.assertTrue(os.path.islink(os.path.join(wt, os.path.basename(link))))
                 finally:
-                    shutil.rmtree(self.wt, ignore_errors=True)
+                    shutil.rmtree(wt, ignore_errors=True)
                     git("-C", self.clone, "worktree", "prune")
 
     def test_listing_another_clone_of_the_same_origin_trusts_no_other(self):
@@ -816,7 +870,7 @@ class Status(Base):
                     with open(local, "w") as f:
                         f.write(local_text)
                 out, err = io.StringIO(), io.StringIO()
-                code = repo.main(["status", "o/n", "--branch", "b", "--dir", self.dir], run=run, out=out, err=err, config=config)
+                code = repo.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run=run, out=out, err=err, config=config)
                 r = json.loads(out.getvalue())
                 self.assertEqual((code, r["pr"]["number"]), (0, 7))
                 self.assertEqual([e["body"] for e in r["user"]], ["do Y"])

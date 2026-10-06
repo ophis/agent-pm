@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
 from config import CLONES, NAME, OWNER, REF, TASKS, RUNS_DIR, repo_slug, sh_run  # noqa: E402
+import repo  # noqa: E402
 from repo import GUARD, SHORT, common_dir, err_text, under  # noqa: E402
 
 MAPPED = "project mapping "
@@ -104,15 +105,20 @@ def _repo_info(o, n, run):
     return full, push is True, default
 
 
+def checkout(ident, owner, name, *, work=RUNS_DIR) -> str:
+    """The issue's checkout of owner/name: core's rule, the issue id as its slug (the input's `Checkout:`)."""
+    return repo.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+
+
 def _branches(ident, o, n, run, work):
     """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own clone, else on
     GitHub (gh's credentials, no shared clone); or a Transient. A worktree's are read on GitHub: its clone is known only
     from a `.git` file the agent run could have changed."""
-    checkout = os.path.join(work, ident, CLONES[0], o, n)
-    git = os.path.join(checkout, ".git")
+    path = checkout(ident, o, n, work=work)
+    git = os.path.join(path, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
         # The agent run can write this clone's config; these keep it from running code as the harness.
-        res = run(["git", *GUARD, "-C", checkout, f"--git-dir={git}",
+        res = run(["git", *GUARD, "-C", path, f"--git-dir={git}",
                    "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
         if res.returncode != 0:
             return Transient(f"git branch --list: {err_text(res)}")
@@ -160,11 +166,11 @@ def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Tran
 def with_clone(t, ident, clones, *, work=RUNS_DIR, writable=None, run=sh_run) -> Target:
     """`t` with `clone` set: what the issue's existing checkout was made from, else its `[local_clones]` entry, else "". The
     checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the right origin."""
-    checkout = os.path.join(work, ident, CLONES[0], t.owner, t.name)
-    git, full = os.path.join(checkout, ".git"), f"{t.owner}/{t.name}"
+    path = checkout(ident, t.owner, t.name, work=work)
+    git, full = os.path.join(path, ".git"), f"{t.owner}/{t.name}"
     if os.path.isdir(git) and not os.path.islink(git):
         return replace(t, clone="")
-    if common := common_dir(checkout):
+    if common := common_dir(path):
         clone = os.path.dirname(common)
         roots = config.writable(work) if writable is None else writable
         if not under(common, roots) and config.clone_error(clone, full, run=run) is None:

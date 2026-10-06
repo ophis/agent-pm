@@ -409,6 +409,8 @@ def composed(role, task=None):
 
 
 LANGUAGE_RULE = "headings and fixed labels included"
+CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
+                 "`Checkout:`; no `Checkout:` → drop it.")
 
 
 class RealCore(unittest.TestCase):
@@ -547,6 +549,20 @@ class RealCore(unittest.TestCase):
             for cmd in run.commands:
                 cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, task).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, task)
+
+    def test_every_repo_py_command_takes_the_inputs_checkout(self):
+        found = {}
+        for role, task in ALL:
+            prompt, _ = composed(role, task)
+            cmds = re.findall(r"`python3 \S+/repo\.py (worktree|status) ([^`]*)`", prompt)
+            found[task] = [cmd for cmd, _ in cmds]
+            for _, args in cmds:
+                self.assertEqual(args, "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>", task)
+            self.assertEqual(rule(prompt, "Checkout"), [CHECKOUT_RULE], task)
+        both = ["worktree", "status"]
+        self.assertEqual(found, {"deep-research": ["worktree"], "light-research": ["worktree"],
+                                 "product-design": ["worktree"], "build": both, "light-build": both,
+                                 "echo": ["worktree"], "prepare-test": ["worktree"]})
 
     def test_every_repo_named_by_url_may_be_a_local_clone_path(self):
         named = []

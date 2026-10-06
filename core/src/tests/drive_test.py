@@ -132,7 +132,7 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--allowedTools"):], [
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`", argv[2])
+        self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
@@ -475,7 +475,7 @@ class Skill(Base):
         self.assertIn('description: "Quick research on a question', head)
         self.assertTrue(body.lstrip().startswith("# Guide"))
         self.assertIn("Input: $ARGUMENTS", body)
-        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`",
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`",
                       body)
         self.assertNotIn(self.tmp.name, body)
         self.assertNotIn(CORE, body)
@@ -520,7 +520,7 @@ class Skill(Base):
         skill = os.path.join(self.tmp.name, "pm-product-design")
         files = self.export("pm", "product-design").files
         self.assertEqual(sorted(files), [os.path.join(skill, "SKILL.md"), os.path.join(skill, "scripts", "repo.py")])
-        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> <repo>`",
+        self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/scripts/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`",
                       files[os.path.join(skill, "SKILL.md")])
 
     def test_document_tasks_return_to_the_orchestrator(self):
