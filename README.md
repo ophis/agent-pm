@@ -188,25 +188,6 @@ done
 
 The plists log to `/Users/francis/.agent-pm/logs/` (launchd doesn't expand `~`); with another `work_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
-### Migration (one time)
-
-Before TASK-182, `work/` and `logs/` sat inside the repo. launchd runs `main`, so merging is the switch: pull `main` and move the dirs together, while no issue is In Progress and `tmux ls` shows no `agent-pm-*` session.
-
-```bash
-for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done   # no tick (nor prune) mid-move
-git -C ~/playground/agent-pm pull
-mkdir ~/.agent-pm
-mv ~/playground/agent-pm/work ~/.agent-pm/work
-mv ~/playground/agent-pm/logs ~/.agent-pm/logs
-for clone in ~/playground/agent-pm ~/playground/claude-autopilot; do   # each [local_clones] path
-  git -C "$clone" worktree list --porcelain \
-    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/.agent-pm/work/|p' \
-    | xargs git -C "$clone" worktree repair
-done
-```
-
-Then install the plists again as above (`cp` and `bootstrap`). Sessions from before the move can't be resumed: Claude Code keys transcripts by the workdir path.
-
 ### Role accounts
 
 Each `[roles.<role>]` in `orchestrator/config.toml` acts in Linear, through write-back, as its own `account`, with its API key in the Keychain under `key`:
