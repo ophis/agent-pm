@@ -449,9 +449,10 @@ class RealCore(unittest.TestCase):
                 run = compose.load_run(root, role, task)
                 self.assertEqual((run.task, run.show), (task, ""))
 
-    def test_local_example_is_comments_only(self):
-        with open(os.path.join(CORE, "config.local.example.toml"), "rb") as f:
-            self.assertEqual(tomllib.load(f), {})
+    def test_local_lines_uncommented_are_a_valid_local_file(self):
+        with open(os.path.join(CORE, compose.CONFIG)) as f:
+            local = tomllib.loads("".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: ")))
+        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs"}, set(local))
 
     def test_every_prompt_has_the_progress_rule_once(self):
         for role, task in ALL:
