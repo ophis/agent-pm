@@ -7,7 +7,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 ```
 agent-pm/
 ├── CLAUDE.md                    # Claude's notes on this repo
-├── .claude/skills/tui-workers/  # the tui-workers skill
+├── .claude/skills/tmux/         # the tmux skill
 ├── core/                        # the core pack: team/, output/, src/, skills/ (core/CLAUDE.md)
 │   └── config.toml, config.local.toml        # Core configuration
 └── orchestrator/                # the Linear side: src/, *.plist (launchd schedules)
@@ -76,15 +76,15 @@ python3 core/src/tui_claude.py show a --show ''                          # only 
 python3 core/src/tui_claude.py --help                                    # options; how --show replaces the split
 ```
 
-### tui-workers skill
+### tmux skill
 
-`.claude/skills/tui-workers/` builds on `tui_claude.py`: with `/tui-workers`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps, commands and gotchas: [SKILL.md](.claude/skills/tui-workers/SKILL.md).
+`.claude/skills/tmux/` builds on `tui_claude.py`: with `/tmux`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps, commands and gotchas: [SKILL.md](.claude/skills/tmux/SKILL.md).
 
 ```bash
-python3 .claude/skills/tui-workers/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md'      # prints "a <session id>"; a pane right of this one
-python3 .claude/skills/tui-workers/scripts/workers.py start b --events ~/w.events -- --model sonnet                   # a pane below a's; claude flags after --
-python3 .claude/skills/tui-workers/scripts/workers.py reply a                                                         # a's last answer, from its transcript
-python3 .claude/skills/tui-workers/scripts/workers.py restart a                                                       # a resumes its conversation in its pane
+python3 .claude/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md'      # prints "a <session id>"; a pane right of this one
+python3 .claude/skills/tmux/scripts/workers.py start b --events ~/w.events -- --model sonnet                   # a pane below a's; claude flags after --
+python3 .claude/skills/tmux/scripts/workers.py reply a                                                         # a's last answer, from its transcript
+python3 .claude/skills/tmux/scripts/workers.py restart a                                                       # a resumes its conversation in its pane
 ```
 
 ### Core configuration

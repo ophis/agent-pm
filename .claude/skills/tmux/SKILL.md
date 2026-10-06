@@ -1,12 +1,12 @@
 ---
-name: tui-workers
+name: tmux
 description: "Start and direct other Claude Code sessions (workers) in tmux/iTerm2 panes: start, watch done/blocked/dead events, follow up, read replies, rename, stop, restart."
 allowed-tools:
   - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/workers.py reply *)
   - Bash(python3 ${CLAUDE_SKILL_DIR}/../../../core/src/tui_claude.py read *)
 ---
 
-# TUI workers
+# tmux
 
 You, the commander, run each worker as an interactive `claude` in its own tmux session, shown in an iTerm2 pane, else a tmux pane. Below, `workers.py` means `python3 ${CLAUDE_SKILL_DIR}/scripts/workers.py` and `tui_claude.py` means `python3 ${CLAUDE_SKILL_DIR}/../../../core/src/tui_claude.py`; write them out exactly so, since the pre-approved `workers.py reply` and `tui_claude.py read` match that text.
 
