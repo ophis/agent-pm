@@ -25,7 +25,7 @@ STATES_LINE = HEADER[HEADER.index("states = "):HEADER.index("task_label_group")]
 
 
 def missing(keys):
-    return f"missing {keys}: set them in orchestrator/config.local.toml, a copy of orchestrator/config.local.example.toml"
+    return f"missing {keys}: set them in orchestrator/config.local.toml (orchestrator/config.toml's `# local:` lines)"
 
 
 class ConfigFile:
@@ -334,7 +334,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(config.docs(runs, self.root), config.Docs("acme/notes", "trunk", DIRS))
 
     def test_docs_mismatch(self):
-        message = "core: document tasks must publish to one github.com repo and branch"
+        message = "core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)"
         for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
                        DESIGN.replace(" }", ', host = "ghe.example.com" }')):
             with self.subTest(design):
@@ -428,9 +428,14 @@ class RealConfig(unittest.TestCase):
                           "product-design": ("design", "PRD"), "build": ("build", "ENG"),
                           "light-build": ("build", "ENG")})
 
-    def test_example_is_comments_only(self):
-        with open(os.path.join(config.ROOT, config.EXAMPLE), "rb") as f:
-            self.assertEqual(tomllib.load(f), {})
+    def test_local_lines_uncommented_set_every_required_key(self):
+        with open(config.CONFIG) as f:
+            local = "".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: "))
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(config.CONFIG, os.path.join(d, "config.toml"))
+            with open(os.path.join(d, "config.local.toml"), "w") as f:
+                f.write(local)
+            self.assertEqual(config._missing(repo.read_config(os.path.join(d, "config.toml"))), [])
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):

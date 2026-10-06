@@ -11,7 +11,6 @@ from typing import Literal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
-EXAMPLE = "orchestrator/config.local.example.toml"
 CORE = os.path.join(ROOT, "core")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
@@ -192,8 +191,8 @@ def load_config(path=CONFIG):
     checks against core config are in runnable(), which every consumer calls."""
     cfg = repo.read_config(path)
     if missing := _missing(cfg):
-        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in orchestrator/config.local.toml, "
-                         f"a copy of {EXAMPLE}")
+        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in orchestrator/config.local.toml "
+                         "(orchestrator/config.toml's `# local:` lines)")
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
@@ -366,7 +365,7 @@ def docs(roles, root=ROOT):
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise SystemExit("core: document tasks must publish to one github.com repo and branch")
+        raise SystemExit("core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)")
     return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
 
 
