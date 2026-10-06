@@ -42,7 +42,7 @@ DIED = "set-option @state dead"
 DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
 BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
-PANES = "#{pane_tty} #{pane_id}"
+PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
 # before osascript, whose script needs iTerm2 installed; -a includes ancestors (the caller usually runs inside iTerm2)
@@ -233,13 +233,14 @@ def events_file(path: str) -> str:
 
 def decorate(session: str, events: str | None = None, *, proc=subprocess.run) -> None:
     """On the session: @events (when given), the pane-died hook (@state dead; with events, `HH:MM:SS <session> dead`
-    appended to @events) and the pane border showing `<session> <state>`."""
+    appended to @events), the pane border showing `<session> <state>` and no status line."""
     target = f"={_name(session)}:"
     died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
     for args in [*([["set-option", "-t", target, "@events", events]] if events is not None else []),
                  ["set-hook", "-p", "-t", target, "pane-died", died],
                  ["set-option", "-w", "-t", target, "pane-border-status", "top"],
-                 ["set-option", "-w", "-t", target, "pane-border-format", BORDER]]:
+                 ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
+                 ["set-option", "-t", target, "status", "off"]]:
         _tmux_ok(args, proc)
 
 
@@ -376,7 +377,7 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
         if "#" in arg or arg.endswith(";"):
             raise TuiError(f"tmux would misread {arg!r}")
     try:
-        res = _tmux(["split-window", "-h" if side == "right" else "-v", "-P", "-F", "#{pane_id}", "-t", a.pane,
+        res = _tmux(["split-window", "-d", "-h" if side == "right" else "-v", "-P", "-F", "#{pane_id}", "-t", a.pane,
                      *command], proc)
     except TuiError as e:
         return None, str(e)
@@ -550,8 +551,8 @@ def _opener_pane(opener: str, own: bool | None, proc) -> Anchor:
 
 
 def _shown(session: str, own: bool, proc) -> Anchor | None:
-    """The pane a terminal shows the session in, by its most recently active client: a nested client's host pane, else
-    the caller's own pane ($TMUX_PANE) when own, else the client's pane. None when no client shows it."""
+    """The pane a terminal shows the session in, by its most recently active client: a nested client's live host pane,
+    else the caller's own pane ($TMUX_PANE) when own, else the client's pane. None when no client shows it."""
     out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
     clients = sorted((c for c in (line.split(" ", 3) for line in out.splitlines())
                       if len(c) == 4 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3]),
@@ -559,8 +560,9 @@ def _shown(session: str, own: bool, proc) -> Anchor | None:
     if not clients:
         return None
     _, tty, pane, socket = clients[0]
-    hosts = dict(line.split(" ", 1) for line in
-                 _tmux_ok(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines() if " " in line)
+    hosts = {f[1]: f[2] for f in (line.split(" ", 2) for line in
+                                  _tmux_ok(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines())
+             if len(f) == 3 and f[0] != "1"}
     if PANE.fullmatch(hosts.get(tty, "")):
         return Anchor(None, hosts[tty], socket, session)
     return Anchor(("tty", [c[1] for c in clients]), os.environ["TMUX_PANE"] if own else pane, socket, session)

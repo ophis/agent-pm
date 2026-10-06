@@ -30,12 +30,12 @@ WATCH = "; watch it with tmux attach -t '=s'"
 MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
 DIED = "set-option @state dead"
 DIED_EVENTS = DIED + " ; run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
-DECORATE = ["set-hook", "set-option", "set-option"]
+DECORATE = ["set-hook", "set-option", "set-option", "set-option"]
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3", "ITERM_SESSION_ID": "w0t0p0:ABC"}
 OWN = ["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]
 SESSIONS = ["tmux", "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"]
 LIVE = ["tmux", "list-panes", "-a", "-F", "#{pane_id}"]
-HOSTS = ["tmux", "list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"]
+HOSTS = ["tmux", "list-panes", "-a", "-F", "#{pane_dead} #{pane_tty} #{pane_id}"]
 SOCK = "/tmp/s p"
 
 
@@ -50,7 +50,7 @@ def record(opener, pane):
 
 
 def split_window(flag, pane):
-    return ["tmux", "split-window", flag, "-P", "-F", "#{pane_id}", "-t", pane,
+    return ["tmux", "split-window", "-d", flag, "-P", "-F", "#{pane_id}", "-t", pane,
             "env", "-u", "TMUX", TMUX, "-S", SOCK, "attach", "-t", "=s"]
 
 
@@ -77,7 +77,17 @@ def decorations(session, events=None):
     return [*([["tmux", "set-option", "-t", target, "@events", events]] if events else []),
             ["tmux", "set-hook", "-p", "-t", target, "pane-died", DIED_EVENTS if events else DIED],
             ["tmux", "set-option", "-w", "-t", target, "pane-border-status", "top"],
-            ["tmux", "set-option", "-w", "-t", target, "pane-border-format", " #{session_name} #{@state} "]]
+            ["tmux", "set-option", "-w", "-t", target, "pane-border-format", " #{session_name} #{@state} "],
+            ["tmux", "set-option", "-t", target, "status", "off"]]
+
+
+def panes(*rows):
+    """A list-panes result printing rows of (pane_dead, pane_tty, pane_id) in the call's -F format."""
+    def result(argv):
+        fmt = argv[argv.index("-F") + 1]
+        values = [dict(zip(("pane_dead", "pane_tty", "pane_id"), row)) for row in rows]
+        return 0, "".join(re.sub(r"#\{(\w+)\}", lambda m: v[m.group(1)], fmt) + "\n" for v in values)
+    return result
 
 
 class Tmux:
@@ -155,7 +165,7 @@ class Start(unittest.TestCase):
                                          ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on"])
         self.assertNotIn("-c", fake.calls[1][:fake.calls[1].index(sys.executable)])
         self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
-        self.assertEqual(fake.kwargs, [TMUX_KW] * 5)
+        self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
         self.sleep.assert_not_called()
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
@@ -769,7 +779,7 @@ class Pane(unittest.TestCase):
     def test_anchor(self):
         own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
         shown = self.clients((5, "/dev/ttys004", "%9"))
-        nested = (0, "/dev/ttys001 %1\n/dev/ttys004 %5\n")
+        nested = panes(("0", "/dev/ttys001", "%1"), ("0", "/dev/ttys004", "%5"))
         cases = [(ITERM, {}, None, tui_claude.Anchor(("id", ["ABC"]))),
                  (INSIDE, {**own, "list-clients": shown}, None,
                   tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%3", SOCK, "own")),
@@ -793,6 +803,16 @@ class Pane(unittest.TestCase):
         for env, results, beside, msg in cases:
             with self.subTest(env=env, beside=beside), environ(**env), self.assertRaisesRegex(tui_claude.TuiError, msg):
                 tui_claude.anchor(beside, proc=Tmux(results=results))
+
+    def test_a_dead_pane_sharing_the_clients_tty_is_skipped(self):
+        # a dead worker pane keeps its tty, which a later terminal may get
+        shown = self.clients((5, "/dev/ttys004", "%9"))
+        live, dead = ("0", "/dev/ttys004", "%5"), ("1", "/dev/ttys004", "%6")
+        for rows, want in (([live, dead], tui_claude.Anchor(None, "%5", SOCK, "b")),
+                           ([dead], tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))):
+            with self.subTest(rows=rows), environ():
+                fake = Tmux(results={"list-clients": shown, "list-panes": panes(*rows)})
+                self.assertEqual(tui_claude.anchor("b", proc=fake), want)
 
     def test_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n")})
@@ -833,7 +853,7 @@ class Pane(unittest.TestCase):
         fake = Tmux(results={"list-clients": clients, "pgrep": (1,), "split-window": (0, "%10\n")})
         self.assertIsNone(self.show(fake, {}, beside="b", split="below"))
         self.assertEqual(fake.calls[-2:], [split_window("-v", "%7"), *record(None, "%10")])
-        nested = Tmux(results={"list-clients": clients, "list-panes": (0, "/dev/ttys005 %5\n"),
+        nested = Tmux(results={"list-clients": clients, "list-panes": panes(("0", "/dev/ttys005", "%5")),
                                "split-window": (0, "%10\n")})
         self.assertIsNone(self.show(nested, {}, beside="b"))
         self.assertEqual(nested.calls, [clients_of("b"), HOSTS, split_window("-h", "%5"), *record(None, "%10")])
@@ -933,15 +953,15 @@ def seq(*results):
 
 class Stack(unittest.TestCase):
     """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal client (tty
-    /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the `live` pane ids (`hosts` for the
-    tty format); pgrep finds no iTerm2 unless told; a tmux split prints %99."""
+    /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the `live` pane ids (`hosts`, panes()
+    rows, for the tty format); pgrep finds no iTerm2 unless told; a tmux split prints %99."""
     NONE = (0, "no iTerm2 pane shows the anchor\n")
 
-    def fake(self, rows=(), live=(), own="cmd", clients=f"5 /dev/ttys004 %9 {SOCK}\n", hosts="", **results):
-        def panes(argv):
-            return 0, "".join(p + "\n" for p in live) if argv[-1] == "#{pane_id}" else hosts
+    def fake(self, rows=(), live=(), own="cmd", clients=f"5 /dev/ttys004 %9 {SOCK}\n", hosts=(), **results):
+        def list_panes(argv):
+            return (0, "".join(p + "\n" for p in live)) if argv[-1] == "#{pane_id}" else panes(*hosts)(argv)
         return Tmux(results={"display-message": (0, own + "\n"),
-                             "list-sessions": (0, "".join("\t".join(r) + "\n" for r in rows)), "list-panes": panes,
+                             "list-sessions": (0, "".join("\t".join(r) + "\n" for r in rows)), "list-panes": list_panes,
                              "list-clients": (0, clients), "pgrep": (1,), "split-window": (0, "%99\n"), **results})
 
     def show(self, fake, env=INSIDE, **kw):
@@ -997,7 +1017,7 @@ class Stack(unittest.TestCase):
         self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("W"), HOSTS, PGREP,
                                       osa("right", "tty", "s", "/dev/ttys004"), *record("W", "NEW")])
         # W shown by a nested client in the commander's pane %8: that pane splits, never one in W's window
-        fake = self.fake(stack, live, own="W", hosts="/dev/ttys001 %7\n/dev/ttys004 %8\n")
+        fake = self.fake(stack, live, own="W", hosts=[("0", "/dev/ttys001", "%7"), ("0", "/dev/ttys004", "%8")])
         self.assertIsNone(self.show(fake))
         self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("W"), HOSTS, split_window("-h", "%8"),
                                       *record("W", "%99")])
