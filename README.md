@@ -81,10 +81,10 @@ python3 core/src/tui_claude.py --help                                    # optio
 `.claude/skills/tmux/` builds on `tui_claude.py`: with `/tmux`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. Steps, commands and gotchas: [SKILL.md](.claude/skills/tmux/SKILL.md).
 
 ```bash
-python3 .claude/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md'      # prints "a <session id>"; a pane right of this one
-python3 .claude/skills/tmux/scripts/workers.py start b --events ~/w.events -- --model sonnet                   # a pane below a's; claude flags after --
-python3 .claude/skills/tmux/scripts/workers.py reply a                                                         # a's last answer, from its transcript
-python3 .claude/skills/tmux/scripts/workers.py restart a                                                       # a resumes its conversation in its pane
+python3 .claude/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md' -- --permission-mode auto      # prints "a <session id>"; a pane right of this one
+python3 .claude/skills/tmux/scripts/workers.py start b --events ~/w.events -- --permission-mode auto --model sonnet                      # a pane below a's; claude flags after --
+python3 .claude/skills/tmux/scripts/workers.py reply a                                                                                   # a's last answer, from its transcript
+python3 .claude/skills/tmux/scripts/workers.py restart a                                                                                 # a resumes its conversation in its pane
 ```
 
 ### Core configuration
