@@ -318,7 +318,7 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
     if not UUID_RE.fullmatch(a.uuid or "") or a.target is not None and not repo_slug(a.target):
         print(f"run.py: bad issue uuid or target: {a.uuid} {a.target}", file=sys.stderr)
         return 2
-    layout = drive.Layout(a.split or drive.Layout.split, a.beside) if a.runner == "tui" else None
+    layout = drive.Layout(a.split or "right", a.beside) if a.runner == "tui" else None
     try:
         drive.check_layout(a.runner, layout)  # syntax only: the outer placed the pane
     except compose.ConfigError as e:

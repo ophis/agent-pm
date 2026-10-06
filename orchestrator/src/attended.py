@@ -28,7 +28,7 @@ def layout(split, beside, *, proc=subprocess.run):
     session's when a terminal shows it, else $ITERM_SESSION_ID's iTerm2 pane)."""
     if split is not None and split not in tui_claude.SPLITS:
         raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
-    split = split or drive.Layout.split
+    split = split or "right"
     if beside is not None:
         if not tui_claude.NAME.fullmatch(beside):
             raise Bad("bad tmux session name")
