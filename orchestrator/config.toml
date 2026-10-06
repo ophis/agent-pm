@@ -4,9 +4,9 @@
 #   harness_key       required: Keychain service of the harness account's Linear API key (router, promote, prune)
 #   task_label_group  required: Linear id of the `Tasks` label group; its labels pick an issue's task through
 #                     [task_labels]
-#   data_dir          runtime state: agent runs' workdirs in <data_dir>/work/<ID>/, router state and logs in
-#                     <data_dir>/logs/ (the plists hard-code it); absolute or ~, neither in nor containing this repo or a
-#                     [local_clones] clone; unset → <repo path>-data
+#   work_dir          runtime state: agent runs' workdirs in <work_dir>/work/<ID>/, router state and logs in
+#                     <work_dir>/logs/ (the plists hard-code it); absolute or ~, neither in nor containing this repo or a
+#                     [local_clones] clone; unset → <repo path>-work
 team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents
 human_members = ["ophis.w@outlook.com"]
 harness_key = "linear-api-key"

@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import (PATH, PROJECTS, ROOT, RUNS_LOG, WORK_DIR, load_config, role_for, runnable, session,  # noqa: E402
+from config import (PATH, PROJECTS, ROOT, RUNS_LOG, RUNS_DIR, load_config, role_for, runnable, session,  # noqa: E402
                     stage_order, transcript)
 import attended  # noqa: E402
 import linear  # noqa: E402
@@ -214,9 +214,9 @@ def gate(lines, max_5h=MAX_5H):
 
 
 def probe(sh, max_5h=MAX_5H):
-    """(ok, summary) of a fresh usage probe against max_5h. Its cwd is <work_dir> itself, not an agent run's <work_dir>/<ID>/."""
-    os.makedirs(WORK_DIR, exist_ok=True)
-    out = sh(PROBE, cwd=WORK_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    """(ok, summary) of a fresh usage probe against max_5h. Its cwd is <work_dir>/work itself, not an agent run's <work_dir>/work/<ID>/."""
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    out = sh(PROBE, cwd=RUNS_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     return gate(out.stdout.splitlines(), max_5h)
 
 

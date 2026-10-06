@@ -180,7 +180,7 @@ class Base(unittest.TestCase):
         os.makedirs(self.root)
         os.symlink(config.CORE, os.path.join(self.root, "core"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG)
-        for p in (mock.patch.object(config, "WORK_DIR", os.path.join(self.root, "work")),
+        for p in (mock.patch.object(config, "RUNS_DIR", os.path.join(self.root, "work")),
                   mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
@@ -323,7 +323,7 @@ class Outer(Base):
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
         self.transcript()
-        os.makedirs(os.path.join(config.WORK_DIR, ID, config.CLONES[0], "Ophis", "Agent-PM", ".git"))
+        os.makedirs(os.path.join(config.RUNS_DIR, ID, config.CLONES[0], "Ophis", "Agent-PM", ".git"))
         self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
         self.assertEqual(self.main(args(mode="resume")), 0)
         self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)

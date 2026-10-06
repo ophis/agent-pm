@@ -31,12 +31,12 @@ agent-pm/
         ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
         ├── linear.py      # Linear client and lookups, shared helpers
         └── tests/
-agent-pm-data/             # <data_dir>
-├── work/<ID>/             # <work_dir>/<ID>/: an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
-└── logs/                  # <logs_dir>: router state and agent run output
+agent-pm-work/             # <work_dir>
+├── work/<ID>/             # an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
+└── logs/                  # router state and agent run output
 ```
 
-Runtime state lives outside the repo, in `<data_dir>`: `orchestrator/config.toml`'s `data_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `<repo path>-data` next to the checkout. `<work_dir>` is `<data_dir>/work`, `<logs_dir>` is `<data_dir>/logs`. An agent run's cwd, `<work_dir>/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
+Runtime state lives outside the repo, in `<work_dir>`: `orchestrator/config.toml`'s `work_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `<repo path>-work` next to the checkout. An agent run's cwd, `<work_dir>/work/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
 
 ## Core pack
 
@@ -54,7 +54,7 @@ A role is who the agent is: a charter (`core/team/roles/<role>.md`: responsibili
 
 ### Tasks
 
-A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config/config.toml`. A task gets a target repo through `core/src/repo.py worktree`: at `<Workdir>/src/<owner>/<name>`, on the agent run's own branch, as a git worktree of the local clone path the input names (it must lie outside `<work_dir>` and the temp dirs; the worktree's own config, which turns on that clone's `extensions.worktreeConfig`, checks out symlinks as plain files unless `core/config/config.toml`'s `symlink_clones` lists the clone's real path; an existing worktree whose setting disagrees is refused: remove it and run again), or a fresh blobless clone for an `<owner>/<name>` or URL. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The `Repo:` line the orchestrator writes for the repo it resolves names that repo's `[local_clones]` path; on later agent runs of an issue its existing checkout's form wins.
+A task is the steps an agent run follows (`core/team/tasks/<task>.md`), including where it reports progress and how to resume after an interruption. The docs repo, branch and folder a document task publishes to are its `output` in `core/config/config.toml`. A task gets a target repo through `core/src/repo.py worktree`: at `<Workdir>/src/<owner>/<name>`, on the agent run's own branch, as a git worktree of the local clone path the input names (it must lie outside `<work_dir>/work` and the temp dirs; the worktree's own config, which turns on that clone's `extensions.worktreeConfig`, checks out symlinks as plain files unless `core/config/config.toml`'s `symlink_clones` lists the clone's real path; an existing worktree whose setting disagrees is refused: remove it and run again), or a fresh blobless clone for an `<owner>/<name>` or URL. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The `Repo:` line the orchestrator writes for the repo it resolves names that repo's `[local_clones]` path; on later agent runs of an issue its existing checkout's form wins.
 
 - **`deep-research`:** for a web question, runs the built-in `/deep-research` Workflow once over all its subquestions; for a local one, writes and runs one workflow of its own (ultracode, ≤ 100 agents, verification inside) over the worktrees; for a mixed one, at most that workflow plus one `/deep-research` run for the web part, skipping the second round when the `gate` command fails. Without a Workflow tool it follows `core/team/methods/` instead. Writes the report from `core/team/templates/research-report.md` to `Research/` in the docs repo.
 - **`light-research`:** sends 3–6 angles in one round, one agent each (web angles, worktree angles, or both), each checking its own sources, with no separate verification. Publishes a shorter report marked Light Research. A later `deep-research` agent run given that report rewrites the same file.
@@ -63,7 +63,7 @@ A task is the steps an agent run follows (`core/team/tasks/<task>.md`), includin
 
 ### An agent run's command
 
-What `drive.py` starts for a product-design agent run on TASK-142 (cwd `<work_dir>/TASK-142/`, env `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000`):
+What `drive.py` starts for a product-design agent run on TASK-142 (cwd `<work_dir>/work/TASK-142/`, env `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=3600000`):
 
 ```bash
 claude -p '<prompt>' \
@@ -71,8 +71,8 @@ claude -p '<prompt>' \
   --model opus --effort high \
   --permission-mode auto --setting-sources user --strict-mcp-config \
   --output-format stream-json --verbose \
-  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm-data/work/TASK-142/src *)' \
-    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm-data/work/TASK-142/.report.jsonl *)'
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm-work/work/TASK-142/src *)' \
+    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm-work/work/TASK-142/.report.jsonl *)'
 ```
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
@@ -144,8 +144,8 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 | Script | Runs | Does |
 |---|---|---|
 | `router.py` | Every 30 minutes, all day; by hand with `--tui` (see Attended runs) | Decides what runs next. Recovers dead In Progress agent runs (resumes them or returns them to Todo), then starts at most one agent run per tick for a role below its `max_runs` live sessions: resumes an interrupted agent run or claims the top ready Todo issue (priority, then later role, then oldest; one with an unfinished blocker isn't ready). Skips the tick when every role is full, while 5-hour usage is at 90% or more, or when a weekly limit is full. |
-| `run.py` | Called by the router; by hand with `--issue ID --tui` (see Attended runs) | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `<work_dir>/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `<work_dir>/<ID>/`. For `engineering` it first checks the target repo and branch; a new agent run whose repo check fails is bounced (comment, In Review) without one. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `<logs_dir>/projects/<task>.log` and `<logs_dir>/runs.log`, then hands the outcome to `writeback.py`. |
-| `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research agent run goes back to Todo). Steps are ledgered in `<work_dir>/<ID>/writeback.json`, so a resumed agent run repeats none. An agent run with no valid outcome stays In Progress, and the router resumes it. |
+| `run.py` | Called by the router; by hand with `--issue ID --tui` (see Attended runs) | Outer, in the tick: validates its arguments and config, checks the role's Keychain item, reads the issue, writes `<work_dir>/work/<ID>/input.md` (the issue, its comments and the docs it links, from `issues.py`, `target.py` and `inputs.py`), then starts the inner in tmux session `agent-pm-<role>-<ID>` with cwd `<work_dir>/work/<ID>/`. For `engineering` it first checks the target repo and branch; a new agent run whose repo check fails is bounced (comment, In Review) without one. Inner, in tmux: posts the session comment, runs the role's task through core, logs to `<work_dir>/logs/projects/<task>.log` and `<work_dir>/logs/runs.log`, then hands the outcome to `writeback.py`. |
+| `writeback.py` | Inner of `run.py` | As the role account: posts the start comment and each other progress mark (`Progress (<name>): …`), then on the outcome the Spec/Plan comments (engineering), title, subscribes you, the summary or questions comment, the document or PR attachment and the state move (In Review; a failed research agent run goes back to Todo). Steps are ledgered in `<work_dir>/work/<ID>/writeback.json`, so a resumed agent run repeats none. An agent run with no valid outcome stays In Progress, and the router resumes it. |
 | `sessions.py` | `run.py`, before and after `claude` | Writes the session's `Run <sid>` comment on the issue (see Session records). |
 | `promote.py` | Every 5 minutes | Hands off: after a 10-minute undo window, an issue in Handoff becomes a Todo issue for the next role in the same project, carrying the source's output links and your comments, and the source goes to Done. Each tick ends with `prune.py`. |
 | `prune.py` | End of each promote tick | Cleans up issues that have been Done or Canceled for 24 hours (see Using the board › Finish) and archives the pm and engineer ones; closes their attended runs' TUI sessions. |
@@ -155,11 +155,11 @@ The Python code in `orchestrator/src/` (config `orchestrator/config.toml`) that 
 ## Using the board
 
 - **New work:** create an issue in the product's project, assigned to the role account that should do it, in Todo; an issue not assigned to a role account (unassigned, or to a person) is never picked. Researcher and pm issues take the brief from the description; a research or pm issue about a repo other than its project's `[project_repos]` entry needs a `Repo: <owner>/<name>` line in its description, and so does a direct engineer issue unless its project has a `[project_repos]` entry.
-- **Order work:** in Linear, add "Y blocks X": X is claimed only once every direct blocker is Done, Canceled or Duplicate (archived counts as done; an unreadable blocker as not done). The router skips a blocked X and logs `blocked: X by Y` to `<logs_dir>/router.log`.
+- **Order work:** in Linear, add "Y blocks X": X is claimed only once every direct blocker is Done, Canceled or Duplicate (archived counts as done; an unreadable blocker as not done). The router skips a blocked X and logs `blocked: X by Y` to `<work_dir>/logs/router.log`.
 - **Your turn:** the agent moves an issue to In Review and subscribes you when output is ready, it has questions, or it failed.
 - **Approve:** move the issue to Handoff, with a comment saying what to do next (optional for a PRD). A PRD's target repo is the project's `[project_repos]` entry, which the PM's hand-off comment names; without one, comment `Repo: <owner>/<name>`. A `Repo:` line in your comment always wins. After 10 minutes (an undo window), promote creates the next role's issue in the same project, assigned to that role, and marks this one Done.
 - **Revise:** comment your feedback and move the issue back to Todo. The agent picks up where it left off. For an engineer issue, your PR comments and reviews count too; other authors' PR comments go to the build as review input, and only yours start a new build.
-- **Finish:** Done and Canceled are yours to set. 24 hours later, a finished issue's `src/` (clones and worktrees), `publish/` (the docs clone) and `tmp/` in `<work_dir>/<ID>/` are deleted; the rest of `<work_dir>/<ID>/` stays. In each local clone those worktrees came from, prune then drops their records and deletes the issue's `<ID>-*` branches that origin already holds; it keeps and reports the others. Lost: uncommitted changes, commits never pushed from a detached HEAD or a submodule, and, since `git worktree prune` covers the whole clone, the record of any of your own worktrees whose folder is missing at that moment unless you `git worktree lock` it. pm and engineer issues are archived then too, so restore one in Linear before reworking it.
+- **Finish:** Done and Canceled are yours to set. 24 hours later, a finished issue's `src/` (clones and worktrees), `publish/` (the docs clone) and `tmp/` in `<work_dir>/work/<ID>/` are deleted; the rest of `<work_dir>/work/<ID>/` stays. In each local clone those worktrees came from, prune then drops their records and deletes the issue's `<ID>-*` branches that origin already holds; it keeps and reports the others. Lost: uncommitted changes, commits never pushed from a detached HEAD or a submodule, and, since `git worktree prune` covers the whole clone, the record of any of your own worktrees whose folder is missing at that moment unless you `git worktree lock` it. pm and engineer issues are archived then too, so restore one in Linear before reworking it.
 
 An issue still unfinished after 4 attempts goes to In Review; a `human_members` user moving it back to Todo resets the count.
 
@@ -169,24 +169,24 @@ A role can have several tasks. The issue's label in the Linear `Tasks` label gro
 
 To upgrade a Light Research issue, remove the label, comment the claims to verify and move the issue back to Todo: the next agent run is `deep-research`, with the earlier report in its input.
 
-The task is recorded in `<logs_dir>/runs.log`, so a resumed agent run keeps it whatever the labels say (none recorded: the role's default). An interrupted agent run whose task is no longer one of the role's goes to In Review with a comment.
+The task is recorded in `<work_dir>/logs/runs.log`, so a resumed agent run keeps it whatever the labels say (none recorded: the role's default). An interrupted agent run whose task is no longer one of the role's goes to In Review with a comment.
 
 To add a task to a role: create `core/team/tasks/<task>.md` (its frontmatter `description` is the skill's; `core/CLAUDE.md`), add `[roles.<role>.tasks.<task>]` to `core/config/config.toml`, add the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you) and the `claude` CLI with the `autopilot` plugin. Agent runs need no `linear` skill and get no Linear key. The docs repo is read through `gh` and published from a per-agent-run clone in `<work_dir>/<ID>/publish`, so `git pull` your own clone to see the documents locally. `task_label_group` in `orchestrator/config.toml` is the id of the Linear `Tasks` label group (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
+Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged in as you) and the `claude` CLI with the `autopilot` plugin. Agent runs need no `linear` skill and get no Linear key. The docs repo is read through `gh` and published from a per-agent-run clone in `<work_dir>/work/<ID>/publish`, so `git pull` your own clone to see the documents locally. `task_label_group` in `orchestrator/config.toml` is the id of the Linear `Tasks` label group (from the Linear API: `issueLabels { nodes { id name isGroup } }`); the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under orchestrator/config.toml's harness_key
-mkdir -p ~/playground/agent-pm-data/logs                              # <logs_dir>, the plists' log dir; launchd can't start a job without it
+mkdir -p ~/playground/agent-pm-work/logs                              # the plists' log dir; launchd can't start a job without it
 for job in router promote; do
   cp orchestrator/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
 done
 ```
 
-The plists log to `/Users/francis/playground/agent-pm-data/logs/`; with another `data_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+The plists log to `/Users/francis/playground/agent-pm-work/logs/`; with another `work_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ### Migration (one time)
 
@@ -195,12 +195,12 @@ Before TASK-182, `work/` and `logs/` sat inside the repo. launchd runs `main`, s
 ```bash
 for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done   # no tick (nor prune) mid-move
 git -C ~/playground/agent-pm pull
-mkdir ~/playground/agent-pm-data
-mv ~/playground/agent-pm/work ~/playground/agent-pm-data/work
-mv ~/playground/agent-pm/logs ~/playground/agent-pm-data/logs
+mkdir ~/playground/agent-pm-work
+mv ~/playground/agent-pm/work ~/playground/agent-pm-work/work
+mv ~/playground/agent-pm/logs ~/playground/agent-pm-work/logs
 for clone in ~/playground/agent-pm ~/playground/claude-autopilot; do   # each [local_clones] path
   git -C "$clone" worktree list --porcelain \
-    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/playground/agent-pm-data/work/|p' \
+    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/playground/agent-pm-work/work/|p' \
     | xargs git -C "$clone" worktree repair
 done
 ```
@@ -216,7 +216,7 @@ Each `[roles.<role>]` in `orchestrator/config.toml` acts in Linear, through writ
 3. Signed in as the role account, create a personal API key in its account settings.
 4. `security add-generic-password -s <key> -a <account> -w` and paste the key at the prompt.
 
-`run.py` checks that the item exists; the agent run itself gets no Linear key. A missing item stops that role's agent runs with a `config-error` line in `<logs_dir>/projects/<task>.log`.
+`run.py` checks that the item exists; the agent run itself gets no Linear key. A missing item stops that role's agent runs with a `config-error` line in `<work_dir>/logs/projects/<task>.log`.
 
 ## Operating
 
@@ -235,12 +235,12 @@ To open an agent run's session, copy the command from the code block of its issu
 
 | Log | Contents |
 |---|---|
-| `<logs_dir>/router.log` | Each tick's decisions, including each claim's task |
-| `<logs_dir>/projects/<task>.log` | Each agent run's output, progress, errors and write-back steps |
-| `<logs_dir>/promote.log` | Handoff and prune actions |
-| `<logs_dir>/runs.log` | Agent run start/resume/end; the router needs it to resume, so keep it |
+| `<work_dir>/logs/router.log` | Each tick's decisions, including each claim's task |
+| `<work_dir>/logs/projects/<task>.log` | Each agent run's output, progress, errors and write-back steps |
+| `<work_dir>/logs/promote.log` | Handoff and prune actions |
+| `<work_dir>/logs/runs.log` | Agent run start/resume/end; the router needs it to resume, so keep it |
 
-Every agent run works in `<work_dir>/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<data_dir>`, or the repo while `data_dir` is unset, breaks resuming in-progress agent runs; moving the repo or `<data_dir>` breaks the installed plists.
+Every agent run works in `<work_dir>/work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<work_dir>`, or the repo while `work_dir` is unset, breaks resuming in-progress agent runs; moving the repo or `<work_dir>` breaks the installed plists.
 
 ### Attended runs
 
@@ -261,19 +261,19 @@ python3 orchestrator/src/router.py --now --tui [--split right|below] [--beside <
 
 ### Session records
 
-Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <work_dir>/<ID> && claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
+Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issue, written and edited by the harness account. Its first line is `Run <sid> · running · <start>` just before `claude` starts, then `Run <sid> · done · <start> → <end> · exit 0` (`interrupted` for any other exit code) when it ends; below it, a code block holds only the command that reopens the session, `cd <work_dir>/work/<ID> && claude --resume <sid>`. The router's resume of an interrupted session edits the same comment; a new claim (e.g. after Revise) adds one.
 
-- A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, agent runs skip them, and the router never reads them: it still resumes from `<logs_dir>/runs.log`.
+- A session comment is one by the harness account (by email) whose first line starts `Run <sid> · `. Promote leaves session comments out of the next issue's `## Comments`, agent runs skip them, and the router never reads them: it still resumes from `<work_dir>/logs/runs.log`.
 - Earlier sessions have a `Run <sid>` attachment instead, or nothing. The attachments stay, and promote still leaves them out of `## Source`.
 - Before opening a session by hand, move its issue out of In Progress, or the router may resume the same session once it has been idle 30 minutes.
 - A comment stuck at `running` with no `agent-pm-<role>-<ID>` tmux session was killed before `claude` exited; `tmux ls` is the truth.
-- A write is one attempt of at most 10 seconds; a failure only adds a `registry-error` line to `<logs_dir>/projects/<task>.log` and never affects the agent run.
+- A write is one attempt of at most 10 seconds; a failure only adds a `registry-error` line to `<work_dir>/logs/projects/<task>.log` and never affects the agent run.
 
 ## Orchestrator configuration
 
 Core's configuration is under Core pack.
 
-- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role, `require_instructions` and `max_runs` (default 1); `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `data_dir` (see Files); `[core]`, the overlay: core run keys for the orchestrator's agent runs in `core/config/config.toml`'s layout, applied after `core/config/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
+- `orchestrator/config.toml`: the Linear team and workflow states, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role (`[roles.<role>]`) its `account`, `key`, `next` role, `require_instructions` and `max_runs` (default 1); `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `work_dir` (see Files); `[core]`, the overlay: core run keys for the orchestrator's agent runs in `core/config/config.toml`'s layout, applied after `core/config/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
 - `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development

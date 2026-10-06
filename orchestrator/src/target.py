@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import CLONES, NAME, OWNER, REF, TASKS, WORK_DIR, repo_slug, sh_run  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, TASKS, RUNS_DIR, repo_slug, sh_run  # noqa: E402
 from repo import GUARD, SHORT, common_dir, err_text, under  # noqa: E402
 
 MAPPED = "project mapping "
@@ -126,7 +126,7 @@ def _branches(ident, o, n, run, work):
     return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
 
 
-def check(issue, repos, *, run=sh_run, work=WORK_DIR) -> Target | Invalid | Transient:
+def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Transient:
     """The engineering pre-check: the repo is reachable with push permission and a safe default branch; its branch name."""
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
@@ -157,7 +157,7 @@ def check(issue, repos, *, run=sh_run, work=WORK_DIR) -> Target | Invalid | Tran
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, clones, *, work=WORK_DIR, writable=None, run=sh_run) -> Target:
+def with_clone(t, ident, clones, *, work=RUNS_DIR, writable=None, run=sh_run) -> Target:
     """`t` with `clone` set: what the issue's existing checkout was made from, else its `[local_clones]` entry, else "". The
     checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the right origin."""
     checkout = os.path.join(work, ident, CLONES[0], t.owner, t.name)

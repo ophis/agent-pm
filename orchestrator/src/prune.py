@@ -4,11 +4,11 @@
 An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
-Entries: for each finished issue, <work_dir>/<ID>/src/<owner>/<name> (legacy: src/<name>), <work_dir>/<ID>/publish and
-<work_dir>/<ID>/tmp, each a real directory inside its own folder (not a symlink); a src or publish entry must be a clone
+Entries: for each finished issue, <work_dir>/work/<ID>/src/<owner>/<name> (legacy: src/<name>), <work_dir>/work/<ID>/publish and
+<work_dir>/work/<ID>/tmp, each a real directory inside its own folder (not a symlink); a src or publish entry must be a clone
 or a worktree (.git a directory or a file), else it is skipped. Each goes with shutil.rmtree, uncommitted work included;
-the rest of <work_dir>/<ID>/ and <logs_dir> stay. A worktree's .git file is read first (repo.common_dir, no git) for its
-local clone; there, unless the clone lies in <work_dir> or a temp dir, git reads refs only: `worktree prune`, then each
+the rest of <work_dir>/work/<ID>/ and <work_dir>/logs stay. A worktree's .git file is read first (repo.common_dir, no git) for its
+local clone; there, unless the clone lies in <work_dir>/work or a temp dir, git reads refs only: `worktree prune`, then each
 <ID>-* branch but the default is deleted when origin/<branch> or origin/<default> holds it, else kept and reported. Remote
 branches are never touched. Agent runs and the harness are the same macOS user: this keeps code an agent run planted
 (filters, hooks, submodules) from running outside auto mode's review; it is no privilege boundary.
@@ -31,7 +31,7 @@ from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import CLONES, WORK_DIR  # noqa: E402
+from config import CLONES, RUNS_DIR  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
 import tui_claude  # noqa: E402
@@ -57,9 +57,9 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK_DIR, team, roles, proc=subprocess.run, run=repo.sh, writable=None):
+    def __init__(self, gql, now, dry, *, work=RUNS_DIR, team, roles, proc=subprocess.run, run=repo.sh, writable=None):
         """roles: {Linear user id: role} as linear.role_ids returns. run: git's runner. writable: dirs whose clones get
-        no git run (default <work_dir> and the temp dirs)."""
+        no git run (default <work_dir>/work and the temp dirs)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.proc, self.run_git = team, roles, proc, run
         self.writable = config.writable(work) if writable is None else writable
@@ -73,7 +73,7 @@ class Pruner:
         self.say(f"prune-error {key}: {msg}")
 
     def entries(self, ident):
-        """Paths below <work_dir>/<ident>/, as parts: (src, n) legacy, (src, owner, n), (publish,) and (tmp,)."""
+        """Paths below <work_dir>/work/<ident>/, as parts: (src, n) legacy, (src, owner, n), (publish,) and (tmp,)."""
         found = []
         for folder in FOLDERS:
             base = os.path.join(self.work, ident, folder)
