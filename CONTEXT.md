@@ -37,7 +37,7 @@ The part of the delegate that starts an agent run through a client and checks it
 
 **Client**:
 A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or files) and enforces what hard constraints it can.
-_Avoid_: runtime, backend
+_Avoid_: runtime, backend, vehicle
 
 **Runner**:
 How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up, the session left open).
@@ -51,9 +51,6 @@ Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull
 **Deliverable**:
 The Markdown an agent run delivers to its destination (report, PRD, PR description): returned in its outcome or published by the agent run, per the destination.
 _Avoid_: document, result, report
-
-**Vehicle**:
-A form a prompt is delivered in (skill, plugin agent, `claude -p` prompt); roles and tasks stay vehicle-neutral.
 
 **Orchestration layer**:
 The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear; the orchestrator of the pipeline's agent runs.

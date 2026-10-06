@@ -12,7 +12,7 @@ import clients  # noqa: E402
 import compose  # noqa: E402
 
 class Plain:
-    """A vehicle with the default scripts and methods paths (or `methods`) and no handover."""
+    """A client with the default scripts and methods paths (or `methods`) and no handover."""
     def __init__(self, handover="", methods=None):
         self._handover = handover
         self._methods = methods
@@ -89,7 +89,7 @@ class Fake(unittest.TestCase):
 
     def compose(self, role="writer", task=None, *, layers=(), **params):
         run = compose.load_run(self.root, role, task, layers=layers)
-        return compose.render(self.root, run, replace(PARAMS, **params), vehicle=Plain()), run
+        return compose.render(self.root, run, replace(PARAMS, **params), client=Plain()), run
 
     def fails(self, msg, role="writer", task=None, layers=()):
         with self.assertRaises(compose.ConfigError) as cm:
@@ -322,35 +322,35 @@ class Prompt(Fake):
 
     def test_handover_closes_the_output_section(self):
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain("Say it back."))
+        prompt = compose.render(self.root, run, PARAMS, client=Plain("Say it back."))
         body = prompt.rsplit("\n---\n", 1)[0]
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
     def test_handover_gets_the_report_command(self):
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain("Run `{{report}} outcome <file>`."))
+        prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
         self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/.report.jsonl outcome <file>`.", prompt)
         spaced = replace(PARAMS, workdir="/my w")
         self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
         self.assertEqual(spaced.channel, "/my w/.report.jsonl")
 
-    def test_role_and_task_text_name_the_vehicles_methods_path(self):
+    def test_role_and_task_text_name_the_clients_methods_path(self):
         self.write({"team/roles/writer.md": "# Writer\n\nKnow `{{methods}}`.\n",
                     "team/tasks/short-note.md": "# Short Note\n\nFollow `{{methods}}/note.md`.\n"})
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run, PARAMS, vehicle=Plain(methods="/m"))
+        prompt = compose.render(self.root, run, PARAMS, client=Plain(methods="/m"))
         self.assertIn("Know `/m`.", prompt)
         self.assertIn("Follow `/m/note.md`.", prompt)
 
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "writer", "long-note")
-        prompt = compose.render(self.root, replace(run, output={"type": "local"}), vehicle=Plain())
+        prompt = compose.render(self.root, replace(run, output={"type": "local"}), client=Plain())
         self.assertIn("Keep it local.", prompt)
         self.assertNotIn("Push to", prompt)
 
     def test_no_params_no_tail(self):
         run = compose.load_run(self.root, "writer", "short-note")
-        prompt = compose.render(self.root, run, vehicle=Plain())
+        prompt = compose.render(self.root, run, client=Plain())
         self.assertNotIn("Workdir: ", prompt)
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
         self.assertEqual((run.role_title, run.task_title, run.task_summary), ("Writer", "Short Note", "Write a note."))
@@ -390,7 +390,7 @@ with open(os.path.join(CORE, "config", "config.toml"), "rb") as _f:
 
 def composed(role, task=None):
     run = compose.load_run(CORE, role, task)
-    return compose.render(CORE, run, PARAMS, vehicle=Plain()), run
+    return compose.render(CORE, run, PARAMS, client=Plain()), run
 
 
 LANGUAGE_RULE = "headings and fixed labels included"
@@ -416,7 +416,7 @@ class RealCore(unittest.TestCase):
                 f.write(cfg.replace('\nlanguage = "Chinese"\n', "\n"))
             for role, task in ALL:
                 run = compose.load_run(root, role, task)
-                prompt = compose.render(root, run, PARAMS, vehicle=Plain())
+                prompt = compose.render(root, run, PARAMS, client=Plain())
                 self.assertEqual(run.language, "", task)
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
@@ -576,7 +576,7 @@ class RealCore(unittest.TestCase):
         self.assertIn("the gate is `none`", composed("researcher", "deep-research")[0])
         gate = "python3 /u/usage.py --below 80"
         run = compose.load_run(CORE, "researcher", "deep-research", layers=[{"gate": gate}])
-        self.assertIn(f"the gate is `{gate}`", compose.render(CORE, run, PARAMS, vehicle=Plain()))
+        self.assertIn(f"the gate is `{gate}`", compose.render(CORE, run, PARAMS, client=Plain()))
 
     def test_each_task_marks_its_start_once_and_never_a_budget(self):
         # build_cutoff needs the start mark: a task without it silently loses its start comment.
@@ -593,8 +593,8 @@ class RealCore(unittest.TestCase):
 
     def test_github_host_defaults_and_overrides(self):
         run = compose.load_run(CORE, "researcher", "light-research")
-        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run, vehicle=Plain()))
-        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), vehicle=Plain())
+        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run, client=Plain()))
+        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), client=Plain())
         self.assertIn("gh repo clone ghe.example.com/ophis/private_docs", prompt)
         self.assertIn("https://ghe.example.com/ophis/private_docs/blob/main/", prompt)
 

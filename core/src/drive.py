@@ -113,7 +113,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} writes files; use export()")
     run = load_run(root, role, task, layers=[client.config, *layers])
-    prompt = render(root, run, params, vehicle=client)
+    prompt = render(root, run, params, client=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root))
     launch = client.launch(prompt, run, params=params, access=acc)
     return launch, run
@@ -124,7 +124,7 @@ def export(root: str, client: Client, role: str, task: str | None = None, *, des
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     run = load_run(root, role, task, layers=[client.config])
-    return client.export(render(root, run, vehicle=client), run, dest=dest)
+    return client.export(render(root, run, client=client), run, dest=dest)
 
 
 def write(files: dict[str, str]) -> None:

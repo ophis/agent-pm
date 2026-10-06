@@ -13,10 +13,7 @@ from typing import Literal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
 CORE = os.path.join(ROOT, "core")
-WORK = os.path.join(ROOT, "work")
 PROJECTS = os.path.expanduser("~/.claude/projects")
-LOGS = os.path.join(ROOT, "logs")
-RUNS_LOG = os.path.join(LOGS, "runs.log")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
@@ -25,6 +22,27 @@ sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
 import repo  # noqa: E402
+
+
+def state_dirs(cfg, root=ROOT):
+    """(work_dir, logs_dir) of a config table, real paths: each its absolute or ~ value, else <root>-work / <root>-logs. A path
+    in root stops the caller."""
+    real, out = os.path.realpath(root), []
+    for key, suffix in (("work_dir", "-work"), ("logs_dir", "-logs")):
+        v = cfg.get(key, real + suffix)
+        path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
+        if not os.path.isabs(path):
+            raise SystemExit(f"orchestrator/config.toml: {key} must be a printable absolute or ~ path: {v!r}")
+        path = os.path.realpath(path)
+        if os.path.commonpath([path, real]) == real:
+            raise SystemExit(f"orchestrator/config.toml: {key} must lie outside the repo {real}: {v!r}")
+        out.append(path)
+    return tuple(out)
+
+
+with open(CONFIG, "rb") as _f:
+    WORK_DIR, LOGS_DIR = state_dirs(tomllib.load(_f))
+RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
 
 
 def session(role, issue):
@@ -41,7 +59,7 @@ def slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-def project_log(name, logs=LOGS):
+def project_log(name, logs=LOGS_DIR):
     d = os.path.join(logs, "projects")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, f"{slug(name)}.log")
@@ -53,7 +71,7 @@ def escape(path):
 
 
 def run_dir(issue):
-    return os.path.join(WORK, issue)
+    return os.path.join(WORK_DIR, issue)
 
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -75,7 +93,8 @@ def transcript(issue, sid, projects=PROJECTS):
     return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core"}
+TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
+            "work_dir", "logs_dir"}
 # Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
@@ -165,6 +184,7 @@ def load_config(path=CONFIG):
         raise SystemExit(f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}")
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
+    state_dirs(cfg)
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
@@ -250,7 +270,7 @@ def run_config(role, task, root=ROOT):
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
 
-def writable(work=WORK):
+def writable(work=WORK_DIR):
     """The dirs an agent run can write; a clone there gets no git run by the harness."""
     return (work, *repo.temp_dirs())
 

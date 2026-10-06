@@ -39,8 +39,8 @@ class ConfigError(Exception):
     pass
 
 
-class Vehicle(Protocol):
-    """What render() needs from whatever carries the prompt (a client)."""
+class PromptClient(Protocol):
+    """The part of a Client (clients/base.py) that render() uses; compose cannot import Client (base.py imports compose)."""
     def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
     def methods_path(self, root: str) -> str: ...   # how the prompt names core's team/methods/ dir
     def handover(self) -> str: ...                  # how the agent run returns its outcome and progress (Output › Return);
@@ -131,13 +131,13 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
                    progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
 
 
-def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicle: Vehicle) -> str:
-    """The agent run's prompt for `vehicle`: its Output section ends with the vehicle's handover as Output › Return
+def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
+    """The agent run's prompt for `client`: its Output section ends with the client's handover as Output › Return
     ({{report}} filled when params are given), then the Workdir/Input tail when params are given."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "task": run.task_title}
     names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title), "language": run.language}
-    paths = {"scripts": vehicle.scripts_path(root), "methods": vehicle.methods_path(root), "gate": run.gate or "none"}
+    paths = {"scripts": client.scripts_path(root), "methods": client.methods_path(root), "gate": run.gate or "none"}
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
@@ -153,7 +153,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, vehicl
     if not os.path.isfile(os.path.join(output, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(_read(output, dest), run.output, dest))
-    if handover := vehicle.handover():
+    if handover := client.handover():
         report = {"report": report_command(paths["scripts"], params)} if params else {}
         parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
