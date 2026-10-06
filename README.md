@@ -35,7 +35,7 @@ agent-pm-work/<ID>/        # <work_dir>/<ID>/: an agent run's working dir: input
 agent-pm-logs/             # <logs_dir>: router state and agent run output
 ```
 
-Runtime state lives outside the repo, in `<work_dir>` and `<logs_dir>`: `orchestrator/config.toml`'s `work_dir` and `logs_dir` (absolute or `~`; a path inside the repo stops router, run and promote), unset → `<repo path>-work` and `<repo path>-logs` next to the checkout. An agent run's cwd, `<work_dir>/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
+Runtime state lives outside the repo, in `<work_dir>` and `<logs_dir>`: `orchestrator/config.toml`'s `work_dir` and `logs_dir` (absolute or `~`; real paths that lie in or contain the repo, contain a `[local_clones]` clone, or overlap each other stop router, run and promote), unset → `<repo path>-work` and `<repo path>-logs` next to the checkout. An agent run's cwd, `<work_dir>/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
 
 ## Core pack
 

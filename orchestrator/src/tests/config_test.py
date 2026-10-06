@@ -550,20 +550,34 @@ class StateDirs(ConfigFile, unittest.TestCase):
             got = config.state_dirs({"work_dir": "~/w", "logs_dir": os.path.join(home, "l")}, os.path.join(home, "repo"))
         self.assertEqual(got, (os.path.join(home, "w"), os.path.join(home, "l")))
         self.assertEqual(self.load(f'work_dir = "{home}/w"\nlogs_dir = "~/l"\n' + BASE)["work_dir"], f"{home}/w")
+        cfg = self.load(f'work_dir = "{home}/w"\nlogs_dir = "{home}/w-l"\n' + BASE + f'[local_clones]\n"ophis/x" = "{home}/w-c"\n'
+                        f'"ophis/y" = "{home}/w-l-c"\n')
+        self.assertEqual(cfg["logs_dir"], f"{home}/w-l")
 
     def test_refused(self):
         real = os.path.realpath(config.ROOT)
-        link = os.path.join(self.dir, "link")
+        d = os.path.realpath(self.dir)
+        link, clink = os.path.join(d, "link"), os.path.join(d, "clink")
         os.symlink(real, link)
-        inside = f"must lie outside the repo {real}: "
-        cases = [(f'work_dir = "{real}"\n', f"work_dir {inside}{real!r}"),
-                 (f'logs_dir = "{real}/logs"\n', f"logs_dir {inside}{real + '/logs'!r}"),
-                 (f'work_dir = "{link}/work"\n', f"work_dir {inside}{link + '/work'!r}"),
-                 ('work_dir = "work"\n', "work_dir must be a printable absolute or ~ path: 'work'"),
-                 ("logs_dir = 5\n", "logs_dir must be a printable absolute or ~ path: 5")]
-        for text, msg in cases:
-            with self.subTest(text=text), self.assertRaises(SystemExit) as cm:
-                self.load(text + BASE)
+        os.makedirs(os.path.join(d, "c"))
+        os.symlink(os.path.join(d, "c"), clink)
+        inside = f"must neither lie in nor contain the repo {real}: "
+        clone = lambda path: f'[local_clones]\n"ophis/x" = "{path}"\n'
+        apart = "work_dir and logs_dir must be separate dirs, neither inside the other: "
+        cases = [(f'work_dir = "{real}"\n', "", f"work_dir {inside}{real!r}"),
+                 (f'logs_dir = "{real}/logs"\n', "", f"logs_dir {inside}{real + '/logs'!r}"),
+                 (f'work_dir = "{link}/work"\n', "", f"work_dir {inside}{link + '/work'!r}"),
+                 (f'logs_dir = "{os.path.dirname(real)}"\n', "", f"logs_dir {inside}{os.path.dirname(real)!r}"),
+                 (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"work_dir must not contain local_clones.ophis/x {d}/c: {d + '/c'!r}"),
+                 (f'logs_dir = "{clink}"\n', clone(f"{d}/c/x"), f"logs_dir must not contain local_clones.ophis/x {d}/c/x: {clink!r}"),
+                 (f'work_dir = "{d}/s"\nlogs_dir = "{d}/s"\n', "", f"{apart}{d + '/s'!r}, {d + '/s'!r}"),
+                 (f'work_dir = "{d}/s"\nlogs_dir = "{d}/s/l"\n', "", f"{apart}{d + '/s'!r}, {d + '/s/l'!r}"),
+                 (f'work_dir = "{clink}/w"\nlogs_dir = "{d}/c"\n', "", f"{apart}{d + '/c/w'!r}, {d + '/c'!r}"),
+                 ('work_dir = "work"\n', "", "work_dir must be a printable absolute or ~ path: 'work'"),
+                 ("logs_dir = 5\n", "", "logs_dir must be a printable absolute or ~ path: 5")]
+        for text, tail, msg in cases:
+            with self.subTest(text=text, tail=tail), self.assertRaises(SystemExit) as cm:
+                self.load(text + BASE + tail)
             self.assertEqual(cm.exception.code, f"orchestrator/config.toml: {msg}")
 
 

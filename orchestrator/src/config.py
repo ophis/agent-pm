@@ -24,9 +24,13 @@ import compose  # noqa: E402
 import repo  # noqa: E402
 
 
-def state_dirs(cfg, root=ROOT):
+def _within(path, top):
+    return os.path.commonpath([path, top]) == top
+
+
+def state_dirs(cfg, root=ROOT, clones=None):
     """(work_dir, logs_dir) of a config table, real paths: each its absolute or ~ value, else <root>-work / <root>-logs. A path
-    in root stops the caller."""
+    in or containing root, one containing a clone of `clones` (repo → real path), or the two nested stop the caller."""
     real, out = os.path.realpath(root), []
     for key, suffix in (("work_dir", "-work"), ("logs_dir", "-logs")):
         v = cfg.get(key, real + suffix)
@@ -34,9 +38,15 @@ def state_dirs(cfg, root=ROOT):
         if not os.path.isabs(path):
             raise SystemExit(f"orchestrator/config.toml: {key} must be a printable absolute or ~ path: {v!r}")
         path = os.path.realpath(path)
-        if os.path.commonpath([path, real]) == real:
-            raise SystemExit(f"orchestrator/config.toml: {key} must lie outside the repo {real}: {v!r}")
+        if _within(path, real) or _within(real, path):
+            raise SystemExit(f"orchestrator/config.toml: {key} must neither lie in nor contain the repo {real}: {v!r}")
+        for k, clone in (clones or {}).items():
+            if _within(clone, path):
+                raise SystemExit(f"orchestrator/config.toml: {key} must not contain local_clones.{k} {clone}: {v!r}")
         out.append(path)
+    if _within(*out) or _within(*out[::-1]):
+        raise SystemExit(f"orchestrator/config.toml: work_dir and logs_dir must be separate dirs, neither inside the other: "
+                         f"{out[0]!r}, {out[1]!r}")
     return tuple(out)
 
 
@@ -184,7 +194,6 @@ def load_config(path=CONFIG):
         raise SystemExit(f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}")
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
-    state_dirs(cfg)
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
@@ -219,6 +228,7 @@ def load_config(path=CONFIG):
             raise SystemExit(f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo")
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
+    state_dirs(cfg, clones=clones)
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
