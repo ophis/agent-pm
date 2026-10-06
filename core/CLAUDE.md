@@ -12,7 +12,7 @@ python3 core/src/tui_claude.py --help                            # host claude i
 core/regen_skills.sh                                             # after editing team/, output/, config.toml or src/repo.py
 ```
 
-Commit the regenerated `core/skills/` with the change that caused it. It uses the merged config: a `config.local.toml` that changes what prompts say (e.g. `language`) changes the skills too.
+`core/skills/` is generated and gitignored; regenerate it after such a change. It uses the merged config: a `config.local.toml` that changes what prompts say (e.g. `language`) changes the skills too.
 
 ## Rules
 

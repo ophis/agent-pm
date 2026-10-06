@@ -5,3 +5,4 @@ __pycache__/
 docs/
 core/config.local.toml
 orchestrator/config.local.toml
+core/skills/

@@ -8,7 +8,7 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 agent-pm/
 ├── CLAUDE.md                    # Claude's notes on this repo
 ├── .claude/skills/tmux/         # the tmux skill
-├── core/                        # the core pack: team/, output/, src/, skills/ (core/CLAUDE.md)
+├── core/                        # the core pack: team/, output/, src/, generated skills/ (core/CLAUDE.md)
 │   └── config.toml, config.local.toml        # Core configuration
 └── orchestrator/                # the Linear side: src/, *.plist (launchd schedules)
     └── config.toml, config.local.toml        # Orchestrator configuration
@@ -21,7 +21,7 @@ agent-pm/
 
 ## Core pack
 
-`core/` turns a role, a task and an input into one agent run, knowing nothing of Linear (`core/CLAUDE.md`); `drive.py` turns its output and reports into events for sinks (terminal, and whatever the caller adds). `<workdir>/run.json` records each session (cwd, settings, transcript, resume command, start, end), progress and the last outcome. `core/regen_skills.sh` exports each role/task as a skill to `core/skills/`.
+`core/` turns a role, a task and an input into one agent run, knowing nothing of Linear (`core/CLAUDE.md`); `drive.py` turns its output and reports into events for sinks (terminal, and whatever the caller adds). `<workdir>/run.json` records each session (cwd, settings, transcript, resume command, start, end), progress and the last outcome. `core/regen_skills.sh [OUT_DIR]` exports each role/task, from `core/team/` and the merged core config, as a skill `<role>-<task>/` to `OUT_DIR` (default `core/skills/`, gitignored); rerun it after editing `core/team/`, `core/output/`, `core/config.toml`, `core/config.local.toml` or `core/src/repo.py`.
 
 ### Roles
 
