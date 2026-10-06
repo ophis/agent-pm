@@ -276,6 +276,8 @@ class OtherRoot(ConfigFile, unittest.TestCase):
     def test_overlay_unknown_keys(self):
         cases = [("[core]\nfoo = 1\n", "'foo' in the global table"),
                  ('[core]\nusers = ["octocat"]\n', "'users' in the global table"),
+                 ('[core]\nsymlink_clones = ["~/x"]\n', "'symlink_clones' in the global table"),
+                 ("[core.clients.claude]\nflags = []\n", "'clients' in the global table"),
                  ('[core.roles.researcher]\ndefault_task = "light-research"\n', "'default_task' in roles.researcher"),
                  ('[core.roles.researcher.tasks.deep-research]\ntasks = 1\n', "'tasks' in roles.researcher.tasks.deep-research")]
         for text, message in cases:

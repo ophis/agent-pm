@@ -13,6 +13,10 @@
 #              `commands`. unset → $TUI_SHOW, else the built-in split (iTerm2, else tmux); "" → the attach line only (show > TUI_SHOW > split)
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 #   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
+#   symlink_clones  global only: local clones (absolute or ~ path) whose worktrees check out symlinks as links, matched by
+#              real path; every other checkout, a skill's bundled repo.py included, gets core.symlinks=false. A listed clone
+#              trusts every link in fetched origin/<branch> commits, which may point outside the worktree: list only stable
+#              paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
 #   clients    global only: per-client tables, see the Clients section
 
 # ── Global ──────────────────────────────────────────────
@@ -21,6 +25,7 @@ effort = "high"
 language = "Chinese"
 # show = "my-show {{session}}"
 # users = ["octocat"]
+# symlink_clones = ["~/data-repo"]
 
 [output]
 type = "local"

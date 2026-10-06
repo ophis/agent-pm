@@ -88,15 +88,22 @@ class Base(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
         self.wt = os.path.join(self.dir, "o", "n")
+        self.none = os.path.join(self.dir, "none.toml")
 
     def existing(self, url=URL):
         os.makedirs(os.path.join(self.wt, ".git"))
         return (lambda a: a[3:] == ["remote", "get-url", "origin"], ok(url + "\n"))
 
-    def main(self, argv, run):
+    def main(self, argv, run, config=None):
         out, err = io.StringIO(), io.StringIO()
-        code = repo.main(argv, run=run, out=out, err=err)
+        code = repo.main(argv, run=run, out=out, err=err, config=config or self.none)
         return code, out.getvalue(), err.getvalue()
+
+    def config(self, text):
+        path = os.path.join(self.dir, "config.toml")
+        with open(path, "w") as f:
+            f.write(text)
+        return path
 
 
 class Parse(unittest.TestCase):
@@ -159,10 +166,18 @@ class TempDirs(unittest.TestCase):
             self.assertIn(os.path.realpath("/var/tmp"), repo.temp_dirs())
 
 
+class SymlinkClones(unittest.TestCase):
+    def test_unset_is_empty_and_paths_are_real_paths(self):
+        self.assertEqual(repo.symlink_clones({}), frozenset())
+        with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
+            got = repo.symlink_clones({"symlink_clones": ["~/c", "/x/../y"]})
+        self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
+
+
 class Worktree(Base):
-    def worktree(self, *answers, branch="TASK-1-x", spec="o/n"):
+    def worktree(self, *answers, branch="TASK-1-x", spec="o/n", config=None):
         run = Fake([*answers, HEAD])
-        return self.main(["worktree", spec, f"--branch={branch}", "--dir", self.dir], run), run
+        return self.main(["worktree", spec, f"--branch={branch}", "--dir", self.dir], run, config), run
 
     def test_fresh_blobless_clone_on_a_new_branch_from_the_default(self):
         (code, out, _), run = self.worktree(info(default="trunk"))
@@ -174,6 +189,23 @@ class Worktree(Base):
                       run.calls)
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--no-track", "-b", "TASK-1-x", "origin/trunk"))
         self.assertEqual(run.timeout("git", "-C", self.wt, "checkout"), repo.LONG)
+
+    def test_a_remote_repo_gets_no_symlinks_whatever_the_list(self):
+        (code, _, err), run = self.worktree(info(), config=self.config(f'symlink_clones = ["{self.dir}", "~/n"]\n'))
+        self.assertEqual(code, 0, err)
+        self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
+                      run.calls)
+
+    def test_a_bad_symlink_clones_fails_worktree_before_the_repo_is_read(self):
+        for text, want in (("symlink_clones = [\n", ""), ('symlink_clones = "/a"\n', "symlink_clones"),
+                           ("symlink_clones = [1]\n", "symlink_clones"), ('symlink_clones = ["a/b"]\n', "symlink_clones"),
+                           ('symlink_clones = ["~nosuchuser/x"]\n', "symlink_clones")):
+            with self.subTest(text=text):
+                run = Fake([])
+                code, _, err = self.main(["worktree", "--dir", self.dir, "--branch", "TASK-1-x", "not a repo"], run,
+                                         self.config(text))
+                self.assertEqual((code, run.calls), (1, []), err)
+                self.assertIn(want, err)
 
     def test_remote_branch_is_tracked(self):
         (code, _, _), run = self.worktree(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
@@ -280,18 +312,18 @@ class Worktree(Base):
                               (["--dir", self.dir, "--branch", "b", "o/n", "--branch", "c"], "--branch")):
                 err = io.StringIO()
                 with self.subTest(cmd=cmd, opt=opt), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
-                    repo.main([cmd, *argv], run=Fake([]))
+                    repo.main([cmd, *argv], run=Fake([]), config=self.none)
                 self.assertIn(f"{opt} given twice", err.getvalue())
 
     def test_branch_is_required(self):
         for cmd in ("worktree", "status"):
             with self.subTest(cmd=cmd), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", io.StringIO()):
-                repo.main([cmd, "--dir", self.dir, "o/n"], run=Fake([]))
+                repo.main([cmd, "--dir", self.dir, "o/n"], run=Fake([]), config=self.none)
 
     def test_prepare_and_checkout_are_gone(self):
         for cmd in ("prepare", "checkout"):
             with self.subTest(cmd=cmd), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", io.StringIO()):
-                repo.main([cmd, "--dir", self.dir, "--branch", "b", "o/n"], run=Fake([]))
+                repo.main([cmd, "--dir", self.dir, "--branch", "b", "o/n"], run=Fake([]), config=self.none)
 
 
 class Retry(unittest.TestCase):
@@ -364,6 +396,14 @@ class Clone(unittest.TestCase):
         git("clone", "-q", self.bare, self.clone)
         self.dir = os.path.join(self.tmp, "work", "src")
         self.wt = os.path.join(self.dir, "o", "n")
+        self.none = os.path.join(self.tmp, "none.toml")
+
+    def listing(self, *paths):
+        """A config.toml whose symlink_clones lists `paths`."""
+        path = os.path.join(self.tmp, "config.toml")
+        with open(path, "w") as f:
+            f.write(f"symlink_clones = {json.dumps(paths)}\n")
+        return path
 
     def advance(self):
         git("-C", self.seed, "commit", "-q", "--allow-empty", "-m", "two")
@@ -372,10 +412,10 @@ class Clone(unittest.TestCase):
 
 
 class Local(Clone):
-    def worktree(self, branch="TASK-1-x", spec=None, base=None):
+    def worktree(self, branch="TASK-1-x", spec=None, base=None, config=None):
         run, out, err = Real([info()]), io.StringIO(), io.StringIO()
         code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err,
-                         temp=())
+                         config=config or self.none, temp=())
         return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
 
     def test_a_path_or_a_tilde_path(self):
@@ -491,16 +531,17 @@ class Local(Clone):
         run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')), (["gh", "pr", "list"], ok("[]"))])
         out, err = io.StringIO(), io.StringIO()
         code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-1-x", self.clone], run=run, out=out, err=err,
-                         config=os.path.join(self.tmp, "none.toml"))
+                         config=self.none)
         self.assertEqual(code, 0, err.getvalue())
         self.assertIsNone(json.loads(out.getvalue())["pr"])
         self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
 
 
 class LocalSafety(Clone):
-    def worktree(self, branch="TASK-1-x", fail_on=None, temp=()):
+    def worktree(self, branch="TASK-1-x", fail_on=None, temp=(), config=None, spec=None):
         run, out, err = Real([info(), *([(fail_on, fail("boom"))] if fail_on else [])]), io.StringIO(), io.StringIO()
-        code = repo.main(["worktree", "--dir", self.dir, "--branch", branch, self.clone], run=run, out=out, err=err, temp=temp)
+        code = repo.main(["worktree", "--dir", self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err,
+                         config=config or self.none, temp=temp)
         return code, err.getvalue()
 
     def file_commit(self):
@@ -510,6 +551,13 @@ class LocalSafety(Clone):
         git("-C", self.seed, "commit", "-q", "-m", "f")
         git("-C", self.seed, "push", "-q", "origin", "main")
         git("-C", self.clone, "fetch", "-q")
+
+    def link_commit(self):
+        os.symlink("/etc/passwd", os.path.join(self.seed, "link"))
+        git("-C", self.seed, "add", "link")
+        git("-C", self.seed, "commit", "-q", "-m", "link")
+        git("-C", self.seed, "push", "-q", "origin", "main")
+        return os.path.join(self.wt, "link")
 
     def assertGood(self):
         index = git("-C", self.wt, "rev-parse", "--path-format=absolute", "--git-path", "index")
@@ -551,19 +599,56 @@ class LocalSafety(Clone):
         code, err = self.worktree()
         self.assertEqual(code, 2)
         self.assertIn("symlinks", err)
+        self.assertIn("unset", err)
 
     def test_a_worktree_gets_no_symlinks_and_the_clone_keeps_its_config(self):
-        os.symlink("/etc/passwd", os.path.join(self.seed, "link"))
-        git("-C", self.seed, "add", "link")
-        git("-C", self.seed, "commit", "-q", "-m", "link")
-        git("-C", self.seed, "push", "-q", "origin", "main")
+        link = self.link_commit()
         self.assertEqual(self.worktree()[0], 0)
-        link = os.path.join(self.wt, "link")
         self.assertTrue(os.path.isfile(link) and not os.path.islink(link))
         self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
         self.assertEqual(git("-C", self.wt, "config", "--get", "core.symlinks"), "false")
         self.assertEqual(subprocess.run(["git", "-C", self.clone, "config", "--get", "core.symlinks"]).returncode, 1)
         self.assertEqual(git("-C", self.clone, "status", "--porcelain"), "")
+
+    def test_a_listed_clones_worktree_gets_symlinks_and_the_clone_keeps_its_config(self):
+        link = self.link_commit()
+        self.assertEqual(self.worktree(config=self.listing(self.clone)), (0, ""))
+        self.assertEqual(os.readlink(link), "/etc/passwd")
+        self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "true")
+        self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
+        self.assertEqual(subprocess.run(["git", "-C", self.clone, "config", "--get", "core.symlinks"]).returncode, 1)
+
+    def test_a_listed_clone_is_matched_by_real_path(self):
+        link = self.link_commit()
+        alias = os.path.join(self.tmp, "alias")
+        os.symlink(self.clone, alias)
+        for i, (listed, spec) in enumerate(((alias, self.clone), (self.clone, alias))):
+            with self.subTest(listed=listed, spec=spec):
+                self.assertEqual(self.worktree(f"TASK-1-{i}", config=self.listing(listed), spec=spec), (0, ""))
+                self.assertTrue(os.path.islink(link))
+                shutil.rmtree(self.wt)
+                git("-C", self.clone, "worktree", "prune")
+
+    def test_listing_another_clone_of_the_same_origin_trusts_no_other(self):
+        link = self.link_commit()
+        other = os.path.join(self.tmp, "clone2")
+        git("clone", "-q", self.bare, other)
+        self.assertEqual(self.worktree(config=self.listing(other)), (0, ""))
+        self.assertTrue(os.path.isfile(link) and not os.path.islink(link))
+        self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "false")
+
+    def test_an_existing_worktree_must_have_the_listed_setting(self):
+        self.file_commit()
+        listed = self.listing(self.clone)
+        self.assertEqual(self.worktree(), (0, ""))
+        code, err = self.worktree(config=listed)
+        self.assertEqual(code, 2)
+        for text in ("symlinks", "false", "true", "symlink_clones", "remove it and run again"):
+            self.assertIn(text, err)
+        shutil.rmtree(self.wt)
+        git("-C", self.clone, "worktree", "prune")
+        self.assertEqual(self.worktree(config=listed), (0, ""))
+        self.assertEqual(self.worktree(config=listed), (0, ""))
 
     def test_a_worktree_deleted_by_hand_is_added_again(self):
         other = os.path.join(self.tmp, "users-own")
@@ -688,6 +773,13 @@ class Status(Base):
                     (["gh", "pr", "list"], ok("[]"))])
         code, out, _ = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run)
         self.assertEqual((code, json.loads(out)), (0, {"pr": None, "plan_docs": [], "since": None, "user": [], "others": []}))
+
+    def test_an_invalid_symlink_clones_does_not_affect_status(self):
+        run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
+                    (["gh", "pr", "list"], ok("[]"))])
+        code, _, err = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run,
+                                 self.config('symlink_clones = ["a/b"]\n'))
+        self.assertEqual(code, 0, err)
 
     def test_bad_config_is_reported_before_an_unreadable_repo(self):
         config = os.path.join(self.dir, "config.toml")

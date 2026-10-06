@@ -406,6 +406,19 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
 
+    def test_a_set_symlink_clones_is_accepted(self):
+        with tempfile.TemporaryDirectory() as root:
+            for d in ("team", "output"):
+                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+            with open(os.path.join(CORE, compose.CONFIG)) as f:
+                cfg = f.read()
+            self.assertIn('\n# symlink_clones = ["~/data-repo"]\n', cfg)
+            os.makedirs(os.path.join(root, "config"))
+            with open(os.path.join(root, compose.CONFIG), "w") as f:
+                f.write(cfg.replace('\n# symlink_clones = ["~/data-repo"]\n', '\nsymlink_clones = ["~/data-repo"]\n'))
+            for role, task in ALL:
+                self.assertEqual(compose.load_run(root, role, task).task, task)
+
     def test_every_prompt_has_the_progress_rule_once(self):
         for role, task in ALL:
             self.assertEqual(composed(role, task)[0].count("is a point to tell the user your progress"), 1, task)
