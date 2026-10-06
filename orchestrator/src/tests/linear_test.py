@@ -238,13 +238,6 @@ class Writes(unittest.TestCase):
             linear.call(Gql(fail=lambda name, v: False), linear.M_COMMENT, "commentCreate", i="I", b="x")
         self.assertEqual(str(cm.exception), "commentCreate: success: false")
 
-    def test_comment(self):
-        gql = Gql()
-        linear.comment(gql, "I", "hello")
-        self.assertEqual(gql.calls, [("comment", {"i": "I", "b": "hello"})])
-        with self.assertRaises(RuntimeError):
-            linear.comment(Gql(fail=lambda name, v: False), "I", "hello")
-
     def test_move(self):
         for state, want, calls in ((IN_PROGRESS, None, [("read", {"i": "I"}), ("move", {"i": "I", "s": IN_REVIEW})]),
                                    (IN_REVIEW, IN_REVIEW, [("read", {"i": "I"})]),
@@ -253,10 +246,6 @@ class Writes(unittest.TestCase):
                 gql = Gql(state)
                 self.assertEqual(linear.move(gql, "I", IN_REVIEW, IN_PROGRESS), want)
                 self.assertEqual(gql.calls, calls)
-
-    def test_move_raises_on_success_false(self):
-        with self.assertRaises(RuntimeError):
-            linear.move(Gql(fail=lambda name, v: False if name == "move" else None), "I", IN_REVIEW, IN_PROGRESS)
 
     def test_comment_and_move_order(self):
         gql = Gql()

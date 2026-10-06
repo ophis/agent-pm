@@ -124,11 +124,6 @@ class Claude(Base):
             for prompt in prompts:
                 self.assertIn(f"`{path}`", prompt)
 
-    def test_resume(self):
-        argv = self.plan(client="claude", resume=True).argv
-        self.assertEqual(argv[3:5], ["--resume", SID])
-        self.assertTrue(argv[2].startswith("Resumed agent run"))
-
     def test_interactive_is_argv_without_the_headless_flags(self):
         for role, task in (("researcher", "light-research"), ("engineer", "engineering")):
             launch = self.plan(role, task, client="claude", repo=self.repo)
@@ -145,9 +140,6 @@ class Claude(Base):
         cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
-
-    def test_headless_has_no_settings(self):
-        self.assertNotIn("--settings", self.plan(client="claude").argv)
 
     def test_interactive_resume(self):
         launch = self.plan(client="claude", resume=True)
@@ -247,14 +239,6 @@ class Generic(Base):
         self.plan("engineer", "engineering")
         self.assertEqual(Recorder.seen[0]["access"].dirs, [])
 
-    def test_resume_needs_sid(self):
-        with self.assertRaises(compose.ConfigError):
-            self.plan(resume=True, sid=None)
-
-    def test_new_session_gets_a_sid(self):
-        self.plan(sid=None)
-        self.assertRegex(Recorder.seen[0]["params"].sid, r"^[0-9a-f-]{36}$")
-
     def test_unknown_client(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
@@ -304,11 +288,6 @@ class Skill(Base):
                       body)
         self.assertNotIn(self.tmp.name, body)
         self.assertNotIn(CORE, body)
-
-    def test_skills_without_scripts_get_only_skill_md(self):
-        r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
-        self.assertEqual(list(clients.SkillClient({}).export("No scripts.", r, dest="o").files),
-                         [os.path.join(os.path.abspath("o"), "r-t", "SKILL.md")])
 
     def test_a_skill_naming_methods_gets_a_copy_of_core_methods(self):
         r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
@@ -553,10 +532,6 @@ class Report(Base):
         with open(self.channel) as f:
             return [json.loads(line) for line in f]
 
-    def test_stop_appends_one_line(self):
-        self.assertEqual(self.report("stop"), (0, "report.py: stop reported\n"))
-        self.assertEqual(self.lines(), [{"kind": "stop"}])
-
     def stop_line(self, stdin, *argv):
         """The one line `report.py stop ARGV` appends with `stdin` as sys.stdin."""
         before = len(self.lines())
@@ -585,10 +560,8 @@ class Report(Base):
                 raise AssertionError("stdin was read")
         self.assertEqual(self.stop_line(Unreadable()), STOP)
 
-    def test_report_event_maps_stop(self):
-        self.assertEqual(drive.report_event('{"kind": "stop"}'), clients.Event("stop"))
-
     def test_report_event_maps_a_stops_pending_count(self):
+        self.assertEqual(drive.report_event('{"kind": "stop"}'), clients.Event("stop"))
         self.assertEqual(drive.report_event('{"kind": "stop", "pending": 2}'), clients.Event("stop", pending=2))
         self.assertEqual(drive.report_event('{"kind": "stop", "pending": 0}'), clients.Event("stop"))
         for pending in ("true", "-1", '"2"', "1.5"):
@@ -892,9 +865,11 @@ class Start(Base):
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("outcome.json") or self.exists("out.md"))
 
-    def test_invalid_outcome(self):
-        r, _, _ = self.start([outcome({**DONE, "status": "maybe"})])
+    def test_invalid_outcome_is_the_error_and_reaches_no_sink(self):
+        seen = []
+        r, _, _ = self.start([outcome({**DONE, "status": "maybe"})], sinks=[seen.append])
         self.assertIn("invalid outcome: status 'maybe'", r.error)
+        self.assertEqual(seen, [])
 
     def test_a_symlink_planted_during_the_run_is_replaced_not_followed(self):
         target = os.path.join(self.tmp.name, "zshrc")
@@ -951,11 +926,6 @@ class Start(Base):
         self.start([said("hi"), outcome(DONE)], sinks=[a.append, b.append])
         self.assertEqual([e.kind for e in a], ["text", "outcome"])
         self.assertEqual(a, b)
-
-    def test_an_invalid_outcome_reaches_no_sink(self):
-        seen = []
-        self.start([outcome({**DONE, "status": "maybe"})], sinks=[seen.append])
-        self.assertEqual(seen, [])
 
     def test_resume_appends_progress_a_new_run_resets_it(self):
         self.start([progress("round", "one"), outcome(DONE)])

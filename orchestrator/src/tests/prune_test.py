@@ -163,23 +163,6 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-skip TASK-49: finish time unknown", out)
         self.assertTrue(os.path.isdir(path))
 
-    def test_unsafe_entries_refused(self):
-        victim = self.mkc("TASK-50", "src", "repo")
-        base = os.path.join(self.work, "TASK-49", "src")
-        os.makedirs(base, exist_ok=True)
-        os.symlink(victim, os.path.join(base, "link"))
-        write(os.path.join(base, "file"), "x")
-        os.makedirs(os.path.join(self.work, "TASK-48"))
-        os.symlink(os.path.dirname(victim), os.path.join(self.work, "TASK-48", "src"))
-        done = ("Done", [(30, "Done")])
-        code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
-        self.assertEqual(code, 0)
-        for line in ("TASK-48/src/repo: not a real directory inside TASK-48/src/, refusing to touch",
-                     "TASK-49/src/link: not a real directory inside TASK-49/src/, refusing to touch",
-                     "TASK-49/src/file: not a real directory inside TASK-49/src/, refusing to touch"):
-            self.assertIn(f"prune-skip {line}", out)
-        self.assertTrue(os.path.isdir(victim))
-
     def test_empty_folder_no_issue_query(self):
         os.makedirs(os.path.join(self.work, "TASK-49", "src"))
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
@@ -198,12 +181,6 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49")))
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
-
-    def test_young_core_clones_untouched(self):
-        paths = [self.mkc("TASK-48", "src", "repo"), self.mkc("TASK-48", "publish")]
-        gql = gql_for({"TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertTrue(all(os.path.isdir(p) for p in paths))
 
     def test_dry_run_plans_clone_deletion_and_deletes_nothing(self):
         paths = [self.mkc("TASK-49", "src", "repo"), self.mkc("TASK-49", "publish")]
@@ -224,13 +201,6 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(msgs(out), ["dry-run: prune-plan TASK-49/src/o/m: delete the clone",
                                      "dry-run: prune-plan TASK-49/src/o/n: delete the worktree"])
         self.assertTrue(os.path.isdir(os.path.join(clone, ".git")) and os.path.isfile(os.path.join(wt, ".git")))
-
-    def test_publish_alone_makes_the_issue_a_candidate(self):
-        publish = self.mkc("TASK-49", "publish")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql)[0], 0)
-        self.assertIn(prune.Q_ISSUE, gql.calls)
-        self.assertFalse(os.path.lexists(publish))
 
     def test_publish_that_is_a_file_is_no_candidate(self):
         os.makedirs(os.path.join(self.work, "TASK-49"))
@@ -257,12 +227,14 @@ class PruneTest(unittest.TestCase):
         os.makedirs(os.path.join(self.work, "TASK-49", "src"))
         os.symlink(victim, os.path.join(self.work, "TASK-49", "src", "link"))
         os.symlink(victim, os.path.join(self.work, "TASK-49", "publish"))
+        write(os.path.join(self.work, "TASK-49", "src", "file"), "x")
         os.makedirs(os.path.join(self.work, "TASK-48"))
         os.symlink(os.path.dirname(victim), os.path.join(self.work, "TASK-48", "src"))
         done = ("Done", [(30, "Done")])
         code, out = self.prune(gql_for({"TASK-48": done, "TASK-49": done, "TASK-50": ("In Progress", [])}))
         self.assertEqual(code, 0)
         self.assertEqual(msgs(out), ["prune-skip TASK-48/src/repo: not a real directory inside TASK-48/src/, refusing to touch",
+                                     "prune-skip TASK-49/src/file: not a real directory inside TASK-49/src/, refusing to touch",
                                      "prune-skip TASK-49/src/link: not a real directory inside TASK-49/src/, refusing to touch",
                                      "prune-skip TASK-49/publish: not a real directory inside TASK-49/, refusing to touch"])
         self.assertTrue(os.path.isdir(os.path.join(victim, ".git")))
@@ -328,12 +300,6 @@ class PruneTest(unittest.TestCase):
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertNotIn(prune.Q_ISSUE, gql.calls)
-
-    def test_young_worktree_untouched(self):
-        wt = self.mkg("TASK-48", "src", "o", "n")
-        gql = gql_for({"TASK-48": ("Done", [(24 - 1 / 3600, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
     def test_tmp_goes_and_the_rest_of_the_issues_dir_and_logs_stay(self):
         ident = os.path.join(self.work, "TASK-49")

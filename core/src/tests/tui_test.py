@@ -121,6 +121,7 @@ class Start(unittest.TestCase):
         self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
         self.assertEqual(fake.kwargs, [TMUX_KW, TMUX_KW])
         self.sleep.assert_not_called()
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_handover_file(self):
         env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
@@ -200,19 +201,14 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.commands(), ["display-message", "kill-session", "new-session"])
         self.assertEqual(fake.calls[1], ["tmux", "kill-session", "-t", "=s"])
 
-    def test_tmux_failure(self):
-        fake = Tmux(fail={"new-session"})
-        with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
-            self.start(fake)
-        self.assertEqual(os.listdir(self.temp), [])
-        self.assertEqual(self.stderr.getvalue(), "")
-
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
         fake = Tmux(fail={"new-session"})   # e.g. the chained set-option failed after new-session made the session
         with self.assertRaisesRegex(tui.TuiError, r"^tmux: boom$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
+        self.assertEqual(os.listdir(self.temp), [])
+        self.assertEqual(self.stderr.getvalue(), "")
 
     def test_a_duplicate_session_is_not_killed(self):
         fake = Tmux(results={"new-session": (1, "", "duplicate session: s\n")})   # another start took the name
@@ -296,11 +292,6 @@ class Start(unittest.TestCase):
                     with self.assertRaises(tui.TuiError):
                         call()
                 self.assertEqual(fake.calls, [])
-
-    def test_shows_the_session_once_started(self):
-        fake = Tmux()
-        self.start(fake)
-        self.assertEqual(self.stderr.getvalue(), "tui: session s: tmux attach -t '=s'\n")
 
     def test_show_gets_its_arguments_after_the_handover(self):
         fake = Tmux()

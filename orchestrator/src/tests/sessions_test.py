@@ -168,23 +168,17 @@ class Failure(unittest.TestCase):
         self.assertRegex(out, r"\A" + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
         self.assertEqual(len(calls), 1)
 
-    def test_write_raising_logs_one_line(self):
+    def test_write_failure_logs_one_line(self):
         existing = comment("a", "2026-09-30T01:00:00.000Z", f"Run {SID} · running · {T1}")
         for op, seed in (("commentCreate", ()), ("commentUpdate", (existing,))):
             for exc, reason in ((RuntimeError("boom"), "RuntimeError: boom"),
                                 (SystemExit("linear api error: [{'message': 'nope'}]"),
                                  "SystemExit: linear api error: [{'message': 'nope'}]"),
-                                (RuntimeError("two\nlines"), "RuntimeError: two lines")):
+                                (RuntimeError("two\nlines"), "RuntimeError: two lines"), (False, "success: false")):
                 with self.subTest(op=op, reason=reason):
                     linear = FakeLinear(*seed, fail={op: exc})
                     self.error(start(linear, record()), f"{ISSUE} session={SID}: {reason}")
                     self.assertEqual(linear.calls, ["comments", op])
-
-    def test_success_false_logs_one_line(self):
-        existing = comment("a", "2026-09-30T01:00:00.000Z", f"Run {SID} · running · {T1}")
-        for op, seed in (("commentCreate", ()), ("commentUpdate", (existing,))):
-            with self.subTest(op):
-                self.error(start(FakeLinear(*seed, fail={op: False}), record()), f"{ISSUE} session={SID}: success: false")
 
     def test_blocking_gql_times_out(self):
         release = threading.Event()
