@@ -24,7 +24,7 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users"}
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 # A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.

@@ -66,6 +66,28 @@ class Base(unittest.TestCase):
         return f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl"
 
 
+class ClientConfig(unittest.TestCase):
+    def test_the_real_tables(self):
+        self.assertLessEqual({"flags", "tiers"}, set(clients.load_config("claude", CORE)))
+        self.assertIn("roles", clients.load_config("skill", CORE))
+        self.assertFalse(os.path.exists(os.path.join(CORE, "config", "clients")))
+
+    def test_missing_or_bad_table(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "config", "config.toml")
+        with self.assertRaises(compose.ConfigError) as cm:
+            clients.load_config("claude", tmp.name)
+        self.assertIn(path, str(cm.exception))
+        os.makedirs(os.path.dirname(path))
+        for text in ("tier = 2\n", "clients = 1\n", "[clients]\nclaude = 1\n", "[clients.skill]\n"):
+            with open(path, "w") as f:
+                f.write(text)
+            with self.subTest(text), self.assertRaises(compose.ConfigError) as cm:
+                clients.load_config("claude", tmp.name)
+            self.assertIn("[clients.claude]", str(cm.exception))
+
+
 class Claude(Base):
     def test_no_deny_rules(self):
         for role, task in (("researcher", "light-research"), ("engineer", "engineering")):

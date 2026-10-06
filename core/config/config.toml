@@ -1,6 +1,6 @@
 # Core pack config. A task's value overrides its role's, which overrides the global one.
-#   tier       model tier 1–4 (1 = strongest); each client config (config/clients/<name>.toml) maps it to a model
-#   effort     low | medium | high | xhigh | max; each client config maps it to the client's effort
+#   tier       model tier 1–4 (1 = strongest); each [clients.<name>] table maps it to a model
+#   effort     low | medium | high | xhigh | max; each [clients.<name>] table maps it to the client's effort
 #   templates  files under templates/ inlined into the prompt
 #   read       extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/ dir.
 #              Read-only by the prompt only: no deny rules
@@ -13,6 +13,7 @@
 #              `commands`. unset → $TUI_SHOW, else the built-in split (iTerm2, else tmux); "" → the attach line only (show > TUI_SHOW > split)
 #   output     destination: type = github (repo, branch, dir, host: default github.com) | local | pull-request
 #   users      global only: GitHub logins whose PR comments are the user's; unset → the gh login
+#   clients    global only: per-client tables, see the Clients section
 
 # ── Global ──────────────────────────────────────────────
 tier = 2
@@ -89,3 +90,72 @@ effort = "low"
 tier = 4
 effort = "low"
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+
+# ── Clients ─────────────────────────────────────────────
+# Claude Code client data, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
+# Same layout as the tables above: a value under [clients.claude.roles.<role>.tasks.<task>] beats
+# [clients.claude.roles.<role>], which beats [clients.claude].
+[clients.claude]
+flags = ["--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config"]
+# allow = ["<rule>"]   # extra --allowedTools rules in Claude Code syntax; [clients.claude], its roles.<role> or roles.<role>.tasks.<task>
+
+[clients.claude.tiers]
+1 = "fable"
+2 = "opus"
+3 = "sonnet"
+4 = "haiku"
+
+[clients.claude.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+[clients.claude.env]
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"   # claude -p otherwise kills a workflow after 10 idle minutes
+
+# Skill client data, read by SkillClient (src/clients/skill.py).
+
+# Same layout as the tables above; an entry here replaces the same one there.
+#   description  the SKILL.md description, which tells a model when to use the skill;
+#                without one, it is "<Task> as <Role>: <the task file's first line>"
+#   output       orchestrator → the deliverable goes back to the orchestrator; tasks without an entry keep their own (engineering: pull-request)
+[clients.skill]
+
+# ── Researcher ─────────────────────────────────────────
+[clients.skill.roles.researcher.tasks.deep-research]
+description = "Deep, verified research on a question about the web, a codebase, or both: research workflows, key claims checked by independent votes, a sourced Markdown report with its gaps listed. Use when the answer must be reliable or a quick pass left gaps; for a fast answer use researcher-light-research."
+
+[clients.skill.roles.researcher.tasks.deep-research.output]
+type = "orchestrator"
+
+[clients.skill.roles.researcher.tasks.light-research]
+description = "Quick research on a question about the web, a codebase, or both: one round of parallel agents and a short sourced Markdown report. Use when a fast, good-enough answer will do; for verified depth use researcher-deep-research."
+
+[clients.skill.roles.researcher.tasks.light-research.output]
+type = "orchestrator"
+
+# ── PM ─────────────────────────────────────────────────
+[clients.skill.roles.pm.tasks.product-design]
+description = "Turn a product request, notes or research reports into a reviewed PRD: problem, scope, requirements and phased delivery. Use when an idea needs to become a buildable spec before engineering."
+
+[clients.skill.roles.pm.tasks.product-design.output]
+type = "orchestrator"
+
+# ── Engineer ───────────────────────────────────────────
+[clients.skill.roles.engineer.tasks.engineering]
+description = "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review, then push the branch and open the PR. Use when an approved PRD is ready to implement."
+
+# ── Dummy Tester ───────────────────────────────────────
+[clients.skill.roles.dummy-tester.tasks.echo]
+description = "Return the input unchanged. Use only to check that a role, a task and their output work end to end."
+
+[clients.skill.roles.dummy-tester.tasks.echo.output]
+type = "orchestrator"
+
+[clients.skill.roles.dummy-tester.tasks.prepare-test]
+description = "Open a worktree of the named repo and report it. Use only to check that repo.py worktree works end to end."
+
+[clients.skill.roles.dummy-tester.tasks.prepare-test.output]
+type = "orchestrator"

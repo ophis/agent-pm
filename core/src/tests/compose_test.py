@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import clients  # noqa: E402
 import compose  # noqa: E402
 
 class Plain:
@@ -518,8 +519,7 @@ class RealCore(unittest.TestCase):
         self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
     def test_a_run_reads_the_methods_dir_its_text_names(self):
-        with open(os.path.join(CORE, "config", "clients", "claude.toml"), "rb") as f:
-            claude = tomllib.load(f)
+        claude = clients.load_config("claude", CORE)
         named = []
         for role, task in ALL:
             text = ""
