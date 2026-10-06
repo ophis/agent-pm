@@ -26,7 +26,7 @@ Commit the regenerated `core/skills/` with the change that caused it.
 
 ## Add a client
 
-1. **Class.** `src/clients/<name>.py`, a `Client` subclass (it is also the prompt's `compose.Vehicle`) setting:
+1. **Class.** `src/clients/<name>.py`, a `Client` subclass (it satisfies `compose.PromptClient`) setting:
    - `keys`: its own config keys (`"roles"` too for per-role/task entries);
    - `needs_config`: whether it reads `[clients.<name>]` in `config/config.toml`;
    - `runs`: `True` → `launch()` starts an agent run; `False` → `export()` writes files (as `skill` does);
