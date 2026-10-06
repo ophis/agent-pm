@@ -340,11 +340,11 @@ class RealConfig(unittest.TestCase):
         cfg = config.load_config()
         runs = config.runnable(cfg)
         self.assertEqual(runs, {
-            "researcher": config.Role("frank.agent.w+researcher@gmail.com", "linear-api-key-researcher", ("deep-research", "light-research")),
-            "pm": config.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",)),
-            "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("engineering",))})
+            "researcher": config.Role("frank.agent.w+researcher@gmail.com", "linear-api-key-researcher", ("deep-research", "light-research"), 3),
+            "pm": config.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",), 3),
+            "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("engineering",), 3)})
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
-        self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 1, "pm": 1, "engineer": 1})
+        self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 3, "pm": 3, "engineer": 3})
         self.assertEqual(config.docs(runs), config.Docs("ophis/private_docs", "main", {
             "deep-research": "Research/", "light-research": "Research/", "product-design": "Product Design/"}))
         self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
