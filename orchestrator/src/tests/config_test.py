@@ -2,13 +2,16 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
 import config  # noqa: E402
 import clients  # noqa: E402
@@ -18,6 +21,11 @@ BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
+STATES_LINE = HEADER[HEADER.index("states = "):HEADER.index("task_label_group")]
+
+
+def missing(keys):
+    return f"missing {keys}: set them in orchestrator/config.local.toml, a copy of orchestrator/config.local.example.toml"
 
 
 class ConfigFile:
@@ -40,9 +48,7 @@ class Config(ConfigFile, unittest.TestCase):
                          {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
 
     def test_rejected(self):
-        states = "states = { " + ", ".join(f'{k} = "{v}"' for k, v in STATES.items()) + " }\n"
         body = BASE[BASE.index("[roles"):]
-        team = f'team = "{TEAM}"\n'
         group = "task_label_group must be a Linear label group id (UUID): "
         label = BASE + f'[task_labels]\nlight-research = "{LABEL1}"\n'
         upper = "ABCDEF00-0000-4000-8000-000000000021"
@@ -55,23 +61,30 @@ class Config(ConfigFile, unittest.TestCase):
             (BASE + '[tasks.x]\nmodel = "opus"\n[docs]\nrepo = "acme/notes"\n', "unknown keys: docs, tasks"),
             (BASE.replace(solo, role("solo", 'role = "x"', 'task = "y"')), "[roles.solo] has unknown keys: role, task"),
             (BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")), "[roles.solo] has unknown keys: read_only, tasks"),
-            (x + 'key = "k-x"\n', "[roles.x] account must be the role's Linear email: None"),
+            (x + 'key = "k-x"\n', missing("roles.x.account")),
             (x + 'account = ""\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: ''"),
             (x + 'account = 5\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: 5"),
-            (x + 'account = "x@agents.test"\n', "[roles.x] key must be a Keychain service name: None"),
+            (x + 'account = "x@agents.test"\n', missing("roles.x.key")),
+            (BASE + "[roles.x]\n[roles.y]\nkey = 'k-y'\n", missing("roles.x.account, roles.x.key, roles.y.account")),
             (x + 'account = "x@agents.test"\nkey = ""\n', "[roles.x] key must be a Keychain service name: ''"),
             (x + 'account = "x@agents.test"\nkey = ["k"]\n', "[roles.x] key must be a Keychain service name: ['k']"),
             *[(BASE + role("x", f"max_runs = {value}"), f"[roles.x] max_runs must be a whole number >= 1: {shown}")
               for shown, value in {"0": "0", "-1": "-1", "'2'": '"2"', "True": "true", "1.5": "1.5"}.items()],
-            (BASE.replace('harness_key = "linear-api-key"\n', ""), "harness_key must be a Keychain service name: None"),
+            (BASE.replace('harness_key = "linear-api-key"\n', ""), missing("harness_key")),
             (BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"), "harness_key must be a Keychain service name: 1"),
-            ('team = "Frank\'s Agents"\n' + states + body, "team must be a Linear team id (UUID): \"Frank's Agents\""),
-            (states + body, "team must be a Linear team id (UUID): None"),
-            (team + body, "[states] is missing: todo, in_progress, in_review, handoff, done, canceled"),
-            (team + states.replace(f', canceled = "{STATES["canceled"]}"', "") + body, "[states] is missing: canceled"),
-            (team + states.replace(" }", ', backlog = "x" }') + body, "[states] has unknown keys: backlog"),
-            (team + states.replace(STATES["done"], "Done") + body, "states.done must be a Linear workflow state id (UUID): 'Done'"),
-            (BASE.replace(f'task_label_group = "{TASK_GROUP}"\n', ""), group + "None"),
+            (BASE.replace(TEAM, "Frank's Agents"), "team must be a Linear team id (UUID): \"Frank's Agents\""),
+            (BASE.replace(f'"{TEAM}"', "5"), "team must be a Linear team id (UUID): 5"),
+            (BASE.replace(f'team = "{TEAM}"\n', ""), missing("team")),
+            (body, missing("team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
+                           "states.handoff, states.done, states.canceled")),
+            (BASE.replace(STATES_LINE, ""), missing("states.todo, states.in_progress, states.in_review, states.handoff, "
+                                                    "states.done, states.canceled")),
+            (BASE.replace(STATES_LINE, 'states = "x"\n'), missing("states.todo, states.in_progress, states.in_review, "
+                                                                 "states.handoff, states.done, states.canceled")),
+            (BASE.replace(f', canceled = "{STATES["canceled"]}"', ""), missing("states.canceled")),
+            (BASE.replace(" }\n", ', backlog = "x" }\n', 1), "[states] has unknown keys: backlog"),
+            (BASE.replace(STATES["done"], "Done"), "states.done must be a Linear workflow state id (UUID): 'Done'"),
+            (BASE.replace(f'task_label_group = "{TASK_GROUP}"\n', ""), missing("task_label_group")),
             (BASE.replace(TASK_GROUP, "not-a-uuid"), group + "'not-a-uuid'"),
             (BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"), group + "'ABCDEF00-0000-4000-8000-000000000002'"),
             (BASE.replace(f'"{TASK_GROUP}"', "5"), group + "5"),
@@ -331,38 +344,93 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.fails(message, HEADER + role("engineer"))
 
 
-P1, P2 = "121166b1-191a-4461-bec4-42f1c2dc0ddd", "ae72ede7-67a6-469d-a959-8ea51ab71fb8"
+P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
+DEPLOYMENT = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "project_repos",
+              "local_clones", "work_dir"}
+
+
+class Local(ConfigFile, unittest.TestCase):
+    """config.toml with config.local.toml beside it on top."""
+    def local(self, text):
+        with open(os.path.join(self.dir, "config.local.toml"), "w") as f:
+            f.write(text)
+
+    def test_local_on_top(self):
+        self.local(HEADER + 'human_members = ["b@x.com"]\n' + role("researcher", "max_runs = 2") + role("pm")
+                   + f'[project_repos]\n"{P2}" = "ophis/y"\n')
+        cfg = self.load('human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
+                        f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n')
+        self.assertEqual((cfg["team"], cfg["states"], cfg["human_members"]), (TEAM, STATES, ["b@x.com"]))
+        self.assertEqual(cfg["roles"], {"researcher": {"next": "pm", "max_runs": 2, "account": "researcher@agents.test",
+                                                       "key": "linear-api-key-researcher"},
+                                        "pm": {"account": "pm@agents.test", "key": "linear-api-key-pm"}})
+        self.assertEqual(cfg["project_repos"], {P1: "ophis/x", P2: "ophis/y"})
+        self.assertEqual(cfg["core"], {"roles": {"pm": {"tier": 1}}})
+
+    def test_local_alone_and_no_local(self):
+        self.local(BASE)
+        self.assertEqual(self.load("")["roles"], self.load(BASE)["roles"])
+        os.remove(os.path.join(self.dir, "config.local.toml"))
+        self.assertEqual(self.load(BASE)["team"], TEAM)
+
+    def test_a_bad_local_value_is_rejected(self):
+        self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
+        with self.assertRaises(SystemExit) as cm:
+            self.load(BASE)
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'")
 
 
 class RealConfig(unittest.TestCase):
-    """The repo's orchestrator/config.toml, core config and TASKS together."""
+    """The repo's committed orchestrator/config.toml with a fixture config.local.toml, core config and TASKS together."""
+    def load(self, local=None):
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(config.CONFIG, os.path.join(d, "config.toml"))
+            if local is not None:
+                with open(os.path.join(d, "config.local.toml"), "w") as f:
+                    f.write(local)
+            return config.load_config(os.path.join(d, "config.toml"))
+
+    def test_committed_config_holds_no_deployment_values(self):
+        with open(config.CONFIG, "rb") as f:
+            committed = tomllib.load(f)
+        self.assertFalse(DEPLOYMENT & set(committed))
+        self.assertEqual({r: set(p) & {"account", "key"} for r, p in committed["roles"].items()},
+                         {"researcher": set(), "pm": set(), "engineer": set()})
+
+    def test_without_local_names_what_is_missing(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.load()
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml: " + missing(
+            "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
+            "states.done, states.canceled, roles.researcher.account, roles.researcher.key, roles.pm.account, roles.pm.key, "
+            "roles.engineer.account, roles.engineer.key"))
+
     def test_real_config(self):
-        cfg = config.load_config()
+        cfg = self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
         runs = config.runnable(cfg)
         self.assertEqual(runs, {
-            "researcher": config.Role("frank.agent.w+researcher@gmail.com", "linear-api-key-researcher", ("deep-research", "light-research"), 3),
-            "pm": config.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",), 3),
-            "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("build", "light-build"), 3)})
+            "researcher": config.Role("researcher@agents.test", "linear-api-key-researcher", ("deep-research", "light-research"), 3),
+            "pm": config.Role("pm@agents.test", "linear-api-key-pm", ("product-design",), 3),
+            "engineer": config.Role("engineer@agents.test", "linear-api-key-engineer", ("build", "light-build"), 3)})
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
         self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 3, "pm": 3, "engineer": 3})
         self.assertEqual(config.docs(runs), config.Docs("ophis/private_docs", "main", {
             "deep-research": "Research/", "light-research": "Research/", "product-design": "Product Design/"}))
-        self.assertEqual(cfg["team"], "06159b6b-5efe-4bc5-a27b-875701f40d61")
+        self.assertEqual(cfg["team"], TEAM)
         self.assertNotIn("docs", cfg)
         self.assertEqual(cfg["core"], {"roles": {"researcher": {"tasks": {"deep-research": {
             "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
-        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d",
-                                              "light-build": "0cd05aec-3a73-4e6f-a584-8aab9e52afbd"})
-        self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
-        home = os.path.expanduser("~/playground")
-        self.assertEqual(cfg["local_clones"], {"ophis/agent-pm": os.path.realpath(f"{home}/agent-pm"),
-                                               "ophis/claude-autopilot": os.path.realpath(f"{home}/claude-autopilot")})
+        self.assertEqual((cfg["task_labels"], cfg["project_repos"], cfg["local_clones"]), ({}, {}, {}))
         self.assertEqual(config.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
         self.assertEqual({t: (x.kind, x.prefix) for t, x in config.TASKS.items()},
                          {"deep-research": ("research", ""), "light-research": ("research", ""),
                           "product-design": ("design", "PRD"), "build": ("build", "ENG"),
                           "light-build": ("build", "ENG")})
+
+    def test_example_is_comments_only(self):
+        with open(os.path.join(config.ROOT, config.EXAMPLE), "rb") as f:
+            self.assertEqual(tomllib.load(f), {})
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):

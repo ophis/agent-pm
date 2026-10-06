@@ -4,12 +4,12 @@
 repo.py worktree --dir DIR --branch B REPO  prints {"repo", "host", "default", "branch", "commit", "worktree",
                                            "permalink_base", "push"}; no push permission is no error
 repo.py status --dir DIR --branch B REPO    after worktree: {"pr", "plan_docs", "since", "user", "others"}, `user` and
-                                           `others` being PR comments and reviews by the user (config.toml's `users`,
+                                           `others` being PR comments and reviews by the user (core config's `users`,
                                            else the gh login) and by anyone else since the latest plan doc commit
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs (prune runs no git in a clone there). A local clone gets a git worktree after a fetch that
 moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig),
-true if config.toml's `trusted_dirs` lists the clone's real path; an existing worktree with the other setting is
+true if core config's `trusted_dirs` lists the clone's real path; an existing worktree with the other setting is
 refused. Any other REPO gets a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new
 from origin/<default>.
 Git lock failures (runs sharing a clone) are retried.
@@ -17,6 +17,7 @@ Each option may be given once, so a command pre-approved by its `--dir` prefix c
 second `--dir`.
 Exits 2 when REPO or B is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other failure.
 Errors mask URL userinfo.
+Core config: config.toml beside src/, with config.local.toml on top (read_config); a skill's copy has none.
 """
 import argparse
 import json
@@ -44,6 +45,7 @@ BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
+LOCAL = "config.local.toml"
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
@@ -106,8 +108,27 @@ def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
 
 
+def merge(base: dict, over: dict) -> dict:
+    """`base` with `over` on top: tables merge key by key; any other value of `over` replaces base's."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def read_config(path: str) -> dict:
+    """TOML file `path`, with config.local.toml beside it merged on top when it exists (merge())."""
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    local = os.path.join(os.path.dirname(path), LOCAL)
+    if os.path.isfile(local):
+        with open(local, "rb") as f:
+            cfg = merge(cfg, tomllib.load(f))
+    return cfg
+
+
 def trusted_dirs(cfg: dict) -> frozenset[str]:
-    """Realpaths of config.toml's `trusted_dirs`; ValueError unless it is a list of absolute or expandable ~ paths."""
+    """Realpaths of the config's `trusted_dirs`; ValueError unless it is a list of absolute or expandable ~ paths."""
     paths = cfg.get("trusted_dirs", [])
     if not isinstance(paths, list):
         raise ValueError("trusted_dirs: want a list of local paths")
@@ -390,10 +411,7 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = {}
-        if os.path.isfile(config):   # a skill's copy of this script has no config.toml beside it
-            with open(config, "rb") as f:
-                cfg = tomllib.load(f)
+        cfg = read_config(config) if os.path.isfile(config) else {}   # a skill's copy has no config.toml beside it
         if a.cmd == "worktree":
             r = worktree(a.repo, a.branch, a.dir, run=run, temp=temp, links=trusted_dirs(cfg))
         else:

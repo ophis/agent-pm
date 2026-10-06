@@ -244,7 +244,7 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
     if src and src["team"]["id"] == ctx.team:
         text = (f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
                 "`Repo: <owner>/<name>` naming the target repo."
-                + (" Or fix orchestrator/config.toml's [project_repos] entry." if reason.startswith(MAPPED) else ""))
+                + (" Or fix orchestrator/config.local.toml's [project_repos] entry." if reason.startswith(MAPPED) else ""))
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         except (Exception, SystemExit) as e:

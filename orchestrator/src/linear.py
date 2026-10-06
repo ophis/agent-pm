@@ -17,7 +17,7 @@ import drive  # noqa: E402
 
 @functools.cache
 def harness_service():
-    """Keychain service of the harness account's Linear key: orchestrator/config.toml's harness_key."""
+    """Keychain service of the harness account's Linear key: the orchestrator config's harness_key."""
     return config.load_config()["harness_key"]
 
 
@@ -162,7 +162,7 @@ def role_ids(gql, runs):
 
 @dataclass(frozen=True)
 class Team:
-    """The orchestrator/config.toml team as checked by team(): {logical state: state id}."""
+    """The config's team as checked by team(): {logical state: state id}."""
     id: str
     name: str
     states: dict
@@ -173,7 +173,7 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 
 
 def team(gql, cfg):
-    """The orchestrator/config.toml team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
+    """The config's team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
     nodes = gql(Q_TEAM, t=cfg["team"])["teams"]["nodes"]
     if not nodes:
         raise SystemExit(f"orchestrator/config.toml: team {cfg['team']} not found in Linear")

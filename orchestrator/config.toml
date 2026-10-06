@@ -1,75 +1,26 @@
-# Linear entities by id, since names change with a rename.
-#   team              required: the Linear team id
-#   human_members     the human users' emails; each is subscribed to every issue moved to In Review; unset → none
-#   harness_key       required: Keychain service of the harness account's Linear API key (router, promote, prune)
-#   task_label_group  required: Linear id of the `Tasks` label group; its labels pick an issue's task through
-#                     [task_labels]
-#   work_dir          runtime state: agent runs' workdirs in <work_dir>/work/<ID>/, router state and logs in
-#                     <work_dir>/logs/ (the plists hard-code it); absolute or ~, neither in nor containing this repo or a
-#                     [local_clones] clone; unset → ~/.agent-pm
-team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents
-human_members = ["ophis.w@outlook.com"]
-harness_key = "linear-api-key"
-task_label_group = "66f375be-02ef-44d2-84cc-d11a280dc3ea"
-
-# The team's workflow states the code uses.
-#   <state>  required for each of todo, in_progress, in_review, handoff, done, canceled: its Linear state id
-[states]
-todo        = "717e27f7-c97e-43d8-aa47-13d513ad8ec6"
-in_progress = "cda9dcfe-c2ab-4853-8e17-8d6ad76b0795"
-in_review   = "5efb3bbc-ea0b-4982-a3d5-31338c9bade3"
-handoff     = "6d876dc6-7732-4473-a0b2-30041d93d0aa"
-done        = "414a4381-7260-46e7-8057-d8cec9d4b11f"
-canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
-
-# Task labels; optional, a default task needs none.
-#   <task>  the task's Linear label id, a child of the Tasks group
-[task_labels]
-light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
-light-build = "0cd05aec-3a73-4e6f-a584-8aab9e52afbd"      # Light Build
+# The orchestrator's generic config. This deployment's settings (Linear ids, accounts, Keychain items, repos, clones,
+# work_dir) go in config.local.toml, read on top of this file: see config.local.example.toml.
 
 # A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. An issue
 # assigned to its account runs the role's default task unless its Tasks label picks another through [task_labels].
-#   account               required: the role's Linear account (email)
-#   key                   required: Keychain service of that account's API key; write-back acts as it
 #   next                  the role promote hands this role's Handoff issues to; unset → the last stage
 #   require_instructions  true → a Handoff issue with no human_members comment goes back to In Review; unset → true
 #   max_runs              agent runs of this role at once; unset → 1
 [roles.researcher]
-account = "frank.agent.w+researcher@gmail.com"
-key = "linear-api-key-researcher"
 next = "pm"
 max_runs = 3
 
 [roles.pm]
-account = "frank.agent.w+pm@gmail.com"
-key = "linear-api-key-pm"
 next = "engineer"
 require_instructions = false       # a PRD carries enough context
 max_runs = 3
 
 [roles.engineer]
-account = "frank.agent.w+engineer@gmail.com"
-key = "linear-api-key-engineer"
 max_runs = 3
-
-# Project repos; optional.
-#   "<project id>"  "<owner>/<name>": target repo of the Linear project's Engineering, research or product-design
-#                   issues with no Repo: line; a Repo: line wins
-[project_repos]
-"121166b1-191a-4461-bec4-42f1c2dc0ddd" = "ophis/agent-pm"           # Agent PM
-"ae72ede7-67a6-469d-a959-8ea51ab71fb8" = "ophis/claude-autopilot"   # Autopilot
-
-# Local clones; optional, an unlisted repo gets a fresh clone.
-#   "<owner>/<name>"  "<path>" (absolute or ~) of the repo's local clone. The input's Repo: line names the path, so
-#                     the agent run gets a git worktree of the clone; config.runnable checks it is a clone of that repo
-[local_clones]
-"ophis/agent-pm" = "~/playground/agent-pm"
-"ophis/claude-autopilot" = "~/playground/claude-autopilot"
 
 # The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
 # [core], applied after core/config.toml's [clients.claude] (drive.plan layers). config.overlay() fills {{root}}
 # with this repo's root.
-#   <run key>  as in core/config.toml; users, trusted_dirs and clients are refused
+#   <run key>  as in core/config.toml and core/config.local.example.toml; users, trusted_dirs and clients are refused
 [core.roles.researcher.tasks.deep-research]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"

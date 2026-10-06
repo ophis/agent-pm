@@ -32,7 +32,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -112,11 +111,9 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
 
 
 def trusted_dirs(root: str) -> frozenset[str]:
-    """Real paths of <root>/config.toml's global `trusted_dirs`; ConfigError when it is malformed."""
-    with open(os.path.join(root, CONFIG), "rb") as f:
-        cfg = tomllib.load(f)
+    """Real paths of the global `trusted_dirs` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
     try:
-        return repos.trusted_dirs(cfg)
+        return repos.trusted_dirs(repos.read_config(os.path.join(root, CONFIG)))
     except ValueError as e:
         raise ConfigError(str(e)) from None
 

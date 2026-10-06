@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node  # noqa: E402
 import config  # noqa: E402
 import linear  # noqa: E402
@@ -135,7 +136,9 @@ class LinearGql(unittest.TestCase):
     def test_harness_service_reads_the_config(self):
         linear.harness_service.cache_clear()
         self.addCleanup(linear.harness_service.cache_clear)
-        self.assertEqual(linear.harness_service(), "linear-api-key")
+        with mock.patch.object(config, "load_config", return_value={"harness_key": "linear-harness"}) as load:
+            self.assertEqual((linear.harness_service(), linear.harness_service()), ("linear-harness", "linear-harness"))
+        load.assert_called_once_with()
 
     def test_service_names_the_keychain_item(self):
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))

@@ -183,7 +183,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
-        return None, f'Task label "{name}" is not in orchestrator/config.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+        return None, f'Task label "{name}" is not in orchestrator/config.local.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
     if task not in role_tasks:
         return None, (f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
                       "Fix the label or the assignee, then move the issue back to Todo.")

@@ -1,10 +1,10 @@
 """The client interface: a Client turns a composed agent run into a Launch."""
 import os
-import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
+import repo
 from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
 
 
@@ -83,12 +83,11 @@ class Client:
 
 
 def load_config(name: str, root: str) -> dict:
-    """<root>/config.toml's [clients.<name>] table."""
+    """[clients.<name>] of <root>/config.toml with config.local.toml on top."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")
-    with open(path, "rb") as f:
-        tables = tomllib.load(f).get("clients")
+    tables = repo.read_config(path).get("clients")
     table = tables.get(name) if isinstance(tables, dict) else None
     if not isinstance(table, dict):
         raise ConfigError(f"no [clients.{name}] table in {path}")

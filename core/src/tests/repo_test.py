@@ -106,6 +106,28 @@ class Base(unittest.TestCase):
         return path
 
 
+class ReadConfig(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "config.toml")
+
+    def test_merge(self):
+        base = {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}}
+        over = {"b": 2, "s": {"k": 1}, "u": 5, "t": {"y": 2, "l": [3], "n": {"q": 3}}}
+        self.assertEqual(repo.merge(base, over), {"a": 1, "b": 2, "s": {"k": 1}, "u": 5,
+                                                  "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}}})
+        self.assertEqual(base, {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}})
+
+    def test_config_local_toml_beside_goes_on_top(self):
+        with open(self.path, "w") as f:
+            f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
+        self.assertEqual(repo.read_config(self.path), {"users": ["a", "b"], "t": {"x": 1, "y": 1}})
+        with open(os.path.join(os.path.dirname(self.path), repo.LOCAL), "w") as f:
+            f.write('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
+        self.assertEqual(repo.read_config(self.path), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}})
+
+
 class Parse(unittest.TestCase):
     def test_forms(self):
         for spec, want in (("o/n", ("github.com", "o", "n")), ("ghe.example.com/o/n", ("ghe.example.com", "o", "n")),
@@ -627,6 +649,14 @@ class LocalSafety(Clone):
         self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "-C", self.clone, "config", "--get", "core.symlinks"]).returncode, 1)
 
+    def test_a_clone_listed_in_config_local_toml_gets_symlinks(self):
+        link = self.link_commit()
+        config = self.listing()
+        with open(os.path.join(self.tmp, "config.local.toml"), "w") as f:
+            f.write(f"trusted_dirs = {json.dumps([self.clone])}\n")
+        self.assertEqual(self.worktree(config=config), (0, ""))
+        self.assertEqual(os.readlink(link), "/etc/passwd")
+
     def test_a_listed_clone_is_matched_by_real_path(self):
         link = self.link_commit()
         alias = os.path.join(self.tmp, "alias")
@@ -771,20 +801,26 @@ class Status(Base):
     def test_configured_users_replace_the_gh_login(self):
         comments = [[{"created_at": "2026-10-03T00:00:00Z", "user": {"login": "me"}, "body": "from the bot"},
                      {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "Alice"}, "body": "do Y"}]]
-        run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
-                    (["gh", "pr", "list"], ok(json.dumps([{"number": 7, "url": "u7", "state": "OPEN",
-                                                           "isCrossRepository": False, "author": {"login": "me"}}]))),
-                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
-                    (lambda a: "--paginate" in a, ok("[[]]"))])
-        config = os.path.join(self.dir, "config.toml")
-        with open(config, "w") as f:
-            f.write('users = ["alice"]\n')
-        out, err = io.StringIO(), io.StringIO()
-        code = repo.main(["status", "o/n", "--branch", "b", "--dir", self.dir], run=run, out=out, err=err, config=config)
-        r = json.loads(out.getvalue())
-        self.assertEqual((code, r["pr"]["number"]), (0, 7))
-        self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
-        self.assertEqual([e["body"] for e in r["others"]], ["from the bot"])
+        config, local = os.path.join(self.dir, "config.toml"), os.path.join(self.dir, "config.local.toml")
+        existing = self.existing()
+        for text, local_text in (('users = ["alice"]\n', None), ('users = ["bob"]\n', 'users = ["alice"]\n')):
+            with self.subTest(local=local_text):
+                run = Fake([existing, (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
+                            (["gh", "pr", "list"], ok(json.dumps([{"number": 7, "url": "u7", "state": "OPEN",
+                                                                   "isCrossRepository": False, "author": {"login": "me"}}]))),
+                            (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                            (lambda a: "--paginate" in a, ok("[[]]"))])
+                with open(config, "w") as f:
+                    f.write(text)
+                if local_text:
+                    with open(local, "w") as f:
+                        f.write(local_text)
+                out, err = io.StringIO(), io.StringIO()
+                code = repo.main(["status", "o/n", "--branch", "b", "--dir", self.dir], run=run, out=out, err=err, config=config)
+                r = json.loads(out.getvalue())
+                self.assertEqual((code, r["pr"]["number"]), (0, 7))
+                self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
+                self.assertEqual([e["body"] for e in r["others"]], ["from the bot"])
 
     def test_other_branches_plan_docs_and_no_pr(self):
         self.plan_doc(branch="other")

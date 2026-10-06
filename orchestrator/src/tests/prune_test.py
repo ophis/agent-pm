@@ -5,6 +5,7 @@ from functools import partial
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402,F401
 from board_ids import STATES as IDS_BY_KEY, TEAM, team_node  # noqa: E402
 import config, linear, promote, prune, repo  # noqa: E402
 import promote_test as tp  # noqa: E402

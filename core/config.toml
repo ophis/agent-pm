@@ -1,32 +1,17 @@
-# Core pack config. A run key's value resolves in order, each step replacing what the earlier ones set:
-#   layers  this file → the client's [clients.<name>] → the orchestrator's [core] overlay; so a later layer's global
-#           value beats an earlier layer's task value
+# Core pack config. This machine's settings (show, cwd, users, trusted_dirs) go in config.local.toml, read on top of
+# this file: see config.local.example.toml. A run key's value resolves in order, each step replacing what the earlier
+# ones set:
+#   layers  this file (config.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
+#           a later layer's global value beats an earlier layer's task value
 #   levels  within a layer: global → role ([roles.<role>]) → task ([roles.<role>.tasks.<task>])
 
 # ── Global ──────────────────────────────────────────────
 #   tier            required: model tier 1–4 (1 = strongest); [clients.<name>] maps it to a model
 #   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
-#   show            tui runner only: how the agent run's TUI window opens.
-#                   unset        → split the current pane (iTerm2, else tmux)
-#                   ""           → open nothing; print the `tmux attach` command
-#                   "<command>"  → run it; {{session}} is the tmux session name
-#   cwd             the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory (the
-#                   orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.json)
-#   users           global only: GitHub logins whose PR comments are the user's; unset → the gh login
-#   trusted_dirs    global only: dirs you trust (absolute or ~ path, matched by real path); unset → none. A cwd that is
-#                   one or under one loads its project settings; any other, user settings only, with a stderr notice
-#                   unless it is the workdir; a trusted cwd in the workdir is refused. A listed local clone's worktrees
-#                   check out symlinks as links; every other checkout, a skill's bundled repo.py included, gets
-#                   core.symlinks=false. A listed clone trusts every link in fetched origin/<branch> commits, which may
-#                   point outside the worktree: list only stable paths only you write. An agent run cannot add one (no
-#                   flag; the overlay rejects it)
 tier = 2
 effort = "high"
 language = "Chinese"
-# show = ""   # e.g. on a server: no window, attach by hand
-# users = ["octocat"]
-# trusted_dirs = ["~/data-repo"]
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on
