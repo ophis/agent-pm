@@ -460,7 +460,7 @@ class FakeTui:
         """tui's start, status, kill and send replaced by this fake's, or by `api`'s; time.monotonic by its clock."""
         stack = ExitStack()
         stack.enter_context(unittest.mock.patch.multiple(
-            drive.tui, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
+            drive.tui_claude, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
         stack.enter_context(unittest.mock.patch.object(time, "monotonic", lambda: self.now))
         return stack
 
@@ -477,7 +477,7 @@ class FakeTui:
             return step
         for item in step:
             drive.append_line(self.channel, json.dumps(item) + "\n")
-        return drive.tui.RUNNING
+        return drive.tui_claude.RUNNING
 
     def kill(self, name):
         self.calls.append(("kill", name))
@@ -767,7 +767,7 @@ class Start(Base):
         self.assertEqual((r.returncode, seen), (0, ["progress", "outcome"]))
 
     def test_headless_ignores_stops(self):
-        with unittest.mock.patch.object(drive.tui, "send") as send:
+        with unittest.mock.patch.object(drive.tui_claude, "send") as send:
             r, _, _ = self.start([*[{"kind": "stop"}] * (drive.STOP_LIMIT + 1), said("still going"), outcome(DONE)])
         self.assertEqual((r.returncode, r.outcome.status, send.called), (0, "done", False))
 
@@ -1074,31 +1074,75 @@ class TuiRunner(Base):
 
     def test_tui_session_name(self):
         self.assertEqual(drive.tui_session("r", "t", SID), self.NAME)
-        self.assertIsNotNone(drive.TUI_SESSION.fullmatch(self.NAME))
-        self.assertIsNone(drive.TUI_SESSION.fullmatch("r-t-xyz"))
+        self.assertEqual(drive.tui_session("r", "t", SID, prefix="engineer-TASK-1"), "engineer-TASK-1-11111111")
+        self.assertEqual(drive.tui_session("r", "t", SID, prefix=None), self.NAME)
 
-    def test_layout_reaches_tui_start_and_defaults_to_right_beside_nothing(self):
-        for layout, want in ((None, ("right", None)), (drive.Layout("below", "s"), ("below", "s"))):
-            p = self.params()
-            fake = FakeTui(p.channel, [[outcome(DONE)]])
-            launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
-            with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
-                drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[])
-            (_, _, _, kw), = [c for c in fake.calls if c[0] == "start"]
-            self.assertEqual((kw["split"], kw["beside"]), want)
+    def test_tui_session_matches_the_prefix_and_sid_shape_only(self):
+        for name, prefix in ((self.NAME, "r-t"), ("engineer-TASK-1-11111111", "engineer-TASK-1"), ("A_b-0-deadbeef", "A_b-0")):
+            self.assertEqual(drive.TUI_SESSION.fullmatch(name)["prefix"], prefix)
+        for name in ("r-t-xyz", "r-t-1111111", "r-t-111111111", "-11111111", "11111111", "r t-11111111", "r-t-11111111\n"):
+            self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
+
+    def launched(self, layout=None, **kw):
+        """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
+        p = self.params()
+        fake = FakeTui(p.channel, [[outcome(DONE)]])
+        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
+        with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
+            drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[], **kw)
+        (_, name, _, kw), = [c for c in fake.calls if c[0] == "start"]
+        return name, kw
+
+    def test_layout_reaches_tui_start_and_defaults_to_the_automatic_stack(self):
+        for layout, want in ((None, (None, None, None)), (drive.Layout(), (None, None, None)),
+                             (drive.Layout("below", "s"), ("below", "s", None)),
+                             (drive.Layout(opener="w0t0p0:AB-12"), (None, None, "w0t0p0:AB-12")),
+                             (drive.Layout("right", None, "mine"), ("right", None, "mine"))):
+            with self.subTest(layout=layout):
+                _, kw = self.launched(layout)
+                self.assertEqual((kw["split"], kw["beside"], kw["opener"]), want)
+
+    def test_prefix_names_the_session_and_events_reach_tui_start(self):
+        name, kw = self.launched(prefix="engineer-TASK-1", events="/tmp/ev.log")
+        self.assertEqual((name, kw["events"]), ("engineer-TASK-1-11111111", "/tmp/ev.log"))
+        name, kw = self.launched()
+        self.assertEqual((name, kw["events"]), (self.NAME, None))
+
+    def test_a_kill_after_a_prefixed_start_names_the_prefixed_session(self):
+        def sink(event):
+            raise RuntimeError("sink")
+
+        p = self.params()
+        fake = FakeTui(p.channel, [[progress("round", "x")]])
+        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
+        with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), self.assertRaises(RuntimeError):
+            drive.start(launch, run(), p, client=claude(), runner="tui", sinks=[sink], prefix="p-1")
+        self.assertEqual(fake.calls[-1], ("kill", "p-1-11111111"))
 
     def test_a_bad_layout_is_a_config_error_before_files_or_channel(self):
         marker = os.path.join(self.work, "marker")
-        cases = (("headless", drive.Layout(), "no layout"), ("tui", drive.Layout("left"), "split"),
-                 ("tui", drive.Layout(beside="a b"), "beside"), ("tui", drive.Layout(beside=""), "beside"))
-        for runner, layout, word in cases:
-            with self.subTest(runner=runner, layout=layout):
+        cases = (("headless", {"layout": drive.Layout()}, "no layout"), ("tui", {"layout": drive.Layout("left")}, "split"),
+                 ("tui", {"layout": drive.Layout(beside="a b")}, "beside"),
+                 ("tui", {"layout": drive.Layout(beside="")}, "beside"),
+                 ("tui", {"layout": drive.Layout(opener="a b")}, "opener"),
+                 ("tui", {"layout": drive.Layout(opener="")}, "opener"),
+                 ("tui", {"layout": drive.Layout(opener="a:b:c")}, "opener"),
+                 ("tui", {"prefix": "a b"}, "prefix"), ("tui", {"prefix": ""}, "prefix"),
+                 ("tui", {"prefix": "a.b"}, "prefix"),
+                 ("headless", {"prefix": "p"}, "prefix"), ("headless", {"events": "/tmp/ev.log"}, "events"))
+        for runner, kw, word in cases:
+            with self.subTest(runner=runner, **kw):
                 p = self.params()
                 launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], files={marker: "x"})
                 with self.assertRaisesRegex(drive.ConfigError, word):
-                    drive.start(launch, run(), p, client=claude(), runner=runner, layout=layout, sinks=[])
+                    drive.start(launch, run(), p, client=claude(), runner=runner, sinks=[], **kw)
                 self.assertFalse(os.path.lexists(marker))
                 self.assertFalse(os.path.lexists(p.channel))
+
+    def test_a_layout_with_no_split_and_a_good_opener_is_accepted(self):
+        for layout in (drive.Layout(), drive.Layout(opener="mine"), drive.Layout(opener="w0t0p0:AB-12"),
+                       drive.Layout("below", "s", "mine")):
+            drive.check_layout("tui", layout)
 
     def test_main_split_and_beside_build_the_layout(self):
         seen = []
@@ -1109,10 +1153,54 @@ class TuiRunner(Base):
             return real(*a, **kw)
 
         for flags, want in ((["--split", "below", "--beside", "s"], drive.Layout("below", "s")),
-                            (["--beside", "s"], drive.Layout("right", "s")), ([], None)):
+                            (["--beside", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
+                            ([], None)):
             with unittest.mock.patch.object(drive, "start", start):
                 self.main([outcome(DONE)], extra=flags)
             self.assertEqual(seen.pop(), want)
+
+    def test_main_prefix_and_events_reach_start_and_the_tui_session(self):
+        seen = []
+        real = drive.start
+
+        def start(*a, **kw):
+            seen.append((kw["prefix"], kw["events"]))
+            return real(*a, **kw)
+
+        for flags, want in (([], (None, None)), (["--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log"],
+                                                  ("engineer-TASK-1", "/tmp/ev.log"))):
+            with unittest.mock.patch.object(drive, "start", start):
+                code, calls, _ = self.main([outcome(DONE)], extra=flags)
+            self.assertEqual((code, seen.pop()), (0, want))
+        (_, name, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertRegex(name, r"engineer-TASK-1-[0-9a-f]{8}")
+        self.assertEqual(kw["events"], "/tmp/ev.log")
+
+    def test_main_a_bad_prefix_or_headless_prefix_or_events_exits_2_before_anything_starts(self):
+        base = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work]
+        cases = ((["--runner", "tui", "--prefix", "a b"], "prefix"), (["--runner", "tui", "--prefix", ""], "prefix"),
+                 (["--prefix", "p"], "prefix"), (["--events", "/tmp/ev.log"], "events"),
+                 (["--runner", "headless", "--prefix", "p", "--dry-run"], "prefix"),
+                 (["--events", "/tmp/ev.log", "--dry-run"], "events"))
+        for extra, word in cases:
+            with self.subTest(extra=extra):
+                err = io.StringIO()
+                with redirect_stderr(err), unittest.mock.patch.object(drive, "start") as start:
+                    self.assertEqual(drive.main([*base, *extra], root=CORE), 2)
+                self.assertIn(word, err.getvalue())
+                start.assert_not_called()
+                self.assertFalse(os.path.exists(self.work))
+
+    def test_main_dry_run_with_a_prefix_exits_0_and_starts_nothing(self):
+        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work, "--runner", "tui", "--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log",
+                "--dry-run"]
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()), unittest.mock.patch.object(drive, "start") as start:
+            self.assertEqual(drive.main(argv, root=CORE), 0)
+        self.assertEqual(json.loads(out.getvalue())["argv"][0], "claude")
+        start.assert_not_called()
 
     def test_main_layout_with_headless_exits_2(self):
         err = io.StringIO()
@@ -1153,14 +1241,14 @@ class TuiRunner(Base):
         def sink(event):
             raise RuntimeError("sink")
 
-        kill = unittest.mock.Mock(side_effect=drive.tui.TuiError("gone"))
+        kill = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("gone"))
         with self.assertRaises(RuntimeError):
             self.start([progress("round", "x")], sinks=[sink], api={"kill": kill})
         self.assertEqual(kill.call_args, unittest.mock.call(self.NAME))
         self.assertIn("drive.py: tui: gone\n", self.err.getvalue())
 
     def test_a_tui_error_on_start_is_the_result(self):
-        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui.TuiError("no tmux"))})
+        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no tmux"))})
         self.assertEqual((r, calls), (drive.Result(1, None, "tui: no tmux"), []))
 
     def test_an_interrupted_start_kills_no_session_it_did_not_start(self):
@@ -1169,7 +1257,7 @@ class TuiRunner(Base):
         self.assertEqual(self.fake.calls, [])
 
     def test_a_tui_error_reading_the_session_kills_it_and_is_the_result(self):
-        status = unittest.mock.Mock(side_effect=drive.tui.TuiError("no server"))
+        status = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no server"))
         r, calls, _, _ = self.start(api={"status": status})
         self.assertEqual((r, [c[0] for c in calls]), (drive.Result(1, None, "tui: no server"), ["start", "kill"]))
         code, calls, err = self.main(api={"status": status})
@@ -1242,14 +1330,14 @@ class TuiRunner(Base):
         self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls], err), (0, "done", ["start"], ""))
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
-        send = unittest.mock.Mock(side_effect=drive.tui.TuiError("no pane"))
+        send = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no pane"))
         r, _, _, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT), api={"send": send})
         self.assertEqual((r.error, send.call_count), ("the agent run returned no outcome", 1))
         self.assertIn("drive.py: tui: no pane\n", err)
 
     def test_start_refuses_a_client_without_the_command_before_anything_starts(self):
         popen = unittest.mock.Mock()
-        with unittest.mock.patch.object(drive.tui, "start") as start, self.assertRaises(compose.ConfigError):
+        with unittest.mock.patch.object(drive.tui_claude, "start") as start, self.assertRaises(compose.ConfigError):
             drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), runner="tui", popen=popen)
         self.assertEqual((popen.called, start.called, os.path.exists(self.work)), (False, False, False))
 

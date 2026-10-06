@@ -1,22 +1,25 @@
-"""Attended runs: where the TUI pane goes, and the harness-only record of an agent run's TUI sessions.
+"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>.
 
-The record, logs/tui/<ID>, holds one TUI session name per line. Agent runs never write logs/; the inner driver does.
+attended.py owns that name: prefix builds it, ISSUE_TUI matches it. An issue's TUI sessions are the live tmux sessions
+so named; nothing records them.
 """
 import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 from typing import NamedTuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
+import config  # noqa: E402,F401  (puts core/src on sys.path)
 import drive  # noqa: E402
 import linear  # noqa: E402
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 from linear import one_line  # noqa: E402
 
-RECORD_DIR = "tui"
+# the prefix of an issue's TUI session name (drive.TUI_SESSION): <role>-<ID>
+ISSUE_TUI = re.compile(rf"([a-z][a-z0-9-]*)-({linear.ISSUE_ID})")
+# list-sessions' stderr when no server runs: a stale socket, or none (tmux's client.c)
+NO_SERVER = re.compile(r"no server running on .*|error connecting to .* \(No such file or directory\)")
 
 
 class Bad(Exception):
@@ -24,88 +27,86 @@ class Bad(Exception):
 
 
 def layout(split, beside, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: beside the pane tui.anchor finds (session `beside`'s, else the caller's tmux
-    session's when a terminal shows it, else $ITERM_SESSION_ID's iTerm2 pane)."""
-    if split is not None and split not in tui.SPLITS:
-        raise Bad(f"split must be one of {', '.join(tui.SPLITS)}")
-    split = split or drive.Layout.split
+    """The drive.Layout for the TUI pane: split and beside as given, and the caller's opener (tui_claude.opener). Bad
+    unless tui_claude.anchor finds a pane (beside's, else the caller's), and, without beside, the caller has an
+    opener."""
+    if split is not None and split not in tui_claude.SPLITS:
+        raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
     if beside is not None:
-        if not tui.NAME.fullmatch(beside):
+        if not tui_claude.NAME.fullmatch(beside):
             raise Bad("bad tmux session name")
-        if tui.status(beside, proc=proc) is None:
+        if tui_claude.status(beside, proc=proc) is None:
             raise Bad(f"no tmux session {beside}")
     try:
-        found = tui.anchor(beside, proc=proc)
-    except tui.TuiError as e:
+        tui_claude.anchor(beside, proc=proc)
+        try:
+            opener = tui_claude.opener(proc=proc)
+        except tui_claude.TuiError:
+            if beside is None:
+                raise
+            opener = None
+    except tui_claude.TuiError as e:
         hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
         raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
-    return drive.Layout(split, found.session)
+    return drive.Layout(split, beside, opener)
 
 
-def _path(ident, logs):
-    return Path(logs, RECORD_DIR, ident)
+def prefix(role, ident):
+    """The TUI session prefix of role's agent run of issue ident, <role>-<ID>; ValueError when ISSUE_TUI does not match
+    it."""
+    name = f"{role}-{ident}"
+    if not ISSUE_TUI.fullmatch(name):
+        raise ValueError(f"TUI session prefix {name!r}: want {ISSUE_TUI.pattern}")
+    return name
 
 
-def record(ident, name, *, logs=config.LOGS):
-    path = _path(ident, logs)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    drive.append_line(path, name + "\n")
+def sessions(ident, *, proc=subprocess.run):
+    """The names of issue ident's live TUI sessions, sorted; [] when no tmux server runs. Raises tui_claude.TuiError."""
+    return sorted(name for name, i in _live(proc) if i == ident)
 
 
-def _read(ident, logs):
-    """(names, malformed): the record's TUI session names and its count of other lines; ([], 0) without one.
-    Raises OSError."""
-    path = _path(ident, logs)
-    lines = path.read_text().splitlines() if path.exists() else []
-    found = [n for n in lines if drive.TUI_SESSION.fullmatch(n)]
-    return found, len(lines) - len(found)
+def issues(*, proc=subprocess.run):
+    """The issue ids with a live TUI session, sorted; [] when no tmux server runs. Raises tui_claude.TuiError."""
+    return sorted({i for _, i in _live(proc)})
 
 
-def names(ident, *, logs=config.LOGS):
-    """The TUI session names recorded for ident, a malformed line left out. Raises OSError."""
-    return _read(ident, logs)[0]
+def _live(proc):
+    """(name, issue id) of each live tmux session named as an issue's TUI session."""
+    try:
+        res = proc(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True,
+                   stdin=subprocess.DEVNULL)
+    except OSError as e:
+        raise tui_claude.TuiError(f"tmux: {e}") from e
+    if res.returncode:
+        err = (res.stderr or "").strip()
+        if NO_SERVER.fullmatch(err):
+            return []
+        raise tui_claude.TuiError(f"tmux: {err}")
+    found = []
+    for name in res.stdout.splitlines():
+        if (m := drive.TUI_SESSION.fullmatch(name)) and (issue := ISSUE_TUI.fullmatch(m["prefix"])):
+            found.append((name, issue[2]))
+    return found
 
 
 class Closed(NamedTuple):
-    """One close result: status closed, skip (a malformed line, name None: its text is never kept) or error (name None:
-    the record itself); msg says why for skip and error."""
+    """One close result: status closed or error (name None: the listing failed); msg says why for error."""
     status: str
     name: str | None = None
     msg: str = ""
 
 
-def close(ident, *, logs=config.LOGS, proc=subprocess.run):
-    """Kill the live TUI sessions recorded for ident and drop them from the record; a kill that fails stays recorded,
-    a session already gone is dropped with no result. Returns the Closed results; never raises."""
-    path = _path(ident, logs)
-    out, kept = [], []
+def close(ident, *, proc=subprocess.run):
+    """Kill issue ident's live TUI sessions (sessions). Returns the Closed results; never raises."""
     try:
-        if not path.exists():
-            return out
-        found, malformed = _read(ident, logs)
-        out += [Closed("skip", msg="not a TUI session name")] * malformed
-        for name in found:
-            try:
-                if tui.status(name, proc=proc) is None:
-                    continue
-                tui.kill(name, proc=proc)
-                out.append(Closed("closed", name))
-            except tui.TuiError as e:
-                kept.append(name)
-                out.append(Closed("error", name, one_line(e)))
-        if kept:
-            drive.save(path, "".join(n + "\n" for n in kept))
-        else:
-            path.unlink()
-    except OSError as e:
-        out.append(Closed("error", msg=one_line(e)))
+        names = sessions(ident, proc=proc)
+    except tui_claude.TuiError as e:
+        return [Closed("error", msg=one_line(e))]
+    out = []
+    for name in names:
+        try:
+            tui_claude.kill(name, proc=proc)
+            out.append(Closed("closed", name))
+        except tui_claude.TuiError as e:
+            out.append(Closed("error", name, one_line(e)))
     return out
-
-
-def recorded(logs=config.LOGS):
-    """Issue ids with a record, sorted."""
-    try:
-        files = os.listdir(Path(logs, RECORD_DIR))
-    except OSError:
-        return []
-    return sorted(n for n in files if re.fullmatch(linear.ISSUE_ID, n))

@@ -15,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from board_ids import HEADER, STATES, role  # noqa: E402
 from router_test import STRAY, FakeLinear, blocker, issue as todo_issue, label  # noqa: E402
+from attended_test import Tmux  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
 import inputs  # noqa: E402
@@ -41,7 +42,7 @@ PR = "https://github.com/Ophis/Agent-PM/pull/7"
 DONE = {"status": "done", "title": "TASK-7: Session registry", "summary": "Opened the PR.", "url": PR}
 NOW = "2026-10-04T10:00:00+08:00"
 TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
-TUI_NAME = "engineer-engineering-0b6f2c1e"
+TUI_NAME = "engineer-TASK-7-0b6f2c1e"
 ATTACH = ("run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'\n"
           f"run.py: tui: tmux attach -t '={TUI_NAME}'\n")
 LAYOUT, CLOSE = attended.layout, attended.close
@@ -135,19 +136,6 @@ class Run:
                     raise r
                 return r
         raise AssertionError(f"unexpected {argv}")
-
-
-class Tmux:
-    """Fake tmux for attended's proc: the `live` sessions run, kill-session succeeds; records each argv."""
-    def __init__(self, live=()):
-        self.live, self.calls = set(live), []
-
-    def __call__(self, argv, **kw):
-        self.calls.append(argv[1:])
-        if argv[1] == "list-clients":  # -t =<name>
-            return subprocess.CompletedProcess(argv, 0, "5 /dev/ttys4 %1 /s\n" if argv[3][1:] in self.live else "", "")
-        running = argv[1] == "display-message" and argv[4][1:-1] in self.live  # -t =<name>:
-        return subprocess.CompletedProcess(argv, 0, "0  \n" if running else "\n", "")
 
 
 class Proc:
@@ -270,14 +258,17 @@ class Outer(Base):
         self.assertEqual(self.sh_calls[1], self.sh_calls[0])
         self.assertEqual(self.err, "")
 
-    def test_split_and_beside_need_the_tui_runner(self):
+    def test_tui_options_need_the_tui_runner(self):
         inner = ["--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM"]
-        for extra in (["--split", "right"], ["--beside", "dev"], ["--runner", "headless", "--split", "below"]):
+        events = os.path.join(self.tmp, "events.log")
+        for extra in (["--split", "right"], ["--beside", "dev"], ["--runner", "headless", "--split", "below"],
+                      ["--events", events], ["--opener", "mine"]):
             for where in ([], inner):
                 with self.subTest(extra=extra, inner=bool(where)):
                     self.assertEqual(self.main(args() + where + extra), 2)
-                    self.assertEqual(self.err, "run.py: --split and --beside need --runner tui\n")
+                    self.assertEqual(self.err, "run.py: --split, --beside, --opener and --events need --runner tui\n")
         self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.popen_calls), ([], [], [], []))
+        self.assertFalse(os.path.exists(events))
         self.assertFalse(os.path.exists(self.runs))
 
     def test_research_has_no_target(self):
@@ -466,17 +457,30 @@ class Attended(Base):
             os.environ.pop(k, None)
         os.environ["TERM_PROGRAM"] = "iTerm.app"
 
-    def tui(self, *extra, live=()):
+    def tui(self, *extra, live=(), assignee=ENGINEER):
         self.tmux = Tmux(live)
         place = functools.partial(LAYOUT, proc=self.tmux)
         with mock.patch.object(attended, "layout", place):
-            return self.main(args() + ["--runner", "tui", *extra])
+            return self.main(args(assignee) + ["--runner", "tui", *extra])
 
     def driver(self, *tail, iterm=""):
         return [(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
                   "agent-pm-engineer-TASK-7", "-c", self.rd,
                   sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), *tail],
                  {"check": True})]
+
+    def rename_engineer(self, name):
+        """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
+        core, roles = os.path.join(self.root, "core"), os.path.join("team", "roles")
+        os.remove(core)
+        for parent, own in (("", {"config", "team"}), ("team", {"roles"}), (roles, set())):
+            os.makedirs(os.path.join(core, parent), exist_ok=True)
+            for n in set(os.listdir(os.path.join(config.CORE, parent))) - own:
+                os.symlink(os.path.join(config.CORE, parent, n), os.path.join(core, parent, n))
+        os.symlink(os.path.join(config.CORE, roles, "engineer.md"), os.path.join(core, roles, f"{name}.md"))
+        self.write(os.path.join(core, compose.CONFIG),
+                   self.read(os.path.join(config.CORE, compose.CONFIG)).replace("[roles.engineer", f"[roles.{name}"))
+        self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG.replace(role("engineer"), role(name)))
 
     def test_beside_a_session(self):
         self.assertEqual(self.tui("--split", "below", "--beside", "dev", live=["dev"]), 0)
@@ -487,8 +491,42 @@ class Attended(Base):
     def test_an_iterm2_pane_gets_the_tui_and_a_detached_driver(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
         self.assertEqual(self.tui(), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=right", iterm="w0t0p0:ABC"))
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=w0t0p0:ABC", iterm="w0t0p0:ABC"))
         self.assertEqual(self.err, ATTACH)
+
+    def test_the_callers_tmux_session_is_the_opener_never_beside(self):
+        os.environ.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
+        self.assertEqual(self.tui(live=["mine"]), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=mine"))
+        self.assertEqual(self.err, ATTACH)
+
+    def test_events_reach_the_inner_as_an_absolute_path(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        events = os.path.join(self.tmp, "events.log")
+        self.assertEqual(self.tui("--split", "below", "--events", os.path.join(self.tmp, ".", "events.log")), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=below", "--opener=w0t0p0:ABC",
+                                                    f"--events={events}", iterm="w0t0p0:ABC"))
+        self.assertEqual(os.stat(events).st_mode & 0o777, 0o600)
+
+    def test_a_bad_events_file_starts_nothing(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        cases = [(self.tmp, f"events file {self.tmp}: Is a directory"),
+                 (os.path.join(self.tmp, "a#b"), f"events file {self.tmp}/a#b: tmux would misread it")]
+        for path, msg in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(self.tui("--events", path), 2)
+                self.assertEqual(self.err, f"run.py: {msg}\n")
+        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
+        self.assertFalse(os.path.exists(self.rd))
+
+    def test_a_role_outside_the_session_name_contract_starts_nothing(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.rename_engineer("eng_x")
+        self.assertEqual(self.tui(assignee="eng_x@agents.test"), 2)
+        (line,) = self.plog()
+        self.assertTrue(line.startswith("<ts> config-error TASK-7: TUI session prefix 'eng_x-TASK-7': want "), line)
+        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
+        self.assertEqual(self.main(args("eng_x@agents.test")), 0)  # headless: no TUI session to name
 
     def test_attach_lines_come_before_the_driver_session(self):
         printed = []
@@ -551,8 +589,10 @@ class AttendedEntry(Base):
         return [TS.sub("", line) for line in self.err.splitlines()]
 
     def test_claims_then_starts_the_run_attended(self):
+        events = os.path.join(self.tmp, "events.log")
         cases = [(("--split", "below", "--beside", "dev"), "", ["--runner=tui", "--split=below", "--beside=dev"]),
-                 ((), "w0t0p0:ABC", ["--runner=tui", "--split=right"])]
+                 ((), "w0t0p0:ABC", ["--runner=tui", "--opener=w0t0p0:ABC"]),
+                 (("--events", events), "w0t0p0:ABC", ["--runner=tui", "--opener=w0t0p0:ABC", f"--events={events}"])]
         for extra, iterm, tail in cases:
             with self.subTest(extra=extra):
                 os.environ["ITERM_SESSION_ID"] = iterm
@@ -575,15 +615,15 @@ class AttendedEntry(Base):
                       *tail], {"check": True})])
                 self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=engineering",
                                                "run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'",
-                                               f"run.py: tui: tmux attach -t '=engineer-engineering-{sid[:8]}'"])
+                                               f"run.py: tui: tmux attach -t '=engineer-TASK-7-{sid[:8]}'"])
                 self.assertEqual(self.gql.mutations, [(linear.M_STATE, {"i": ID, "s": STATES["in_progress"]})])
                 self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
-    def test_only_issue_split_and_beside(self):
+    def test_only_issue_split_beside_and_events(self):
         for argv in (["--tui"], ["--tui", "--split", "below"], *(["--issue", ID, "--tui", *x] for x in (
                 ["--project", PROJECT], ["--assignee", ENGINEER], ["--sid", SID], ["--task", "engineering"], ["--mode", "new"],
                 ["--inner"], ["--uuid", UUID], ["--target", "Ophis/Agent-PM"], ["--runner", "tui"], ["--runner", "headless"],
-                ["--spl", "below"], ["--bes", "dev"]))):
+                ["--opener", "mine"], ["--spl", "below"], ["--bes", "dev"], ["--eve", "x"]))):
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
                 run.main(argv, sh=self.sh, gql=self.gql, run=self.run, popen=self.popen, runs=self.runs,
                          projects=self.projects, keychain=self.keychain, root=self.root)
@@ -601,11 +641,12 @@ class AttendedEntry(Base):
         self.assertEqual(self.err, "run.py: orchestrator/config.toml: unknown keys: bogus\n")
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
-    def test_no_place_for_the_pane_before_any_linear_call(self):
+    def test_no_place_for_the_pane_or_a_bad_events_file_before_any_linear_call(self):
         cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
                       "run from tmux or iTerm2, or pass --beside SESSION"),
                  (("--split", "left"), "split must be one of right, below"),
-                 (("--beside", "gone"), "no tmux session gone")]
+                 (("--beside", "gone"), "no tmux session gone"),
+                 (("--beside", "dev", "--events", self.tmp), f"events file {self.tmp}: Is a directory")]
         for extra, msg in cases:
             with self.subTest(msg=msg):
                 self.assertEqual(self.entry(*extra), 2)
@@ -648,17 +689,10 @@ class Inner(Base):
                   mock.patch.object(attended, "close", lambda ident, **kw: CLOSE(ident, proc=self.tmux, **kw))):
             p.start()
             self.addCleanup(p.stop)
-        self.record = os.path.join(self.root, "logs", "tui", ID)
 
     def inner(self, assignee=ENGINEER, task="engineering", mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
         return self.main(["--inner", "--uuid", uuid, *(["--target", target] if target else []),
                           *forwarded(assignee, task, mode), *extra])
-
-    def recorded_at_first_call(self):
-        """A Gql that notes the record's text (None: no record) at each Linear call."""
-        seen = []
-        self.gql = Gql(node(), lambda name, v: seen.append(self.read(self.record) if os.path.exists(self.record) else None))
-        return seen
 
     def rec(self):
         return sessions.base(sid=SID, cwd=self.rd, started_at=NOW)
@@ -749,63 +783,55 @@ class Inner(Base):
                 self.handlers[sig](sig, None)
             self.assertEqual(cm.exception.code, code)
 
-    def test_tui_runs_as_headless_does_but_for_runner_and_layout(self):
+    def test_tui_runs_as_headless_does_but_for_runner_layout_and_session_naming(self):
         seen = []
-        for extra in ((), ("--runner=tui", "--split=below", "--beside=dev")):
+        for extra in ((), ("--runner=tui", "--split=below", "--beside=dev", "--opener=w0t0p0:ABC", "--events=/x/ev.log")):
             self.gql = Gql(node())
             with mock.patch.object(drive, "start", return_value=drive.Result(0, drive.Outcome(**DONE))) as start:
                 self.assertEqual(self.inner(extra=extra), 0)
             os.remove(os.path.join(self.rd, writeback.LEDGER))
             (pos, kw), = start.call_args_list
-            seen.append((kw.pop("runner"), kw.pop("layout"), pos, [s.__qualname__ for s in kw.pop("sinks")],
-                         sorted(kw), self.gql.calls))
-        (h_runner, h_layout, *headless), (t_runner, t_layout, *tui) = seen
-        self.assertEqual((h_runner, h_layout), ("headless", None))
-        self.assertEqual((t_runner, t_layout), ("tui", drive.Layout("below", "dev")))
+            seen.append(([kw.pop(k) for k in ("runner", "layout", "prefix", "events")], pos,
+                         [s.__qualname__ for s in kw.pop("sinks")], sorted(kw), self.gql.calls))
+        (h_own, *headless), (t_own, *tui) = seen
+        self.assertEqual(h_own, ["headless", None, None, None])
+        self.assertEqual(t_own, ["tui", drive.Layout("below", "dev", "w0t0p0:ABC"), "engineer-TASK-7", "/x/ev.log"])
         self.assertEqual(tui, headless)
         self.assertIn(("state", KEY, {"i": UUID, "s": STATES["in_review"]}), headless[-1])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "logs", "tui")))
 
     def test_close_runs_before_every_run(self):
-        self.write(self.record, "not a name\nengineer-engineering-aaaaaaaa\nengineer-engineering-bbbbbbbb\n")
-        self.tmux = Tmux(live=["engineer-engineering-aaaaaaaa"])
-        at_call = self.recorded_at_first_call()
-        with mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
-            self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[:3], ["<ts> launch TASK-7 mode=new session=" + SID,
-                                           "<ts> tui-skip TASK-7: not a TUI session name",
-                                           "<ts> tui-closed TASK-7 engineer-engineering-aaaaaaaa"])
-        self.assertEqual([c[0] for c in self.tmux.calls], ["display-message", "kill-session", "display-message"])
-        self.assertEqual((at_call[0], os.path.exists(self.record)), (None, False))
+        mine = ["engineer-TASK-7-aaaaaaaa", "pm-TASK-7-bbbbbbbb"]
+        other = ["engineer-TASK-70-cccccccc", "agent-pm-engineer-TASK-7"]
+        for extra in ((), ("--runner=tui",)):
+            with self.subTest(extra=extra):
+                self.tmux = Tmux(live=[*mine, *other])
+                seen = []
+                self.gql = Gql(node(), lambda name, v: seen.append(list(self.tmux.live)))
+                with mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
+                    self.assertEqual(self.inner(extra=extra), 0)
+                self.assertEqual(self.plog()[-5:-2], ["<ts> launch TASK-7 mode=new session=" + SID,
+                                                      *(f"<ts> tui-closed TASK-7 {n}" for n in mine)])
+                self.assertEqual(self.tmux.tmux_calls(), ["list-sessions", "kill-session", "kill-session"])
+                self.assertEqual(seen[0], other)
 
     def test_close_results_become_tui_lines(self):
-        closed = [attended.Closed("skip", None, "not a TUI session name"), attended.Closed("closed", "e-t-aaaaaaaa"),
-                  attended.Closed("error", "e-t-bbbbbbbb", "TuiError: boom"), attended.Closed("error", None, "OSError: nope")]
+        closed = [attended.Closed("closed", "e-TASK-7-aaaaaaaa"),
+                  attended.Closed("error", "e-TASK-7-bbbbbbbb", "TuiError: boom"),
+                  attended.Closed("error", None, "TuiError: tmux: nope")]
         with mock.patch.object(attended, "close", return_value=closed), \
                 mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
             self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[1:5], ["<ts> tui-skip TASK-7: not a TUI session name",
-                                            "<ts> tui-closed TASK-7 e-t-aaaaaaaa",
-                                            "<ts> tui-error TASK-7 e-t-bbbbbbbb: TuiError: boom",
-                                            "<ts> tui-error TASK-7: OSError: nope"])
-
-    def test_tui_records_its_session_before_the_session_comment(self):
-        at_call = self.recorded_at_first_call()
-        with mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
-            self.assertEqual(self.inner(extra=("--runner=tui", "--split=right")), 0)
-        self.assertEqual((at_call[0], self.read(self.record)), (TUI_NAME + "\n", TUI_NAME + "\n"))
-        self.assertEqual(self.plog()[1], "<ts> end TASK-7 session=" + SID + " exit=0")
-
-    def test_record_failure_is_logged_and_the_run_goes_on(self):
-        self.write(os.path.dirname(self.record), "")
-        with mock.patch.object(drive, "start", return_value=drive.Result(0, None)) as start:
-            self.assertEqual(self.inner(extra=("--runner=tui",)), 0)
-        start.assert_called_once()
-        tui_dir = os.path.dirname(self.record)
-        self.assertEqual(self.plog()[1], f"<ts> tui-error TASK-7: FileExistsError: [Errno 17] File exists: '{tui_dir}'")
+        self.assertEqual(self.plog()[1:4], ["<ts> tui-closed TASK-7 e-TASK-7-aaaaaaaa",
+                                            "<ts> tui-error TASK-7 e-TASK-7-bbbbbbbb: TuiError: boom",
+                                            "<ts> tui-error TASK-7: TuiError: tmux: nope"])
 
     def test_bad_layout_exits_2(self):
         cases = [(("--runner=tui", "--split=left"), "layout split 'left': want one of right, below"),
-                 (("--runner=tui", "--beside=a:b"), "layout beside 'a:b': want [A-Za-z0-9_-]+")]
+                 (("--runner=tui", "--beside=a:b"), "layout beside 'a:b': want [A-Za-z0-9_-]+"),
+                 (("--runner=tui", "--opener=a b"), "layout opener 'a b': want a tmux session name or an iTerm2 session id"),
+                 (("--runner=tui", "--opener=w0:a:b"),
+                  "layout opener 'w0:a:b': want a tmux session name or an iTerm2 session id")]
         for extra, msg in cases:
             with self.subTest(msg=msg):
                 self.assertEqual(self.inner(extra=extra), 2)

@@ -13,13 +13,14 @@ the default is deleted when origin/<branch> or origin/<default> holds it, else k
 never touched. Agent runs and the harness are the same macOS user: this keeps code an agent run planted (filters, hooks,
 submodules) from running outside auto mode's review; it is no privilege boundary.
 
-TUI sessions: attended.close ends a finished issue's recorded ones (logs/tui/<ID>) before its checkouts go, since a
-left-open claude may work in one.
+TUI sessions: attended.close ends a finished issue's live ones, found by name (<role>-<ID>-<sid[:8]>), before its
+checkouts go, since a left-open claude may work in one.
 
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
-Runs at the end of promote's tick (Pruner); an issue is queried on its own only when it has such an entry or a record.
+Runs at the end of promote's tick (Pruner); an issue is queried on its own only when it has such an entry or a live TUI
+session.
 """
 import os
 import re
@@ -30,9 +31,10 @@ from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import CLONES, LOGS, WORK  # noqa: E402
+from config import CLONES, WORK  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
+import tui_claude  # noqa: E402
 from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -55,12 +57,11 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=WORK, team, roles, logs=LOGS, proc=subprocess.run, run=repo.sh,
-                 writable=None):
+    def __init__(self, gql, now, dry, *, work=WORK, team, roles, proc=subprocess.run, run=repo.sh, writable=None):
         """roles: {Linear user id: role} as linear.role_ids returns. run: git's runner. writable: dirs whose clones get
         no git run (default work/ and the temp dirs)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles, self.logs, self.proc, self.run_git = team, roles, logs, proc, run
+        self.team, self.roles, self.proc, self.run_git = team, roles, proc, run
         self.writable = config.writable(work) if writable is None else writable
         self.errors = 0
 
@@ -164,19 +165,17 @@ class Pruner:
     def close_sessions(self, ident):
         if self.dry:
             try:
-                names = attended.names(ident, logs=self.logs)
-            except OSError as e:
+                names = attended.sessions(ident, proc=self.proc)
+            except tui_claude.TuiError as e:
                 self.error(ident, one_line(e))
                 return
             for name in names:
                 self.say(f"prune-plan {ident}/{name}: close the tui session")
             return
-        for c in attended.close(ident, logs=self.logs, proc=self.proc):
+        for c in attended.close(ident, proc=self.proc):
             key = ident if c.name is None else f"{ident}/{c.name}"
             if c.status == "closed":
                 self.say(f"prune-closed {key}: tui session")
-            elif c.status == "skip":
-                self.say(f"prune-skip {key}: {c.msg}")
             else:
                 self.error(key, c.msg)
 
@@ -222,7 +221,12 @@ class Pruner:
                       if IDENT_RE.fullmatch(n) and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))]
         except OSError:
             idents = []
-        idents = sorted(set(idents) | set(attended.recorded(self.logs)))
+        try:
+            live = attended.issues(proc=self.proc)
+        except tui_claude.TuiError as e:
+            self.error("tui", one_line(e))
+            live = []
+        idents = sorted(set(idents) | set(live))
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]

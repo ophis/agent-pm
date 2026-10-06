@@ -1,4 +1,4 @@
-"""Starts and directs Claude Code workers in tmux panes through core/src/tui.py. Stdlib only."""
+"""Starts and directs Claude Code workers in tmux panes through core/src/tui_claude.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
@@ -8,49 +8,24 @@ import os
 import re
 import shlex
 import shutil
-import stat
 import subprocess
 import sys
-import time
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-TUI = os.path.join(ROOT, "core", "src", "tui.py")
+sys.path.insert(0, os.path.join(ROOT, "core", "src"))
+import tui_claude  # noqa: E402
+
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
 ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
-MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
-SESSIONS = "#{session_name}\t#{session_attached}\t#{@events}\t#{@started}"
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
-# tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
-DIED = ("set-option @state dead ; "
-        "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'")
-BORDER = " #{session_name} #{@state} "
 
 
 class WorkersError(Exception):
     pass
-
-
-def hooks(events: str) -> str:
-    """The --settings JSON: Stop appends `done`, a blocking Notification `blocked`, to the events file; each, and
-    UserPromptSubmit (`working`), sets the session's @state."""
-    def state(word: str) -> str:
-        return f'tmux set-option -t "$TMUX_PANE" @state {word} >/dev/null 2>&1'
-
-    def command(word: str) -> str:
-        return (f'[ -n "$TMUX_PANE" ] && {{ {state(word)}; echo "$(date +%H:%M:%S) '
-                f'$(tmux display -p -t "$TMUX_PANE" \'#S\') {word}" >> {shlex.quote(events)}; }} || true')
-
-    def entry(cmd: str) -> list:
-        return [{"type": "command", "command": cmd}]
-
-    return json.dumps({"hooks": {
-        "Stop": [{"hooks": entry(command("done"))}],
-        "Notification": [{"matcher": MATCHER, "hooks": entry(command("blocked"))}],
-        "UserPromptSubmit": [{"hooks": entry(f'[ -n "$TMUX_PANE" ] && {state("working")} || true')}]}})
 
 
 def _run(proc, argv, **kw):
@@ -65,54 +40,16 @@ def _check(name: str) -> None:
         raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
-def _touch(events: str) -> None:
-    try:
-        fd = os.open(events, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-        try:
-            st = os.fstat(fd)
-        finally:
-            os.close(fd)
-    except OSError as e:
-        raise WorkersError(f"events file {events}: {e.strerror}") from e
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-        raise WorkersError(f"events file {events}: not a regular file owned by you")
-
-
-def _decorations(name: str) -> list:
-    """The pane-died hook (`dead` event and @state) and the pane border showing `<name> <state>`."""
-    return [["tmux", "set-hook", "-p", "-t", f"={name}:", "pane-died", DIED],
-            ["tmux", "set-option", "-w", "-t", f"={name}:", "pane-border-status", "top"],
-            ["tmux", "set-option", "-w", "-t", f"={name}:", "pane-border-format", BORDER]]
-
-
 def _tmux(argv: list, proc) -> None:
     res = _run(proc, argv)
     if res.returncode != 0:
         raise WorkersError(f"tmux {argv[1]} {argv[-2]}: {(res.stderr or '').strip()}")
 
 
-def _beside(name: str, events: str, proc) -> list:
-    """tui.py layout flags: below the newest attached other worker on the events file, else none."""
-    res = _run(proc, ["tmux", "list-sessions", "-F", SESSIONS])
-    best = None
-    if res.returncode == 0:
-        for line in res.stdout.splitlines():
-            fields = line.split("\t")
-            if len(fields) != 4 or fields[2] != events or fields[0] == name:
-                continue
-            try:
-                attached, started = int(fields[1]), int(fields[3])
-            except ValueError:
-                continue
-            if attached > 0 and (best is None or started > best[0]):
-                best = (started, fields[0])
-    return ["--beside", best[1], "--split", "below"] if best else []
-
-
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
           beside: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `beside` or `split` replaces the automatic placement; tui.py defaults the other."""
+    `beside` or `split` replaces tui_claude's automatic placement; it defaults the other."""
     _check(name)
     if beside is not None:
         _check(beside)
@@ -123,23 +60,18 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     if claude is None:
         raise WorkersError("claude not found on PATH")
     claude = os.path.abspath(claude)
-    _touch(events)
     sid = str(uuid.uuid4())
     child_env = {k: v for k, v in env.items() if k not in STRIP}
-    layout = [*(["--beside", beside] if beside else []), *(["--split", split] if split else [])]
-    argv = [sys.executable, TUI, "start", name, *(layout or _beside(name, events, proc)), "--", claude,
-            "--session-id", sid, "--name", name, "--settings", hooks(events), *flags,
-            *(["--", prompt] if prompt else [])]
-    res = _run(proc, argv, cwd=cwd, env=child_env)
-    if res.returncode != 0:
-        raise WorkersError((res.stderr or "").strip() or f"tui.py exited {res.returncode}")
-    for line in (res.stderr or "").splitlines():
-        if line.startswith("tui: show:"):
-            print(line, file=sys.stderr)
-    options = {"@sid": sid, "@cwd": cwd, "@events": events, "@claude": claude,
+    try:
+        tui_claude.start(name, [claude, "--session-id", sid, "--name", name, *flags,
+                                *(["--", prompt] if prompt else [])],
+                         cwd=cwd, env=child_env, events=events, split=split, beside=beside, proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+    options = {"@sid": sid, "@cwd": cwd, "@claude": claude,
                "@env": json.dumps({k: child_env[k] for k in ENV_KEYS if k in child_env}),
-               "@flags": json.dumps(list(flags)), "@started": str(time.time_ns())}
-    for argv in [*(["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()), *_decorations(name)]:
+               "@flags": json.dumps(list(flags))}
+    for argv in (["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()):
         try:
             _tmux(argv, proc)
         except WorkersError as e:
@@ -176,12 +108,15 @@ def restart(name: str, *, proc=subprocess.run) -> str:
     """Respawn worker `name`'s pane resuming its session; returns the shell string it ran."""
     _check(name)
     opt = _stored(name, proc)
-    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()),
-             opt["claude"], "--resume", opt["sid"], "--name", name, "--settings", hooks(opt["events"]),
-             *opt["flags"]]
+    try:
+        resume = tui_claude.with_hooks([opt["claude"], "--resume", opt["sid"], "--name", name, *opt["flags"]],
+                                       opt["events"])
+        tui_claude.decorate(name, opt["events"], proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()), *resume]
     cmd = " ".join(shlex.quote(w) for w in words)
-    for argv in [*_decorations(name), ["tmux", "set-option", "-t", f"={name}:", "@state", ""]]:
-        _tmux(argv, proc)
+    _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
     res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
     if res.returncode != 0:

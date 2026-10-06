@@ -1,26 +1,29 @@
-import os, subprocess, sys, tempfile, unittest
-from pathlib import Path
+import os, subprocess, sys, unittest
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import attended  # noqa: E402
 import drive  # noqa: E402
-import tui  # noqa: E402
+import tui_claude  # noqa: E402
 
 ID = "TASK-12"
-A, B = "engineer-engineering-0b6f2c1e", "engineer-engineering-7c1d9e2f"
+SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
+A, B = "engineer-TASK-12-0b6f2c1e", "dummy-tester-TASK-12-7c1d9e2f"
 PANE = {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
 ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
+NO_SERVER = (1, "no server running on /private/tmp/tmux-501/default\n")
 
 
 class Tmux:
-    """Fake tmux: live names answer status (RUNNING) and kill; fail names make kill-session fail."""
-    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 /tmp/s\n"):
-        self.live, self.fail, self.own, self.clients, self.calls = set(live), set(fail), own, clients, []
+    """Fake tmux: `live` sessions answer status, list-sessions (none: no server) and kill-session, which fails for
+    `fail` ones; `listing` (rc, stderr) replaces list-sessions' answer."""
+    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 /tmp/s\n", listing=None):
+        self.live, self.fail, self.own, self.clients, self.listing = dict.fromkeys(live), set(fail), own, clients, listing
+        self.calls = []
 
     def __call__(self, argv, **kw):
         args = argv[1:]
         self.calls.append(args)
-        out, rc = "", 0
+        out, rc, err = "", 0, ""
         if args[0] == "display-message" and args[-1] == "#{session_name}":
             out = self.own + "\n"
         elif args[0] == "list-clients":
@@ -28,13 +31,16 @@ class Tmux:
         elif args[0] == "display-message":
             name = args[3][1:-1]  # =name:
             out = "0  \n" if name in self.live else "\n"
+        elif args[0] == "list-sessions":
+            rc, err = self.listing or (NO_SERVER if not self.live else (0, ""))
+            out = "" if rc else "".join(n + "\n" for n in self.live)
         elif args[0] == "kill-session":
             name = args[2][1:]
             if name in self.fail:
-                rc = 1
+                rc, err = 1, "boom"
             else:
-                self.live.discard(name)
-        return subprocess.CompletedProcess(argv, rc, out, "boom" if rc else "")
+                self.live.pop(name, None)
+        return subprocess.CompletedProcess(argv, rc, out, err)
 
     def tmux_calls(self):
         return [c[0] for c in self.calls]
@@ -60,21 +66,24 @@ class LayoutTest(unittest.TestCase):
         with self.assertRaisesRegex(attended.Bad, "no tmux session gone"):
             self.call(beside="gone", tmux=Tmux())
 
-    def test_beside_given(self):
-        got = self.call("below", "dev", tmux=Tmux(live=["dev"]))
-        self.assertEqual(got, drive.Layout("below", "dev"))
+    def test_beside_given_keeps_it_with_the_opener_if_any(self):
+        for environ, opener in (({}, None), (ITERM, "w0t0p0:ABC"), ({**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}, None),
+                                (PANE, "mine")):
+            with self.subTest(environ=environ):
+                self.assertEqual(self.call("below", "dev", tmux=Tmux(live=["dev"]), environ=environ),
+                                 drive.Layout("below", "dev", opener))
 
     def test_beside_not_shown(self):
         with self.assertRaisesRegex(attended.Bad, r"^no pane to show the TUI beside \(no terminal shows tmux session dev\)$"):
             self.call(beside="dev", tmux=Tmux(live=["dev"], clients=""))
 
-    def test_inside_tmux(self):
-        got = self.call(environ=PANE, tmux=Tmux(own="mine"))
-        self.assertEqual(got, drive.Layout("right", "mine"))
+    def test_inside_tmux_the_own_session_is_the_opener_never_beside(self):
+        self.assertEqual(self.call(environ=PANE, tmux=Tmux(own="mine")), drive.Layout(None, None, "mine"))
+        self.assertEqual(self.call("below", environ=PANE, tmux=Tmux(own="mine")), drive.Layout("below", None, "mine"))
 
     def test_inside_tmux_unshown_falls_back_to_iterm(self):
         got = self.call(environ={**PANE, **ITERM}, tmux=Tmux(own="mine", clients=""))
-        self.assertEqual(got, drive.Layout("right", None))
+        self.assertEqual(got, drive.Layout(None, None, "mine"))
 
     def test_inside_tmux_unshown_no_iterm(self):
         with self.assertRaisesRegex(attended.Bad, "^no pane to show the TUI beside"):
@@ -86,7 +95,7 @@ class LayoutTest(unittest.TestCase):
 
     def test_iterm_pane(self):
         tmux = Tmux()
-        self.assertEqual(self.call("below", environ=ITERM, tmux=tmux), drive.Layout("below", None))
+        self.assertEqual(self.call("below", environ=ITERM, tmux=tmux), drive.Layout("below", None, "w0t0p0:ABC"))
         self.assertEqual(tmux.calls, [])
 
     def test_no_pane(self):
@@ -97,84 +106,80 @@ class LayoutTest(unittest.TestCase):
                                   r"or iTerm2, or pass --beside SESSION$"):
                 self.call(environ=environ)
 
+    def test_a_pane_but_no_opener_without_beside(self):
+        with self.assertRaisesRegex(attended.Bad, r"^no pane to show the TUI beside \(bad \$ITERM_SESSION_ID 'w0t0p0:A_B'"
+                                                  r".*\): run from tmux or iTerm2, or pass --beside SESSION$"):
+            self.call(environ={**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"})
 
-class RecordTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.logs = self.tmp.name
-        self.path = Path(self.logs, attended.RECORD_DIR, ID)
 
-    def write(self, *lines):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text("".join(l + "\n" for l in lines))
+class PrefixTest(unittest.TestCase):
+    def test_role_and_issue(self):
+        for role in ("engineer", "dummy-tester", "pm2"):
+            with self.subTest(role=role):
+                self.assertEqual(attended.prefix(role, ID), f"{role}-{ID}")
 
-    def close(self, tmux):
-        return attended.close(ID, logs=self.logs, proc=tmux)
+    def test_a_name_outside_the_contract(self):
+        for role, ident in (("Engineer", ID), ("eng_x", ID), ("", ID), ("2pm", ID), ("engineer", "task-12"),
+                            ("engineer", "TASK-12 ")):
+            with self.subTest(role=role, ident=ident), self.assertRaisesRegex(ValueError, "TUI session prefix"):
+                attended.prefix(role, ident)
 
-    def test_record_appends_and_creates_dir(self):
-        attended.record(ID, A, logs=self.logs)
-        attended.record(ID, B, logs=self.logs)
-        self.assertEqual(self.path.read_text(), f"{A}\n{B}\n")
 
-    def test_close_no_record(self):
-        tmux = Tmux()
-        self.assertEqual(self.close(tmux), [])
-        self.assertEqual(tmux.calls, [])
+class SessionsTest(unittest.TestCase):
+    OTHERS = ["engineer-TASK-1-aaaaaaaa", "Engineer-TASK-12-bbbbbbbb", "agent-pm-engineer-TASK-12",
+              "agent-pm-engineer-TASK-12345678", "engineer-engineering-0b6f2c1e", "engineer-TASK-12-0B6F2C1E",
+              "engineer-TASK-12-0b6f2c1", "engineer-task-12-0b6f2c1e", "mine"]
 
-    def test_close_gone_dropped(self):
-        self.write(A)
-        self.assertEqual(self.close(Tmux()), [])
-        self.assertFalse(self.path.exists())
+    def test_the_name_drive_gets_round_trips(self):
+        name = drive.tui_session("engineer", "engineering", SID, prefix=attended.prefix("engineer", ID))
+        tmux = Tmux(live=[name])
+        self.assertEqual((attended.sessions(ID, proc=tmux), attended.issues(proc=tmux)), ([name], [ID]))
+        self.assertEqual(tmux.calls, [["list-sessions", "-F", "#{session_name}"]] * 2)
 
-    def test_close_live_killed(self):
-        self.write(A)
-        tmux = Tmux(live=[A])
-        self.assertEqual(self.close(tmux), [attended.Closed("closed", A)])
-        self.assertNotIn(A, tmux.live)
-        self.assertFalse(self.path.exists())
+    def test_found_by_name_only(self):
+        tmux = Tmux(live=[B, *self.OTHERS, A, "pm-TASK-12-cccccccc"])
+        self.assertEqual(attended.sessions(ID, proc=tmux), [B, A, "pm-TASK-12-cccccccc"])
+        self.assertEqual(attended.sessions("TASK-1", proc=tmux), ["engineer-TASK-1-aaaaaaaa"])
+        self.assertEqual(attended.sessions("TASK-12345678", proc=tmux), [])
+        self.assertEqual(attended.issues(proc=tmux), ["TASK-1", ID])
 
-    def test_close_kill_error_kept(self):
-        self.write(A, B)
-        tmux = Tmux(live=[A, B], fail=[A])
-        (status, name, msg), closed = self.close(tmux)
-        self.assertEqual(closed, attended.Closed("closed", B))
-        self.assertEqual((status, name), ("error", A))
-        self.assertTrue(msg and "\n" not in msg)
-        self.assertEqual(self.path.read_text(), f"{A}\n")
+    def test_no_server_means_none(self):
+        for err in (NO_SERVER[1], "error connecting to /private/tmp/tmux-501/default (No such file or directory)\n"):
+            with self.subTest(err=err):
+                tmux = Tmux(listing=(1, err))
+                self.assertEqual((attended.sessions(ID, proc=tmux), attended.issues(proc=tmux),
+                                  attended.close(ID, proc=tmux)), ([], [], []))
+                self.assertEqual(tmux.tmux_calls(), ["list-sessions"] * 3)
 
-    def test_close_malformed_never_logged_nor_sent_to_tmux(self):
-        bad = "evil name; $(rm -rf)"
-        self.write(bad, "agent-pm-engineer-TASK-1", "task154", "")
-        tmux = Tmux()
-        out = self.close(tmux)
-        self.assertEqual(out, [attended.Closed("skip", None, "not a TUI session name")] * 4)
-        self.assertNotIn("evil", repr(out))
-        self.assertEqual(tmux.calls, [])
-        self.assertFalse(self.path.exists())
+    def test_a_listing_failure(self):
+        def oserror(argv, **kw):
+            raise FileNotFoundError(2, "No such file or directory", "tmux")
+        for proc, want in ((Tmux(listing=(1, "error connecting to /tmp/x (Permission denied)\n")),
+                            "tmux: error connecting to /tmp/x (Permission denied)"),
+                           (oserror, "tmux: [Errno 2] No such file or directory: 'tmux'")):
+            with self.subTest(want=want):
+                for call in (lambda: attended.sessions(ID, proc=proc), lambda: attended.issues(proc=proc)):
+                    with self.assertRaises(tui_claude.TuiError) as cm:
+                        call()
+                    self.assertEqual(str(cm.exception), want)
+                self.assertEqual(attended.close(ID, proc=proc), [attended.Closed("error", None, f"TuiError: {want}")])
 
-    def test_close_unreadable(self):
-        self.path.parent.mkdir(parents=True)
-        self.path.mkdir()
-        (status, name, msg), = self.close(Tmux())
-        self.assertEqual((status, name), ("error", None))
-        self.assertTrue(msg and "\n" not in msg)
 
-    def test_names(self):
-        self.assertEqual(attended.names(ID, logs=self.logs), [])
-        self.write(A, "evil name", "agent-pm-engineer-TASK-1", B, "")
-        self.assertEqual(attended.names(ID, logs=self.logs), [A, B])
-        self.path.unlink()
-        self.path.mkdir()
-        with self.assertRaises(OSError):
-            attended.names(ID, logs=self.logs)
+class CloseTest(unittest.TestCase):
+    def test_kills_each_by_exact_name(self):
+        tmux = Tmux(live=[A, "engineer-TASK-1-aaaaaaaa", B, "agent-pm-engineer-TASK-12"])
+        self.assertEqual(attended.close(ID, proc=tmux), [attended.Closed("closed", B), attended.Closed("closed", A)])
+        self.assertEqual(tmux.calls[1:], [["kill-session", "-t", f"={B}"], ["kill-session", "-t", f"={A}"]])
+        self.assertEqual(list(tmux.live), ["engineer-TASK-1-aaaaaaaa", "agent-pm-engineer-TASK-12"])
 
-    def test_recorded(self):
-        self.assertEqual(attended.recorded(self.logs), [])
-        self.path.parent.mkdir(parents=True)
-        for name in ("TASK-9", "ABC-1", "notes", "task-1", ".tmp-x", "TASK-1.bak"):
-            Path(self.path.parent, name).write_text("")
-        self.assertEqual(attended.recorded(self.logs), ["ABC-1", "TASK-9"])
+    def test_a_failed_kill_is_an_error_and_the_rest_go_on(self):
+        tmux = Tmux(live=[A, B], fail=[B])
+        (status, name, msg), closed = attended.close(ID, proc=tmux)
+        self.assertEqual(((status, name), closed), (("error", B), attended.Closed("closed", A)))
+        self.assertEqual(msg, "TuiError: tmux: boom")
+
+    def test_nothing_to_close(self):
+        self.assertEqual(attended.close(ID, proc=Tmux(live=["engineer-TASK-1-aaaaaaaa"])), [])
 
 
 if __name__ == "__main__":
