@@ -74,7 +74,7 @@ claude -p '<prompt>' \
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
 
-`--runner tui` starts the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to the session, split right of the anchor pane: the pane showing `--beside <tmux session>`, else your tmux pane when a terminal shows its session, else your iTerm2 pane (`$ITERM_SESSION_ID`; outside tmux only with `TERM_PROGRAM=iTerm.app`). An iTerm2 pane gets an iTerm2 split; any other tmux pane a `tmux split-window` running `tmux attach` (a nested client's pane: the tmux pane hosting it). No anchor → only the attach command, with the reason. `--split right|below` picks the side (tui only); `core/config/config.toml`'s header says what replaces that split. The agent run is done once its outcome arrives; the session stays open.
+`--runner tui` starts the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<role>-<task>-<sid[:8]>`, through `src/tui.py`. `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to the session, split right of the anchor pane: the pane showing `--beside <tmux session>`, else your tmux pane when a terminal shows its session, else your iTerm2 pane (`$ITERM_SESSION_ID`; outside tmux only with `TERM_PROGRAM=iTerm.app`). An iTerm2 pane gets an iTerm2 split; any other tmux pane a `tmux split-window` running `tmux attach` (a nested client's pane: the tmux pane hosting it). No anchor → only the attach command, with the reason. `--split right|below` picks the side (tui only); `core/config/config.toml`'s `show` comment says what replaces that split. The agent run is done once its outcome arrives; the session stays open.
 
 The `Stop` hook reports each turn end with the agent run's pending background work (`report.py … stop --pending background_tasks`). A turn that ends with work pending is ignored. The first other turn that ends without an outcome gets one nudge, typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), `drive.py` gives up: it prints the attach command, leaves the session to you and exits 1. It gives up the same way once 2 h (`WAIT_LIMIT`) pass since the last progress report, or the agent run's start, with no outcome, whatever the hook reports; a dialog nobody answers waits in the pane until then.
 
@@ -85,7 +85,7 @@ With tui:
 - The open session is an agent nobody watches: after the outcome, or once `drive.py` gives up, it keeps the agent run's pre-approvals and `drive.py`'s environment, and nothing it does is reported. End it with `tmux kill-session -t '=<session>'`.
 - The nudge is typed into the pane up to about a second after the turn ends: if a new turn has opened a permission dialog by then (manual mode), the keys go to the dialog.
 
-In a container (no iTerm2 or `osascript`), set `TUI_SHOW` in `drive.py`'s environment, e.g. to a command that asks a host-side watcher (yours to deploy) to attach, and leave `show` unset.
+In a container (no iTerm2 or `osascript`), set `show`, e.g. in `orchestrator/config.toml`'s `[core]` overlay, to a command that asks a host-side watcher (yours to deploy) to attach.
 
 ### tui.py
 
@@ -97,7 +97,7 @@ python3 core/src/tui.py start b --beside a --split below -- cat   # a pane below
 python3 core/src/tui.py send a 'Summarize README.md'              # pastes the text, then Enter
 python3 core/src/tui.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui.py show a --show ''                          # only prints a's attach command
-python3 core/src/tui.py --help                                    # options, and how --show and $TUI_SHOW pick the show
+python3 core/src/tui.py --help                                    # options, and how --show replaces the split
 ```
 
 ### tui-workers skill

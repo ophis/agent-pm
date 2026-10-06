@@ -98,17 +98,16 @@ class Start(unittest.TestCase):
             f.write("#!/bin/sh\n")
         os.chmod(self.tool, 0o755)
         for p in (unittest.mock.patch.object(tempfile, "tempdir", self.temp),
-                  unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40))),
-                  unittest.mock.patch.dict(os.environ, {"TUI_SHOW": ""})):
+                  unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40)))):
             p.start()
             self.addCleanup(p.stop)
         self.sleep = unittest.mock.Mock()
         self.stderr = io.StringIO()
 
-    def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
+    def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, template="", **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            tui.start(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep, **kw)
+            tui.start(session, list(argv), cwd=self.cwd, env=env, template=template, proc=fake, sleep=self.sleep, **kw)
 
     def test_one_tmux_call_runs_the_wrapper_and_keeps_a_dead_pane(self):
         fake = Tmux()
@@ -304,20 +303,10 @@ class Start(unittest.TestCase):
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "proc": fake}, False,
                                  ["display-message", "new-session"])])
 
-    def test_tui_show_comes_from_os_environ_not_env(self):
-        fake = Tmux()
-        self.start(fake, env={"PATH": self.bin, "TUI_SHOW": "echo env"})
-        self.assertEqual(fake.commands(), ["display-message", "new-session"])
-        self.assertEqual(fake.handover["env"]["TUI_SHOW"], "echo env")
-        fake = Tmux()
-        with unittest.mock.patch.dict(os.environ, {"TUI_SHOW": "echo {{session}}"}):
-            self.start(fake)
-        self.assertEqual(fake.calls[-1], ["/bin/sh", "-c", "echo s"])
-
     def test_a_failed_show_is_only_printed(self):
         fake = Tmux(results={"osascript": FileNotFoundError(2, "No such file or directory", "osascript")})
         with environ(**ITERM), which():
-            self.start(fake)
+            self.start(fake, template=None)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "pgrep", "osascript"])
         self.assertEqual(self.stderr.getvalue(),
                          ATTACH + f"tui: show: osascript: [Errno 2] No such file or directory: 'osascript'{WATCH}\n")
@@ -328,7 +317,7 @@ class Start(unittest.TestCase):
                 with self.subTest(**kw):
                     fake = Tmux()
                     with self.assertRaises(tui.TuiError):
-                        self.start(fake, **kw)
+                        self.start(fake, template=None, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
             self.start(fake, template="", split="up", beside="a b")
@@ -444,10 +433,10 @@ class Show(unittest.TestCase):
         self.show(fake, "open {{session}}", session="a;b c")
         self.assertEqual(fake.calls, [["/bin/sh", "-c", "open 'a;b c'"]])
 
-    def test_argument_beats_tui_show_beats_iterm(self):
-        for template, env, want in (("echo arg", {"TUI_SHOW": "echo env", **ITERM}, [["/bin/sh", "-c", "echo arg"]]),
-                                    (None, {"TUI_SHOW": "echo env", **ITERM}, [["/bin/sh", "-c", "echo env"]]),
-                                    (None, ITERM, [PGREP, osa("right", "id", "s", "ABC")])):
+    def test_template_else_the_split(self):
+        split = [PGREP, osa("right", "id", "s", "ABC")]
+        for template, env, want in (("echo arg", ITERM, [["/bin/sh", "-c", "echo arg"]]),
+                                    (None, ITERM, split)):
             with self.subTest(template=template, env=env):
                 fake = Tmux(results={"osascript": (0, "\n")})
                 self.assertIsNone(self.show(fake, template, env))
@@ -455,12 +444,10 @@ class Show(unittest.TestCase):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_empty_runs_nothing(self):
-        for template, env in (("", {"TUI_SHOW": "echo env"}), (None, {"TUI_SHOW": "", "ITERM_SESSION_ID": "w0t0p0:A"})):
-            with self.subTest(template=template, env=env):
-                fake = Tmux()
-                self.assertIsNone(self.show(fake, template, env))
-                self.assertEqual(fake.calls, [])
-                self.assertEqual(self.stderr.getvalue(), ATTACH)
+        fake = Tmux()
+        self.assertIsNone(self.show(fake, "", ITERM))
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_failures_printed_and_returned(self):
         missing = FileNotFoundError(2, "No such file or directory", "/bin/sh")
@@ -624,12 +611,9 @@ class Pane(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
     def test_template_ignores_split_and_beside(self):
-        for template, env in (("open {{session}}", {}), (None, {"TUI_SHOW": "open {{session}}"})):
-            with self.subTest(template=template):
-                fake = Tmux()
-                self.assertIsNone(self.show(fake, {**self.INSIDE, **env}, template=template, split="up",
-                                            beside="a b"))
-                self.assertEqual(fake.calls, [["/bin/sh", "-c", "open s"]])
+        fake = Tmux()
+        self.assertIsNone(self.show(fake, self.INSIDE, template="open {{session}}", split="up", beside="a b"))
+        self.assertEqual(fake.calls, [["/bin/sh", "-c", "open s"]])
 
     def test_no_anchor_refuses_with_the_attach_command(self):
         for env in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": ""},
