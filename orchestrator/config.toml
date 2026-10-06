@@ -6,7 +6,7 @@
 #                     [task_labels]
 #   work_dir          runtime state: agent runs' workdirs in <work_dir>/work/<ID>/, router state and logs in
 #                     <work_dir>/logs/ (the plists hard-code it); absolute or ~, neither in nor containing this repo or a
-#                     [local_clones] clone; unset → <repo path>-work
+#                     [local_clones] clone; unset → ~/.agent-pm
 team = "06159b6b-5efe-4bc5-a27b-875701f40d61"   # Frank's Agents
 human_members = ["ophis.w@outlook.com"]
 harness_key = "linear-api-key"

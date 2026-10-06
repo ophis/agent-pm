@@ -423,12 +423,14 @@ class LocalClones(Clones):
         self.assertEqual(self.load(BASE)["local_clones"], {})
 
     def test_entries_stored_as_realpaths(self):
-        real = os.path.join(self.dir, "real")
+        home = os.path.join(self.dir, "home")
+        real = os.path.join(home, "real")
         os.makedirs(real)
         os.symlink(real, os.path.join(self.dir, "link"))
-        with mock.patch.dict(os.environ, {"HOME": self.dir}):
-            cfg = self.load(BASE + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
-        self.assertEqual(cfg["local_clones"], {SLUG: real, "ophis/x": real, "ophis/y": self.dir})
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            cfg = self.load(f'work_dir = "{self.dir}/w"\n' + BASE
+                            + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
+        self.assertEqual(cfg["local_clones"], {SLUG: real, "ophis/x": real, "ophis/y": home})
 
     def test_bad_entry_rejected(self):
         cases = [("agent-pm", "/x"), ("https://github.com/ophis/agent-pm", "/x"), ("ophis/..", "/x"), (SLUG, 42), (SLUG, True),
@@ -537,12 +539,17 @@ class RepoSlug(unittest.TestCase):
 
 
 class WorkDir(ConfigFile, unittest.TestCase):
-    def test_unset_is_next_to_the_repo(self):
-        work = os.path.realpath(config.ROOT) + "-work"
+    def test_unset_is_in_home(self):
+        work = os.path.realpath(os.path.expanduser("~/.agent-pm"))
         self.assertEqual((config.WORK_DIR, config.RUNS_DIR, config.LOGS_DIR, config.RUNS_LOG),
                          (work, work + "/work", work + "/logs", work + "/logs/runs.log"))
-        root = os.path.join(self.dir, "repo")
-        self.assertEqual(config.work_dir({}, root), os.path.realpath(root) + "-work")
+        home = os.path.realpath(self.dir)
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            self.assertEqual(config.work_dir({}, os.path.join(home, "repo")), home + "/.agent-pm")
+            with self.assertRaises(SystemExit) as cm:
+                self.load(BASE + '[local_clones]\n"ophis/x" = "~"\n')
+        self.assertEqual(cm.exception.code, "orchestrator/config.toml: work_dir must neither lie in nor contain "
+                                            f"local_clones.ophis/x {home}: '~/.agent-pm'")
 
     def test_set(self):
         home = os.path.realpath(self.dir)

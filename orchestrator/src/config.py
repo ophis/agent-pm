@@ -29,10 +29,10 @@ def _overlap(a, b):
 
 
 def work_dir(cfg, root=ROOT, clones=None):
-    """work_dir of a config table, a real path: its absolute or ~ value, else <root>-work. One that lies in or contains root
+    """work_dir of a config table, a real path: its absolute or ~ value, else ~/.agent-pm. One that lies in or contains root
     or a clone of `clones` (repo → real path) stops the caller."""
     real = os.path.realpath(root)
-    v = cfg.get("work_dir", real + "-work")
+    v = cfg.get("work_dir", "~/.agent-pm")
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
         raise SystemExit(f"orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}")

@@ -31,12 +31,12 @@ agent-pm/
         ├── config.py      # paths, config, core config and overlay, per-task data (TASKS)
         ├── linear.py      # Linear client and lookups, shared helpers
         └── tests/
-agent-pm-work/             # <work_dir>
+~/.agent-pm/               # <work_dir>
 ├── work/<ID>/             # an agent run's working dir: input.md, progress.jsonl, outcome.json, writeback.json, worktrees and clones in src/ and publish/
 └── logs/                  # router state and agent run output
 ```
 
-Runtime state lives outside the repo, in `<work_dir>`: `orchestrator/config.toml`'s `work_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `<repo path>-work` next to the checkout. An agent run's cwd, `<work_dir>/work/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
+Runtime state lives outside the repo, in `<work_dir>`: `orchestrator/config.toml`'s `work_dir` (absolute or `~`; a real path that lies in or contains the repo or a `[local_clones]` clone stops router, run and promote), unset → `~/.agent-pm`. An agent run's cwd, `<work_dir>/work/<ID>/`, is thus outside the repo: git there doesn't see agent-pm, and nothing from its `CLAUDE.md` or `.claude/` reaches the run.
 
 ## Core pack
 
@@ -71,8 +71,8 @@ claude -p '<prompt>' \
   --model opus --effort high \
   --permission-mode auto --setting-sources user --strict-mcp-config \
   --output-format stream-json --verbose \
-  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/playground/agent-pm-work/work/TASK-142/src *)' \
-    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/playground/agent-pm-work/work/TASK-142/.report.jsonl *)'
+  --allowedTools 'Bash(python3 /Users/francis/playground/agent-pm/core/src/repo.py worktree --dir /Users/francis/.agent-pm/work/TASK-142/src *)' \
+    'Bash(python3 /Users/francis/playground/agent-pm/core/src/report.py --to /Users/francis/.agent-pm/work/TASK-142/.report.jsonl *)'
 ```
 
 `<prompt>` is the composed prompt (guide, principles, charter, task, template, output, then the Input and Workdir lines). A resume swaps `--session-id` for `--resume`. A task with `read`/`write` dirs adds `--add-dir`. There is no deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`, which the agent run reports its progress and outcome with (appended to `.report.jsonl`, which `drive.py` tails), and auto mode and your user settings decide the rest. To print the current command: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` (either runner) and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from the environment they pass on: a `claude` inheriting it from a Claude Code session saves no transcript and can't be resumed.
@@ -179,14 +179,14 @@ Requires macOS, `/opt/homebrew/bin/python3` (3.11+), `tmux`, `git`, `gh` (logged
 
 ```bash
 security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under orchestrator/config.toml's harness_key
-mkdir -p ~/playground/agent-pm-work/logs                              # the plists' log dir; launchd can't start a job without it
+mkdir -p ~/.agent-pm/logs                                             # the plists' log dir; launchd can't start a job without it
 for job in router promote; do
   cp orchestrator/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
 done
 ```
 
-The plists log to `/Users/francis/playground/agent-pm-work/logs/`; with another `work_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+The plists log to `/Users/francis/.agent-pm/logs/` (launchd doesn't expand `~`); with another `work_dir`, edit their log paths to match. To change a schedule, edit the plist in `orchestrator/` (the router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check; drop it to run only at night), copy it again, then `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again. To stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
 
 ### Migration (one time)
 
@@ -195,12 +195,12 @@ Before TASK-182, `work/` and `logs/` sat inside the repo. launchd runs `main`, s
 ```bash
 for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done   # no tick (nor prune) mid-move
 git -C ~/playground/agent-pm pull
-mkdir ~/playground/agent-pm-work
-mv ~/playground/agent-pm/work ~/playground/agent-pm-work/work
-mv ~/playground/agent-pm/logs ~/playground/agent-pm-work/logs
+mkdir ~/.agent-pm
+mv ~/playground/agent-pm/work ~/.agent-pm/work
+mv ~/playground/agent-pm/logs ~/.agent-pm/logs
 for clone in ~/playground/agent-pm ~/playground/claude-autopilot; do   # each [local_clones] path
   git -C "$clone" worktree list --porcelain \
-    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/playground/agent-pm-work/work/|p' \
+    | sed -n 's|^worktree /Users/francis/playground/agent-pm/work/|/Users/francis/.agent-pm/work/|p' \
     | xargs git -C "$clone" worktree repair
 done
 ```
@@ -240,7 +240,7 @@ To open an agent run's session, copy the command from the code block of its issu
 | `<work_dir>/logs/promote.log` | Handoff and prune actions |
 | `<work_dir>/logs/runs.log` | Agent run start/resume/end; the router needs it to resume, so keep it |
 
-Every agent run works in `<work_dir>/work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<work_dir>`, or the repo while `work_dir` is unset, breaks resuming in-progress agent runs; moving the repo or `<work_dir>` breaks the installed plists.
+Every agent run works in `<work_dir>/work/<ID>/`, where `input.md`, `progress.jsonl`, `outcome.json` and `writeback.json` stay for inspection. Moving `<work_dir>` breaks resuming in-progress agent runs; moving the repo or `<work_dir>` breaks the installed plists.
 
 ### Attended runs
 
