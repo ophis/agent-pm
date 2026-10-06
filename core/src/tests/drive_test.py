@@ -90,7 +90,7 @@ class ClientConfig(unittest.TestCase):
 
 class Claude(Base):
     def test_no_deny_rules(self):
-        for role, task in (("researcher", "light-research"), ("engineer", "engineering")):
+        for role, task in (("researcher", "light-research"), ("engineer", "build")):
             self.assertNotIn("--disallowedTools", self.plan(role, task, client="claude", repo=self.repo).argv)
 
     def test_light_research_argv(self):
@@ -109,8 +109,8 @@ class Claude(Base):
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
-    def test_engineering_xhigh_and_repo_commands(self):
-        argv = self.plan("engineer", "engineering", client="claude").argv
+    def test_build_xhigh_and_repo_commands(self):
+        argv = self.plan("engineer", "build", client="claude").argv
         self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
         self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
             f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("worktree", "status")]
@@ -147,7 +147,7 @@ class Claude(Base):
                 self.assertIn(f"`{path}`", prompt)
 
     def test_interactive_is_argv_without_the_headless_flags(self):
-        for role, task in (("researcher", "light-research"), ("engineer", "engineering")):
+        for role, task in (("researcher", "light-research"), ("engineer", "build")):
             launch = self.plan(role, task, client="claude", repo=self.repo)
             argv = launch.argv
             rest = [a for i, a in enumerate(argv) if i not in (1, 2)]
@@ -275,7 +275,7 @@ class Generic(Base):
         self.assertEqual(Recorder.seen[0]["access"].dirs, [])
 
     def test_repo_ignored_without_repo_arg(self):
-        self.plan("engineer", "engineering")
+        self.plan("engineer", "build")
         self.assertEqual(Recorder.seen[0]["access"].dirs, [])
 
     def test_unknown_client(self):
@@ -523,9 +523,10 @@ class Skill(Base):
             self.assertNotIn("## Resume", text)
 
     def test_pull_request_stays(self):
-        text = self.skill_text("engineer", "engineering")
-        self.assertIn("gh pr create", text)
-        self.assertNotIn("publish, post or save it nowhere", text)
+        for task in ("build", "light-build"):
+            text = self.skill_text("engineer", task)
+            self.assertIn("gh pr create", text, task)
+            self.assertNotIn("publish, post or save it nowhere", text, task)
 
     def test_description_falls_back_to_the_task_heading(self):
         r = run(role_title="R", task_title="T", task_summary="Do it.", output={"type": "orchestrator"})
@@ -539,8 +540,8 @@ class Skill(Base):
         self.assertIn('description: "Does \\"it\\"."', text)
 
     def test_every_task_becomes_a_skill(self):
-        for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "engineering"),
-                           ("dummy-tester", "echo")):
+        for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "build"),
+                           ("engineer", "light-build"), ("dummy-tester", "echo")):
             self.assertNotIn("{{", self.skill_text(role, task))
 
     def test_main_writes_the_file_and_runs_nothing(self):

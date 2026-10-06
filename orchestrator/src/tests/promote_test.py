@@ -371,7 +371,7 @@ class TestScopeAndConfig(Base):
     def test_child_titles_from_tasks(self):
         self.config = self.write_config(PM_NEXT)
         self.ready(role="pm", title="DES: Title DR-1")
-        tasks = {"product-design": config.Task("design", prefix="DES"), "engineering": config.Task("build", prefix="BLD")}
+        tasks = {"product-design": config.Task("design", prefix="DES"), "build": config.Task("build", prefix="BLD")}
         with mock.patch.dict(config.TASKS, tasks):
             self.run_main()
         (child,) = self.fake.children.values()

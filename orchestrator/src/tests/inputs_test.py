@@ -142,8 +142,8 @@ class Gather(unittest.TestCase):
         src = inputs.gather(issue(url, ident="PM-9"), "product-design", DOCS, run=gh)
         self.assertEqual((src.earlier.path, src.earlier.url, src.earlier.text), ("Product Design/2026-08-01-PM-1-x.md", url, "p1"))
         gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
-        src = inputs.gather(issue("", links=(issues.Link(url),), ident="ENG-7"), "engineering", DOCS, run=gh)
-        got = inputs.render(issue("D", ident="ENG-7"), "engineering", src, humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS)
+        src = inputs.gather(issue("", links=(issues.Link(url),), ident="ENG-7"), "build", DOCS, run=gh)
+        got = inputs.render(issue("D", ident="ENG-7"), "build", src, humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS)
         self.assertIn("## PRD: `Product Design/2026-08-01-PM-1-x.md`\n\n" + fenced("p1"), got)
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {url}\n", got)
 
@@ -219,10 +219,12 @@ class Gather(unittest.TestCase):
     def test_build_lists_nothing_and_keeps_every_link(self):
         prd = BASE + "Product%20Design/2026-09-01-PM-9-x.md"
         gh = Gh({endpoint("Product%20Design/2026-09-01-PM-9-x.md"): ok("prd"), endpoint("Research/r.md"): ok("r")})
-        src = inputs.gather(issue(f"{prd} {BASE}Research/r.md", ident="ENG-7"), "engineering", DOCS, run=gh)
-        self.assertIsNone(src.earlier)
-        self.assertEqual([d.path for d in src.docs], ["Product Design/2026-09-01-PM-9-x.md", "Research/r.md"])
-        self.assertEqual(len(gh.calls), 2)
+        for task in ("build", "light-build"):
+            gh.calls.clear()
+            src = inputs.gather(issue(f"{prd} {BASE}Research/r.md", ident="ENG-7"), task, DOCS, run=gh)
+            self.assertIsNone(src.earlier)
+            self.assertEqual([d.path for d in src.docs], ["Product Design/2026-09-01-PM-9-x.md", "Research/r.md"])
+            self.assertEqual(len(gh.calls), 2)
 
 
 def research_issue():
@@ -364,7 +366,7 @@ class RenderBuild(unittest.TestCase):
         iss = issue(lines("Build the registry.", "Phase 2 only.", "", "## Comments", "- Ann, t:", "  > quoted"), ident="ENG-7",
                     title="ENG: Session Registry!", notes=self.notes())
         src = inputs.Sources((inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None)
-        got = inputs.render(iss, "engineering", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
+        got = inputs.render(iss, "build", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertEqual(got, lines(
             "Reference: ENG-7", "Title: ENG-7: Session Registry", "Repo: ophis/agent-pm", "Branch: ENG-7-session-registry",
             f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}", "", BUILD_PRECEDENCE, "",
@@ -381,12 +383,18 @@ class RenderBuild(unittest.TestCase):
             "- Researcher, 2026-09-05T00:00:00.000Z:", "  > Question: which?",
             "- integration, 2026-09-07T00:00:00.000Z:", "  > bot late"))
 
+    def test_light_build_input_is_builds(self):
+        iss = issue(lines("Fix the typo.", "", "## Comments", "- Ann, t:", "  > quoted"), ident="ENG-7", notes=self.notes())
+        for src in (inputs.Sources((), None), inputs.Sources((self.PRD,), None)):
+            self.assertEqual(inputs.render(iss, "light-build", src, humans=HUMANS, target=self.TARGET, docs=DOCS),
+                             inputs.render(iss, "build", src, humans=HUMANS, target=self.TARGET, docs=DOCS))
+
     def test_golden_handoff_without_prd(self):
         d = lines("Handoff from PM-9: u", "", "## Source", f"- PRD: {BASE}Product%20Design/p.md", "",
                   "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build phase 1.", "",
                   "## Comments", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")
         iss = issue(d, ident="ENG-7", title="ENG: Registry")
-        got = inputs.render(iss, "engineering", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
+        got = inputs.render(iss, "build", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertEqual(got, lines(
             "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: ophis/agent-pm", "Branch: ENG-7-session-registry",
             "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
@@ -397,7 +405,7 @@ class RenderBuild(unittest.TestCase):
     def test_golden_repo_names_the_local_clone(self):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build phase 1.")
         t = target.Target("ophis", "agent-pm", "ENG-7-session-registry", "/x/agent-pm")
-        got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "engineering", inputs.Sources((), None),
+        got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "build", inputs.Sources((), None),
                             humans=HUMANS, target=t, docs=DOCS)
         self.assertEqual(got, lines(
             "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Branch: ENG-7-session-registry",
@@ -408,7 +416,7 @@ class RenderBuild(unittest.TestCase):
     def test_handoff_prd_and_link_line(self):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")
         src = inputs.Sources((self.PRD,), None)
-        got = inputs.render(issue(d, ident="ENG-7"), "engineering", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
+        got = inputs.render(issue(d, ident="ENG-7"), "build", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}\n", got)
         self.assertIn(lines("## The user's instructions", "", "Ann, t:\nGo.", "", "## PRD: `Product Design/2026-09-05-PM-9-q.md`"), got)
         self.assertNotIn("## Linked documents", got)
@@ -416,26 +424,26 @@ class RenderBuild(unittest.TestCase):
     def test_only_a_design_dir_doc_is_the_prd_first_one_wins(self):
         other = inputs.Doc(BASE + "Product%20Design/2026-09-06-PM-10-z.md", "Product Design/2026-09-06-PM-10-z.md", "z")
         report = inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r")
-        got = inputs.render(issue("D", ident="ENG-7"), "engineering", inputs.Sources((report, self.PRD, other), None),
+        got = inputs.render(issue("D", ident="ENG-7"), "build", inputs.Sources((report, self.PRD, other), None),
                             humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`", got)
         self.assertIn("## Linked documents (context)\n\n### `Research/r.md`\n\n" + fenced("r") + "\n\n### `Product Design/2026-09-06-PM-10-z.md`", got)
         self.assertNotIn("### `Product Design/2026-09-05-PM-9-q.md`", got)
-        none = inputs.render(issue("D", ident="ENG-7"), "engineering", inputs.Sources((report,), None),
+        none = inputs.render(issue("D", ident="ENG-7"), "build", inputs.Sources((report,), None),
                              humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## PRD\n\nNone linked.", none)
         self.assertIn("## Linked documents (context)\n\n### `Research/r.md`", none)
 
     def test_missing_prd_text_names_the_branch(self):
         prd = inputs.Doc(self.PRD.url, self.PRD.path, None)
-        got = inputs.render(issue("D", ident="ENG-7"), "engineering", inputs.Sources((prd,), None),
+        got = inputs.render(issue("D", ident="ENG-7"), "build", inputs.Sources((prd,), None),
                             humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`\n\n(not found on main)", got)
 
     def test_without_build_started_the_cutoff_is_the_creation_time(self):
         ns = (note("one", "2026-09-02T00:00:00.000Z", ANN), note("old", "2026-08-30T00:00:00.000Z", ANN))
         ns = tuple(sorted(ns, key=lambda n: n.at))
-        got = inputs.render(issue("D", ident="ENG-7", notes=ns), "engineering", inputs.Sources((), None),
+        got = inputs.render(issue("D", ident="ENG-7", notes=ns), "build", inputs.Sources((), None),
                             humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertIn("## The user's requirements since the last build\n\nAnn, 2026-09-02T00:00:00.000Z:\none", got)
         self.assertIn("## Earlier comments (context; the user's ones are already built)\n\n- Ann, 2026-08-30T00:00:00.000Z:\n  > old", got)

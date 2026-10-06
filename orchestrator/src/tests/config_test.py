@@ -104,7 +104,7 @@ class Config(ConfigFile, unittest.TestCase):
 PIPELINE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
 RESEARCHER = config.Role("researcher@agents.test", "linear-api-key-researcher", ("deep-research", "light-research"))
 PM = config.Role("pm@agents.test", "linear-api-key-pm", ("product-design",))
-ENGINEER = config.Role("engineer@agents.test", "linear-api-key-engineer", ("engineering",))
+ENGINEER = config.Role("engineer@agents.test", "linear-api-key-engineer", ("build", "light-build"))
 GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
 
 
@@ -148,7 +148,7 @@ class Runnable(ConfigFile, unittest.TestCase):
                    PIPELINE.replace("linear-api-key-engineer", "linear-api-key"))
 
     def test_task_labels_keys(self):
-        text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nengineering = "{LABEL2}"\n'
+        text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
         for task, text in (("echo", PIPELINE), ("ghost", PIPELINE), ("product-design", HEADER + role("researcher"))):
             with self.subTest(task):
@@ -212,9 +212,9 @@ default_task = "product-design"
 output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }
 
 [roles.engineer]
-default_task = "engineering"
+default_task = "build"
 
-[roles.engineer.tasks.engineering]
+[roles.engineer.tasks.build]
 output = { type = "pull-request" }
 """
 DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }'
@@ -306,7 +306,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
                 self.assertEqual(cm.exception.code, "orchestrator/config.toml [core]: unknown key " + message)
 
     def test_core_errors(self):
-        self.core(CORE_TOML.replace("[roles.engineer.tasks.engineering]\n", "[roles.engineer.tasks.engineering]\ntier = 9\n"))
+        self.core(CORE_TOML.replace("[roles.engineer.tasks.build]\n", "[roles.engineer.tasks.build]\ntier = 9\n"))
         self.fails("core: tier must be an integer 1–4, got 9")
         self.core(CORE_TOML)
         self.fails("core: gate must be one line of shell command without backticks",
@@ -342,7 +342,7 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(runs, {
             "researcher": config.Role("frank.agent.w+researcher@gmail.com", "linear-api-key-researcher", ("deep-research", "light-research"), 3),
             "pm": config.Role("frank.agent.w+pm@gmail.com", "linear-api-key-pm", ("product-design",), 3),
-            "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("engineering",), 3)})
+            "engineer": config.Role("frank.agent.w+engineer@gmail.com", "linear-api-key-engineer", ("build", "light-build"), 3)})
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
         self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 3, "pm": 3, "engineer": 3})
         self.assertEqual(config.docs(runs), config.Docs("ophis/private_docs", "main", {
@@ -351,7 +351,8 @@ class RealConfig(unittest.TestCase):
         self.assertNotIn("docs", cfg)
         self.assertEqual(cfg["core"], {"roles": {"researcher": {"tasks": {"deep-research": {
             "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
-        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"})
+        self.assertEqual(cfg["task_labels"], {"light-research": "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d",
+                                              "light-build": "0cd05aec-3a73-4e6f-a584-8aab9e52afbd"})
         self.assertEqual(cfg["project_repos"], {P1: "ophis/agent-pm", P2: "ophis/claude-autopilot"})
         home = os.path.expanduser("~/playground")
         self.assertEqual(cfg["local_clones"], {"ophis/agent-pm": os.path.realpath(f"{home}/agent-pm"),
@@ -360,7 +361,8 @@ class RealConfig(unittest.TestCase):
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
         self.assertEqual({t: (x.kind, x.prefix) for t, x in config.TASKS.items()},
                          {"deep-research": ("research", ""), "light-research": ("research", ""),
-                          "product-design": ("design", "PRD"), "engineering": ("build", "ENG")})
+                          "product-design": ("design", "PRD"), "build": ("build", "ENG"),
+                          "light-build": ("build", "ENG")})
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):

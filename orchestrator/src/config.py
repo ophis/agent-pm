@@ -127,8 +127,10 @@ TASKS = {
     "deep-research":  Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
     "light-research": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
     "product-design": Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
-    "engineering":    Task("build", prefix="ENG", start="Build started:", done="Build ready:",
+    "build":          Task("build", prefix="ENG", start="Build started:", done="Build ready:",
                            question="Question:", failed="Build failed:", files=True),
+    "light-build":    Task("build", prefix="ENG", start="Build started:", done="Build ready:",
+                           question="Question:", failed="Build failed:"),
 }
 
 

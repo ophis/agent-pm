@@ -26,6 +26,7 @@ canceled    = "ed6093ef-3f2e-4e8e-bb59-65ec56ae1938"
 #   <task>  the task's Linear label id, a child of the Tasks group
 [task_labels]
 light-research = "7cb3a7cc-05b4-4dec-bbf8-d4fce87cea1d"   # Light Research
+light-build = "0cd05aec-3a73-4e6f-a584-8aab9e52afbd"      # Light Build
 
 # A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. An issue
 # assigned to its account runs the role's default task unless its Tasks label picks another through [task_labels].

@@ -93,13 +93,20 @@ dir = "Product Design/"
 
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]
-default_task = "engineering"
+default_task = "build"
 
-[roles.engineer.tasks.engineering]
+[roles.engineer.tasks.build]
 effort = "xhigh"
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
 
-[roles.engineer.tasks.engineering.output]
+[roles.engineer.tasks.build.output]
+type = "pull-request"
+
+[roles.engineer.tasks.light-build]
+effort = "xhigh"
+commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
+
+[roles.engineer.tasks.light-build.output]
 type = "pull-request"
 
 # ── Dummy Tester ────────────────────────────────────────
@@ -148,7 +155,7 @@ CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 # Skill client, read by SkillClient (src/clients/skill.py). A skill's description is its task file's frontmatter
 # `description` (core/CLAUDE.md).
 #   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
-#           tasks without an entry keep their own (engineering: pull-request)
+#           tasks without an entry keep their own (build, light-build: pull-request)
 [clients.skill]
 
 # ── Researcher ─────────────────────────────────────────

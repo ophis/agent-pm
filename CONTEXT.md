@@ -9,7 +9,7 @@ A persona with standards and boundaries (researcher, pm, engineer), defined by a
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, light research, product design, engineering), defined by steps plus run config.
+One job a role can do (deep research, light research, product design, build, light build), defined by steps plus run config.
 _Avoid_: skill, job
 
 **Principles**:

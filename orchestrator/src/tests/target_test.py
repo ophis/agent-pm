@@ -193,7 +193,7 @@ class Check(unittest.TestCase):
         self.assertEqual(r.branch, "TASK-26-remote")
         self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
 
-    def test_read_only_task_branches_are_not_the_engineering_branch(self):
+    def test_read_only_task_branches_are_not_the_build_branch(self):
         read_only = [f"TASK-26-{t}" for t, spec in config.TASKS.items() if spec.kind != "build"]
         self.assertEqual(sorted(read_only), ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"])
         self.git_dir()
@@ -208,8 +208,8 @@ class Check(unittest.TestCase):
         self.git_dir()
         r = self.check(local=ok("TASK-26-light-research-2\nTASK-26-light-research\n"))
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-light-research-2"))
-        r = self.check(local=ok("TASK-26-engineering\nTASK-26-light-research\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-engineering"))
+        r = self.check(local=ok("TASK-26-build\nTASK-26-light-research\n"))
+        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-build"))
 
     def test_no_clone_dir_runs_no_local_git(self):
         os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))

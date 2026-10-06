@@ -110,7 +110,7 @@ class Base(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp)
         self.plog = os.path.join(self.tmp, "project.log")
 
-    def ctx(self, task="engineering", *, gql=None, resume=False, target=TARGET, project=None, sid=SID, workdir=None):
+    def ctx(self, task="build", *, gql=None, resume=False, target=TARGET, project=None, sid=SID, workdir=None):
         if workdir is None:
             workdir = tempfile.mkdtemp(dir=self.tmp)
         return writeback.Context(ident=ID, issue_id=UUID, task=task, sid=sid, resume=resume, project=project,
@@ -187,6 +187,7 @@ class FinishGolden(Base):
     def golden(self, task, status, resume):
         research = ("1. Which repo?\n2. Which version?\n\n" + FOOTER
                     + " To change the target repo, edit the description's `Repo:` line.")
+        files = [spec_comment(), plan_comment()] if config.TASKS[task].files else []
         table = {
             ("research", "done"): expect(body=f"Three queues compared.\nRedis streams fit best.\n\n{DOC}", state="in_review",
                                          attach=DOC, attach_title="Queue options"),
@@ -197,17 +198,17 @@ class FinishGolden(Base):
                                        state="in_review", attach=PRD, attach_title="Session Registry"),
             ("design", "needs_input"): expect(body=f"1. Who uses it?\n2. Web or CLI?\n\n{FOOTER}", state="in_review"),
             ("design", "failed"): expect(body="Could not publish.", state="in_review"),
-            ("build", "done"): expect(files=[spec_comment(), plan_comment()], state="in_review",
+            ("build", "done"): expect(files=files, state="in_review",
                                       body=f"Build ready:\nAdds the registry.\nVerify: python3 -m unittest\n\n{PR}",
                                       attach=PR, attach_title="ENG-7: Session registry"),
             ("build", "needs_input"): expect(body=f"Question:\n1. Keep the old API?\n\n{FOOTER}", state="in_review"),
-            ("build", "failed"): expect(files=[spec_comment(), plan_comment()], state="in_review",
+            ("build", "failed"): expect(files=files, state="in_review",
                                         body=f"Build failed: push not permitted\n\n{TREE}"),
         }
         return table[(config.TASKS[task].kind, status)]
 
     def test_every_task_status_and_mode(self):
-        self.assertEqual(set(config.TASKS), {"deep-research", "light-research", "product-design", "engineering"})
+        self.assertEqual(set(config.TASKS), {"deep-research", "light-research", "product-design", "build", "light-build"})
         for task in config.TASKS:
             for status in drive.STATUSES:
                 for resume in (False, True):
@@ -219,10 +220,13 @@ class FinishGolden(Base):
                         self.assertTrue(writeback.finish(ctx, self.outcomes(task, spec, plan)[status]))
                         self.assertEqual(gql.calls, self.golden(task, status, resume))
 
+    def test_light_build_is_build_without_files(self):
+        self.assertEqual(config.TASKS["light-build"], replace(config.TASKS["build"], files=False))
+
     def test_plog_and_ledger(self):
         ctx = self.ctx()
         spec, plan = self.files(ctx)
-        writeback.finish(ctx, self.outcomes("engineering", spec, plan)["done"])
+        writeback.finish(ctx, self.outcomes("build", spec, plan)["done"])
         steps = [f"file:ENG-7-spec.md:{sha(SPEC_TEXT)}", f"file:ENG-7-plan.md:{sha(PLAN_TEXT)}", "comment",
                  f"attach:{PR}", "move:in_review"]
         self.assertEqual(self.lines(), [f"writeback {ID}: {s}" for s in steps])
@@ -496,10 +500,12 @@ class Sink(Base):
         self.assertEqual(len(gql.calls), 2)
 
     def test_build_started_matches_the_cutoff(self):
-        gql = Gql()
-        writeback.sink(self.ctx(gql=gql))(drive.Event("progress", name="start"))
-        self.assertEqual(gql.calls, [comment("Build started")])
-        self.assertTrue(issues.BUILD_STARTED.match(gql.calls[0][1]["b"]))
+        for task in ("build", "light-build"):
+            with self.subTest(task=task):
+                gql = Gql()
+                writeback.sink(self.ctx(task, gql=gql))(drive.Event("progress", name="start"))
+                self.assertEqual(gql.calls, [comment("Build started")])
+                self.assertTrue(issues.BUILD_STARTED.match(gql.calls[0][1]["b"]))
 
     def test_start_leads(self):
         for task, body in (("deep-research", "Research started: budget 2 rounds"),

@@ -42,7 +42,7 @@ INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to
 USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake"
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+)(?:.* task=(\S+)$)?")
+LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+) task=(\S+)$")
 Q_ASSIGNEE = "query($f: IssueFilter) { issues(filter: $f) { nodes { assignee { email } } } }"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
@@ -62,8 +62,7 @@ def local_time(s):
 
 
 def parse_log(path):
-    """(time, kind, issue, sid, task) of every start/resume line, in file order; task is None without a trailing task= field.
-    runs.log timestamps are local time."""
+    """(time, kind, issue, sid, task) of every start/resume line, in file order. runs.log timestamps are local time."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -101,7 +100,7 @@ def latest_sid(entries, issue):
 
 
 def logged_task(entries, sid):
-    return next((e[4] for e in reversed(entries) if e[3] == sid and e[4]), None)
+    return next((e[4] for e in reversed(entries) if e[3] == sid), None)
 
 
 def sid_times(entries, sid):
@@ -320,7 +319,7 @@ class Board:
             elif sid and has_transcript(self.tdir, ident, sid):
                 role = self.role(issue)
                 run = self.runs[role]
-                task = logged_task(self.entries, sid) or run.default
+                task = logged_task(self.entries, sid)
                 if task not in run.tasks:
                     log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
                     self.comment_and_move(issue, f'The interrupted agent run\'s task "{task}" is not one of {role}\'s tasks '
