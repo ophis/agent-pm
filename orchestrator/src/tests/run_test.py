@@ -164,11 +164,11 @@ def outcome(data):
     return {"kind": "outcome", "outcome": data}
 
 
-def args(assignee=ENGINEER, task="engineering", mode="new"):
+def args(assignee=ENGINEER, task="build", mode="new"):
     return ["--issue", ID, "--project", PROJECT, "--assignee", assignee, "--sid", SID, "--task", task, "--mode", mode]
 
 
-def forwarded(assignee=ENGINEER, task="engineering", mode="new", sid=SID):
+def forwarded(assignee=ENGINEER, task="build", mode="new", sid=SID):
     return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}", f"--task={task}", f"--mode={mode}"]
 
 
@@ -231,10 +231,10 @@ class Base(unittest.TestCase):
         self.err = err.getvalue()
         return rc
 
-    def plog_path(self, task="engineering"):
+    def plog_path(self, task="build"):
         return os.path.join(self.root, "logs", "projects", f"{task}.log")
 
-    def plog(self, task="engineering"):
+    def plog(self, task="build"):
         return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(task)).splitlines()]
 
     def transcript(self):
@@ -242,7 +242,7 @@ class Base(unittest.TestCase):
 
 
 class Outer(Base):
-    def test_engineering_starts_the_inner_in_tmux(self):
+    def test_build_starts_the_inner_in_tmux(self):
         self.assertEqual(self.main(args()), 0)
         self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
                                            sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM",
@@ -364,8 +364,8 @@ class Outer(Base):
         self.assertEqual(self.err, "run.py: 'x@y.com' is not a role account\n")
 
     def test_task_not_the_roles_goes_to_the_default_task_log(self):
-        self.assertEqual(self.main(args(RESEARCHER, "engineering")), 2)
-        self.assertEqual(self.plog("deep-research"), ["<ts> config-error TASK-7: task 'engineering' is not one of "
+        self.assertEqual(self.main(args(RESEARCHER, "build")), 2)
+        self.assertEqual(self.plog("deep-research"), ["<ts> config-error TASK-7: task 'build' is not one of "
                                                       "researcher's tasks (deep-research, light-research)"])
         self.assertFalse(os.path.exists(self.plog_path()))
 
@@ -394,16 +394,19 @@ class Outer(Base):
     def test_invalid_new_bounces_without_a_run(self):
         self.run.table = [(("gh", "api"), res(code=1, stderr="gh: Not Found (HTTP 404)"))]
         reason = "project mapping ophis/agent-pm: not found or no access (HTTP 404)"
-        self.assertEqual(self.main(args()), 0)
-        self.assertEqual(self.gql.calls, [
-            ("issue", None, {"i": ID}),
-            ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
-            ("comment", KEY, {"i": UUID, "b": f"Question: repo check failed: {reason}. Fix the description's `Repo:` "
-                                              "line, then move this issue back to Todo."}),
-            ("reread", KEY, {"i": UUID}),
-            ("state", KEY, {"i": UUID, "s": STATES["in_review"]})])
-        self.assertEqual(self.plog(), [f"<ts> bounce TASK-7: {reason}"])
-        self.assertEqual((self.sh_calls, os.path.exists(self.rd)), ([], False))
+        for task in ("build", "light-build"):
+            with self.subTest(task=task):
+                self.gql = Gql(node(comments=[USER_NOTE]))
+                self.assertEqual(self.main(args(task=task)), 0)
+                self.assertEqual(self.gql.calls, [
+                    ("issue", None, {"i": ID}),
+                    ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
+                    ("comment", KEY, {"i": UUID, "b": f"Question: repo check failed: {reason}. Fix the description's "
+                                                      "`Repo:` line, then move this issue back to Todo."}),
+                    ("reread", KEY, {"i": UUID}),
+                    ("state", KEY, {"i": UUID, "s": STATES["in_review"]})])
+                self.assertEqual(self.plog()[-1], f"<ts> bounce TASK-7: {reason}")
+                self.assertEqual((self.sh_calls, os.path.exists(self.rd)), ([], False))
 
     def test_bounce_failure_is_transient(self):
         self.run.table = [(("gh", "api"), res(code=1, stderr="HTTP 404"))]
@@ -607,7 +610,7 @@ class AttendedEntry(Base):
                 (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
                 sid = line.split(" ")[2].removeprefix("session=")
                 self.assertRegex(sid, config.UUID_RE)
-                self.assertEqual(line, router.start_line(ID, sid, "engineering"))
+                self.assertEqual(line, router.start_line(ID, sid, "build"))
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
                 self.assertEqual(self.sh_calls, [
                     (LIST, {"capture_output": True, "text": True}),
@@ -615,7 +618,7 @@ class AttendedEntry(Base):
                       "agent-pm-engineer-TASK-7", "-c", self.rd,
                       sys.executable, run.RUN, "--inner", "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(sid=sid),
                       *tail], {"check": True})])
-                self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=engineering",
+                self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=build",
                                                "run.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'",
                                                f"run.py: tui: tmux attach -t '=engineer-TASK-7-{sid[:8]}'"])
                 self.assertEqual(self.gql.mutations, [(linear.M_STATE, {"i": ID, "s": STATES["in_progress"]})])
@@ -623,7 +626,7 @@ class AttendedEntry(Base):
 
     def test_only_issue_split_beside_and_events(self):
         for argv in (["--tui"], ["--tui", "--split", "below"], *(["--issue", ID, "--tui", *x] for x in (
-                ["--project", PROJECT], ["--assignee", ENGINEER], ["--sid", SID], ["--task", "engineering"], ["--mode", "new"],
+                ["--project", PROJECT], ["--assignee", ENGINEER], ["--sid", SID], ["--task", "build"], ["--mode", "new"],
                 ["--inner"], ["--uuid", UUID], ["--target", "Ophis/Agent-PM"], ["--runner", "tui"], ["--runner", "headless"],
                 ["--opener", "mine"], ["--spl", "below"], ["--bes", "dev"], ["--eve", "x"]))):
             with self.subTest(argv=argv), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
@@ -692,7 +695,7 @@ class Inner(Base):
             p.start()
             self.addCleanup(p.stop)
 
-    def inner(self, assignee=ENGINEER, task="engineering", mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
+    def inner(self, assignee=ENGINEER, task="build", mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
         return self.main(["--inner", "--uuid", uuid, *(["--target", target] if target else []),
                           *forwarded(assignee, task, mode), *extra])
 
@@ -711,7 +714,7 @@ class Inner(Base):
         (line,) = [x for x in self.read(self.plog_path()).splitlines() if " end " in x]
         return line
 
-    def test_engineering_run(self):
+    def test_build_run(self):
         def lines():
             reported(self.rd, {"kind": "progress", "name": "start", "text": "first build, phase 1"})
             yield said("Working on it")
@@ -890,7 +893,7 @@ class Inner(Base):
 
     def test_step_2_errors_write_the_end_line(self):
         cases = [(dict(assignee="x@y.com"), "run.py: 'x@y.com' is not a role account\n", None),
-                 (dict(assignee=RESEARCHER, task="engineering"), "run.py: task 'engineering' is not one of researcher's "
+                 (dict(assignee=RESEARCHER, task="build"), "run.py: task 'build' is not one of researcher's "
                   "tasks (deep-research, light-research)\n", "deep-research")]
         for kw, err, task in cases:
             with self.subTest(err=err):

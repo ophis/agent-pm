@@ -452,7 +452,7 @@ class RealCore(unittest.TestCase):
             self.assertEqual(run.task, task)
 
     def test_default_tasks(self):
-        for role, task in (("pm", "product-design"), ("engineer", "engineering"), ("researcher", "deep-research")):
+        for role, task in (("pm", "product-design"), ("engineer", "build"), ("researcher", "deep-research")):
             self.assertEqual(composed(role)[1].task, task)
 
     def test_every_prompt_opens_with_the_guide(self):
@@ -471,11 +471,21 @@ class RealCore(unittest.TestCase):
         self.assertEqual(run.output["dir"], "Product Design/")
         self.assertEqual((run.read, run.write), ([], []))
 
-    def test_engineering(self):
-        prompt, run = composed("engineer", "engineering")
-        self.assertIn("[Engineer rules](#engineer) > [Engineering rules](#engineering)", prompt)
+    def test_build(self):
+        prompt, run = composed("engineer", "build")
+        self.assertIn("[Engineer rules](#engineer) > [Build rules](#build)", prompt)
         self.assertIn("gh pr create", prompt)
         self.assertEqual((run.effort, run.write, run.output), ("xhigh", [], {"type": "pull-request"}))
+
+    def test_light_build(self):
+        prompt, run = composed("engineer", "light-build")
+        eng = composed("engineer", "build")[1]
+        self.assertIn("[Engineer rules](#engineer) > [Light Build rules](#light-build)", prompt)
+        self.assertIn("`autopilot:light-build`", prompt)
+        self.assertNotIn("autopilot:build", prompt)
+        self.assertIn("gh pr create", prompt)
+        self.assertEqual((run.tier, run.effort, run.read, run.write, run.commands, run.output),
+                         (eng.tier, eng.effort, eng.read, eng.write, eng.commands, eng.output))
 
     def test_researcher_deep_research_compiles(self):
         prompt, run = composed("researcher", "deep-research")
@@ -529,11 +539,12 @@ class RealCore(unittest.TestCase):
                 named.append(task)
                 self.assertEqual(prompt.count("repo URL"),
                                  len(re.findall(r"repo URLs? or local clone paths?", prompt)), task)
-        self.assertEqual(sorted(named), ["deep-research", "echo", "engineering", "light-research", "prepare-test",
-                                         "product-design"])
+        self.assertEqual(sorted(named), ["build", "deep-research", "echo", "light-build", "light-research",
+                                         "prepare-test", "product-design"])
 
-    def test_engineering_fails_without_push_permission(self):
-        self.assertIn("`push` false → `failed`", composed("engineer", "engineering")[0])
+    def test_builds_fail_without_push_permission(self):
+        for task in ("build", "light-build"):
+            self.assertIn("`push` false → `failed`", composed("engineer", task)[0], task)
 
     def test_researcher_takes_several_repos(self):
         prompt, _ = composed("researcher", "light-research")
@@ -580,7 +591,7 @@ class RealCore(unittest.TestCase):
 
     def test_each_task_marks_its_start_once_and_never_a_budget(self):
         # build_cutoff needs the start mark: a task without it silently loses its start comment.
-        for task in ("deep-research", "light-research", "product-design", "engineering"):
+        for task in ("deep-research", "light-research", "product-design", "build", "light-build"):
             with open(os.path.join(CORE, "team", "tasks", f"{task}.md")) as f:
                 text = f.read()
             self.assertEqual(len(re.findall(r"^\s*\[agent-pm-progress:start\] \S", text, re.M)), 1, task)
@@ -589,7 +600,8 @@ class RealCore(unittest.TestCase):
     def test_progress_names_of_the_real_tasks(self):
         self.assertEqual(compose.load_run(CORE, "researcher", "deep-research").progress, ["start", "round"])
         self.assertEqual(compose.load_run(CORE, "pm", "product-design").progress, ["start"])
-        self.assertEqual(compose.load_run(CORE, "engineer", "engineering").progress, ["start", "step"])
+        self.assertEqual(compose.load_run(CORE, "engineer", "build").progress, ["start", "step"])
+        self.assertEqual(compose.load_run(CORE, "engineer", "light-build").progress, ["start", "step"])
 
     def test_github_host_defaults_and_overrides(self):
         run = compose.load_run(CORE, "researcher", "light-research")

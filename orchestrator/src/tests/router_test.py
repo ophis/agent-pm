@@ -988,7 +988,7 @@ class Tick(Base):
         self.resumable("TASK-1", "a", 60)
         self.tick(fake, shell=FakeShell(["agent-pm-engineer-TASK-1"]))
         self.assertEqual(self.said(), ["live: engineer 1/2", "plan: new (2 in queue)", "pick: TASK-2 (2 in queue)",
-                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0"])
+                                       "claim: TASK-2 task=build", "launch TASK-2 (Product Design) exit=0"])
         self.assertEqual(self.launched_runs(), [("TASK-2", "new")])
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
                          {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("Todo", None)})
@@ -999,7 +999,7 @@ class Tick(Base):
                            issue("TASK-2", "Todo", "engineer", priority=2, project=PD)])
         self.tick(fake, shell=FakeShell(["agent-pm-engineer-TASK-1"]))
         self.assertEqual(self.said(), ["live: engineer 1/2", "plan: new (1 in queue)", "pick: TASK-2 (1 in queue)",
-                                       "claim: TASK-2 task=engineering", "launch TASK-2 (Product Design) exit=0"])
+                                       "claim: TASK-2 task=build", "launch TASK-2 (Product Design) exit=0"])
         self.assertEqual({i: t["state"] for i, t in fake.issues.items()}, {"TASK-1": "Todo", "TASK-2": "In Progress"})
 
     def test_full_role_todo_not_claimed_and_non_live_in_progress_recovered(self):
@@ -1123,7 +1123,7 @@ class Tick(Base):
                 self.assertRegex(said[1], r"^usage: status=allowed .* \(1 planned, allowed\)$")
                 self.assertEqual((len(said), self.sh.launches(), fake.mutations), (2, [], []))
                 continue
-            self.assertEqual(said, ["pick: TASK-4 (1 in queue)", "claim: TASK-4 task=engineering",
+            self.assertEqual(said, ["pick: TASK-4 (1 in queue)", "claim: TASK-4 task=build",
                                     "launch TASK-4 (Product Design) exit=0"])
             self.assertEqual(self.launched_runs(), [("TASK-4", "new")])
             self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
@@ -1273,7 +1273,7 @@ class Tick(Base):
         self.assertEqual(self.plan(fake), f"resume TASK-1 a {fake.issues['TASK-1']['url']} {DR}")
 
     def test_driver_session_counts_toward_max_runs_and_a_tui_session_does_not(self):
-        tui = drive.tui_session("engineer", "engineering", self.sid("a"))
+        tui = drive.tui_session("engineer", "build", self.sid("a"))
         for live, runs in (([tui, "agent-pm-engineer-TASK-9"], []), ([tui], [("TASK-1", "new")])):
             with self.subTest(live=live):
                 self.tick(FakeLinear([issue("TASK-1", "Todo", "engineer")]), shell=FakeShell(live))

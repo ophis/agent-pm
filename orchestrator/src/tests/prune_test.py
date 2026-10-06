@@ -494,7 +494,7 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(list(tmux.live), ["engineer-TASK-8-aaaaaaaa"])
 
     def test_only_names_of_the_contract_make_candidates_and_get_closed(self):
-        others = ["agent-pm-engineer-TASK-7", "Engineer-TASK-8-aaaaaaaa", "engineer-engineering-7c1d9e2f", "notes"]
+        others = ["agent-pm-engineer-TASK-7", "Engineer-TASK-8-aaaaaaaa", "engineer-build-7c1d9e2f", "notes"]
         tmux = Tmux(live=[*others, A, "engineer-TASK-70-bbbbbbbb"])
         gql = gql_for({"TASK-7": ("Done", [(30, "Done")]), "TASK-70": ("In Progress", [(30, "In Progress")])})
         code, out = self.prune(gql, tmux=tmux)
