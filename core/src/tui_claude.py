@@ -133,7 +133,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
                 raise TuiError(f"tmux would misread {arg!r}")
         state = status(session, proc=proc)
         if state == RUNNING:
-            raise TuiError(f"session {session} is running; tmux attach -t '={session}'")
+            raise TuiError(f"session {session} is running; {attach_command(session)}")
         if state is not None:
             kill(session, proc=proc)
         handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": os.path.abspath(cwd),
@@ -289,12 +289,19 @@ def read(session: str, lines: int | None = None, *, proc=subprocess.run) -> str:
     return "\n".join(text if lines is None else text[-lines:])
 
 
+def attach_command(session: str) -> str:
+    """The printed command attaching a terminal to the session: `tmux attach -t '=<session>'`, after
+    $TUI_ATTACH_PREFIX (e.g. `docker exec -it <container>`) when that is not blank."""
+    prefix = os.environ.get("TUI_ATTACH_PREFIX", "").strip()
+    return f"{prefix} tmux attach -t '={session}'" if prefix else f"tmux attach -t '={session}'"
+
+
 def show(session: str, template: str | None = None, *, split: str | None = None, beside: str | None = None,
          opener: str | None = None, proc=subprocess.run) -> str | None:
     """Print how to attach, then run the show: template, else open_pane; "" runs nothing.
     A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split, beside or
     opener."""
-    print(f"tui: session {session}: tmux attach -t '={session}'", file=sys.stderr)
+    print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
     if template is None:
         why = open_pane(session, split=split, beside=beside, opener=opener, proc=proc)
     else:
@@ -332,7 +339,7 @@ def open_pane(session: str, *, split: str | None = None, beside: str | None = No
             new, why = (_stack(session, opener, tmux, proc)
                         or _split(session, "right", _opener_pane(opener, own, proc), tmux, proc))
     except TuiError as e:
-        return f"{e}; watch it with tmux attach -t '={session}'"
+        return f"{e}; watch it with {attach_command(session)}"
     if new is None:
         return why
     _record(session, opener, new, proc)
@@ -426,7 +433,8 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host claude in a detached tmux session: start it, "
                                  "type into it, read it, show it. The show: --show T, else an iTerm2 split, else a tmux "
-                                 "split; T may use {{session}}; '' prints only the attach command.")
+                                 "split; T may use {{session}}; '' prints only the attach command. "
+                                 "$TUI_ATTACH_PREFIX (e.g. 'docker exec -it C') prefixes printed attach commands.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     start_p = sub.add_parser("start", help="run claude in a new detached session, then show it",
                              description="session -- claude [args...]: everything after the first -- is the "

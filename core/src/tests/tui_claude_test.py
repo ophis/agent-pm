@@ -37,6 +37,9 @@ SESSIONS = ["tmux", "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{@o
 LIVE = ["tmux", "list-panes", "-a", "-F", "#{pane_id}"]
 HOSTS = ["tmux", "list-panes", "-a", "-F", "#{pane_dead} #{pane_tty} #{pane_id}"]
 SOCK = "/tmp/s p"
+# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before the printed `tmux attach`
+PREFIXES = (({}, ""), ({"TUI_ATTACH_PREFIX": " \t"}, ""),
+            ({"TUI_ATTACH_PREFIX": " docker exec -it box "}, "docker exec -it box "))
 
 
 def done(argv, rc=0, out="", err=""):
@@ -49,9 +52,9 @@ def record(opener, pane):
             ["tmux", "set-option", "-t", "=s:", "@pane", pane]]
 
 
-def split_window(flag, pane):
+def split_window(flag, pane, sock=SOCK):
     return ["tmux", "split-window", "-d", flag, "-P", "-F", "#{pane_id}", "-t", pane,
-            "env", "-u", "TMUX", TMUX, "-S", SOCK, "attach", "-t", "=s"]
+            "env", "-u", "TMUX", TMUX, "-S", sock, "attach", "-t", "=s"]
 
 
 def clients_of(session):
@@ -145,9 +148,11 @@ class Start(unittest.TestCase):
             f.write("#!/bin/sh\n")
         os.chmod(self.tool, 0o755)
         for p in (unittest.mock.patch.object(tempfile, "tempdir", self.temp),
-                  unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40)))):
+                  unittest.mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 40))),
+                  unittest.mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
+        os.environ.pop("TUI_ATTACH_PREFIX", None)
         self.sleep = unittest.mock.Mock()
         self.stderr = io.StringIO()
 
@@ -235,11 +240,14 @@ class Start(unittest.TestCase):
             self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks()])
 
     def test_live_session_is_refused(self):
-        fake = Tmux(pane="0  ")
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^session s is running; tmux attach -t '=s'$"):
-            self.start(fake)
-        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
-        self.assertEqual(os.listdir(self.temp), [])
+        for env, prefix in PREFIXES:
+            with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
+                fake = Tmux(pane="0  ")
+                with self.assertRaisesRegex(tui_claude.TuiError,
+                                            "^" + re.escape(f"session s is running; {prefix}tmux attach -t '=s'") + "$"):
+                    self.start(fake)
+                self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
+                self.assertEqual(os.listdir(self.temp), [])
 
     def test_dead_session_is_killed_then_started(self):
         fake = Tmux(pane="1 0 ")
@@ -359,6 +367,16 @@ class Start(unittest.TestCase):
                                            "osascript"])
         self.assertEqual(self.stderr.getvalue(),
                          ATTACH + f"tui: show: osascript: [Errno 2] No such file or directory: 'osascript'{WATCH}\n")
+
+    def test_in_a_container_the_show_is_a_tmux_split(self):
+        fake = Container.fake(Container.PGREPS[-1])
+        with environ(**Container.ENV), which():
+            self.start(fake, template=None)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE, "display-message",
+                                           "list-sessions", "list-clients", "list-panes", "pgrep", "split-window",
+                                           "set-option", "set-option"])
+        self.assertEqual(fake.calls[-3], split_window("-h", "%0", Container.SOCK))
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_bad_layout_refused_before_tmux(self):
         with environ(**ITERM), which():
@@ -691,6 +709,12 @@ class Show(unittest.TestCase):
         self.assertEqual(fake.kwargs, [SH_KW])
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
+    def test_attach_line_takes_the_prefix(self):
+        for env, prefix in PREFIXES:
+            with self.subTest(env=env):
+                self.show(Tmux(), "", env)
+                self.assertEqual(self.stderr.getvalue(), f"tui: session s: {prefix}tmux attach -t '=s'\n")
+
     def test_session_quoted(self):
         fake = Tmux()
         self.show(fake, "open {{session}}", session="a;b c")
@@ -899,6 +923,12 @@ class Pane(unittest.TestCase):
                                      + WATCH + "$")
                     self.assertEqual(fake.calls, [])
                     self.assertEqual(self.stderr.getvalue(), ATTACH + f"tui: show: {why}\n")
+
+    def test_the_watch_command_takes_the_prefix(self):
+        for env, prefix in PREFIXES:
+            with self.subTest(env=env):
+                why = self.show(Tmux(), env)
+                self.assertTrue(why.endswith(f"; watch it with {prefix}tmux attach -t '=s'"), why)
 
     def test_no_tmux(self):
         fake = Tmux()
@@ -1141,6 +1171,57 @@ class Stack(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
 
+class Container(unittest.TestCase):
+    """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0), shown by a client on
+    /dev/pts/1 (iTerm2's tmux -CC through docker exec -it); no iTerm2 and no iTerm2 variables. pgrep finds nothing:
+    procps, busybox's usage error, or none installed."""
+    SOCK = "/tmp/tmux-0/default"
+    ENV = {"TMUX": f"{SOCK},42,0", "TMUX_PANE": "%0", "PATH": "/usr/local/bin:/usr/bin:/bin"}
+    OWN = ["tmux", "display-message", "-p", "-t", "%0", "#{session_name}"]
+    PGREPS = ((1, "", ""), (1, "", "BusyBox v1.36.1 multi-call binary.\n\nUsage: pgrep [-flanovx] PATTERN\n"),
+              (2, "", "pgrep: invalid option -- 'a'\n"), FileNotFoundError(2, "No such file or directory", "pgrep"))
+
+    @classmethod
+    def fake(cls, pgrep, rows=()):
+        def list_panes(argv):
+            if argv[-1] == "#{pane_id}":
+                return 0, "%0\n%5\n"
+            return panes(("0", "/dev/pts/0", "%0"), ("0", "/dev/pts/2", "%5"))(argv)
+        return Tmux(results={"display-message": (0, "cmd\n"), "list-panes": list_panes, "pgrep": pgrep,
+                             "list-sessions": (0, "".join("\t".join(r) + "\n" for r in rows)),
+                             "list-clients": (0, f"100 /dev/pts/1 %0 {cls.SOCK}\n"), "split-window": (0, "%6\n")})
+
+    def show(self, fake, env=ENV):
+        self.stderr = io.StringIO()
+        with environ(**env), which(), redirect_stderr(self.stderr):
+            return tui_claude.show("s", proc=fake)
+
+    def test_first_pane_a_tmux_split_right_of_the_callers(self):
+        for pgrep in self.PGREPS:
+            with self.subTest(pgrep=pgrep):
+                fake = self.fake(pgrep)
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls, [self.OWN, SESSIONS, clients_of("cmd"), HOSTS, PGREP,
+                                              split_window("-h", "%0", self.SOCK), *record("cmd", "%6")])
+                self.assertEqual(self.stderr.getvalue(), ATTACH)
+
+    def test_a_second_pane_stacks_below_the_first(self):
+        fake = self.fake(self.PGREPS[0], [("$1", "w1", "cmd", "%5", self.SOCK)])
+        self.assertIsNone(self.show(fake))
+        self.assertEqual(fake.calls, [self.OWN, SESSIONS, LIVE, split_window("-v", "%5", self.SOCK),
+                                      *record("cmd", "%6")])
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
+
+    def test_no_client_no_pane_and_the_prefixed_attach_command(self):
+        fake = self.fake(self.PGREPS[0])
+        fake.results["list-clients"] = (0, "")
+        why = self.show(fake, {**self.ENV, "TUI_ATTACH_PREFIX": "docker exec -it box"})
+        self.assertTrue(why.startswith("no anchor pane: no terminal shows tmux session cmd"), why)
+        self.assertTrue(why.endswith("; watch it with docker exec -it box tmux attach -t '=s'"), why)
+        self.assertNotIn("split-window", fake.commands())
+        self.assertNotIn("osascript", fake.commands())
+
+
 class Opener(unittest.TestCase):
     def test_in_tmux_its_session(self):
         fake = Tmux(results={"display-message": (0, "cmd\n")})
@@ -1233,6 +1314,7 @@ class Cli(unittest.TestCase):
         rc, out, _ = self.main("-h")
         self.assertEqual(rc, 0)
         self.assertIn("{start,send,read,show}", out)
+        self.assertIn("$TUI_ATTACH_PREFIX", out)
         rc, out, _ = self.main("start", "-h")
         self.assertEqual(rc, 0)
         out = " ".join(out.split())
