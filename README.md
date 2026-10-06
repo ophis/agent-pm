@@ -93,12 +93,12 @@ In a container (no iTerm2 or `osascript`), set `show`, e.g. in `orchestrator/con
 
 `start` adds hooks to the `claude` command's `--settings` (merged into one it already carries): each session's pane border shows `<session> <state>` (working, done, blocked, dead), and `--events FILE` appends `HH:MM:SS <session> done|blocked|dead` lines to FILE (created 0600).
 
-Panes stack by opener, the caller: its tmux session, else its iTerm2 pane (`$ITERM_SESSION_ID`; outside tmux only with `TERM_PROGRAM=iTerm.app`). The first pane opens right of the opener's pane (the pane a terminal shows its session in; a nested client's: the tmux pane hosting it), each later one below the newest pane the opener opened that still shows. `--beside <session>` splits the pane showing that session instead and `--split right|below` picks the side; either replaces the stacking. An iTerm2 pane gets an iTerm2 split; any other tmux pane a `tmux split-window` running `tmux attach`. A caller inside a session `tui_claude.py` started (a worker) is its own opener: its panes get a column of their own. The sessions' `@opener` and `@pane` options hold what the next placement needs; nothing else is stored.
+Panes stack by opener, the caller: its tmux session, else its iTerm2 pane (`$ITERM_SESSION_ID`; outside tmux only with `TERM_PROGRAM=iTerm.app`). The first pane opens right of the opener's pane (the pane a terminal shows its session in; a nested client's: the tmux pane hosting it), each later one below the newest pane the opener opened that still shows. `--beside <session>` splits the pane showing that session instead and `--split right|below` picks the side; either places that pane explicitly, and it still joins the stack. An iTerm2 pane gets an iTerm2 split; any other tmux pane a `tmux split-window` running `tmux attach`. A caller inside a session `tui_claude.py` started (a worker) is its own opener: its panes get a column of their own. The sessions' `@opener` and `@pane` options hold what the next placement needs; nothing else is stored.
 
 ```bash
 python3 core/src/tui_claude.py start a -- claude                         # a session running claude, in a pane right of this one
 python3 core/src/tui_claude.py start b --events ~/c.events -- claude     # a pane below a's; its done, blocked and dead lines go to the file
-python3 core/src/tui_claude.py start c --beside a --split right -- claude   # a pane right of a's, outside the stack
+python3 core/src/tui_claude.py start c --beside a --split right -- claude   # a pane right of a's
 python3 core/src/tui_claude.py send a 'Summarize README.md'              # pastes the text, then Enter
 python3 core/src/tui_claude.py read a --lines 50                         # the pane's last 50 lines, with history
 python3 core/src/tui_claude.py show a --show ''                          # only prints a's attach command
