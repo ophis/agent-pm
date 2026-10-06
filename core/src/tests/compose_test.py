@@ -421,16 +421,16 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, task)
                 self.assertNotIn("Chinese", prompt, task)
 
-    def test_a_set_symlink_clones_is_accepted(self):
+    def test_a_set_trusted_dirs_is_accepted(self):
         with tempfile.TemporaryDirectory() as root:
             for d in ("team", "output"):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
             with open(os.path.join(CORE, compose.CONFIG)) as f:
                 cfg = f.read()
-            self.assertIn('\n# symlink_clones = ["~/data-repo"]\n', cfg)
+            self.assertIn('\n# trusted_dirs = ["~/data-repo"]\n', cfg)
             os.makedirs(os.path.join(root, "config"))
             with open(os.path.join(root, compose.CONFIG), "w") as f:
-                f.write(cfg.replace('\n# symlink_clones = ["~/data-repo"]\n', '\nsymlink_clones = ["~/data-repo"]\n'))
+                f.write(cfg.replace('\n# trusted_dirs = ["~/data-repo"]\n', '\ntrusted_dirs = ["~/data-repo"]\n'))
             for role, task in ALL:
                 self.assertEqual(compose.load_run(root, role, task).task, task)
 

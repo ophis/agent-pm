@@ -225,7 +225,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
         return 1
     issue, task = taken
     sid = str(uuid.uuid4())
-    append(runs, router.start_line(a.issue, sid, task, projects))
+    append(runs, router.start_line(a.issue, sid, task))
     hosted = argparse.Namespace(issue=a.issue, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
                                 task=task, mode="new", runner="tui", split=a.split, beside=a.beside, events=a.events)
     return outer(hosted, sh=sh, gql=gql, run=run, projects=projects, keychain=keychain, root=root)
@@ -256,9 +256,11 @@ def inner(a, *, layout, gql, popen, runs, root):
     for c in attended.close(a.issue):
         where = a.issue if c.name is None else f"{a.issue} {c.name}"
         _append(plog, f"tui-{c.status} {where}: {c.msg}" if c.msg else f"tui-{c.status} {where}")
-    rec = sessions.base(sid=a.sid, cwd=rd, started_at=sessions.now())
-    if reg := sessions.post(a.issue, rec, gql=harness):
-        _append(plog, reg)
+    rec = sessions.base(sid=a.sid, workdir=rd, started_at=sessions.now())
+
+    def begun():  # run.json now names the session's cwd, which the comment's resume command needs
+        if reg := sessions.post(a.issue, rec, gql=harness):
+            _append(plog, reg)
     ctx = _context(a, cfg, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)
     rc, result = 1, None
     try:
@@ -266,13 +268,12 @@ def inner(a, *, layout, gql, popen, runs, root):
         client = clients.get("claude", core)
         params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume")
-        launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root))
+        launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
         with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
-            sinks = [drive.terminal(sys.stderr), drive.progress_file(os.path.join(rd, drive.PROGRESS), append=params.resume),
-                     drive.outcome_file(os.path.join(rd, drive.OUTCOME)), drive.terminal(err), writeback.sink(ctx)]
+            sinks = [drive.terminal(sys.stderr), drive.terminal(err), writeback.sink(ctx)]
             result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout,
                                  prefix=attended.prefix(name, a.issue) if layout else None, events=a.events,
-                                 sinks=sinks, popen=functools.partial(popen, stderr=err))
+                                 sinks=sinks, begun=begun, popen=functools.partial(popen, stderr=err))
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):

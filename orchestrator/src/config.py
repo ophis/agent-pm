@@ -17,10 +17,11 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
-# No orchestrator module may be named clients, compose, drive, repo or report: these come from core/src.
+# No orchestrator module may be named clients, compose, drive, repo, report or tui_claude: these come from core/src.
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
+import drive  # noqa: E402
 import repo  # noqa: E402
 
 
@@ -71,11 +72,6 @@ def project_log(name, logs=LOGS_DIR):
     return os.path.join(d, f"{slug(name)}.log")
 
 
-def escape(path):
-    """Claude Code's folder name for a cwd: every non-alphanumeric character becomes "-"."""
-    return re.sub(r"[^A-Za-z0-9]", "-", path)
-
-
 def run_dir(issue):
     return os.path.join(RUNS_DIR, issue)
 
@@ -93,10 +89,13 @@ def repo_slug(value):
 
 
 def transcript(issue, sid, projects=PROJECTS):
-    """Session file for an agent run; sid must be a UUID (untrusted input) or this returns None."""
+    """Session file for an agent run, under the cwd its record names (drive.session; none: the workdir); sid must be a
+    UUID (untrusted input) or this returns None."""
     if not UUID_RE.fullmatch(sid):
         return None
-    return os.path.join(projects, escape(run_dir(issue)), f"{sid}.jsonl")
+    rd = run_dir(issue)
+    entry = drive.session(rd, sid)
+    return clients.claude.transcript(entry["cwd"] if entry else rd, sid, projects)
 
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
@@ -304,6 +303,13 @@ def runnable(cfg, root=ROOT):
     broken one stops the caller (fail loud). Core roles absent from orchestrator/config.toml are not orchestrated."""
     with open(os.path.join(root, "core", compose.CONFIG), "rb") as f:
         core_roles = tomllib.load(f).get("roles", {})
+    try:
+        trusted = drive.trusted_dirs(os.path.join(root, "core"))
+    except compose.ConfigError as e:
+        raise SystemExit(f"core: {e}") from None
+    for d in sorted(trusted):
+        if repo.under(WORK_DIR, [d]):
+            raise SystemExit(f"core: trusted_dirs: {d} is or contains work_dir {WORK_DIR}")
     out = {}
     for name, p in cfg["roles"].items():
         if name not in core_roles:

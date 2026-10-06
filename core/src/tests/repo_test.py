@@ -166,11 +166,11 @@ class TempDirs(unittest.TestCase):
             self.assertIn(os.path.realpath("/var/tmp"), repo.temp_dirs())
 
 
-class SymlinkClones(unittest.TestCase):
+class TrustedDirs(unittest.TestCase):
     def test_unset_is_empty_and_paths_are_real_paths(self):
-        self.assertEqual(repo.symlink_clones({}), frozenset())
+        self.assertEqual(repo.trusted_dirs({}), frozenset())
         with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
-            got = repo.symlink_clones({"symlink_clones": ["~/c", "/x/../y"]})
+            got = repo.trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
         self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
 
 
@@ -191,15 +191,15 @@ class Worktree(Base):
         self.assertEqual(run.timeout("git", "-C", self.wt, "checkout"), repo.LONG)
 
     def test_a_remote_repo_gets_no_symlinks_whatever_the_list(self):
-        (code, _, err), run = self.worktree(info(), config=self.config(f'symlink_clones = ["{self.dir}", "~/n"]\n'))
+        (code, _, err), run = self.worktree(info(), config=self.config(f'trusted_dirs = ["{self.dir}", "~/n"]\n'))
         self.assertEqual(code, 0, err)
         self.assertIn(["gh", "repo", "clone", "github.com/o/n", self.wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"],
                       run.calls)
 
-    def test_a_bad_symlink_clones_fails_worktree_before_the_repo_is_read(self):
-        for text, want in (("symlink_clones = [\n", "(at "), ('symlink_clones = "/a"\n', "symlink_clones"),
-                           ("symlink_clones = [1]\n", "symlink_clones"), ('symlink_clones = ["a/b"]\n', "symlink_clones"),
-                           ('symlink_clones = ["~nosuchuser/x"]\n', "symlink_clones")):
+    def test_a_bad_trusted_dirs_fails_worktree_before_the_repo_is_read(self):
+        for text, want in (("trusted_dirs = [\n", "(at "), ('trusted_dirs = "/a"\n', "trusted_dirs"),
+                           ("trusted_dirs = [1]\n", "trusted_dirs"), ('trusted_dirs = ["a/b"]\n', "trusted_dirs"),
+                           ('trusted_dirs = ["~nosuchuser/x"]\n', "trusted_dirs")):
             with self.subTest(text=text):
                 run = Fake([])
                 code, _, err = self.main(["worktree", "--dir", self.dir, "--branch", "TASK-1-x", "not a repo"], run,
@@ -399,10 +399,10 @@ class Clone(unittest.TestCase):
         self.none = os.path.join(self.tmp, "none.toml")
 
     def listing(self, *paths):
-        """A config.toml whose symlink_clones lists `paths`."""
+        """A config.toml whose trusted_dirs lists `paths`."""
         path = os.path.join(self.tmp, "config.toml")
         with open(path, "w") as f:
-            f.write(f"symlink_clones = {json.dumps(paths)}\n")
+            f.write(f"trusted_dirs = {json.dumps(paths)}\n")
         return path
 
     def advance(self):
@@ -654,7 +654,7 @@ class LocalSafety(Clone):
         self.assertEqual(self.worktree(), (0, ""))
         code, err = self.worktree(config=listed)
         self.assertEqual(code, 2)
-        for text in ("symlinks", "false", "true", "symlink_clones", "remove it and run again"):
+        for text in ("symlinks", "false", "true", "trusted_dirs", "remove it and run again"):
             self.assertIn(text, err)
         self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "false")
         shutil.rmtree(self.wt)
@@ -793,11 +793,11 @@ class Status(Base):
         code, out, _ = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run)
         self.assertEqual((code, json.loads(out)), (0, {"pr": None, "plan_docs": [], "since": None, "user": [], "others": []}))
 
-    def test_an_invalid_symlink_clones_does_not_affect_status(self):
+    def test_an_invalid_trusted_dirs_does_not_affect_status(self):
         run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
                     (["gh", "pr", "list"], ok("[]"))])
         code, _, err = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run,
-                                 self.config('symlink_clones = ["a/b"]\n'))
+                                 self.config('trusted_dirs = ["a/b"]\n'))
         self.assertEqual(code, 0, err)
 
     def test_bad_config_is_reported_before_an_unreadable_repo(self):

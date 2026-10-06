@@ -6,13 +6,14 @@ one attempt, bounded by LIMIT seconds.
 import functools
 import os
 import re
-import shlex
 import sys
 import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
+import clients  # noqa: E402
+import drive  # noqa: E402
 import linear  # noqa: E402
 from linear import one_line  # noqa: E402
 
@@ -34,13 +35,15 @@ def is_comment(comment):
     return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {config.UUID_RE.pattern} · ", comment["body"]) is not None
 
 
-def base(*, sid, cwd, started_at):
-    return {"sid": sid, "cwd": cwd, "started_at": started_at}
+def base(*, sid, workdir, started_at):
+    return {"sid": sid, "workdir": workdir, "started_at": started_at}
 
 
 def command(rec):
-    q = shlex.quote
-    return f"cd {q(rec['cwd'])} && claude --resume {q(rec['sid'])}"
+    """The resume command, in the cwd the session's record names (drive.session; none: the workdir). Built here, never
+    read from the record: the agent run can write it."""
+    entry = drive.session(rec["workdir"], rec["sid"])
+    return clients.claude.resume(entry["cwd"] if entry else rec["workdir"], rec["sid"], rec["workdir"])
 
 
 def prefix(sid):

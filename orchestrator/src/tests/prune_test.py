@@ -301,7 +301,7 @@ class PruneTest(unittest.TestCase):
         os.makedirs(os.path.join(ident, "tmp", "deep"))
         write(os.path.join(ident, "tmp", "deep", "pr.md"), "x")
         os.chmod(os.path.join(ident, "tmp", "deep", "pr.md"), 0o444)
-        kept = [os.path.join(ident, f) for f in ("input.md", "progress.jsonl", "outcome.json", "writeback.json", ".report.jsonl")]
+        kept = [os.path.join(ident, f) for f in ("input.md", "run.json", "writeback.json", ".report.jsonl")]
         for f in kept:
             write(f, "x")
         os.makedirs(logs)

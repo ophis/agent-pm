@@ -3,6 +3,8 @@ reports progress and its outcome with the driver's report command; its stream-js
 """
 import json
 import os
+import re
+import shlex
 from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams, report_command
@@ -11,10 +13,29 @@ from .base import PROGRESS, Access, Client, Event, Launch
 
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+
+def resume(cwd: str, sid: str, workdir: str) -> str:
+    """The shell command a human resumes session `sid` with: claude in its cwd, reaching the workdir."""
+    q = shlex.quote
+    cmd = f"cd {q(cwd)} && claude --resume {q(sid)}"
+    return cmd if os.path.realpath(cwd) == os.path.realpath(workdir) else f"{cmd} --add-dir {q(workdir)}"
+
+
+def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
+    """Where Claude Code saves session `sid` started in `cwd`: a folder named for cwd's real path, each
+    non-alphanumeric character turned into "-"."""
+    return os.path.join(projects, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)), f"{sid}.jsonl")
 
 
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        if any(str(f).split("=")[0] == "--setting-sources" for f in config.get("flags", [])):
+            raise ConfigError("--setting-sources is the driver's (trusted_dirs): remove it from [clients.claude].flags")
 
     def handover(self) -> str:
         return ("Report through `{{report}}`, a pre-approved shell command, never in a reply:\n\n"
@@ -35,7 +56,12 @@ class ClaudeClient(Client):
         if effort is None:
             raise ConfigError(f"no effort for {run.effort!r} in [clients.claude] in config.toml")
         head = ["--resume" if params.resume else "--session-id", params.sid, "--model", model, "--effort", effort,
-                *c.get("flags", [])]
+                *c.get("flags", []), "--setting-sources", "user,project,local" if access.project else "user"]
+        workdir = os.path.abspath(params.workdir)
+        cwd = access.cwd or workdir
+        mcp = os.path.join(cwd, ".mcp.json")
+        if access.project and os.path.isfile(mcp):
+            head += ["--mcp-config", mcp]
         tail = []
         for d in access.dirs:
             tail += ["--add-dir", d]
@@ -46,7 +72,8 @@ class ClaudeClient(Client):
         stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
         hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
         interactive = ["claude", prompt, *head, *tail, "--settings", json.dumps(hook)]
-        return Launch(argv, dict(c.get("env", {})), cwd=os.path.abspath(params.workdir), interactive=interactive)
+        return Launch(argv, dict(c.get("env", {})), cwd=cwd, interactive=interactive,
+                      transcript=transcript(cwd, params.sid), resume=resume(cwd, params.sid, workdir))
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:
         for line in lines:
