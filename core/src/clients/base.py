@@ -26,6 +26,7 @@ class Launch:
     transcript: str = ""   # where the client saves the session; "": unknown
     resume: str = ""       # the shell command a human resumes the session with; "": none
     project: bool = False  # Access.project, set by drive.plan
+    status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
 
 
 @dataclass(frozen=True)

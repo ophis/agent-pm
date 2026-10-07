@@ -13,6 +13,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import workers  # noqa: E402
+sys.path.insert(0, os.path.join(workers.CORE, "src", "tests"))
+import hermetic  # noqa: E402
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 tui_claude = workers.tui_claude
@@ -32,11 +34,17 @@ def isolate(case):
         case.addCleanup(p.__exit__, None, None, None)
 
 
-def decorate_calls(events):
+def decorate_calls(events, status_line=False):
     """The tmux calls tui_claude.decorate makes for worker w1."""
     fake = Fake()
-    tui_claude.decorate("w1", events, proc=fake)
+    tui_claude.decorate("w1", events, status_line=status_line, proc=fake)
     return fake.calls
+
+
+def local(case, text):
+    """Core config's local file for the rest of `case`'s test."""
+    with open(os.path.join(hermetic.home(case), "core.local.toml"), "w") as f:
+        f.write(text)
 
 
 class Fake:
@@ -122,7 +130,7 @@ class StartTest(unittest.TestCase):
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
         env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         beside=None, proc=fake)
+                                         beside=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
     def test_no_prompt(self):
@@ -253,6 +261,20 @@ class StartTest(unittest.TestCase):
             argv = fake.handover["argv"]
             self.assertEqual(argv[-3:], ["Grep", "--", prompt])
             self.assertEqual(argv.count("--"), 1)
+
+    def test_status_line_from_core_config(self):
+        local(self, "status_line = true\n")
+        fake = Fake()
+        self.start(fake)
+        self.assertIs(self.tui.call_args.kwargs["status_line"], True)
+        self.assertIn(["tmux", "set-option", "-t", "=w1:", "status", "on"], fake.calls)
+
+    def test_a_bad_status_line_starts_nothing(self):
+        local(self, 'status_line = "yes"\n')
+        fake = Fake()
+        with self.assertRaisesRegex(workers.WorkersError, "core config: status_line: want true or false"):
+            self.start(fake)
+        self.assertEqual(fake.calls, [])
 
     def test_kill_failure_ignored(self):
         fake = Fake()
@@ -391,6 +413,15 @@ class RestartTest(WorkerCase):
         tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
         self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
         self.assertEqual(tail[-1][1], "respawn-pane")
+
+    def test_redecorates_with_the_status_line_core_config_now_has(self):
+        fake = Fake()
+        self.started(fake)
+        local(self, "status_line = true\n")
+        n = len(fake.calls)
+        workers.restart("w1", proc=fake)
+        tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
+        self.assertEqual(tail[:-2], decorate_calls(self.events, status_line=True))
 
     def test_decoration_failure_no_respawn(self):
         fake = Fake()

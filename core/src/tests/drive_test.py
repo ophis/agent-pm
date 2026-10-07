@@ -306,6 +306,18 @@ class Generic(Base):
             self.plan(client="nope")
         self.assertIn("unknown client 'nope'", str(cm.exception))
 
+    def test_plan_sets_the_configs_status_line(self):
+        self.assertIs(self.plan().status_line, False)
+        path = os.path.join(hermetic.home(self), "core.local.toml")
+        for text, want in (("status_line = true\n", True), ("status_line = false\n", False)):
+            with open(path, "w") as f:
+                f.write(text)
+            self.assertIs(self.plan().status_line, want, text)
+        with open(path, "w") as f:
+            f.write('status_line = "on"\n')
+        with self.assertRaisesRegex(compose.ConfigError, "status_line: want true or false"):
+            self.plan()
+
     def test_plan_and_inline_each_need_their_kind_of_client(self):
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
@@ -1257,11 +1269,11 @@ class TuiRunner(Base):
         for name in ("r-t-xyz", "r-t-1111111", "r-t-111111111", "-11111111", "11111111", "r t-11111111", "r-t-11111111\n"):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
-    def launched(self, layout=None, **kw):
+    def launched(self, layout=None, status_line=False, **kw):
         """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
         p = self.params()
         fake = FakeTui(p.channel, [[outcome(DONE)]])
-        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
+        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line)
         with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
             drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[], **kw)
         (_, name, _, kw), = [c for c in fake.calls if c[0] == "start"]
@@ -1275,6 +1287,10 @@ class TuiRunner(Base):
             with self.subTest(layout=layout):
                 _, kw = self.launched(layout)
                 self.assertEqual((kw["split"], kw["beside"], kw["opener"]), want)
+
+    def test_the_launchs_status_line_reaches_tui_start(self):
+        for status_line in (False, True):
+            self.assertIs(self.launched(status_line=status_line)[1]["status_line"], status_line)
 
     def test_prefix_names_the_session_and_events_reach_tui_start(self):
         name, kw = self.launched(prefix="engineer-TASK-1", events="/tmp/ev.log")

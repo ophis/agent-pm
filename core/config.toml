@@ -25,6 +25,8 @@
 #                   worktrees check out symlinks as links; every other checkout gets core.symlinks=false. A listed
 #                   clone trusts every link in fetched origin/<branch> commits, which may point outside the worktree:
 #                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
+#   status_line     local, global only: true → TUI sessions (the tui runner's, the tmux skill's workers) show tmux's
+#                   status line; unset → false
 tier = 2
 effort = "high"
 language = "English"
@@ -33,6 +35,7 @@ language = "English"
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
+# local: status_line = true
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on

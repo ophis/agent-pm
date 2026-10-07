@@ -143,6 +143,14 @@ def trusted_dirs(cfg: dict) -> frozenset[str]:
     return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
 
 
+def status_line(cfg: dict) -> bool:
+    """The global `status_line`: whether a TUI session shows tmux's status line; unset → off."""
+    v = cfg.get("status_line", False)
+    if not isinstance(v, bool):
+        raise ValueError("status_line: want true or false")
+    return v
+
+
 def temp_dirs() -> tuple[str, ...]:
     """Realpaths of the dirs any process, an agent run included, may write: TMPDIR, Python's temp dir, /tmp, /var/tmp
     and macOS's per-user one."""

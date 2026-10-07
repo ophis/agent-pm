@@ -120,6 +120,14 @@ def trusted_dirs(root: str) -> frozenset[str]:
         raise ConfigError(str(e)) from None
 
 
+def status_line(root: str) -> bool:
+    """The global `status_line` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
+    try:
+        return repos.status_line(repos.read_config(os.path.join(root, CONFIG)))
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+
+
 def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
     """(the agent run's cwd, whether its client loads the cwd's project settings and instructions). A new run's cwd is
     the `cwd` run key, else `cwd`, else the caller's current directory; project is on when trusted_dirs holds its real
@@ -157,7 +165,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root), cwd=here,
                  project=project)
     launch = client.launch(prompt, run, params=params, access=acc)
-    return replace(launch, project=project), run
+    return replace(launch, project=project, status_line=status_line(root)), run
 
 
 def inline(root: str, client: Client, role: str, task: str | None = None) -> str:
@@ -457,7 +465,7 @@ class Headless:
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None):
+                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
@@ -507,8 +515,8 @@ class Tui:
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None):
-        self.run, self.layout, self.events = run, layout or Layout(), events
+                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
+        self.run, self.layout, self.events, self.status_line = run, layout or Layout(), events, status_line
         self.name = tui_session(run.role, run.task, params.sid, prefix)
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started, self.since = False, 0.0
@@ -516,7 +524,8 @@ class Tui:
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
             tui_claude.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
-                             split=self.layout.split, beside=self.layout.beside, opener=self.layout.opener)
+                             split=self.layout.split, beside=self.layout.beside, opener=self.layout.opener,
+                             status_line=self.status_line)
         except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started, self.since = True, time.monotonic()
@@ -625,7 +634,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     check_layout(runner, layout)
     check_naming(runner, prefix, events)
     host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout, prefix=prefix,
-                           events=events)
+                           events=events, status_line=launch.status_line)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
     sinks = [terminal()] if sinks is None else sinks

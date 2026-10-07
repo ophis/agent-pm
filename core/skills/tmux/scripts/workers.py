@@ -14,6 +14,7 @@ import uuid
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(CORE, "src"))
+import repo  # noqa: E402
 import tui_claude  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -40,6 +41,14 @@ def _check(name: str) -> None:
         raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
+def _status_line() -> bool:
+    """Core config's status_line (repo.read_config)."""
+    try:
+        return repo.status_line(repo.read_config(os.path.join(CORE, "config.toml")))
+    except (OSError, ValueError) as e:
+        raise WorkersError(f"core config: {e}") from e
+
+
 def _tmux(argv: list, proc) -> None:
     res = _run(proc, argv)
     if res.returncode != 0:
@@ -49,10 +58,12 @@ def _tmux(argv: list, proc) -> None:
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
           beside: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `beside` or `split` replaces tui_claude's automatic placement; it defaults the other."""
+    `beside` or `split` replaces tui_claude's automatic placement; it defaults the other. Its status line: core config's
+    status_line."""
     _check(name)
     if beside is not None:
         _check(beside)
+    status_line = _status_line()
     events, cwd = os.path.abspath(events), os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
@@ -65,7 +76,8 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     try:
         tui_claude.start(name, [claude, "--session-id", sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
-                         cwd=cwd, env=child_env, events=events, split=split, beside=beside, proc=proc)
+                         cwd=cwd, env=child_env, events=events, split=split, beside=beside, status_line=status_line,
+                         proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
     options = {"@sid": sid, "@cwd": cwd, "@claude": claude,
@@ -105,13 +117,15 @@ def _stored(name: str, proc) -> dict:
 
 
 def restart(name: str, *, proc=subprocess.run) -> str:
-    """Respawn worker `name`'s pane resuming its session; returns the shell string it ran."""
+    """Respawn worker `name`'s pane resuming its session, its status line as core config's status_line says now; returns
+    the shell string it ran."""
     _check(name)
     opt = _stored(name, proc)
+    status_line = _status_line()
     try:
         resume = tui_claude.with_hooks([opt["claude"], "--resume", opt["sid"], "--name", name, *opt["flags"]],
                                        opt["events"])
-        tui_claude.decorate(name, opt["events"], proc=proc)
+        tui_claude.decorate(name, opt["events"], status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
     words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()), *resume]
