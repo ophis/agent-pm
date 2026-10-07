@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import json
 import os
@@ -655,6 +656,160 @@ class MainTest(WorkerCase):
         for argv in (["start", "w1"], ["start", "w1", "--events", self.events, "--split", "left"]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
                 workers.main(argv)
+            self.assertEqual(cm.exception.code, 2, argv)
+
+
+def nl(*lines):
+    return "".join(f"{x}\n" for x in lines)
+
+
+class NextEventTest(unittest.TestCase):
+    A, B, C = "10:00:01 w1 done", "10:00:02 w2 blocked", "10:00:03 w1 outcome needs_input"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(os.path.realpath(self.tmp.name), "events")
+
+    def append(self, data):
+        with open(self.path, "ab") as f:
+            f.write(data if isinstance(data, bytes) else data.encode())
+
+    def sleeping(self, *steps):
+        """Patches time.sleep: its nth call runs steps[n]; a call past the last fails the test instead of hanging."""
+        calls = iter(steps)
+
+        def sleep(secs):
+            step = next(calls, None)
+            if step is None:
+                raise AssertionError("next_event kept waiting")
+            step()
+        return mock.patch.object(workers.time, "sleep", side_effect=sleep)
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = workers.main(["next-event", *argv])
+        return rc, out.getvalue(), err.getvalue()
+
+    def error(self, reason, after=0, path=None):
+        path = path or self.path
+        with self.assertRaises(workers.WorkersError) as cm:
+            workers.next_event(path, after)
+        self.assertEqual(str(cm.exception), f"events file {path}: {reason}")
+
+    def test_first_event_after_a_line(self):
+        self.append(nl(self.A, self.B, self.C))
+        with self.sleeping():
+            self.assertEqual(workers.next_event(self.path, 1), (2, self.B))
+            self.assertEqual(workers.next_event(self.path, 0), (1, self.A))
+            self.assertEqual(workers.next_event(self.path, 2), (3, self.C))
+
+    def test_every_kind_is_an_event(self):
+        kinds = [f"10:00:0{i} w1 {k}" for i, k in enumerate(("done", "blocked", "dead", "outcome failed", "new x y"))]
+        self.append(nl(*kinds))
+        with self.sleeping():
+            for n, event in enumerate(kinds):
+                self.assertEqual(workers.next_event(self.path, n), (n + 1, event))
+
+    def test_after_end_skips_what_is_there(self):
+        self.append(nl(self.A, self.B))
+        with self.sleeping(lambda: self.append(nl(self.C))) as sleep:
+            self.assertEqual(workers.next_event(self.path, None), (3, self.C))
+        sleep.assert_called_once_with(0.5)
+
+    def test_after_end_counts_complete_lines_only(self):
+        self.append(nl(self.A) + "10:00:02 w1 do")
+        with self.sleeping(lambda: self.append("ne\n")):
+            self.assertEqual(workers.next_event(self.path, None), (2, "10:00:02 w1 done"))
+
+    def test_after_end_of_a_missing_file_is_zero(self):
+        with self.sleeping(lambda: self.append(nl(self.A))):
+            self.assertEqual(workers.next_event(self.path, None), (1, self.A))
+
+    def test_event_appended_while_waiting(self):
+        self.append(nl(self.A))
+        with self.sleeping(lambda: self.append(nl(self.B))) as sleep:
+            self.assertEqual(workers.next_event(self.path, 1), (2, self.B))
+        sleep.assert_called_once_with(0.5)
+
+    def test_fewer_lines_than_after_waits_for_the_line_after(self):
+        self.append(nl(self.A))
+        with self.sleeping(lambda: self.append(nl(self.B)), lambda: self.append(nl(self.C))) as sleep:
+            self.assertEqual(workers.next_event(self.path, 2), (3, self.C))
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_malformed_lines_skipped_but_counted(self):
+        junk = ["", "garbage", "1:00:01 w1 done", "10:00:01 w1", "10:00:01 w1 ", "10:00:01  w1 done", " 10:00:01 w1 done"]
+        self.append(nl(self.A, *junk, self.B))
+        with self.sleeping():
+            self.assertEqual(workers.next_event(self.path, 1), (len(junk) + 2, self.B))
+
+    def test_decoded_as_utf8_with_replacement(self):
+        self.append(b"10:00:01 w1 caf\xc3\xa9 \xff\n")
+        with self.sleeping():
+            self.assertEqual(workers.next_event(self.path, 0), (1, "10:00:01 w1 caf\u00e9 \ufffd"))
+
+    def test_partial_last_line_waits_for_its_newline(self):
+        self.append(nl(self.A) + "10:00:02 w1 caf")
+        with self.sleeping(lambda: self.append(b"\xc3"), lambda: self.append(b"\xa9\n")) as sleep:
+            self.assertEqual(workers.next_event(self.path, 1), (2, "10:00:02 w1 caf\u00e9"))
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_missing_file_waited_for(self):
+        with self.sleeping(lambda: None, lambda: self.append(nl(self.A))) as sleep:
+            self.assertEqual(workers.next_event(self.path, 0), (1, self.A))
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_consumed_bytes_not_read_again(self):
+        consumed = "0123456789abcdef\n"
+        self.append(consumed)
+
+        def rewrite():
+            with open(self.path, "r+b") as f:
+                f.write(b"\n" * len(consumed))
+        with self.sleeping(rewrite, lambda: self.append(nl(self.B))):
+            self.assertEqual(workers.next_event(self.path, 0), (2, self.B))
+
+    def test_shrunk_file(self):
+        self.append(nl(self.A, self.B))
+
+        def shrink():
+            with open(self.path, "wb") as f:
+                f.write(nl(self.A).encode())
+        with self.sleeping(shrink):
+            self.error("shrank", 2)
+
+    def test_replaced_file(self):
+        self.append(nl(self.A, self.B))
+
+        def replace():
+            with open(self.path + ".new", "wb") as f:
+                f.write(nl(self.B, self.A).encode())
+            os.replace(self.path + ".new", self.path)
+        with self.sleeping(replace):
+            self.error("replaced", 2)
+
+    def test_unreadable_path(self):
+        with self.sleeping():
+            self.error(os.strerror(errno.EISDIR), path=self.tmp.name)
+
+    def test_main_prints_line_and_event(self):
+        self.append(nl(self.A, self.B))
+        with self.sleeping():
+            self.assertEqual(self.run_main("--events", self.path, "--after", "1"), (0, f"2 {self.B}\n", ""))
+        with self.sleeping(lambda: self.append(nl(self.C))):
+            self.assertEqual(self.run_main("--events", self.path, "--after", "end"), (0, f"3 {self.C}\n", ""))
+
+    def test_main_error_exit(self):
+        with self.sleeping():
+            self.assertEqual(self.run_main("--events", self.tmp.name, "--after", "0"),
+                             (1, "", f"workers: events file {self.tmp.name}: {os.strerror(errno.EISDIR)}\n"))
+
+    def test_main_usage_error(self):
+        for argv in (["--after", "-1"], ["--after", "x"], ["--after", "1.5"], ["--after", ""], []):
+            with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                workers.main(["next-event", "--events", self.path, *argv])
             self.assertEqual(cm.exception.code, 2, argv)
 
 
