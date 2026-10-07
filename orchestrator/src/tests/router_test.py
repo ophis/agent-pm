@@ -1360,7 +1360,7 @@ class TaskLabels(Base):
         role_tasks = ["deep-research", "light-research"]
         label_tasks = {LIGHT: "light-research", DEEP: "deep-research", ORPHAN_LABEL: "product-design"}
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in orchestrator/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in ~/.agent-pm/orchestrator.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (([], ("deep-research", None)),
                  (outside, ("deep-research", None)),
                  ([label("Light Research", LIGHT)], ("light-research", None)),

@@ -1,10 +1,10 @@
-# DO NOT MODIFY this file. This machine's settings go in config.local.toml next to it (gitignored, read on top of this
-# file): create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any
-# other key too: tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a
-# table cannot drop a key this file sets, so a local [output] keeps this file's other keys at that level.
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/core.local.toml, read on top of this file: create
+# it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any other key too:
+# tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a table cannot
+# drop a key this file sets, so a local [output] keeps this file's other keys at that level.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
-#   layers  this file (config.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
+#   layers  this file (core.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
 #           a later layer's global value beats an earlier layer's task value
 #   levels  within a layer: global → role ([roles.<role>]) → task ([roles.<role>.tasks.<task>])
 
@@ -42,7 +42,7 @@ language = "English"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# Every task saves locally unless config.local.toml gives it a destination. The orchestrator needs deep-research,
+# Every task saves locally unless core.local.toml gives it a destination. The orchestrator needs deep-research,
 # light-research and product-design on one github.com repo and branch (local: their [output] below).
 [output]
 type = "local"

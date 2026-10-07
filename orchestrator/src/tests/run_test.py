@@ -486,14 +486,14 @@ class Attended(Base):
         """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
         core, roles = os.path.join(self.root, "core"), os.path.join("team", "roles")
         os.remove(core)
-        for parent, own in (("", {compose.CONFIG, "config.local.toml", "team"}), ("team", {"roles"}), (roles, set())):
+        for parent, own in (("", {compose.CONFIG, "team"}), ("team", {"roles"}), (roles, set())):
             os.makedirs(os.path.join(core, parent), exist_ok=True)
             for n in set(os.listdir(os.path.join(config.CORE, parent))) - own:
                 os.symlink(os.path.join(config.CORE, parent, n), os.path.join(core, parent, n))
         os.symlink(os.path.join(config.CORE, roles, "engineer.md"), os.path.join(core, roles, f"{name}.md"))
         self.write(os.path.join(core, compose.CONFIG),
                    self.read(os.path.join(config.CORE, compose.CONFIG)).replace("[roles.engineer", f"[roles.{name}"))
-        self.write(os.path.join(core, "config.local.toml"), self.read(hermetic.FIXTURE))
+        self.write(os.path.join(hermetic.home(self), "core.local.toml"), self.read(hermetic.FIXTURE))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), CONFIG.replace(role("engineer"), role(name)))
 
     def test_beside_a_session(self):

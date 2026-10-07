@@ -10,6 +10,7 @@ import unittest
 import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import hermetic  # noqa: E402
 import repo  # noqa: E402
 
 SHA = "a" * 40
@@ -119,13 +120,18 @@ class ReadConfig(unittest.TestCase):
                                                   "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}}})
         self.assertEqual(base, {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}})
 
-    def test_config_local_toml_beside_goes_on_top(self):
+    def test_the_local_file_goes_on_top(self):
         with open(self.path, "w") as f:
             f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
         self.assertEqual(repo.read_config(self.path), {"users": ["a", "b"], "t": {"x": 1, "y": 1}})
-        with open(os.path.join(os.path.dirname(self.path), repo.LOCAL), "w") as f:
+        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
             f.write('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
-        self.assertEqual(repo.read_config(self.path), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}})
+        merged = {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
+        self.assertEqual(repo.read_config(self.path), merged)
+        other = os.path.join(os.path.dirname(self.path), "other.toml")
+        with open(other, "w") as f:
+            f.write('users = ["d"]\n')
+        self.assertEqual(repo.read_config(self.path, other), {"users": ["d"], "t": {"x": 1, "y": 1}})
 
 
 class Parse(unittest.TestCase):
@@ -702,10 +708,10 @@ class LocalSafety(Clone):
         self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
         self.assertEqual(subprocess.run(["git", "-C", self.clone, "config", "--get", "core.symlinks"]).returncode, 1)
 
-    def test_a_clone_listed_in_config_local_toml_gets_symlinks(self):
+    def test_a_clone_listed_in_the_local_file_gets_symlinks(self):
         link = self.link_commit()
         config = self.listing()
-        with open(os.path.join(self.tmp, "config.local.toml"), "w") as f:
+        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
             f.write(f"trusted_dirs = {json.dumps([self.clone])}\n")
         self.assertEqual(self.worktree(config=config), (0, ""))
         self.assertEqual(os.readlink(link), "/etc/passwd")
@@ -855,7 +861,7 @@ class Status(Base):
     def test_configured_users_replace_the_gh_login(self):
         comments = [[{"created_at": "2026-10-03T00:00:00Z", "user": {"login": "me"}, "body": "from the bot"},
                      {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "Alice"}, "body": "do Y"}]]
-        config, local = os.path.join(self.dir, "config.toml"), os.path.join(self.dir, "config.local.toml")
+        config, local = os.path.join(self.dir, "config.toml"), os.path.join(hermetic.home(self), "core.local.toml")
         existing = self.existing()
         for text, local_text in (('users = ["alice"]\n', None), ('users = ["bob"]\n', 'users = ["alice"]\n')):
             with self.subTest(local=local_text):

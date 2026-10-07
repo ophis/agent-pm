@@ -21,7 +21,7 @@ second `--dir`.
 Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
 failure.
 Errors mask URL userinfo.
-Core config: config.toml beside src/, with config.local.toml on top (read_config); a skill's copy has none.
+Core config: config.toml beside src/, with ~/.agent-pm/core.local.toml on top (read_config); a skill's copy has none.
 """
 import argparse
 import json
@@ -50,7 +50,7 @@ SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
-LOCAL = "config.local.toml"
+LOCAL = "~/.agent-pm/core.local.toml"
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
@@ -121,11 +121,11 @@ def merge(base: dict, over: dict) -> dict:
     return out
 
 
-def read_config(path: str) -> dict:
-    """TOML file `path`, with config.local.toml beside it merged on top when it exists (merge())."""
+def read_config(path: str, local: str = LOCAL) -> dict:
+    """TOML file `path`, with TOML file `local` (~ expanded) merged on top when it exists (merge())."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
-    local = os.path.join(os.path.dirname(path), LOCAL)
+    local = os.path.expanduser(local)
     if os.path.isfile(local):
         with open(local, "rb") as f:
             cfg = merge(cfg, tomllib.load(f))

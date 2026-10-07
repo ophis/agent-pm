@@ -9,15 +9,17 @@ agent-pm/
 ├── CLAUDE.md                    # Claude's notes on this repo
 ├── .claude/skills/tmux/         # the tmux skill
 ├── core/                        # the core pack: team/, output/, src/, generated skills/ (core/CLAUDE.md)
-│   └── config.toml, config.local.toml        # Core configuration
+│   └── config.toml              # Core configuration
 └── orchestrator/                # the Linear side: src/, *.plist (launchd schedules)
-    └── config.toml, config.local.toml        # Orchestrator configuration
-~/.agent-pm/                     # <work_dir>
+    └── config.toml              # Orchestrator configuration
+~/.agent-pm/                     # <work_dir> by default
+├── core.local.toml              # Core configuration: this machine's
+├── orchestrator.local.toml      # Orchestrator configuration: this deployment's
 ├── work/<ID>/                   # an agent run's workdir: input.md, run.json, writeback.json, src/, publish/
 └── logs/                        # router state and agent run output
 ```
 
-`<work_dir>` is `orchestrator/config.local.toml`'s `work_dir` (absolute or `~`), unset → `~/.agent-pm`; a real path that lies in or contains the repo or a `[local_clones]` clone, or that a `trusted_dirs` entry is or contains, stops router, run and promote. So git in a workdir doesn't see agent-pm, and its `CLAUDE.md` and `.claude/` don't reach the run.
+`<work_dir>` is `~/.agent-pm/orchestrator.local.toml`'s `work_dir` (absolute or `~`), unset → `~/.agent-pm` (the local files stay there either way); a real path that lies in or contains the repo or a `[local_clones]` clone, or that a `trusted_dirs` entry is or contains, stops router, run and promote. So git in a workdir doesn't see agent-pm, and its `CLAUDE.md` and `.claude/` don't reach the run.
 
 ## Core pack
 
@@ -35,7 +37,7 @@ A role: a charter (`core/team/roles/<role>.md`: responsibilities, standards, bou
 
 ### Tasks
 
-A task (`core/team/tasks/<task>.md`): an agent run's steps, progress marks and resume. `core/src/repo.py worktree` checks out a target repo at `<Workdir>/src/<owner>/<name>-<slug>` (`<slug>`: its `--name`, else the branch with `/` → `-`), on the agent run's own branch: a git worktree of the local clone path the input names (outside `<work_dir>/work` and the temp dirs), else a fresh blobless clone of an `<owner>/<name>` or URL. A worktree checks out symlinks as plain files unless `core/config.local.toml`'s `trusted_dirs` lists the clone's real path (via the worktree's own config, which turns on the clone's `extensions.worktreeConfig`); an existing worktree whose setting disagrees is refused: remove it, run again. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The orchestrator's `Repo:` line names the repo's `[local_clones]` path; on an issue's later agent runs its existing checkout's form wins. Its `Checkout:` line is the issue id: the `--name` (`core/team/principles.md` › Checkout).
+A task (`core/team/tasks/<task>.md`): an agent run's steps, progress marks and resume. `core/src/repo.py worktree` checks out a target repo at `<Workdir>/src/<owner>/<name>-<slug>` (`<slug>`: its `--name`, else the branch with `/` → `-`), on the agent run's own branch: a git worktree of the local clone path the input names (outside `<work_dir>/work` and the temp dirs), else a fresh blobless clone of an `<owner>/<name>` or URL. A worktree checks out symlinks as plain files unless `~/.agent-pm/core.local.toml`'s `trusted_dirs` lists the clone's real path (via the worktree's own config, which turns on the clone's `extensions.worktreeConfig`); an existing worktree whose setting disagrees is refused: remove it, run again. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The orchestrator's `Repo:` line names the repo's `[local_clones]` path; on an issue's later agent runs its existing checkout's form wins. Its `Checkout:` line is the issue id: the `--name` (`core/team/principles.md` › Checkout).
 
 - **`deep-research`:** web → the built-in `/deep-research` Workflow once over all subquestions; local → its own ultracode workflow (≤ 100 agents, verification inside) over the worktrees; mixed → at most both, the second skipped when the `gate` command fails; no Workflow tool → `core/team/methods/`. Report (`core/team/templates/research-report.md`) to `Research/` in the docs repo.
 - **`light-research`:** 3–6 angles (web, worktree or both) in one round, one agent each, self-checked, no separate verification; a shorter report marked Light Research, whose file a later `deep-research` agent run given it rewrites.
@@ -58,7 +60,7 @@ claude -p '<prompt>' \
 
 `<prompt>`: guide, principles, charter, task, template, output, then the Input and Workdir lines. A resume swaps `--session-id` for `--resume`, reusing the session's recorded cwd and settings. `read`/`write` dirs add `--add-dir`. The `cwd` run key moves the start dir (unset: `drive.py`'s caller's current directory; orchestrator runs: the workdir); another than the workdir adds `--add-dir <workdir>`, prompt paths staying absolute. A cwd in or under a `trusted_dirs` entry gets `--setting-sources user,project,local` and, with a `.mcp.json`, `--mcp-config <cwd>/.mcp.json`; a trusted cwd in the workdir is refused; any other gets `user` and, unless it is the workdir, a stderr notice. No deny list: `--allowedTools` pre-approves the task's `commands` and `report.py` (progress and outcome, appended to `.report.jsonl`, which `drive.py` tails); auto mode and your user settings decide the rest. Print it: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from their child's environment: a `claude` inheriting it saves no transcript and can't be resumed.
 
-`--runner tui` runs the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<prefix>-<sid[:8]>` through `src/tui_claude.py` (its flags: `core/CLAUDE.md`). `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to it, stacked as in tui_claude.py; no pane to split → only the attach command, with the reason. What replaces the split: `core/config.toml`'s `show` comment. In a container (no iTerm2 or `osascript`): `.claude/skills/tmux/SKILL.md` › In a container; or set `show`, e.g. in `core/config.local.toml` or `orchestrator/config.local.toml`'s `[core]` overlay, to a command asking a host-side watcher (yours to deploy) to attach.
+`--runner tui` runs the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<prefix>-<sid[:8]>` through `src/tui_claude.py` (its flags: `core/CLAUDE.md`). `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to it, stacked as in tui_claude.py; no pane to split → only the attach command, with the reason. What replaces the split: `core/config.toml`'s `show` comment. In a container (no iTerm2 or `osascript`): `.claude/skills/tmux/SKILL.md` › In a container; or set `show`, e.g. in `~/.agent-pm/core.local.toml` or `orchestrator.local.toml`'s `[core]` overlay, to a command asking a host-side watcher (yours to deploy) to attach.
 
 The `Stop` hook (`report.py … stop --pending background_tasks`) reports each turn end; one ending with work pending is ignored (`core/CLAUDE.md`). The first other one without an outcome gets a nudge typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), or 2 h (`WAIT_LIMIT`) after the last progress report or the start without an outcome, `drive.py` gives up: prints the attach command, leaves the session to you, exits 1. An unanswered dialog waits in the pane until then. Interactive `claude` asks in the pane whether to trust a new folder (`-p` doesn't); without auto mode (Haiku, tier 4) it runs in manual mode, asking there for what isn't pre-approved; the nudge is typed up to about a second after the turn ends, so a permission dialog opened by then gets the keys. After the outcome or a give-up the open session is an unwatched agent with the run's pre-approvals and `drive.py`'s environment, nothing it does reported: end it with `tmux kill-session -t '=<session>'`.
 
@@ -91,13 +93,13 @@ python3 .claude/skills/tmux/scripts/workers.py restart a                        
 
 - `core/team/`: `guide.md` (the prompt's opening: what each section is, and precedence), `principles.md` (rules for every agent run), one charter per role, one file per task, `methods/` (steps a task follows when its harness lacks the native tool), and the report (numbered `[n]` sources) and PRD (stable `FR-<n>`, `NFR-<n>`, `P<n>` ids) templates.
 - `core/config.toml`: per role and task, `tier`, `effort`, extra `read`/`write` dirs, pre-approved `commands`, the `output` (default `local`) and `language`. Its `[clients.claude]` maps tiers and efforts to models and holds the `claude` flags. See `core/CLAUDE.md`.
-- `core/config.local.toml` (gitignored; `core/config.toml` marks its keys `# local:`): this machine's `show`, `cwd`, `users` and `trusted_dirs`, the document tasks' `output` (for the orchestrator: one github.com docs repo and branch, a folder per task), and any override of `core/config.toml`, read on top of it: tables merge key by key, the local value wins, a list is replaced whole. Without it, `core/config.toml` alone applies.
+- `~/.agent-pm/core.local.toml` (`core/config.toml` marks its keys `# local:`): this machine's `show`, `cwd`, `users` and `trusted_dirs`, the document tasks' `output` (for the orchestrator: one github.com docs repo and branch, a folder per task), and any override of `core/config.toml`, read on top of it: tables merge key by key, the local value wins, a list is replaced whole. Without it, `core/config.toml` alone applies.
 
 ### Dependencies
 
 Nothing checks them; a missing one fails the agent run. The `claude` CLI (claude client): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; for tui, interactive mode and `Stop` hooks in `--settings`; subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research). The `autopilot` plugin, plus `superpowers` for `build` (not `light-build`). `python3` 3.11+ (stdlib only); `git` and `gh` logged in (`repo.py`, the `github` and `pull-request` destinations). `tmux` 3.3+ (tui runner, `tui_claude.py`); `osascript`, `pgrep` and a running iTerm2 only for the default show's iTerm2 split. GitHub and the web. Skills (`core/skills/`): `${CLAUDE_SKILL_DIR}`.
 
-Your user settings (`~/.claude/CLAUDE.md`, skills, plugins, permissions) reach every agent run; MCP servers don't (`--strict-mcp-config`), except a trusted cwd's `.mcp.json`. Only a trusted cwd adds its project settings, `CLAUDE.md` and skills, e.g. `trusted_dirs = ["~/data-repo"]` in `core/config.local.toml` and `[core.roles.researcher] cwd = "~/data-repo"` in `orchestrator/config.local.toml`.
+Your user settings (`~/.claude/CLAUDE.md`, skills, plugins, permissions) reach every agent run; MCP servers don't (`--strict-mcp-config`), except a trusted cwd's `.mcp.json`. Only a trusted cwd adds its project settings, `CLAUDE.md` and skills, e.g. `trusted_dirs = ["~/data-repo"]` in `~/.agent-pm/core.local.toml` and `[core.roles.researcher] cwd = "~/data-repo"` in `~/.agent-pm/orchestrator.local.toml`.
 
 ## Orchestrator
 
@@ -147,10 +149,10 @@ To add a task to a role: create `core/team/tasks/<task>.md` (its frontmatter `de
 
 Requires macOS, `/opt/homebrew/bin/python3` (3.11+) and the Dependencies, `gh` logged in as you. Agent runs need no `linear` skill and get no Linear key. The docs repo is read through `gh` and published from a per-agent-run clone in `<work_dir>/work/<ID>/publish`: `git pull` your own clone to see the documents. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 
-Create `orchestrator/config.local.toml` from `orchestrator/config.toml`'s `# local:` lines, uncommented, with your values; router, run and promote stop naming any required key it lacks. Likewise `core/config.local.toml` from `core/config.toml`'s, if this machine needs any of them. Both local files are gitignored.
+Create `~/.agent-pm/orchestrator.local.toml` from `orchestrator/config.toml`'s `# local:` lines, uncommented, with your values; router, run and promote stop naming any required key it lacks. Likewise `~/.agent-pm/core.local.toml` from `core/config.toml`'s, if this machine needs any of them.
 
 ```bash
-security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under orchestrator/config.local.toml's harness_key
+security add-generic-password -a frank.agent.w -s linear-api-key -w   # harness account's Linear API key; the only item under orchestrator.local.toml's harness_key
 mkdir -p ~/.agent-pm/logs                                             # the plists' log dir; launchd can't start a job without it
 for job in router promote; do
   cp orchestrator/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
@@ -162,7 +164,7 @@ The plists log to `/Users/francis/.agent-pm/logs/` (launchd doesn't expand `~`);
 
 ### Role accounts
 
-Router and promote act in Linear as the harness account `frank.agent.w@gmail.com`; each `[roles.<role>]` in `orchestrator/config.local.toml` writes back as its own `account`, its API key in the Keychain under `key`:
+Router and promote act in Linear as the harness account `frank.agent.w@gmail.com`; each `[roles.<role>]` in `~/.agent-pm/orchestrator.local.toml` writes back as its own `account`, its API key in the Keychain under `key`:
 
 1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
 2. Open the invite in a private window, choosing **Continue with email** (Google signs in as the harness account).
@@ -214,7 +216,7 @@ Each session `run.py` starts or resumes gets one `Run <sid>` comment on its issu
 Core's configuration is under Core pack.
 
 - `orchestrator/config.toml`: per role (`[roles.<role>]`) its `next` role, `require_instructions` and `max_runs` (default 1); `[core]` (below).
-- `orchestrator/config.local.toml` (gitignored; `orchestrator/config.toml` marks its keys `# local:`), read on top of `orchestrator/config.toml` as in Core configuration: the Linear `team` and workflow `[states]`, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role its `account` and `key`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `work_dir` (see Files). The overlay, `[core]`, in either file: core run keys for the orchestrator's agent runs in `core/config.toml`'s layout, applied after `core/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
+- `~/.agent-pm/orchestrator.local.toml` (`orchestrator/config.toml` marks its keys `# local:`), read on top of `orchestrator/config.toml` as in Core configuration: the Linear `team` and workflow `[states]`, both by id; `task_label_group`, the id of the Linear `Tasks` label group; `[task_labels]`, each task → the id of its label in that group; `human_members`; `harness_key`, the Keychain service of the harness account's key; per role its `account` and `key`; `[project_repos]`, each Linear project id → the `<owner>/<name>` repo of its Engineering, local or mixed research and product-design issues that have no `Repo:` line; `[local_clones]`, each `<owner>/<name>` → the absolute or `~` path of its local clone (`config.runnable` checks it), which the input's `Repo:` names; `work_dir` (see Files). The overlay, `[core]`, in either file: core run keys for the orchestrator's agent runs in `core/config.toml`'s layout, applied after `core/config.toml`'s `[clients.claude]` (`{{root}}` is this repo's root), e.g. deep research's `gate`, the `router.py --brake` command.
 - `orchestrator/src/config.py` `TASKS`: per task, the issue title prefix and the write-back comment texts (e.g. product design retitles the issue `PRD: <product name>`).
 
 ## Development

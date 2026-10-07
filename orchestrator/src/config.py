@@ -1,4 +1,4 @@
-"""Paths, orchestrator/config.toml (config.local.toml on top), core config with its [core] overlay, and TASKS; imports no
+"""Paths, orchestrator/config.toml (LOCAL on top), core config with its [core] overlay, and TASKS; imports no
 other orchestrator module. Needs Python 3.11+ (tomllib).
 """
 import os
@@ -11,6 +11,7 @@ from typing import Literal
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
+LOCAL = "~/.agent-pm/orchestrator.local.toml"
 CORE = os.path.join(ROOT, "core")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
@@ -45,7 +46,7 @@ def work_dir(cfg, root=ROOT, clones=None):
     return path
 
 
-WORK_DIR = work_dir(repo.read_config(CONFIG))
+WORK_DIR = work_dir(repo.read_config(CONFIG, LOCAL))
 RUNS_DIR, LOGS_DIR = os.path.join(WORK_DIR, "work"), os.path.join(WORK_DIR, "logs")
 RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
 
@@ -187,11 +188,11 @@ def _missing(cfg):
 
 
 def load_config(path=CONFIG):
-    """`path` with config.local.toml beside it on top (repo.read_config), with the checks every consumer needs; the
-    checks against core config are in runnable(), which every consumer calls."""
-    cfg = repo.read_config(path)
+    """`path` with LOCAL on top (repo.read_config), with the checks every consumer needs; the checks against core config
+    are in runnable(), which every consumer calls."""
+    cfg = repo.read_config(path, LOCAL)
     if missing := _missing(cfg):
-        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in orchestrator/config.local.toml "
+        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {LOCAL} "
                          "(orchestrator/config.toml's `# local:` lines)")
     _check_ids(cfg)
     hk = cfg.get("harness_key")
@@ -263,9 +264,9 @@ def _check_overlay_keys(table, allowed, where):
 
 
 def overlay(root=ROOT):
-    """[core] of <root>/orchestrator/config.toml with config.local.toml on top ({} without one), {{root}} filled; its keys are
-    checked here, since core checks only its own config's, the rest by load_config, which every consumer calls first."""
-    layer = _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml")).get("core", {}), root)
+    """[core] of <root>/orchestrator/config.toml with LOCAL on top ({} without one), {{root}} filled; its keys are checked
+    here, since core checks only its own config's, the rest by load_config, which every consumer calls first."""
+    layer = _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
     _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
     for r, role in layer.get("roles", {}).items():
         _check_overlay_keys(role, compose.RUN_KEYS | {"tasks"}, f"roles.{r}")
@@ -365,7 +366,7 @@ def docs(roles, root=ROOT):
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise SystemExit("core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)")
+        raise SystemExit(f"core: document tasks must publish to one github.com repo and branch (their [output] in {repo.LOCAL})")
     return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
 
 

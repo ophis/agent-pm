@@ -13,7 +13,7 @@ import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
+import hermetic  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
@@ -74,12 +74,12 @@ class ClientConfig(unittest.TestCase):
         self.assertIn("roles", clients.load_config("skill", CORE))
         self.assertFalse(os.path.exists(os.path.join(CORE, "config")))
 
-    def test_config_local_toml_goes_on_top(self):
+    def test_the_local_file_goes_on_top(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         with open(os.path.join(tmp.name, "config.toml"), "w") as f:
             f.write('[clients.claude]\nflags = ["-a"]\n[clients.claude.tiers]\n1 = "x"\n2 = "y"\n')
-        with open(os.path.join(tmp.name, "config.local.toml"), "w") as f:
+        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
             f.write('[clients.claude]\nflags = ["-b"]\n[clients.claude.tiers]\n2 = "z"\n')
         self.assertEqual(clients.load_config("claude", tmp.name), {"flags": ["-b"], "tiers": {"1": "x", "2": "z"}})
 
@@ -311,16 +311,17 @@ class Cwd(Base):
             os.makedirs(d)
             with open(os.path.join(d, ".mcp.json"), "w") as f:
                 f.write("{}")
+        self.local = os.path.join(hermetic.home(self), "core.local.toml")
 
     def core(self, *trusted):
-        """A core root: the committed config.toml, and a config.local.toml listing `trusted` as trusted_dirs."""
+        """A core root: the committed config.toml, and the local file listing `trusted` as trusted_dirs."""
         root = os.path.join(self.tmp.name, "core")
         os.makedirs(root, exist_ok=True)
         for d in ("team", "output"):
             if not os.path.lexists(os.path.join(root, d)):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
         shutil.copy(os.path.join(CORE, compose.CONFIG), root)
-        with open(os.path.join(root, "config.local.toml"), "w") as f:
+        with open(self.local, "w") as f:
             f.write(f"trusted_dirs = {json.dumps(list(trusted))}\n")
         return root
 

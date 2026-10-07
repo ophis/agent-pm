@@ -2,7 +2,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,7 +10,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
+import hermetic  # noqa: E402
 from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
 import config  # noqa: E402
 import clients  # noqa: E402
@@ -25,7 +24,7 @@ STATES_LINE = HEADER[HEADER.index("states = "):HEADER.index("task_label_group")]
 
 
 def missing(keys):
-    return f"missing {keys}: set them in orchestrator/config.local.toml (orchestrator/config.toml's `# local:` lines)"
+    return f"missing {keys}: set them in ~/.agent-pm/orchestrator.local.toml (orchestrator/config.toml's `# local:` lines)"
 
 
 class ConfigFile:
@@ -43,6 +42,9 @@ class ConfigFile:
 
 
 class Config(ConfigFile, unittest.TestCase):
+    def test_tests_never_read_this_machines_local_file(self):
+        self.assertIn(os.path.realpath(os.path.expanduser(config.LOCAL)), hermetic.HIDDEN)
+
     def test_stage_order(self):
         self.assertEqual(config.stage_order(self.load(BASE)),
                          {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
@@ -334,7 +336,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(config.docs(runs, self.root), config.Docs("acme/notes", "trunk", DIRS))
 
     def test_docs_mismatch(self):
-        message = "core: document tasks must publish to one github.com repo and branch (their [output] in core/config.local.toml)"
+        message = "core: document tasks must publish to one github.com repo and branch (their [output] in ~/.agent-pm/core.local.toml)"
         for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
                        DESIGN.replace(" }", ', host = "ghe.example.com" }')):
             with self.subTest(design):
@@ -350,9 +352,13 @@ DEPLOYMENT = {"team", "states", "human_members", "harness_key", "task_label_grou
 
 
 class Local(ConfigFile, unittest.TestCase):
-    """config.toml with config.local.toml beside it on top."""
+    """config.toml with the local file on top."""
+    def setUp(self):
+        super().setUp()
+        self.home = hermetic.home(self)
+
     def local(self, text):
-        with open(os.path.join(self.dir, "config.local.toml"), "w") as f:
+        with open(os.path.join(self.home, "orchestrator.local.toml"), "w") as f:
             f.write(text)
 
     def test_local_on_top(self):
@@ -370,7 +376,7 @@ class Local(ConfigFile, unittest.TestCase):
     def test_local_alone_and_no_local(self):
         self.local(BASE)
         self.assertEqual(self.load("")["roles"], self.load(BASE)["roles"])
-        os.remove(os.path.join(self.dir, "config.local.toml"))
+        os.remove(os.path.join(self.home, "orchestrator.local.toml"))
         self.assertEqual(self.load(BASE)["team"], TEAM)
 
     def test_a_bad_local_value_is_rejected(self):
@@ -381,14 +387,15 @@ class Local(ConfigFile, unittest.TestCase):
 
 
 class RealConfig(unittest.TestCase):
-    """The repo's committed orchestrator/config.toml with a fixture config.local.toml, core config and TASKS together."""
+    """The repo's committed orchestrator/config.toml with a fixture local file, core config and TASKS together."""
+    def setUp(self):
+        self.local = os.path.join(hermetic.home(self), "orchestrator.local.toml")
+
     def load(self, local=None):
-        with tempfile.TemporaryDirectory() as d:
-            shutil.copy(config.CONFIG, os.path.join(d, "config.toml"))
-            if local is not None:
-                with open(os.path.join(d, "config.local.toml"), "w") as f:
-                    f.write(local)
-            return config.load_config(os.path.join(d, "config.toml"))
+        if local is not None:
+            with open(self.local, "w") as f:
+                f.write(local)
+        return config.load_config()
 
     def test_committed_config_holds_no_deployment_values(self):
         with open(config.CONFIG, "rb") as f:
@@ -431,11 +438,9 @@ class RealConfig(unittest.TestCase):
     def test_local_lines_uncommented_set_every_required_key(self):
         with open(config.CONFIG) as f:
             local = "".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: "))
-        with tempfile.TemporaryDirectory() as d:
-            shutil.copy(config.CONFIG, os.path.join(d, "config.toml"))
-            with open(os.path.join(d, "config.local.toml"), "w") as f:
-                f.write(local)
-            self.assertEqual(config._missing(repo.read_config(os.path.join(d, "config.toml"))), [])
+        with open(self.local, "w") as f:
+            f.write(local)
+        self.assertEqual(config._missing(repo.read_config(config.CONFIG, config.LOCAL)), [])
 
 
 class ProjectRepos(ConfigFile, unittest.TestCase):

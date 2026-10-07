@@ -1,4 +1,4 @@
-# The tests' core/config.local.toml, merged over the committed core/config.toml in place of a real one (hermetic.py).
+# The tests' ~/.agent-pm/core.local.toml, merged over the committed core/config.toml in place of a real one (hermetic.py).
 language = "Chinese"
 
 [roles.researcher.tasks.deep-research.output]

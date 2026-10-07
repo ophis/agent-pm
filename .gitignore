@@ -3,6 +3,4 @@ logs/
 __pycache__/
 .DS_Store
 docs/
-core/config.local.toml
-orchestrator/config.local.toml
 core/skills/

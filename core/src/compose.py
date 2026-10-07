@@ -19,7 +19,7 @@ import repo
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
 OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how an agent run hands back
-CONFIG = "config.toml"   # config.local.toml beside it goes on top (repo.read_config)
+CONFIG = "config.toml"   # repo.LOCAL goes on top (repo.read_config)
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -119,7 +119,7 @@ def lookup(layer: Mapping, role: str, task: str, key: str):
 
 
 def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = ()) -> RunConfig:
-    """The run config for role/task from config.toml with config.local.toml on top, each later layer (same layout)
+    """The run config for role/task from config.toml with repo.LOCAL on top, each later layer (same layout)
     replacing the run keys it sets. That config must be valid on its own; each layer is checked again once applied."""
     cfg = repo.read_config(os.path.join(root, CONFIG))
     task = _check(cfg, role, task)

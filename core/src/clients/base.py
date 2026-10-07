@@ -83,7 +83,7 @@ class Client:
 
 
 def load_config(name: str, root: str) -> dict:
-    """[clients.<name>] of <root>/config.toml with config.local.toml on top."""
+    """[clients.<name>] of <root>/config.toml with repo.LOCAL on top."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")

@@ -1,6 +1,6 @@
-# DO NOT MODIFY this file. This deployment's settings go in config.local.toml next to it (gitignored, read on top of
-# this file): create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override
-# any other key too: tables merge key by key, the local value wins, a list is replaced whole; a table cannot drop a key
+# DO NOT MODIFY this file. This deployment's settings go in ~/.agent-pm/orchestrator.local.toml, read on top of this
+# file: create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any
+# other key too: tables merge key by key, the local value wins, a list is replaced whole; a table cannot drop a key
 # this file sets. Missing required keys stop router, run and promote.
 
 # Linear entities by id, since names change with a rename.
@@ -36,7 +36,7 @@
 
 # A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. An issue
 # assigned to its account runs the role's default task unless its Tasks label picks another through [task_labels].
-# A role added in config.local.toml is orchestrated too.
+# A role added in orchestrator.local.toml is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
 #   key                   local, required: Keychain service of that account's API key; write-back acts as it
 #   next                  the role promote hands this role's Handoff issues to; unset → the last stage

@@ -618,7 +618,7 @@ class Bounce(Base):
         gql = Gql(issue=self.src())
         reason = "project mapping ophis/x: not found or no access (HTTP 404)"
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), reason)
-        self.assertIn(comment(self.text(reason, " Or fix orchestrator/config.local.toml's [project_repos] entry.")), gql.calls)
+        self.assertIn(comment(self.text(reason, " Or fix ~/.agent-pm/orchestrator.local.toml's [project_repos] entry.")), gql.calls)
 
     def test_unarchive_failure_ignored(self):
         for err in (SystemExit("linear api error: not archived"), False):
