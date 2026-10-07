@@ -17,8 +17,9 @@ once the outcome arrives or it gives up, and left open for the user. --events FI
 there. --split, --split-from, --prefix and, without --detach, --events are tui only.
 --detach (needs --events) runs the driver itself, this command, in a new detached tmux session <prefix>-<sid[:8]>-drive
 (driver_session) on the caller's tmux server, prints its name and attach command, and exits; a tui pane goes where the
-caller's would (its opener; a --split-from session must be shown). When the driver ends, on SIGHUP or SIGTERM too, it
-appends `HH:MM:SS <session> outcome <done|needs_input|failed|error>` to the events file (error: no valid outcome).
+caller's would (its opener; a --split-from session must be shown). When the driver ends, on SIGHUP or SIGTERM too
+(even one sent as it starts), it appends `HH:MM:SS <session> outcome <done|needs_input|failed|error>` to the events
+file (error: no valid outcome).
 The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
@@ -648,7 +649,8 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
            sleep=time.sleep) -> None:
     """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
-    and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux. Raises RunnerError."""
+    and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
+    argv unblocks them (main). Raises RunnerError."""
     tmp = None
     try:
         tmp = tempfile.mkdtemp()
@@ -657,7 +659,7 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
             if "#" in arg or arg.endswith(";"):
                 raise RunnerError(f"tmux would misread {arg!r}")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
-            json.dump({"argv": argv, "cwd": cwd,
+            json.dump({"argv": argv, "cwd": cwd, "block": [int(s) for s in SIGNALS],
                        "env": {k: v for k, v in env.items() if k not in tui_claude.TERMINAL_KEYS}}, f)
         res = proc(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s", name, sys.executable, "-I",
                     "-c", tui_claude.EXEC, path], capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -800,30 +802,32 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--driver", help=argparse.SUPPRESS)   # --detach's: this is the driver in tmux session DRIVER
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    if a.input == "-":
+    if a.input == "-" and a.driver is None:   # the driver's is the caller's stdin text, even a "-"
         a.input = sys.stdin.read()
-    # The act-as skill pre-approves `--client skill --role *`: only a client that runs may write the outcome line.
-    if a.driver is None or a.events is None or not getattr(clients.REGISTRY.get(a.client or "claude"), "runs", False):
+    if a.driver is None:
         return _main(a, root, popen, proc)[0]
     for s in SIGNALS:
         signal.signal(s, _stop)
     status = None
     try:
-        code, status = _main(a, root, popen, proc)
-        return code
-    finally:
-        for s in SIGNALS:
-            signal.signal(s, signal.SIG_IGN)
         try:
-            append_line(tui_claude.events_file(a.events),
-                        f"{time.strftime('%H:%M:%S')} {a.driver} outcome {status or 'error'}\n")
-        except (OSError, tui_claude.TuiError) as e:
-            print(f"drive.py: {e}", file=sys.stderr)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)   # blocked by detach until now
+            code, status = _main(a, root, popen, proc)
+            return code
+        finally:
+            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    finally:   # a stop that cut the block short comes here too, blocked by _stop
+        # The act-as skill pre-approves `--client skill --role *`: only a client that runs may write the outcome line.
+        if a.events is not None and getattr(clients.REGISTRY.get(a.client or "claude"), "runs", False):
+            try:
+                append_line(tui_claude.events_file(a.events),
+                            f"{time.strftime('%H:%M:%S')} {a.driver} outcome {status or 'error'}\n")
+            except (OSError, tui_claude.TuiError) as e:
+                print(f"drive.py: {e}", file=sys.stderr)
 
 
 def _stop(signum, frame):
-    for s in SIGNALS:   # one exit: the outcome line is written once
-        signal.signal(s, signal.SIG_IGN)
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)   # one exit: the outcome line is written once
     raise SystemExit(128 + signum)
 
 

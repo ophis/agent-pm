@@ -81,9 +81,11 @@ TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM
 # Set in a Claude Code session's commands: a claude inheriting it saves no transcript and can't be resumed.
 CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
-# Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
+# Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does. The handover's `block` signals
+# are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them.
 EXEC = f"""import json, os, signal, sys
 with open(sys.argv[1]) as f: h = json.load(f)
+signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
 os.unlink(sys.argv[1])
 os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)

@@ -1553,8 +1553,11 @@ class Detach(Base):
             os.environ.pop(k, None)
         os.environ.update(ITERM_SESSION_ID="w0t0p0:AB-12", TERM_PROGRAM="iTerm.app")   # the opener, with no tmux call
         self.events = os.path.join(self.tmp.name, "w.events")
-        for s in drive.SIGNALS:   # a driver's main sets them
+        for s in drive.SIGNALS:   # a driver's main sets them and leaves them blocked
             self.addCleanup(signal.signal, s, signal.getsignal(s))
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, signal.pthread_sigmask(signal.SIG_BLOCK, []))
+        for s in drive.SIGNALS:   # first: one left pending is dropped as the mask is restored
+            self.addCleanup(signal.signal, s, signal.SIG_IGN)
 
     def argv(self, *extra):
         return ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.",
@@ -1643,6 +1646,7 @@ class Detach(Base):
             f"--out={self.work}/out.md", f"--workdir={self.work}", f"--sid={SID}", "--runner=tui", "--prefix=p",
             f"--events={self.events}", "--opener=w0t0p0:AB-12", f"--driver={driver}"])
         self.assertEqual(handover["cwd"], os.getcwd())
+        self.assertEqual(handover["block"], [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
         self.assertEqual(handover["env"]["PATH"], os.environ["PATH"])
         self.assertNotIn("ITERM_SESSION_ID", handover["env"])   # the pane's, from -e
         self.assertEqual(err, f"drive.py: cwd {os.getcwd()} is not in trusted_dirs: its project settings are off\n"
@@ -1660,6 +1664,18 @@ class Detach(Base):
         with unittest.mock.patch.object(sys, "stdin", io.StringIO("# Echo\nthis")):
             code, _, _, handover = self.outer("--input", "-")
         self.assertEqual((code, handover["argv"][4]), (0, "--input=# Echo\nthis"))
+
+    def test_stdin_text_dash_reaches_the_driver_as_text_not_its_stdin(self):
+        with unittest.mock.patch.object(sys, "stdin", io.StringIO("-")):
+            code, _, _, handover = self.outer("--runner", "tui", "--input", "-")
+        self.assertEqual((code, handover["argv"][4]), (0, "--input=-"))
+        stdin = unittest.mock.Mock()
+        with unittest.mock.patch.object(sys, "stdin", stdin):
+            code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
+        stdin.read.assert_not_called()
+        (_, _, argv, _), = [c for c in calls if c[0] == "start"]
+        self.assertTrue(argv[1].endswith("Input:\n\n-\n"), argv[1][-40:])
+        self.assertEqual((code, self.lines()), (0, [f"{self.DRIVER} outcome done\n"]))
 
     def test_without_an_opener_the_driver_gets_no_iterm_pane_and_headless_no_tui_line(self):
         os.environ["TERM_PROGRAM"] = "vscode"   # $ITERM_SESSION_ID left over from another terminal
@@ -1737,12 +1753,36 @@ class Detach(Base):
 
         def kill(name):
             killed.append(name)
-            os.kill(os.getpid(), signal.SIGTERM)   # another, while it stops: ignored
+            os.kill(os.getpid(), signal.SIGTERM)   # another, while it stops: blocked
 
         with self.assertRaises(SystemExit) as cm:
             self.inner(api={"status": status, "kill": kill})
         self.assertEqual((cm.exception.code, killed), (129, [f"dummy-tester-echo-{SID[:8]}"]))
         self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+
+    def test_a_signal_sent_before_the_driver_handles_them_waits_and_ends_it_with_one_error_line(self):
+        signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)   # as detach hands the driver over
+        os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session as it starts
+        with self.assertRaises(SystemExit) as cm:
+            self.inner([outcome(DONE)])
+        self.assertEqual(cm.exception.code, 129)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_a_signal_as_the_driver_ends_still_leaves_its_outcome_line(self):
+        sigmask, sent = signal.pthread_sigmask, []
+
+        def block_after_a_signal(how, signals):
+            if how == signal.SIG_BLOCK and not sent:
+                sent.append(how)
+                os.kill(os.getpid(), signal.SIGTERM)   # before the driver's end blocks them
+            return sigmask(how, signals)
+
+        with unittest.mock.patch.object(signal, "pthread_sigmask", block_after_a_signal), \
+                self.assertRaises(SystemExit) as cm:
+            self.inner([outcome(DONE)])
+        self.assertEqual((cm.exception.code, sent), (143, [signal.SIG_BLOCK]))
+        self.assertEqual(self.lines(), ["d-drive outcome done\n"])
 
 
 class Sinks(unittest.TestCase):
