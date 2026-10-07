@@ -298,8 +298,7 @@ class Prompt(Fake):
     def test_task_frontmatter_gives_the_description_and_never_reaches_the_prompt(self):
         self.write({"team/tasks/short-note.md": '---\ndescription: "Notes: short. Use for \\"x\\"."\n---\n\n# Short Note\n\nWrite a note.\n'})
         prompt, run = self.compose(task="short-note")
-        self.assertEqual((run.task_description, run.task_title, run.task_summary),
-                         ('Notes: short. Use for "x".', "Short Note", "Write a note."))
+        self.assertEqual((run.task_description, run.task_title), ('Notes: short. Use for "x".', "Short Note"))
         self.assertNotIn("description:", prompt)
         self.assertIn("# Writer\n\nWrite well.\n\n# Short Note\n\nWrite a note.\n", prompt)
         self.assertEqual(self.compose(task="long-note")[1].task_description, "")
@@ -372,7 +371,7 @@ class Prompt(Fake):
         prompt = compose.render(self.root, run, client=Plain())
         self.assertNotIn("Workdir: ", prompt)
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
-        self.assertEqual((run.role_title, run.task_title, run.task_summary), ("Writer", "Short Note", "Write a note."))
+        self.assertEqual((run.role_title, run.task_title), ("Writer", "Short Note"))
 
     def test_resume_starts_with_resumed_run(self):
         prompt, _ = self.compose(task="short-note", resume=True)

@@ -21,7 +21,7 @@ second `--dir`.
 Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
 failure.
 Errors mask URL userinfo.
-Core config: config.toml beside src/, with ~/.agent-pm/core.local.toml on top (read_config); a skill's copy has none.
+Core config: config.toml beside src/, with ~/.agent-pm/core.local.toml on top (read_config).
 """
 import argparse
 import json
@@ -434,7 +434,7 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_config(config) if os.path.isfile(config) else {}   # a skill's copy has no config.toml beside it
+        cfg = read_config(config)
         if a.cmd == "worktree":
             r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
         else:

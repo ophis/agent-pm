@@ -36,7 +36,7 @@ The part of the delegate that assembles principles, role, task and input into a 
 The part of the delegate that starts an agent run through a client and checks its output; the same for every client.
 
 **Client**:
-A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or files) and enforces what hard constraints it can.
+A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or a prompt to print) and enforces what hard constraints it can.
 _Avoid_: runtime, backend, vehicle
 
 **Runner**:

@@ -23,7 +23,7 @@ agent-pm/
 
 ## Core pack
 
-`core/` turns a role, a task and an input into one agent run, knowing nothing of Linear (`core/CLAUDE.md`); `drive.py` turns its output and reports into events for sinks (terminal, and whatever the caller adds). `<workdir>/run.json` records each session (cwd, settings, transcript, resume command, start, end), progress and the last outcome. `core/regen_skills.sh [OUT_DIR]` exports each role/task, from `core/team/` and the merged core config, as a skill `<role>-<task>/` to `OUT_DIR` (default `core/skills/`, gitignored); rerun it after editing `core/team/`, `core/output/`, `core/config.toml`, `core/config.local.toml` or `core/src/repo.py`.
+`core/` turns a role, a task and an input into one agent run, knowing nothing of Linear (`core/CLAUDE.md`); `drive.py` turns its output and reports into events for sinks (terminal, and whatever the caller adds). `<workdir>/run.json` records each session (cwd, settings, transcript, resume command, start, end), progress and the last outcome. `drive.py --client skill --role R --task T` starts nothing: it prints the role/task's prompt for the calling Claude Code conversation to follow (`/agent-pm:act-as`).
 
 ### Roles
 
@@ -37,7 +37,7 @@ A role: a charter (`core/team/roles/<role>.md`: responsibilities, standards, bou
 
 ### Tasks
 
-A task (`core/team/tasks/<task>.md`): an agent run's steps, progress marks and resume. `core/src/repo.py worktree` checks out a target repo at `<Workdir>/src/<owner>/<name>-<slug>` (`<slug>`: its `--name`, else the branch with `/` → `-`), on the agent run's own branch: a git worktree of the local clone path the input names (outside `<work_dir>/work` and the temp dirs), else a fresh blobless clone of an `<owner>/<name>` or URL. A worktree checks out symlinks as plain files unless `~/.agent-pm/core.local.toml`'s `trusted_dirs` lists the clone's real path (via the worktree's own config, which turns on the clone's `extensions.worktreeConfig`); an existing worktree whose setting disagrees is refused: remove it, run again. Remote clones and a skill's bundled `repo.py` always check out symlinks as plain files. The orchestrator's `Repo:` line names the repo's `[local_clones]` path; on an issue's later agent runs its existing checkout's form wins. Its `Checkout:` line is the issue id: the `--name` (`core/team/principles.md` › Checkout).
+A task (`core/team/tasks/<task>.md`): an agent run's steps, progress marks and resume. `core/src/repo.py worktree` checks out a target repo at `<Workdir>/src/<owner>/<name>-<slug>` (`<slug>`: its `--name`, else the branch with `/` → `-`), on the agent run's own branch: a git worktree of the local clone path the input names (outside `<work_dir>/work` and the temp dirs), else a fresh blobless clone of an `<owner>/<name>` or URL. A worktree checks out symlinks as plain files unless `~/.agent-pm/core.local.toml`'s `trusted_dirs` lists the clone's real path (via the worktree's own config, which turns on the clone's `extensions.worktreeConfig`); an existing worktree whose setting disagrees is refused: remove it, run again. Remote clones always check out symlinks as plain files. The orchestrator's `Repo:` line names the repo's `[local_clones]` path; on an issue's later agent runs its existing checkout's form wins. Its `Checkout:` line is the issue id: the `--name` (`core/team/principles.md` › Checkout).
 
 - **`deep-research`:** web → the built-in `/deep-research` Workflow once over all subquestions; local → its own ultracode workflow (≤ 100 agents, verification inside) over the worktrees; mixed → at most both, the second skipped when the `gate` command fails; no Workflow tool → `core/team/methods/`. Report (`core/team/templates/research-report.md`) to `Research/` in the docs repo.
 - **`light-research`:** 3–6 angles (web, worktree or both) in one round, one agent each, self-checked, no separate verification; a shorter report marked Light Research, whose file a later `deep-research` agent run given it rewrites.
@@ -143,7 +143,7 @@ After 4 attempts an unfinished issue goes to In Review; a `human_members` user m
 
 The issue's label in the `Tasks` label group picks one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working; no such label → the role's default task. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, remove the label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps the task in `<work_dir>/logs/runs.log` whatever the labels say (none: the role's default); an interrupted agent run whose task is no longer the role's goes to In Review with a comment.
 
-To add a task to a role: create `core/team/tasks/<task>.md` (its frontmatter `description` is the skill's; `core/CLAUDE.md`), add `[roles.<role>.tasks.<task>]` to `core/config.toml` and the task to `TASKS` in `orchestrator/src/config.py`, run `core/regen_skills.sh`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
+To add a task to a role: create `core/team/tasks/<task>.md` (its frontmatter `description`: `core/CLAUDE.md`), add `[roles.<role>.tasks.<task>]` to `core/config.toml` and the task to `TASKS` in `orchestrator/src/config.py`, create the label in the `Tasks` group and add `<task> = "<label id>"` to `[task_labels]`.
 
 ## Setup
 
@@ -221,4 +221,4 @@ Core's configuration is under Core pack.
 
 ## Development
 
-Tests, `core/regen_skills.sh` and architecture notes: `CLAUDE.md`.
+Tests and architecture notes: `CLAUDE.md`.

@@ -67,7 +67,6 @@ class RunConfig:
     cwd: str = ""   # "" → the caller's default (drive.place)
     role_title: str = ""
     task_title: str = ""
-    task_summary: str = ""
     task_description: str = ""   # the task file's frontmatter `description`; "" without one
     progress: list[str] = field(default_factory=list)   # the task's progress point names, in order
 
@@ -132,8 +131,7 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
     role_md = _read(os.path.join(root, TEXT), role_rel)
     description, task_md = _task(os.path.join(root, TEXT), task_rel)
     return replace(run, role_title=_title(role_md, role_rel), task_title=_title(task_md, task_rel),
-                   task_summary=_summary(task_md), task_description=description,
-                   progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
+                   task_description=description, progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
@@ -240,7 +238,7 @@ def _read(root: str, rel: str) -> str:
 
 def _task(root: str, rel: str) -> tuple[str, str]:
     """(description, body) of a task file. Its optional YAML frontmatter holds only `description: "<JSON string>"`
-    (a skill's description) and never reaches a prompt."""
+    (what role/task listings show) and never reaches a prompt."""
     text = _read(root, rel)
     if not (m := FRONTMATTER.match(text)):
         return "", text
@@ -259,11 +257,6 @@ def _title(text: str, rel: str) -> str:
     if not first.startswith("# "):
         raise ConfigError(f"{rel} must start with a '# ' heading")
     return first[2:].strip()
-
-
-def _summary(text: str) -> str:
-    """The first paragraph line after a file's heading."""
-    return next((line.strip() for line in text.splitlines()[1:] if line.strip() and not line.startswith("#")), "")
 
 
 def _fence(text: str) -> str:

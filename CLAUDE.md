@@ -9,7 +9,6 @@ python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orc
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
 python3 -m unittest discover -s .claude/skills/tmux/scripts -p "*_test.py"         # tmux skill tests
-core/regen_skills.sh                                              # when: core/CLAUDE.md
 ```
 
 Operating commands: README › Operating, README › Attended runs. Python 3.11+ (`tomllib`; macOS's `python3` is 3.9, so launchd uses `/opt/homebrew/bin/python3`). Without `--dry-run`, router and promote change real issues and start real agent runs.

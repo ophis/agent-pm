@@ -22,10 +22,9 @@
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); unset → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
 #                   notice unless it is the workdir; a trusted cwd in the workdir is refused. A listed local clone's
-#                   worktrees check out symlinks as links; every other checkout, a skill's bundled repo.py included,
-#                   gets core.symlinks=false. A listed clone trusts every link in fetched origin/<branch> commits, which
-#                   may point outside the worktree: list only stable paths only you write. An agent run cannot add one
-#                   (no flag; the overlay rejects it)
+#                   worktrees check out symlinks as links; every other checkout gets core.symlinks=false. A listed
+#                   clone trusts every link in fetched origin/<branch> commits, which may point outside the worktree:
+#                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
 tier = 2
 effort = "high"
 language = "English"
@@ -160,8 +159,8 @@ max = "max"
 [clients.claude.env]
 CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
-# Skill client, read by SkillClient (src/clients/skill.py). A skill's description is its task file's frontmatter
-# `description` (core/CLAUDE.md).
+# Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
+# conversation to follow (the act-as skill).
 #   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
 #           tasks without an entry keep their own (build, light-build: pull-request)
 [clients.skill]

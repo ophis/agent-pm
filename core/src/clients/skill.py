@@ -1,19 +1,11 @@
-"""Agent Skill: writes the composed role + task as <dest>/<role>-<task>/SKILL.md, plus a copy of each core script it
-runs under scripts/ and, when it names methods/, of core's team/methods/ under methods/, instead of starting an agent
-run."""
-import json
-import os
+"""Agent Skill: the composed role + task, printed for the calling Claude Code conversation to follow (the act-as skill)
+instead of starting an agent run."""
 import re
 
-from compose import TEXT, RunConfig
+from .base import PROGRESS, Client
 
-from .base import PROGRESS, Client, Launch
-
-TAIL = "\n---\n\nInput: $ARGUMENTS\nWorkdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n"
-SCRIPTS = "${CLAUDE_SKILL_DIR}/scripts"
-METHODS = "${CLAUDE_SKILL_DIR}/methods"
-CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CORE_METHODS = os.path.join(os.path.dirname(CORE_SCRIPTS), TEXT, "methods")
+TAIL = ("\n---\n\nInput: given with this prompt\n"
+        "Workdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n")
 # A skill runs once, inline: a task's Resume section (for interrupted agent runs) never applies.
 RESUME = re.compile(r"\n## Resume\n.*?(?=\n# |\Z)", re.S)
 REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
@@ -24,31 +16,9 @@ class SkillClient(Client):
     keys = frozenset({"roles"})
     runs = False
 
-    def scripts_path(self, root: str) -> str:
-        return SCRIPTS
-
-    def methods_path(self, root: str) -> str:
-        return METHODS
-
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
                 f"`deliverable` after the frontmatter instead of in it; write no file for the outcome. {REPORT}.")
 
-    def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
-        name = f"{run.role}-{run.task}"
-        description = run.task_description or f"{run.task_title} as {run.role_title}: {run.task_summary}"
-        head = f"---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n"
-        text = head + RESUME.sub("\n", prompt).rstrip() + "\n" + TAIL
-        skill = os.path.join(os.path.abspath(dest), name)
-        files = {os.path.join(skill, "SKILL.md"): text}
-        for script in sorted(set(re.findall(re.escape(SCRIPTS) + r"/([\w.-]+)", text))):
-            with open(os.path.join(CORE_SCRIPTS, script), encoding="utf-8") as f:
-                files[os.path.join(skill, "scripts", script)] = f.read()
-        if METHODS in text:
-            for d, dirs, names in os.walk(CORE_METHODS):
-                dirs[:] = sorted(n for n in dirs if not n.startswith("."))   # dotfiles (.DS_Store) are not methods
-                for filename in sorted(n for n in names if not n.startswith(".")):
-                    path = os.path.join(d, filename)
-                    with open(path, encoding="utf-8") as f:
-                        files[os.path.join(skill, "methods", os.path.relpath(path, CORE_METHODS))] = f.read()
-        return Launch([], files=files)
+    def inline(self, prompt: str) -> str:
+        return RESUME.sub("\n", prompt).rstrip() + "\n" + TAIL

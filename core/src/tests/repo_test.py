@@ -89,7 +89,7 @@ class Base(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
         self.wt = os.path.join(self.dir, "o", "n-TASK-1-x")
-        self.none = os.path.join(self.dir, "none.toml")
+        self.none = os.devnull
 
     def existing(self, url=URL):
         os.makedirs(os.path.join(self.wt, ".git"))
@@ -450,7 +450,7 @@ class Clone(unittest.TestCase):
         git("clone", "-q", self.bare, self.clone)
         self.dir = os.path.join(self.tmp, "work", "src")
         self.wt = os.path.join(self.dir, "o", "n-TASK-1-x")
-        self.none = os.path.join(self.tmp, "none.toml")
+        self.none = os.devnull
 
     def listing(self, *paths):
         """A config.toml whose trusted_dirs lists `paths`."""
