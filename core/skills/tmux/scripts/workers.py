@@ -56,13 +56,13 @@ def _tmux(argv: list, proc) -> None:
 
 
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
-          anchor: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
+          split_from: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `anchor` or `split` replaces tui_claude's automatic placement; it defaults the other. Its status line: core config's
+    `split_from` or `split` replaces tui_claude's automatic placement; it defaults the other. Its status line: core config's
     status_line."""
     _check(name)
-    if anchor is not None:
-        _check(anchor)
+    if split_from is not None:
+        _check(split_from)
     status_line = _status_line()
     events, cwd = os.path.abspath(events), os.path.abspath(cwd)
     if not os.path.isdir(cwd):
@@ -76,7 +76,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     try:
         tui_claude.start(name, [claude, "--session-id", sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
-                         cwd=cwd, env=child_env, events=events, split=split, anchor=anchor, status_line=status_line,
+                         cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, status_line=status_line,
                          proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
@@ -184,7 +184,7 @@ def main(argv=None) -> int:
     p.add_argument("--events", required=True)
     p.add_argument("--cwd")
     p.add_argument("--prompt")
-    p.add_argument("--anchor")
+    p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
         sub.add_parser(cmd).add_argument("name")
@@ -192,7 +192,7 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "start":
             sid = start(a.name, a.events, cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
-                        env=dict(os.environ), anchor=a.anchor, split=a.split, proc=subprocess.run)
+                        env=dict(os.environ), split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, proc=subprocess.run)

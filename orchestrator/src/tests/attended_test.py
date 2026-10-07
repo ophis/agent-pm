@@ -48,37 +48,37 @@ class Tmux:
 
 
 class LayoutTest(unittest.TestCase):
-    def call(self, split=None, anchor=None, *, tmux=None, environ=None):
+    def call(self, split=None, split_from=None, *, tmux=None, environ=None):
         tmux = tmux or Tmux()
         with mock.patch.dict(os.environ, environ or {}, clear=True):
-            return attended.layout(split, anchor, proc=tmux)
+            return attended.layout(split, split_from, proc=tmux)
 
     def test_bad_split(self):
         with self.assertRaisesRegex(attended.Bad, "split must be one of right, below"):
             self.call("left", environ=ITERM)
 
-    def test_bad_anchor_name(self):
+    def test_bad_split_from_name(self):
         tmux = Tmux()
         with self.assertRaisesRegex(attended.Bad, "bad tmux session name"):
-            self.call(anchor="a:b", tmux=tmux)
+            self.call(split_from="a:b", tmux=tmux)
         self.assertEqual(tmux.calls, [])
 
-    def test_missing_anchor_session(self):
+    def test_missing_split_from_session(self):
         with self.assertRaisesRegex(attended.Bad, "no tmux session gone"):
-            self.call(anchor="gone", tmux=Tmux())
+            self.call(split_from="gone", tmux=Tmux())
 
-    def test_anchor_given_keeps_it_with_the_opener_if_any(self):
+    def test_split_from_given_keeps_it_with_the_opener_if_any(self):
         for environ, opener in (({}, None), (ITERM, "w0t0p0:ABC"), ({**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}, None),
                                 (PANE, "mine")):
             with self.subTest(environ=environ):
                 self.assertEqual(self.call("below", "dev", tmux=Tmux(live=["dev"]), environ=environ),
                                  drive.Layout("below", "dev", opener))
 
-    def test_anchor_not_shown(self):
+    def test_split_from_not_shown(self):
         with self.assertRaisesRegex(attended.Bad, r"^no pane to show the TUI beside \(no terminal shows tmux session dev\)$"):
-            self.call(anchor="dev", tmux=Tmux(live=["dev"], clients=""))
+            self.call(split_from="dev", tmux=Tmux(live=["dev"], clients=""))
 
-    def test_inside_tmux_the_own_session_is_the_opener_never_anchor(self):
+    def test_inside_tmux_the_own_session_is_the_opener_never_split_from(self):
         self.assertEqual(self.call(environ=PANE, tmux=Tmux(own="mine")), drive.Layout(None, None, "mine"))
         self.assertEqual(self.call("below", environ=PANE, tmux=Tmux(own="mine")), drive.Layout("below", None, "mine"))
 
@@ -104,12 +104,12 @@ class LayoutTest(unittest.TestCase):
                         {**ITERM, "TERM_PROGRAM": "Apple_Terminal"}):
             with self.subTest(environ=environ), self.assertRaisesRegex(
                     attended.Bad, r"^no pane to show the TUI beside \(no anchor pane: not in tmux, .*\): run from tmux "
-                                  r"or iTerm2, or pass --anchor SESSION$"):
+                                  r"or iTerm2, or pass --split-from SESSION$"):
                 self.call(environ=environ)
 
-    def test_a_pane_but_no_opener_without_anchor(self):
+    def test_a_pane_but_no_opener_without_split_from(self):
         with self.assertRaisesRegex(attended.Bad, r"^no pane to show the TUI beside \(bad \$ITERM_SESSION_ID 'w0t0p0:A_B'"
-                                                  r".*\): run from tmux or iTerm2, or pass --anchor SESSION$"):
+                                                  r".*\): run from tmux or iTerm2, or pass --split-from SESSION$"):
             self.call(environ={**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"})
 
 

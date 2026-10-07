@@ -6,9 +6,9 @@
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
-  --tui [--split right|below] [--anchor SESSION]
+  --tui [--split right|below] [--split-from SESSION]
                     Hand-run, not with --issue: the tick's agent run is attended (run.py --runner tui, with the given --split
-                    and --anchor); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
+                    and --split-from); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
 Needs Python 3.11+.
 """
@@ -39,7 +39,7 @@ PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format"
          "--setting-sources", "user", "--strict-mcp-config"]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
-USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--anchor SESSION]] | --brake"
+USAGE = "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--split-from SESSION]] | --brake"
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
 LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+) task=(\S+)$")
@@ -453,7 +453,8 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
     project = issue["project"]
     tui = []
     if opts["tui"]:
-        tui = ["--runner=tui"] + [f"--{k}={opts[k]}" for k in ("split", "anchor") if opts[k] is not None]
+        tui = ["--runner=tui"] + [f"--{k.replace('_', '-')}={opts[k]}" for k in ("split", "split_from")
+                                  if opts[k] is not None]
     rc = sh([sys.executable, RUN, "--issue", ident, "--project", project["id"],
              "--assignee", issue["assignee"]["email"], "--sid", sid, "--task", task, "--mode", kind, *tui]).returncode
     log(f"launch {ident} ({project['name']}) exit={rc}")
@@ -462,16 +463,16 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root=ROOT):
 
 def options(argv):
     """The tick's options from argv, or None for a form USAGE doesn't allow."""
-    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "anchor": None}
+    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "split_from": None}
     flags = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
-    valued = {"--issue": "issue", "--split": "split", "--anchor": "anchor"}
+    valued = {"--issue": "issue", "--split": "split", "--split-from": "split_from"}
     i = 0
     while i < len(argv):
         a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
         name, eq, inline = a.partition("=")
         if a in flags:
             opts[flags[a]] = True
-        elif eq and name in ("--split", "--anchor") and opts[valued[name]] is None:
+        elif eq and name in ("--split", "--split-from") and opts[valued[name]] is None:
             opts[valued[name]] = inline
         elif a in valued and opts[valued[a]] is None and value is not None and value not in flags | valued:
             opts[valued[a]] = value
@@ -481,7 +482,7 @@ def options(argv):
         i += 1
     if opts["issue"] is not None and (not opts["now"] or opts["tui"]):
         return None
-    if not opts["tui"] and (opts["split"] is not None or opts["anchor"] is not None):
+    if not opts["tui"] and (opts["split"] is not None or opts["split_from"] is not None):
         return None
     return opts
 
@@ -503,7 +504,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
     os.environ["PATH"] = PATH
     if opts["tui"]:
         try:
-            attended.layout(opts["split"], opts["anchor"])
+            attended.layout(opts["split"], opts["split_from"])
         except attended.Bad as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2

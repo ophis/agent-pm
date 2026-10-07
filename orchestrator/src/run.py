@@ -3,21 +3,21 @@
 one the router resumes).
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
-       [--runner headless|tui] [--split right|below] [--anchor SESSION] [--events FILE]
+       [--runner headless|tui] [--split right|below] [--split-from SESSION] [--events FILE]
   Outer: checks the agent run can start, bounces an engineering issue whose repo check fails, writes <work_dir>/work/<ID>/input.md,
   then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
   input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
-  failure is also logged to the task's project log. --runner tui (--split, --anchor and --events need it) checks first
+  failure is also logged to the task's project log. --runner tui (--split, --split-from and --events need it) checks first
   where the TUI pane goes and the caller's opener (attended.layout), the events file (created 0600) and the session
   name (attended.prefix), exit 2 when one fails; the inner gets the opener and only the options given, and the
   sessions' attach commands go to stderr.
-run.py --issue ID --tui [--split right|below] [--anchor SESSION] [--events FILE]
+run.py --issue ID --tui [--split right|below] [--split-from SESSION] [--events FILE]
   Attended entry, by hand: claims the issue (router.Board.take, without the tick's hours, max_runs or usage gate), logs
   its start line, then runs the outer with --runner tui. Exits 2 bad arguments, no place for the TUI pane or a bad
   events file, 1 config error, a live agent run of the issue or nothing claimed, else the outer's code.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] [--opener OPENER] <the same arguments>
   Inner, in that tmux session: attended.close (the issue's TUI sessions), the session comments, core's agent run with
-  the orchestrator's sinks (tui: session <role>-<ID>-<sid[:8]>, its pane placed by --split/--anchor, else stacked with
+  the orchestrator's sinks (tui: session <role>-<ID>-<sid[:8]>, its pane placed by --split/--split-from, else stacked with
   the opener's), the end lines in the project log and runs.log, then write-back as the role account.
 Needs Python 3.11+.
 """
@@ -121,7 +121,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     layout = events = None
     if a.runner == "tui":
         try:
-            layout = attended.layout(a.split, a.anchor)
+            layout = attended.layout(a.split, a.split_from)
             events = tui_claude.events_file(a.events) if a.events is not None else None
         except (attended.Bad, tui_claude.TuiError) as e:
             print(f"run.py: {e}", file=sys.stderr)
@@ -183,7 +183,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     attended_argv, iterm = [], []
     if layout:
         iterm = ["-e", f"ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID', '')}"]  # tmux's own may be stale
-        given = (("split", layout.split), ("anchor", layout.anchor), ("opener", layout.opener), ("events", events))
+        given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
         print(f"run.py: driver: {tui_claude.attach_command(session(name, a.issue))}", file=sys.stderr)
         print(f"run.py: tui: {tui_claude.attach_command(tui)}", file=sys.stderr)
@@ -209,7 +209,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
         print(f"run.py: {e.msg}", file=sys.stderr)
         return e.rc
     try:
-        attended.layout(a.split, a.anchor)
+        attended.layout(a.split, a.split_from)
         if a.events is not None:
             tui_claude.events_file(a.events)
     except (attended.Bad, tui_claude.TuiError) as e:
@@ -227,7 +227,7 @@ def attended_run(a, *, sh, gql, run, runs, projects, keychain, root):
     sid = str(uuid.uuid4())
     append(runs, router.start_line(a.issue, sid, task))
     hosted = argparse.Namespace(issue=a.issue, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
-                                task=task, mode="new", runner="tui", split=a.split, anchor=a.anchor, events=a.events)
+                                task=task, mode="new", runner="tui", split=a.split, split_from=a.split_from, events=a.events)
     return outer(hosted, sh=sh, gql=gql, run=run, projects=projects, keychain=keychain, root=root)
 
 
@@ -301,7 +301,7 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
         ap.add_argument("--issue", required=True)
         ap.add_argument("--tui", action="store_true")
         ap.add_argument("--split")
-        ap.add_argument("--anchor")
+        ap.add_argument("--split-from")
         ap.add_argument("--events")
         return attended_run(ap.parse_args(argv), sh=sh, gql=gql, run=run, runs=runs, projects=projects, keychain=keychain,
                             root=root)
@@ -314,22 +314,22 @@ def main(argv, *, sh=subprocess.run, gql=linear_gql, run=sh_run, popen=subproces
     ap.add_argument("--target")
     ap.add_argument("--runner", choices=("headless", "tui"), default="headless")
     ap.add_argument("--split")
-    ap.add_argument("--anchor")
+    ap.add_argument("--split-from")
     ap.add_argument("--opener")
     ap.add_argument("--events")
     a = ap.parse_args(argv)
     if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"run.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
-    if a.runner != "tui" and any(v is not None for v in (a.split, a.anchor, a.opener, a.events)):
-        print("run.py: --split, --anchor, --opener and --events need --runner tui", file=sys.stderr)
+    if a.runner != "tui" and any(v is not None for v in (a.split, a.split_from, a.opener, a.events)):
+        print("run.py: --split, --split-from, --opener and --events need --runner tui", file=sys.stderr)
         return 2
     if not a.inner:
         return outer(a, sh=sh, gql=gql, run=run, projects=projects, keychain=keychain, root=root)
     if not UUID_RE.fullmatch(a.uuid or "") or a.target is not None and not repo_slug(a.target):
         print(f"run.py: bad issue uuid or target: {a.uuid} {a.target}", file=sys.stderr)
         return 2
-    layout = drive.Layout(a.split, a.anchor, a.opener) if a.runner == "tui" else None
+    layout = drive.Layout(a.split, a.split_from, a.opener) if a.runner == "tui" else None
     try:
         drive.check_layout(a.runner, layout)  # syntax only: the outer checked where the pane goes
     except compose.ConfigError as e:
