@@ -94,13 +94,14 @@ Only `core/` is installed, copied per version to `~/.claude/plugins/cache/agent-
 
 ### tmux skill
 
-`core/skills/tmux/` builds on `tui_claude.py`: with `/agent-pm:tmux`, a Claude Code session starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. It also runs a core role/task through `drive.py --detach`, `--runner tui` in a pane or `headless`, its end an `outcome` line in that file. Steps, commands and gotchas: [SKILL.md](core/skills/tmux/SKILL.md).
+`core/skills/tmux/` builds on `tui_claude.py`: with `/agent-pm:tmux`, a Claude Code session starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`, `next-event`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. It also runs a core role/task through `drive.py --detach`, `--runner tui` in a pane or `headless`, its end an `outcome` line in that file. Steps, commands and gotchas: [SKILL.md](core/skills/tmux/SKILL.md).
 
 ```bash
 python3 core/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md' -- --permission-mode auto      # prints "a <session id>"; a pane right of this one
 python3 core/skills/tmux/scripts/workers.py start b --events ~/w.events -- --permission-mode auto --model sonnet                      # a pane below a's; claude flags after --
 python3 core/skills/tmux/scripts/workers.py reply a                                                                                   # a's last answer, from its transcript
 python3 core/skills/tmux/scripts/workers.py restart a                                                                                 # a resumes its conversation in its pane
+python3 core/skills/tmux/scripts/workers.py next-event --events ~/w.events --after end                                                # waits for the next event, prints "<line> <event>", exits; re-arm with --after <line>
 ```
 
 ### Core configuration
