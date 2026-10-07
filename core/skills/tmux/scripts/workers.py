@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,6 +19,7 @@ import repo  # noqa: E402
 import tui_claude  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
+EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
@@ -171,6 +173,48 @@ def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
     return "\n".join(t for mid, texts in blocks if mid == blocks[-1][0] for t in texts)
 
 
+def next_event(events: str, after: int | None) -> tuple[int, str]:
+    """Wait for the first event after line `after` of the events file (None: after the complete lines it holds now);
+    returns (its line number, its text). Stops with WorkersError if the file can't be read, shrinks or is replaced."""
+    offset = lines = 0
+    ident = None
+    while True:
+        try:
+            with open(events, "rb") as f:
+                st = os.fstat(f.fileno())
+                if ident is None:
+                    ident = (st.st_dev, st.st_ino)
+                elif ident != (st.st_dev, st.st_ino):
+                    raise WorkersError(f"events file {events}: replaced")
+                if st.st_size < offset:
+                    raise WorkersError(f"events file {events}: shrank")
+                f.seek(offset)
+                data = f.read()
+        except FileNotFoundError:
+            data = b""
+        except OSError as e:
+            raise WorkersError(f"events file {events}: {e.strerror}") from e
+        complete = data[:data.rfind(b"\n") + 1]
+        offset += len(complete)
+        batch = complete.split(b"\n")[:-1]
+        if after is None:
+            after = len(batch)
+        for raw in batch:
+            lines += 1
+            text = raw.decode("utf-8", errors="replace")
+            if lines > after and EVENT.fullmatch(text):
+                return lines, text
+        time.sleep(0.5)
+
+
+def _after(value: str) -> int | None:
+    if value == "end":
+        return None
+    if re.fullmatch(r"[0-9]+", value):
+        return int(value)
+    raise argparse.ArgumentTypeError(f"{value!r}: use a line number or end")
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     flags = []
@@ -188,6 +232,9 @@ def main(argv=None) -> int:
     p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
         sub.add_parser(cmd).add_argument("name")
+    p = sub.add_parser("next-event")
+    p.add_argument("--events", required=True)
+    p.add_argument("--after", type=_after, required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "start":
@@ -196,10 +243,13 @@ def main(argv=None) -> int:
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, proc=subprocess.run)
-        else:
+        elif a.cmd == "reply":
             text = reply(a.name, proc=subprocess.run)
             if text:
                 print(text)
+        else:
+            line, event = next_event(a.events, a.after)
+            print(f"{line} {event}")
     except WorkersError as e:
         print(f"workers: {e}", file=sys.stderr)
         return 1
