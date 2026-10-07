@@ -26,29 +26,29 @@ class Bad(Exception):
     """No usable place for the TUI pane; the message is for the user."""
 
 
-def layout(split, beside, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: split and beside as given, and the caller's opener (tui_claude.opener). Bad
-    unless tui_claude.anchor finds a pane (beside's, else the caller's), and, without beside, the caller has an
+def layout(split, split_from, *, proc=subprocess.run):
+    """The drive.Layout for the TUI pane: split and split_from as given, and the caller's opener (tui_claude.opener). Bad
+    unless tui_claude.anchor finds a pane (split_from's, else the caller's), and, without split_from, the caller has an
     opener."""
     if split is not None and split not in tui_claude.SPLITS:
         raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
-    if beside is not None:
-        if not tui_claude.NAME.fullmatch(beside):
+    if split_from is not None:
+        if not tui_claude.NAME.fullmatch(split_from):
             raise Bad("bad tmux session name")
-        if tui_claude.status(beside, proc=proc) is None:
-            raise Bad(f"no tmux session {beside}")
+        if tui_claude.status(split_from, proc=proc) is None:
+            raise Bad(f"no tmux session {split_from}")
     try:
-        tui_claude.anchor(beside, proc=proc)
+        tui_claude.anchor(split_from, proc=proc)
         try:
             opener = tui_claude.opener(proc=proc)
         except tui_claude.TuiError:
-            if beside is None:
+            if split_from is None:
                 raise
             opener = None
     except tui_claude.TuiError as e:
-        hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
+        hint = "" if split_from else ": run from tmux or iTerm2, or pass --split-from SESSION"
         raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
-    return drive.Layout(split, beside, opener)
+    return drive.Layout(split, split_from, opener)
 
 
 def prefix(role, ident):

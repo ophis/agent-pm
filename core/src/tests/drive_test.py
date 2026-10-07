@@ -2,7 +2,10 @@ import dataclasses
 import io
 import json
 import os
+import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1286,7 +1289,7 @@ class TuiRunner(Base):
                              (drive.Layout("right", None, "mine"), ("right", None, "mine"))):
             with self.subTest(layout=layout):
                 _, kw = self.launched(layout)
-                self.assertEqual((kw["split"], kw["beside"], kw["opener"]), want)
+                self.assertEqual((kw["split"], kw["split_from"], kw["opener"]), want)
 
     def test_the_launchs_status_line_reaches_tui_start(self):
         for status_line in (False, True):
@@ -1311,8 +1314,8 @@ class TuiRunner(Base):
 
     def test_a_bad_layout_is_a_config_error_before_the_workdir_or_channel(self):
         cases = (("headless", {"layout": drive.Layout()}, "no layout"), ("tui", {"layout": drive.Layout("left")}, "split"),
-                 ("tui", {"layout": drive.Layout(beside="a b")}, "beside"),
-                 ("tui", {"layout": drive.Layout(beside="")}, "beside"),
+                 ("tui", {"layout": drive.Layout(split_from="a b")}, "split_from"),
+                 ("tui", {"layout": drive.Layout(split_from="")}, "split_from"),
                  ("tui", {"layout": drive.Layout(opener="a b")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="a:b:c")}, "opener"),
@@ -1333,7 +1336,7 @@ class TuiRunner(Base):
                        drive.Layout("below", "s", "mine")):
             drive.check_layout("tui", layout)
 
-    def test_main_split_and_beside_build_the_layout(self):
+    def test_main_split_and_split_from_build_the_layout(self):
         seen = []
         real = drive.start
 
@@ -1341,8 +1344,8 @@ class TuiRunner(Base):
             seen.append(kw["layout"])
             return real(*a, **kw)
 
-        for flags, want in ((["--split", "below", "--beside", "s"], drive.Layout("below", "s")),
-                            (["--beside", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
+        for flags, want in ((["--split", "below", "--split-from", "s"], drive.Layout("below", "s")),
+                            (["--split-from", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
                             ([], None)):
             with unittest.mock.patch.object(drive, "start", start):
                 self.main([outcome(DONE)], extra=flags)
@@ -1536,6 +1539,250 @@ class TuiRunner(Base):
         with unittest.mock.patch.object(drive.tui_claude, "start") as start, self.assertRaises(compose.ConfigError):
             drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), runner="tui", popen=popen)
         self.assertEqual((popen.called, start.called, os.path.exists(self.work)), (False, False, False))
+
+
+class Detach(Base):
+    DRIVER = f"dummy-tester-echo-{SID[:8]}-drive"
+
+    def setUp(self):
+        super().setUp()
+        p = unittest.mock.patch.dict(os.environ)
+        p.start()
+        self.addCleanup(p.stop)
+        for k in ("TMUX", "TMUX_PANE", "TUI_ATTACH_PREFIX"):
+            os.environ.pop(k, None)
+        os.environ.update(ITERM_SESSION_ID="w0t0p0:AB-12", TERM_PROGRAM="iTerm.app")   # the opener, with no tmux call
+        self.events = os.path.join(self.tmp.name, "w.events")
+        for s in drive.SIGNALS:   # a driver's main sets them and leaves them blocked
+            self.addCleanup(signal.signal, s, signal.getsignal(s))
+        self.addCleanup(signal.pthread_sigmask, signal.SIG_SETMASK, signal.pthread_sigmask(signal.SIG_BLOCK, []))
+        for s in drive.SIGNALS:   # first: one left pending is dropped as the mask is restored
+            self.addCleanup(signal.signal, s, signal.SIG_IGN)
+
+    def argv(self, *extra):
+        return ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.",
+                "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID, *extra]
+
+    def outer(self, *extra, rc=0, proc=None):
+        """drive.main --detach, tmux through `proc`, else a fake that takes the handover file; (exit code, stderr, the
+        tmux calls, the handover)."""
+        calls, handover = [], {}
+
+        def fake(argv, **kw):
+            calls.append(argv)
+            if argv[1] == "new-session" and rc == 0:
+                with open(argv[-1]) as f:
+                    handover.update(json.load(f))
+                os.unlink(argv[-1])
+            return subprocess.CompletedProcess(argv, rc, "", "duplicate session: x\n" if rc else "")
+
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            code = drive.main(self.argv("--detach", "--events", self.events, *extra), root=CORE, proc=proc or fake)
+        return code, err.getvalue(), calls, handover
+
+    def inner(self, *steps, argv=None, api=None):
+        """drive.main as the driver of a tui run over FakeTui(steps); (exit code, its calls)."""
+        fake = FakeTui(os.path.join(self.work, ".report.jsonl"), steps)
+        argv = argv or self.argv("--runner", "tui", "--events", self.events, "--driver", "d-drive")
+        with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
+            return drive.main(argv, root=CORE), fake.calls
+
+    def lines(self):
+        with open(self.events) as f:
+            lines = f.readlines()
+        for line in lines:
+            self.assertRegex(line, r"^\d\d:\d\d:\d\d ")
+        return [line[9:] for line in lines]
+
+    def test_the_driver_session_never_matches_a_tui_session_or_the_reserved_name(self):
+        reserved = re.compile(r"[a-z][a-z0-9-]*-[A-Z][A-Z0-9]*-\d+-[0-9a-f]{8}")   # <role>-<ID>-<8 hex>
+        self.assertTrue(reserved.fullmatch(drive.tui_session("r", "t", SID, "engineer-TASK-1")))
+        for prefix, want in ((None, f"r-t-{SID[:8]}-drive"), ("engineer-TASK-1", f"engineer-TASK-1-{SID[:8]}-drive")):
+            name = drive.driver_session("r", "t", SID, prefix)
+            self.assertEqual(name, want)
+            self.assertTrue(drive.tui_claude.NAME.fullmatch(name))
+            self.assertIsNone(drive.TUI_SESSION.fullmatch(name))
+            self.assertIsNone(reserved.fullmatch(name))
+
+    def test_detach_needs_events_and_a_client_that_runs_before_anything_starts(self):
+        skill, no = ["--client", "skill", "--role", "dummy-tester"], "SkillClient prints a prompt; it takes no --detach"
+        cases = ((self.argv("--detach"), "--detach needs --events"),
+                 (self.argv("--detach", "--runner", "tui"), "--detach needs --events"),
+                 ([*skill, "--detach", "--events", self.events], no),
+                 ([*skill, "--driver", "d", "--events", self.events], no))
+        for argv, want in cases:
+            with self.subTest(argv=argv):
+                err, out, proc = io.StringIO(), io.StringIO(), unittest.mock.Mock()
+                with redirect_stderr(err), redirect_stdout(out):
+                    self.assertEqual(drive.main(argv, root=CORE, proc=proc), 2)
+                self.assertEqual((err.getvalue(), out.getvalue()), (f"drive.py: {want}\n", ""))
+                proc.assert_not_called()
+                self.assertFalse(os.path.exists(self.events))
+                self.assertFalse(os.path.exists(self.work))
+
+    def test_dry_run_prints_the_plan_and_the_driver_and_starts_nothing(self):
+        for runner in ("tui", "headless"):   # with --detach, headless takes --events
+            with self.subTest(runner=runner):
+                out, proc = io.StringIO(), unittest.mock.Mock()
+                with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                    code = drive.main(self.argv("--runner", runner, "--detach", "--events", self.events, "--dry-run"),
+                                      root=CORE, proc=proc)
+                data = json.loads(out.getvalue())
+                self.assertEqual((code, data["argv"][0], data["driver"]), (0, "claude", self.DRIVER))
+                proc.assert_not_called()
+                self.assertFalse(os.path.exists(self.events))
+                self.assertFalse(os.path.exists(self.work))
+
+    def test_detach_starts_this_command_as_the_driver_in_its_session_and_exits(self):
+        driver, tui = f"p-{SID[:8]}-drive", f"p-{SID[:8]}"
+        code, err, (argv,), handover = self.outer("--runner", "tui", "--prefix", "p")
+        self.assertEqual(code, 0)
+        self.assertEqual(argv, ["tmux", "new-session", "-d", "-e", "ITERM_SESSION_ID=w0t0p0:AB-12", "-s", driver,
+                                sys.executable, "-I", "-c", drive.tui_claude.EXEC, argv[-1]])
+        self.assertFalse(os.path.exists(os.path.dirname(argv[-1])))
+        self.assertEqual(handover["argv"], [
+            sys.executable, os.path.abspath(drive.__file__), "--role=dummy-tester", "--task=echo", "--input=Hello.",
+            f"--out={self.work}/out.md", f"--workdir={self.work}", f"--sid={SID}", "--runner=tui", "--prefix=p",
+            f"--events={self.events}", "--opener=w0t0p0:AB-12", f"--driver={driver}"])
+        self.assertEqual(handover["cwd"], os.getcwd())
+        self.assertEqual(handover["block"], [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
+        self.assertEqual(handover["env"]["PATH"], os.environ["PATH"])
+        self.assertNotIn("ITERM_SESSION_ID", handover["env"])   # the pane's, from -e
+        self.assertEqual(err, f"drive.py: cwd {os.getcwd()} is not in trusted_dirs: its project settings are off\n"
+                              f"drive.py: session {SID}\n"
+                              f"drive.py: driver session {driver}: tmux attach -t '={driver}'\n"
+                              f"drive.py: tui session {tui}: tmux attach -t '={tui}'\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
+        self.assertFalse(os.path.exists(self.work))
+        code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
+        (_, name, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((code, name, kw["opener"], kw["events"]), (0, tui, "w0t0p0:AB-12", self.events))
+        self.assertEqual(self.lines(), [f"{driver} outcome done\n"])
+
+    def test_stdin_input_reaches_the_driver_as_text(self):
+        with unittest.mock.patch.object(sys, "stdin", io.StringIO("# Echo\nthis")):
+            code, _, _, handover = self.outer("--input", "-")
+        self.assertEqual((code, handover["argv"][4]), (0, "--input=# Echo\nthis"))
+
+    def test_stdin_text_dash_reaches_the_driver_as_text_not_its_stdin(self):
+        with unittest.mock.patch.object(sys, "stdin", io.StringIO("-")):
+            code, _, _, handover = self.outer("--runner", "tui", "--input", "-")
+        self.assertEqual((code, handover["argv"][4]), (0, "--input=-"))
+        stdin = unittest.mock.Mock()
+        with unittest.mock.patch.object(sys, "stdin", stdin):
+            code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
+        stdin.read.assert_not_called()
+        (_, _, argv, _), = [c for c in calls if c[0] == "start"]
+        self.assertTrue(argv[1].endswith("Input:\n\n-\n"), argv[1][-40:])
+        self.assertEqual((code, self.lines()), (0, [f"{self.DRIVER} outcome done\n"]))
+
+    def test_without_an_opener_the_driver_gets_no_iterm_pane_and_headless_no_tui_line(self):
+        os.environ["TERM_PROGRAM"] = "vscode"   # $ITERM_SESSION_ID left over from another terminal
+        for runner in ("tui", "headless"):
+            with self.subTest(runner=runner):
+                code, err, (argv,), handover = self.outer("--runner", runner)
+                self.assertEqual((code, argv[4]), (0, "ITERM_SESSION_ID="))
+                self.assertEqual([a for a in handover["argv"] if a.startswith(("--opener", "--events"))],
+                                 [f"--events={self.events}"])
+                self.assertEqual("tui session" in err, runner == "tui")
+
+    def test_a_split_from_no_terminal_shows_exits_2_before_anything_starts(self):
+        for rc, out, want in ((0, "", "no terminal shows tmux session s"), (1, "", "tmux: can't find session: s")):
+            with self.subTest(want=want):
+                calls = []
+
+                def proc(argv, **kw):
+                    calls.append(argv[1])
+                    return subprocess.CompletedProcess(argv, rc, out, "can't find session: s\n" if rc else "")
+
+                code, err, _, _ = self.outer("--runner", "tui", "--split-from", "s", proc=proc)
+                self.assertEqual((code, calls), (2, ["list-clients"]))
+                self.assertTrue(err.endswith(f"drive.py: {want}\n"), err)
+                self.assertFalse(os.path.exists(self.events))
+
+    def test_a_failed_tmux_start_exits_3(self):
+        code, err, calls, _ = self.outer("--runner", "tui", rc=1)
+        self.assertEqual((code, [c[1] for c in calls]), (3, ["new-session"]))
+        self.assertTrue(err.endswith("drive.py: tmux: duplicate session: x\n"), err)
+        self.assertFalse(os.path.exists(os.path.dirname(calls[0][-1])))
+
+    def test_a_handover_nobody_takes_kills_the_session(self):
+        calls = []
+
+        def proc(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with self.assertRaisesRegex(drive.RunnerError, "session d did not start"):
+            drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=proc, sleep=lambda s: None)
+        self.assertEqual([c[1:] for c in calls[1:]], [["kill-session", "-t", "=d"]])
+        self.assertFalse(os.path.exists(os.path.dirname(calls[0][-1])))
+
+    def test_the_driver_appends_one_outcome_line_when_it_ends(self):
+        needs = {"status": "needs_input", "title": "T", "summary": "S", "questions": ["Which?"]}
+        cases = (([outcome(DONE)], 0, "done"), ([outcome(needs)], 0, "needs_input"),
+                 ([outcome({"status": "failed", "title": "T", "summary": "S"})], 0, "failed"),
+                 ([outcome({"status": "done"})], 1, "error"), (0, 1, "error"), (3, 3, "error"))
+        for step, code, word in cases:
+            with self.subTest(word=word, step=step):
+                self.assertEqual(self.inner(step)[0], code)
+                self.assertEqual(self.lines(), [f"d-drive outcome {word}\n"])
+                os.unlink(self.events)
+
+    def test_a_driver_that_cannot_start_its_run_appends_error(self):
+        code, calls = self.inner(argv=self.argv("--task", "essay", "--events", self.events, "--driver", "d-drive"))
+        self.assertEqual((code, calls), (2, []))
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+
+    def test_a_headless_driver_appends_only_its_outcome(self):
+        def popen(argv, **kw):
+            return FakeProc(feed(os.path.join(self.work, ".report.jsonl"), [outcome(DONE)]))
+
+        with redirect_stderr(io.StringIO()):
+            code = drive.main(self.argv("--events", self.events, "--driver", "d-drive"), root=CORE, popen=popen)
+        self.assertEqual((code, self.lines()), (0, ["d-drive outcome done\n"]))
+
+    def test_a_signal_ends_the_driver_with_one_error_line_and_kills_its_tui_session(self):
+        killed = []
+
+        def status(name):
+            self.assertTrue(callable(signal.getsignal(signal.SIGHUP)), "no handler: SIGHUP would end the tests")
+            os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session
+            return drive.tui_claude.RUNNING
+
+        def kill(name):
+            killed.append(name)
+            os.kill(os.getpid(), signal.SIGTERM)   # another, while it stops: blocked
+
+        with self.assertRaises(SystemExit) as cm:
+            self.inner(api={"status": status, "kill": kill})
+        self.assertEqual((cm.exception.code, killed), (129, [f"dummy-tester-echo-{SID[:8]}"]))
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+
+    def test_a_signal_sent_before_the_driver_handles_them_waits_and_ends_it_with_one_error_line(self):
+        signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)   # as detach hands the driver over
+        os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session as it starts
+        with self.assertRaises(SystemExit) as cm:
+            self.inner([outcome(DONE)])
+        self.assertEqual(cm.exception.code, 129)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_a_signal_as_the_driver_ends_still_leaves_its_outcome_line(self):
+        sigmask, sent = signal.pthread_sigmask, []
+
+        def block_after_a_signal(how, signals):
+            if how == signal.SIG_BLOCK and not sent:
+                sent.append(how)
+                os.kill(os.getpid(), signal.SIGTERM)   # before the driver's end blocks them
+            return sigmask(how, signals)
+
+        with unittest.mock.patch.object(signal, "pthread_sigmask", block_after_a_signal), \
+                self.assertRaises(SystemExit) as cm:
+            self.inner([outcome(DONE)])
+        self.assertEqual((cm.exception.code, sent), (143, [signal.SIG_BLOCK]))
+        self.assertEqual(self.lines(), ["d-drive outcome done\n"])
 
 
 class Sinks(unittest.TestCase):

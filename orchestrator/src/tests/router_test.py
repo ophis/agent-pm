@@ -688,18 +688,18 @@ class Usage(unittest.TestCase):
                      ["-h"], ["--issue", "TASK-1"],
                      ["--brake", "new"], ["--brake", "--dry-run"], ["--dry-run", "--brake"], ["--brake", "--brake"],
                      ["--tui", "--issue", "TASK-1"], ["--now", "--issue", "TASK-1", "--tui"], ["--tui", "--brake"],
-                     ["--brake", "--tui"], ["--split", "right"], ["--now", "--beside", "dev"], ["--dry-run", "--split", "below"],
-                     ["--tui", "--split"], ["--tui", "--beside", "--now"], ["--now", "--issue", "--dry-run"],
+                     ["--brake", "--tui"], ["--split", "right"], ["--now", "--split-from", "dev"], ["--dry-run", "--split", "below"],
+                     ["--tui", "--split"], ["--tui", "--split-from", "--now"], ["--now", "--issue", "--dry-run"],
                      ["--tui", "--split", "right", "--split", "below"], ["--tui", "dev"], ["--split=right"],
-                     ["--now", "--beside=dev"], ["--tui", "--split=right", "--split=below"],
-                     ["--tui", "--beside=dev", "--beside", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"]):
+                     ["--now", "--split-from=dev"], ["--tui", "--split=right", "--split=below"],
+                     ["--tui", "--split-from=dev", "--split-from", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("probe ran"))), 2)
                 self.assertEqual(err.getvalue(), router.USAGE + "\n")
         self.assertEqual(router.USAGE,
-                         "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--beside SESSION]] | --brake")
+                         "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--split-from SESSION]] | --brake")
         self.assertNotIn("--gate", router.USAGE + router.__doc__)
 
 
@@ -1290,14 +1290,14 @@ class TuiTick(Base):
 
     def test_new_run_launch_argv(self):
         rows = ((("--now", "--tui"), None, None, ["--runner=tui"]),
-                (("--tui", "--beside", "dev", "--now", "--split", "below"), "below", "dev",
-                 ["--runner=tui", "--split=below", "--beside=dev"]),
-                (("--beside", "-x", "--tui"), None, "-x", ["--runner=tui", "--beside=-x"]),
+                (("--tui", "--split-from", "dev", "--now", "--split", "below"), "below", "dev",
+                 ["--runner=tui", "--split=below", "--split-from=dev"]),
+                (("--split-from", "-x", "--tui"), None, "-x", ["--runner=tui", "--split-from=-x"]),
                 (("--split", "right", "--tui"), "right", None, ["--runner=tui", "--split=right"]),
-                (("--now", "--tui", "--split=below", "--beside=dev"), "below", "dev",
-                 ["--runner=tui", "--split=below", "--beside=dev"]),
-                (("--beside=dev", "--tui", "--split", "right"), "right", "dev", ["--runner=tui", "--split=right", "--beside=dev"]))
-        for argv, split, beside, tail in rows:
+                (("--now", "--tui", "--split=below", "--split-from=dev"), "below", "dev",
+                 ["--runner=tui", "--split=below", "--split-from=dev"]),
+                (("--split-from=dev", "--tui", "--split", "right"), "right", "dev", ["--runner=tui", "--split=right", "--split-from=dev"]))
+        for argv, split, split_from, tail in rows:
             with self.subTest(argv=argv):
                 self.lines = []
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -1308,7 +1308,7 @@ class TuiTick(Base):
                                           "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research",
                                           "--mode", "new", *tail])
                 self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", sid, "deep-research") + "\n"))
-                self.assertEqual(self.layout, [mock.call(split, beside)])
+                self.assertEqual(self.layout, [mock.call(split, split_from)])
                 self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
     def test_resume_launch_argv(self):
@@ -1329,7 +1329,7 @@ class TuiTick(Base):
     def test_no_place_for_the_pane_exits_2_before_the_tick(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
         before = self.unmap("\n".join(self.lines) + "\n")
-        for argv in (("--tui", "--beside", "gone"), ("--now", "--tui", "--dry-run", "--beside", "gone")):
+        for argv in (("--tui", "--split-from", "gone"), ("--now", "--tui", "--dry-run", "--split-from", "gone")):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tui_tick(fake, *argv, layout=attended.Bad("no tmux session gone")), 2)

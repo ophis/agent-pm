@@ -355,8 +355,8 @@ class Start(unittest.TestCase):
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
         with unittest.mock.patch.object(tui_claude, "show", side_effect=show):
-            self.start(fake, template="tmpl", split="below", beside="b", opener="o")
-        self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "beside": "b", "opener": "o", "proc": fake}, False,
+            self.start(fake, template="tmpl", split="below", split_from="b", opener="o")
+        self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "split_from": "b", "opener": "o", "proc": fake}, False,
                                  ["display-message", "new-session", *DECORATE])])
 
     def test_a_failed_show_is_only_printed(self):
@@ -380,14 +380,14 @@ class Start(unittest.TestCase):
 
     def test_bad_layout_refused_before_tmux(self):
         with environ(**ITERM), which():
-            for kw in ({"split": "up"}, {"beside": "a b"}, {"opener": "a:b:c"}):
+            for kw in ({"split": "up"}, {"split_from": "a b"}, {"opener": "a:b:c"}):
                 with self.subTest(**kw):
                     fake = Tmux()
                     with self.assertRaises(tui_claude.TuiError):
                         self.start(fake, template=None, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
-            self.start(fake, template="", split="up", beside="a b", opener="a:b:c")
+            self.start(fake, template="", split="up", split_from="a b", opener="a:b:c")
             self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
 
     def test_hooks_events_and_decorations(self):
@@ -824,9 +824,9 @@ class Pane(unittest.TestCase):
                  ({}, {"list-clients": shown, "list-panes": nested}, "b", tui_claude.Anchor(None, "%5", SOCK, "b")),
                  ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk /s\n" + shown[1])}, "b",
                   tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))]
-        for env, results, beside, want in cases:
-            with self.subTest(env=env, results=results, beside=beside), environ(**env):
-                self.assertEqual(tui_claude.anchor(beside, proc=Tmux(results=results)), want)
+        for env, results, split_from, want in cases:
+            with self.subTest(env=env, results=results, split_from=split_from), environ(**env):
+                self.assertEqual(tui_claude.anchor(split_from, proc=Tmux(results=results)), want)
         no_iterm = {k: v for k, v in INSIDE.items() if k != "ITERM_SESSION_ID"}
         cases = [({}, {}, None, "no anchor pane: not in tmux"),
                  ({"ITERM_SESSION_ID": "w0t0p0"}, {}, None, "no anchor pane"),
@@ -834,9 +834,9 @@ class Pane(unittest.TestCase):
                  ({"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "vscode"}, {}, None, "no anchor pane"),
                  (no_iterm, own, None, "no anchor pane: no terminal shows tmux session own"),
                  (INSIDE, {"list-clients": (0, "")}, "b", "^no terminal shows tmux session b$")]
-        for env, results, beside, msg in cases:
-            with self.subTest(env=env, beside=beside), environ(**env), self.assertRaisesRegex(tui_claude.TuiError, msg):
-                tui_claude.anchor(beside, proc=Tmux(results=results))
+        for env, results, split_from, msg in cases:
+            with self.subTest(env=env, split_from=split_from), environ(**env), self.assertRaisesRegex(tui_claude.TuiError, msg):
+                tui_claude.anchor(split_from, proc=Tmux(results=results))
 
     def test_a_dead_pane_sharing_the_clients_tty_is_skipped(self):
         # a dead worker pane keeps its tty, which a later terminal may get
@@ -875,41 +875,41 @@ class Pane(unittest.TestCase):
         self.assertRegex(self.show(fake, INSIDE), r"'a;'")
         self.assertEqual(fake.commands(), ["display-message"])
 
-    def test_iterm2_pane_beside(self):
+    def test_iterm2_pane_split_from(self):
         fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": self.clients((5, "/dev/ttys004", "%9")),
                              "osascript": (0, "ok NEW\n")})
-        self.assertIsNone(self.show(fake, INSIDE, beside="b", split="below"))
+        self.assertIsNone(self.show(fake, INSIDE, split_from="b", split="below"))
         self.assertEqual(fake.calls, [OWN, clients_of("b"), HOSTS, PGREP, osa("below", "tty", "s", "/dev/ttys004"),
                                       *record("own", "NEW")])
 
-    def test_tmux_split_beside(self):
+    def test_tmux_split_split_from(self):
         clients = self.clients((5, "/dev/ttys004", "%9"), (9, "/dev/ttys005", "%7"))
         fake = Tmux(results={"list-clients": clients, "pgrep": (1,), "split-window": (0, "%10\n")})
-        self.assertIsNone(self.show(fake, {}, beside="b", split="below"))
+        self.assertIsNone(self.show(fake, {}, split_from="b", split="below"))
         self.assertEqual(fake.calls[-2:], [split_window("-v", "%7"), *record(None, "%10")])
         nested = Tmux(results={"list-clients": clients, "list-panes": panes(("0", "/dev/ttys005", "%5")),
                                "split-window": (0, "%10\n")})
-        self.assertIsNone(self.show(nested, {}, beside="b"))
+        self.assertIsNone(self.show(nested, {}, split_from="b"))
         self.assertEqual(nested.calls, [clients_of("b"), HOSTS, split_window("-h", "%5"), *record(None, "%10")])
 
     def test_tmux_split_failures(self):
         clients = self.clients((5, "/dev/ttys004", "%9"))
         fake = Tmux(results={"list-clients": clients, "pgrep": (1,), "split-window": (1, "", "no space for new pane\n")})
-        self.assertEqual(self.show(fake, {}, beside="b"), "tmux: no space for new pane")
+        self.assertEqual(self.show(fake, {}, split_from="b"), "tmux: no space for new pane")
         self.assertNotIn("set-option", fake.commands())
         fake = Tmux(results={"list-clients": (0, "5 /dev/ttys004 %9 /tmp/#s\n"), "pgrep": (1,)})
-        self.assertEqual(self.show(fake, {}, beside="b"), "tmux would misread '/tmp/#s'" + WATCH)
+        self.assertEqual(self.show(fake, {}, split_from="b"), "tmux would misread '/tmp/#s'" + WATCH)
         self.assertNotIn("split-window", fake.commands())
 
-    def test_beside_not_shown_anywhere(self):
+    def test_split_from_not_shown_anywhere(self):
         for result in ((0, ""), (1, "", "can't find session: =b\n")):
             with self.subTest(result=result):
                 fake = Tmux(results={"list-clients": result})
-                self.assertTrue(self.show(fake, {}, beside="b").endswith(WATCH))
+                self.assertTrue(self.show(fake, {}, split_from="b").endswith(WATCH))
                 self.assertEqual(fake.commands(), ["list-clients"])
 
     def test_bad_arguments_raise(self):
-        for kw in ({"beside": "a b"}, {"beside": "=b"}, {"split": "up"}, {"split": "vertically"}, {"split": ""},
+        for kw in ({"split_from": "a b"}, {"split_from": "=b"}, {"split": "up"}, {"split": "vertically"}, {"split": ""},
                    {"opener": "a b"}, {"opener": "a:b:c"}):
             with self.subTest(**kw):
                 fake = Tmux()
@@ -917,9 +917,9 @@ class Pane(unittest.TestCase):
                     self.show(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
-    def test_template_ignores_split_beside_and_opener(self):
+    def test_template_ignores_split_split_from_and_opener(self):
         fake = Tmux()
-        self.assertIsNone(self.show(fake, INSIDE, template="open {{session}}", split="up", beside="a b", opener="a b"))
+        self.assertIsNone(self.show(fake, INSIDE, template="open {{session}}", split="up", split_from="a b", opener="a b"))
         self.assertEqual(fake.calls, [["/bin/sh", "-c", "open s"]])
 
     def test_no_anchor_refuses_with_the_attach_command(self):
@@ -1065,11 +1065,11 @@ class Stack(unittest.TestCase):
         self.assertIsNone(self.show(fake))
         self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, split_window("-v", "%20"), *record("W", "%99")])
 
-    def test_explicit_split_or_beside_overrides_the_stack(self):
+    def test_explicit_split_or_split_from_overrides_the_stack(self):
         for kw, (session, flag, pane) in (({"split": "right"}, ("cmd", "-h", "%3")),
                                           ({"split": "below"}, ("cmd", "-v", "%3")),
-                                          ({"beside": "b"}, ("b", "-h", "%9")),
-                                          ({"beside": "b", "split": "below"}, ("b", "-v", "%9"))):
+                                          ({"split_from": "b"}, ("b", "-h", "%9")),
+                                          ({"split_from": "b", "split": "below"}, ("b", "-v", "%9"))):
             with self.subTest(**kw):
                 fake = self.fake([self.row(1, "a", "%7")], live=["%3", "%7"])
                 self.assertIsNone(self.show(fake, **kw))
@@ -1292,26 +1292,26 @@ class Cli(unittest.TestCase):
 
     def test_start_forms(self):
         start = self.patch("start")
-        for argv, session, command, events, template, split, beside in (
+        for argv, session, command, events, template, split, split_from in (
                 ("start a -- cmd", "a", ["cmd"], None, None, None, None),
-                ("start b --beside a --split below -- cmd -x", "b", ["cmd", "-x"], None, None, "below", "a"),
+                ("start b --split-from a --split below -- cmd -x", "b", ["cmd", "-x"], None, None, "below", "a"),
                 ("start --split below b --show T -- cmd", "b", ["cmd"], None, "T", "below", None),
                 ("start a --split right -- cmd -- x", "a", ["cmd", "--", "x"], None, None, "right", None),
                 ("start a --events e -- claude", "a", ["claude"], "e", None, None, None),
-                ("start b --beside a -- claude --x -- -p", "b", ["claude", "--x", "--", "-p"], None, None, None,
+                ("start b --split-from a -- claude --x -- -p", "b", ["claude", "--x", "--", "-p"], None, None, None,
                  "a")):
             with self.subTest(argv=argv):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
                 start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ), events=events,
-                                              template=template, split=split, beside=beside)
+                                              template=template, split=split, split_from=split_from)
         self.main("start", "--show", "", "a", "--", "cmd")
         self.assertEqual(start.call_args.kwargs["template"], "")
 
     def test_start_usage_errors(self):
         start = self.patch("start")
         for argv in ("start a", "start a --", "start a --split below cmd", "start a --bogus x -- cmd",
-                     "start a=b -- cmd", "start --split up a -- cmd", "start b --beside a=b -- cmd", "start a cmd",
+                     "start a=b -- cmd", "start --split up a -- cmd", "start b --split-from a=b -- cmd", "start a cmd",
                      "start -- cmd", "start a b -- cmd", "start --show -- a -- cmd"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split())[0], 2)
@@ -1330,7 +1330,7 @@ class Cli(unittest.TestCase):
         out = " ".join(out.split())
         self.assertIn("session -- claude", out)
         self.assertIn("must be claude", out)
-        for option in ("--show", "--split", "--beside", "--events FILE"):
+        for option in ("--show", "--split", "--split-from", "--events FILE"):
             self.assertIn(option, out)
 
     def test_subcommands(self):
@@ -1343,11 +1343,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.main("read", "s"), (0, "pane\ntext\n", ""))
         self.assertEqual(self.main("read", "s", "--lines", "3")[0], 0)
         self.assertEqual(read.call_args_list, [unittest.mock.call("s", None), unittest.mock.call("s", 3)])
-        self.assertEqual(self.main("show", "--show", "x", "--split", "below", "--beside", "b", "s"), (0, "", ""))
+        self.assertEqual(self.main("show", "--show", "x", "--split", "below", "--split-from", "b", "s"), (0, "", ""))
         status.assert_called_once_with("s")
-        show.assert_called_once_with("s", "x", split="below", beside="b")
+        show.assert_called_once_with("s", "x", split="below", split_from="b")
         self.main("show", "s")
-        self.assertEqual(show.call_args, unittest.mock.call("s", None, split=None, beside=None))
+        self.assertEqual(show.call_args, unittest.mock.call("s", None, split=None, split_from=None))
 
     def test_exit_1(self):
         for name in ("start", "send", "read"):
@@ -1365,7 +1365,7 @@ class Cli(unittest.TestCase):
         called = [self.patch(n) for n in ("start", "send", "read", "show", "status")]
         for argv in ((), ("bogus",), ("send", "s"), ("send", "a b", "x"), ("read", "s", "--lines", "0"),
                      ("read", "s", "--lines", "x"), ("read", "s", "--lines", "-1"), ("show", "--split", "up", "s"),
-                     ("show", "--beside", "a b", "s")):
+                     ("show", "--split-from", "a b", "s")):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv)[0], 2)
         for mock in called:
@@ -1410,10 +1410,10 @@ class Exec(unittest.TestCase):
         self.root = os.path.realpath(tmp.name)
         self.path = os.path.join(self.root, "handover.json")
 
-    def run_exec(self, argv, env, cwd, pane):
+    def run_exec(self, argv, env, cwd, pane, **extra):
         """The wrapper as tmux runs it, given a handover file naming argv."""
         with open(self.path, "w") as f:
-            json.dump({"argv": argv, "env": env, "cwd": cwd}, f)
+            json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
         return subprocess.run([sys.executable, "-I", "-c", tui_claude.EXEC, self.path], env=pane, capture_output=True,
                               text=True, stdin=subprocess.DEVNULL, timeout=30)
 
@@ -1432,6 +1432,14 @@ class Exec(unittest.TestCase):
         self.assertNotIn("PATH", got_env)
         self.assertEqual(got_argv, ["-c", "x", "y z"])
         self.assertFalse(os.path.exists(self.path))
+
+    def test_block_signals_stay_blocked_in_argv(self):
+        code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
+        for extra, want in (({}, set()), ({"block": [signal.SIGHUP, signal.SIGTERM]}, {signal.SIGHUP, signal.SIGTERM})):
+            with self.subTest(**extra):
+                res = self.run_exec([sys.executable, "-c", code], {}, self.root, {}, **extra)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertEqual(set(json.loads(res.stdout)) & {signal.SIGHUP, signal.SIGTERM}, want)
 
     def test_default_signal_dispositions(self):
         for sig in (signal.SIGPIPE, signal.SIGXFSZ):

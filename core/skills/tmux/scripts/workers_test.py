@@ -116,7 +116,7 @@ class StartTest(unittest.TestCase):
 
     def layout(self):
         kw = self.tui.call_args.kwargs
-        return kw["beside"], kw["split"]
+        return kw["split_from"], kw["split"]
 
     def test_tui_claude_in_process(self):
         self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(workers.CORE), "src",
@@ -130,7 +130,7 @@ class StartTest(unittest.TestCase):
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
         env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         beside=None, status_line=False, proc=fake)
+                                         split_from=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
     def test_no_prompt(self):
@@ -284,16 +284,16 @@ class StartTest(unittest.TestCase):
             self.start(fake)
 
     def test_layout_passed_through(self):
-        for kw in ({}, {"beside": "x"}, {"split": "below"}, {"beside": "x", "split": "right"}):
+        for kw in ({}, {"split_from": "x"}, {"split": "below"}, {"split_from": "x", "split": "right"}):
             with self.subTest(**kw):
                 fake = Fake()
                 self.start(fake, **kw)
-                self.assertEqual(self.layout(), (kw.get("beside"), kw.get("split")))
+                self.assertEqual(self.layout(), (kw.get("split_from"), kw.get("split")))
                 self.assertNotIn("list-sessions", [c[1] for c in fake.calls])
 
-    def test_bad_beside(self):
+    def test_bad_split_from(self):
         fake = Fake()
-        self.assertIn("bad name 'a b'", self.assert_fails(fake, beside="a b"))
+        self.assertIn("bad name 'a b'", self.assert_fails(fake, split_from="a b"))
         self.assertEqual(fake.calls, [])
 
     def test_cwd_missing(self):
@@ -605,13 +605,20 @@ class MainTest(WorkerCase):
         self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
         self.assertEqual(fake.handover["argv"][-1], "go")
 
-    def test_start_beside_split(self):
-        fake = Fake()
-        with mock.patch.object(tui_claude, "start", wraps=tui_claude.start) as tui:
-            rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--beside", "x",
-                                        "--split", "below", "--", "--model", "m"], fake)
+    def test_start_split_from_below_opens_under_its_pane(self):
+        sock = "/tmp/tmux-1/default"
+        tmux = os.path.join(self.bin, "tmux")
+        executable(tmux, "#!/bin/sh\n")
+        fake = Fake(results={"list-clients": lambda argv: f"100 /dev/ttys009 %9 {sock}\n" if argv[3] == "=x" else "",
+                             "split-window": lambda argv: "%10\n"})
+        fake.oserror = lambda argv: argv[0] == "pgrep"
+        rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--split-from", "x",
+                                    "--split", "below", "--", "--model", "m"], fake)
         self.assertEqual(rc, 0, err)
-        self.assertEqual((tui.call_args.kwargs["beside"], tui.call_args.kwargs["split"]), ("x", "below"))
+        self.assertEqual([c for c in fake.calls if c[1] == "split-window"],
+                         [["tmux", "split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", "%9",
+                           "env", "-u", "TMUX", tmux, "-S", sock, "attach", "-t", "=w1"]])
+        self.assertEqual(fake.store["@pane"], "%10")
         self.assertEqual(fake.handover["argv"][-2:], ["--model", "m"])
 
     def test_start_defaults_cwd(self):

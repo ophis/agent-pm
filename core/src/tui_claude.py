@@ -81,9 +81,11 @@ TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM
 # Set in a Claude Code session's commands: a claude inheriting it saves no transcript and can't be resumed.
 CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
-# Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does.
+# Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does. The handover's `block` signals
+# are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them.
 EXEC = f"""import json, os, signal, sys
 with open(sys.argv[1]) as f: h = json.load(f)
+signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
 os.unlink(sys.argv[1])
 os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
@@ -106,7 +108,7 @@ class Anchor(NamedTuple):
 
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
-          template: str | None = None, split: str | None = None, beside: str | None = None, opener: str | None = None,
+          template: str | None = None, split: str | None = None, split_from: str | None = None, opener: str | None = None,
           status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
     CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session (status_line too), then show it.
@@ -114,7 +116,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     tmux. Raising, it leaves no session of its own."""
     _name(session)
     if template is None:
-        _layout(split, beside, opener)
+        _layout(split, split_from, opener)
     if not argv:
         raise TuiError("no command")
     exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
@@ -157,7 +159,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
         if os.path.exists(path):
             raise TuiError("the session did not start")
         decorate(session, events, status_line=status_line, proc=proc)
-        show(session, template, split=split, beside=beside, opener=opener, proc=proc)
+        show(session, template, split=split, split_from=split_from, opener=opener, proc=proc)
         may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
@@ -296,14 +298,14 @@ def attach_command(session: str) -> str:
     return f"{prefix} tmux attach -t '={session}'" if prefix else f"tmux attach -t '={session}'"
 
 
-def show(session: str, template: str | None = None, *, split: str | None = None, beside: str | None = None,
+def show(session: str, template: str | None = None, *, split: str | None = None, split_from: str | None = None,
          opener: str | None = None, proc=subprocess.run) -> str | None:
     """Print how to attach, then run the show: template, else open_pane; "" runs nothing.
-    A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split, beside or
+    A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split, split_from or
     opener."""
     print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
     if template is None:
-        why = open_pane(session, split=split, beside=beside, opener=opener, proc=proc)
+        why = open_pane(session, split=split, split_from=split_from, opener=opener, proc=proc)
     else:
         why = _run(session, template, proc) if template else None
     if why:
@@ -311,14 +313,14 @@ def show(session: str, template: str | None = None, *, split: str | None = None,
     return why
 
 
-def open_pane(session: str, *, split: str | None = None, beside: str | None = None, opener: str | None = None,
+def open_pane(session: str, *, split: str | None = None, split_from: str | None = None, opener: str | None = None,
               proc=subprocess.run) -> str | None:
-    """Open a pane attached to the session. Automatic (split and beside None): below the newest pane still open among
-    the @pane of the opener's other sessions (@opener), else right of the opener's pane. Else beside `beside`'s pane
+    """Open a pane attached to the session. Automatic (split and split_from None): below the newest pane still open among
+    the @pane of the opener's other sessions (@opener), else right of the opener's pane. Else beside `split_from`'s pane
     (anchor()), default the opener's, on side split (default right). The opener defaults to opener(). An iTerm2 pane
     splits in iTerm2, else its tmux pane with tmux; then the session records @opener (when known) and @pane.
     None or the failure; with no pane to split, the failure names the attach command."""
-    _layout(split, beside, opener)
+    _layout(split, split_from, opener)
     tmux = shutil.which("tmux")
     if tmux is None:
         return "tmux not found"
@@ -329,10 +331,10 @@ def open_pane(session: str, *, split: str | None = None, beside: str | None = No
             try:
                 opener, own = _opener(proc), True
             except TuiError:
-                if beside is None:
+                if split_from is None:
                     raise
-        if beside is not None:
-            new, why = _split(session, split or "right", anchor(beside, proc=proc), tmux, proc)
+        if split_from is not None:
+            new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
             new, why = _split(session, split, _opener_pane(opener, own, proc), tmux, proc)
         else:
@@ -466,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "start":
             start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), events=a.events, template=a.show,
-                  split=a.split, beside=a.beside)
+                  split=a.split, split_from=a.split_from)
         elif a.cmd == "send":
             send(a.session, a.text)
         elif a.cmd == "read":
@@ -474,18 +476,18 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if status(a.session) is None:
                 raise TuiError(f"no session {a.session}")
-            return 1 if show(a.session, a.show, split=a.split, beside=a.beside) else 0
+            return 1 if show(a.session, a.show, split=a.split, split_from=a.split_from) else 0
     except TuiError as e:
         print(f"tui: {e}", file=sys.stderr)
         return 1
     return 0
 
 
-def _layout(split: str | None, beside: str | None, opener: str | None = None) -> None:
+def _layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:
     if split is not None and split not in SPLITS:
         raise TuiError(f"split must be one of {', '.join(SPLITS)}, not {split!r}")
-    if beside is not None:
-        _name(beside)
+    if split_from is not None:
+        _name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value")
 
@@ -535,14 +537,14 @@ def _opener(proc) -> str:
     return value
 
 
-def anchor(beside: str | None = None, *, proc=subprocess.run) -> Anchor:
-    """The pane a show goes beside: the pane a terminal shows tmux session `beside` in (_shown), else the caller's
+def anchor(split_from: str | None = None, *, proc=subprocess.run) -> Anchor:
+    """The pane a show goes beside: the pane a terminal shows tmux session `split_from` in (_shown), else the caller's
     session's (_opener_pane), else $ITERM_SESSION_ID's iTerm2 pane (outside tmux only with $TERM_PROGRAM iTerm.app: a
     leftover variable names another pane). Raises TuiError when there is none."""
-    if beside is not None:
-        found = _shown(beside, False, proc)
+    if split_from is not None:
+        found = _shown(split_from, False, proc)
         if found is None:
-            raise TuiError(f"no terminal shows tmux session {beside}")
+            raise TuiError(f"no terminal shows tmux session {split_from}")
         return found
     own = own_session(proc=proc)
     return _iterm_pane("not in tmux") if own is None else _opener_pane(own, True, proc)
@@ -586,8 +588,8 @@ def _iterm_pane(why: str) -> Anchor:
 def _show_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--show", metavar="T", help="the show command, instead of the split")
     p.add_argument("--split", choices=SPLITS, help="the split's side (default: below the newest pane you opened that "
-                                                    "still shows, else right of yours; with --beside, right)")
-    p.add_argument("--beside", metavar="S", type=_session_arg,
+                                                    "still shows, else right of yours; with --split-from, right)")
+    p.add_argument("--split-from", metavar="S", type=_session_arg,
                    help="split the pane showing tmux session S (default: yours)")
 
 
