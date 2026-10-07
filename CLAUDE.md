@@ -42,7 +42,7 @@ Operating commands: README › Operating, README › Attended runs. Python 3.11+
 
 ## Gotchas
 
-- Agent runs get `--strict-mcp-config` (`core/config.toml`'s `[clients.claude]`) and `--setting-sources user` (the driver's; a trusted cwd adds project settings: README › An agent run's command): this file and project settings never load in them. An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
+- Agent runs get `--strict-mcp-config` (`core/config.toml`'s `[clients.claude]`) and `--setting-sources user` (the driver's; a trusted cwd adds project settings: README › An agent run's command): this file and project settings never load in them. Their `--settings` turns the `agent-pm` plugin off (`clients/claude.py`); other user plugins load. An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `run_test.py` pins the tmux argv.
 - Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks); without it write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.

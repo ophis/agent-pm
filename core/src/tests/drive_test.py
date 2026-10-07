@@ -111,7 +111,7 @@ class Claude(Base):
         self.assertEqual(launch.argv[3:], [
             "--session-id", SID, "--model", "opus", "--effort", "high",
             "--permission-mode", "auto", "--strict-mcp-config", "--setting-sources", "user",
-            "--output-format", "stream-json", "--verbose",
+            "--output-format", "stream-json", "--verbose", "--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
         self.assertIn(f"## Return\n\nReport through `{self.report()}`", launch.argv[2])
@@ -161,18 +161,30 @@ class Claude(Base):
         for role, task in (("researcher", "light-research"), ("engineer", "build")):
             launch = self.plan(role, task, client="claude", repo=self.repo)
             argv = launch.argv
-            rest = [a for i, a in enumerate(argv) if i not in (1, 2)]
+            j = argv.index("--settings")
+            rest = [a for i, a in enumerate(argv) if i not in (1, 2, j, j + 1)]
             for flag in ("--output-format", "stream-json", "--verbose"):
                 rest.remove(flag)
             i = launch.interactive.index("--settings")
             self.assertEqual(launch.interactive[:i] + launch.interactive[i + 2:], ["claude", argv[2], *rest[1:]])
 
-    def test_interactive_adds_the_stop_hook_after_the_config_flags(self):
+    def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
         cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
-                         {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
+                         {"enabledPlugins": {"agent-pm@agent-pm": False},
+                          "hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
+
+    def test_agent_runs_keep_this_plugin_out(self):
+        with open(os.path.join(CORE, ".claude-plugin", "plugin.json")) as f, \
+                open(os.path.join(CORE, "..", ".claude-plugin", "marketplace.json")) as g:
+            plugin = f"{json.load(f)['name']}@{json.load(g)['name']}"
+        launch = self.plan(client="claude")
+        tui = drive.tui_claude.with_hooks(launch.interactive, "/e")
+        for argv in (launch.argv, launch.interactive, tui):
+            self.assertEqual(argv.count("--settings"), 1)
+            self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["enabledPlugins"], {plugin: False})
 
     def test_interactive_resume(self):
         launch = self.plan(client="claude", resume=True)
