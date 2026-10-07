@@ -8,7 +8,9 @@ Agent pipeline on a Linear board: launchd runs `router.py`, which starts one `ru
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
-python3 -m unittest discover -s .claude/skills/tmux/scripts -p "*_test.py"         # tmux skill tests
+python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"           # tmux skill tests
+claude --plugin-dir core                                          # this checkout's agent-pm plugin; /reload-plugins after edits
+claude plugin validate core && claude plugin validate .           # plugin and marketplace manifests (core/CLAUDE.md at the plugin root: a warning)
 ```
 
 Operating commands: README › Operating, README › Attended runs. Python 3.11+ (`tomllib`; macOS's `python3` is 3.9, so launchd uses `/opt/homebrew/bin/python3`). Without `--dry-run`, router and promote change real issues and start real agent runs.

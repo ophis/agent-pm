@@ -1,6 +1,6 @@
 # core
 
-The portable core pack: `team/` text (guide, principles, roles, tasks, methods, templates) and `output/` (how an agent run hands back) compiled by `src/compose.py` and run by `src/drive.py` through a client in `src/clients/` and a runner. It knows nothing of Linear or a fixed docs repo (`docs/adr/0001`).
+The portable core pack: `team/` text (guide, principles, roles, tasks, methods, templates) and `output/` (how an agent run hands back) compiled by `src/compose.py` and run by `src/drive.py` through a client in `src/clients/` and a runner. It knows nothing of Linear or a fixed docs repo (`docs/adr/0001`). It is the Claude Code plugin `agent-pm` (`.claude-plugin/plugin.json`; `version` changes only when the user says), its skills in `skills/` (`tmux`, `act-as`). Only `core/` is installed: a skill or script references nothing outside it, a skill naming core's files by `${CLAUDE_SKILL_DIR}/../../…`, the only variable its `allowed-tools` rules get.
 
 ## Commands
 
@@ -10,6 +10,7 @@ python3 core/src/drive.py --role R --task T --input X --out O --workdir W [--run
 python3 core/src/drive.py --role R --task T --input X --out O --workdir W --runner tui   # a live agent run in tmux session <prefix>-<sid[:8]> (--prefix, default <role>-<task>)
 python3 core/src/drive.py --client skill --role R --task T      # the prompt /agent-pm:act-as follows (skills/act-as/)
 python3 core/src/tui_claude.py --help                            # host claude in tmux: start, send, read, show
+python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"   # tmux skill (workers.py)
 ```
 
 ## Rules

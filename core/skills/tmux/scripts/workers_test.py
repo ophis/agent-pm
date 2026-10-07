@@ -111,8 +111,9 @@ class StartTest(unittest.TestCase):
         return kw["beside"], kw["split"]
 
     def test_tui_claude_in_process(self):
-        self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(workers.ROOT), "core",
-                                                                             "src", "tui_claude.py"))
+        self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(workers.CORE), "src",
+                                                                             "tui_claude.py"))
+        self.assertTrue(os.path.isfile(os.path.join(workers.CORE, ".claude-plugin", "plugin.json")))
 
     def test_tui_claude_call(self):
         fake = Fake()

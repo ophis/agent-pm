@@ -1,0 +1,14 @@
+{
+  "name": "agent-pm",
+  "description": "agent-pm's Claude Code plugin",
+  "owner": {
+    "name": "Frank Wang"
+  },
+  "plugins": [
+    {
+      "name": "agent-pm",
+      "source": "./core",
+      "description": "tmux workers and agent-pm's core roles and tasks"
+    }
+  ]
+}

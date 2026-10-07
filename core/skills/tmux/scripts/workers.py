@@ -1,4 +1,4 @@
-"""Starts and directs Claude Code workers in tmux panes through core/src/tui_claude.py. Stdlib only."""
+"""Starts and directs Claude Code workers in tmux panes through the plugin's src/tui_claude.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +12,8 @@ import subprocess
 import sys
 import uuid
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-sys.path.insert(0, os.path.join(ROOT, "core", "src"))
+CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.join(CORE, "src"))
 import tui_claude  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")

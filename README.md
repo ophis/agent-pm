@@ -7,8 +7,8 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 ```
 agent-pm/
 ├── CLAUDE.md                    # Claude's notes on this repo
-├── .claude/skills/tmux/         # the tmux skill
-├── core/                        # the core pack: team/, output/, src/, generated skills/ (core/CLAUDE.md)
+├── .claude-plugin/              # the marketplace listing the agent-pm plugin (Plugin)
+├── core/                        # the core pack, the agent-pm plugin: team/, output/, src/, skills/ (core/CLAUDE.md)
 │   └── config.toml              # Core configuration
 └── orchestrator/                # the Linear side: src/, *.plist (launchd schedules)
     └── config.toml              # Orchestrator configuration
@@ -60,7 +60,7 @@ claude -p '<prompt>' \
 
 `<prompt>`: guide, principles, charter, task, template, output, then the Input and Workdir lines. A resume swaps `--session-id` for `--resume`, reusing the session's recorded cwd and settings. `read`/`write` dirs add `--add-dir`. The `cwd` run key moves the start dir (unset: `drive.py`'s caller's current directory; orchestrator runs: the workdir); another than the workdir adds `--add-dir <workdir>`, prompt paths staying absolute. A cwd in or under a `trusted_dirs` entry gets `--setting-sources user,project,local` and, with a `.mcp.json`, `--mcp-config <cwd>/.mcp.json`; a trusted cwd in the workdir is refused; any other gets `user` and, unless it is the workdir, a stderr notice. No deny list: `--allowedTools` pre-approves the task's `commands` and `report.py` (progress and outcome, appended to `.report.jsonl`, which `drive.py` tails); auto mode and your user settings decide the rest. Print it: `python3 core/src/drive.py --role pm --task product-design --input X --out O --workdir W --dry-run`. `drive.py` and `tui_claude.py start` drop `CLAUDE_CODE_CHILD_SESSION` from their child's environment: a `claude` inheriting it saves no transcript and can't be resumed.
 
-`--runner tui` runs the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<prefix>-<sid[:8]>` through `src/tui_claude.py` (its flags: `core/CLAUDE.md`). `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to it, stacked as in tui_claude.py; no pane to split → only the attach command, with the reason. What replaces the split: `core/config.toml`'s `show` comment. In a container (no iTerm2 or `osascript`): `.claude/skills/tmux/SKILL.md` › In a container; or set `show`, e.g. in `~/.agent-pm/core.local.toml` or `orchestrator.local.toml`'s `[core]` overlay, to a command asking a host-side watcher (yours to deploy) to attach.
+`--runner tui` runs the same agent run as an interactive `claude '<prompt>' …` (no `-p`, `--output-format` or `--verbose`; plus `--settings` with a `Stop` hook) in a detached tmux session `<prefix>-<sid[:8]>` through `src/tui_claude.py` (its flags: `core/CLAUDE.md`). `drive.py` prints `tmux attach -t '=<session>'` and opens a pane attached to it, stacked as in tui_claude.py; no pane to split → only the attach command, with the reason. What replaces the split: `core/config.toml`'s `show` comment. In a container (no iTerm2 or `osascript`): `core/skills/tmux/SKILL.md` › In a container; or set `show`, e.g. in `~/.agent-pm/core.local.toml` or `orchestrator.local.toml`'s `[core]` overlay, to a command asking a host-side watcher (yours to deploy) to attach.
 
 The `Stop` hook (`report.py … stop --pending background_tasks`) reports each turn end; one ending with work pending is ignored (`core/CLAUDE.md`). The first other one without an outcome gets a nudge typed into the session; after 3 more (`STOP_LIMIT`; a progress report resets the count), or 2 h (`WAIT_LIMIT`) after the last progress report or the start without an outcome, `drive.py` gives up: prints the attach command, leaves the session to you, exits 1. An unanswered dialog waits in the pane until then. Interactive `claude` asks in the pane whether to trust a new folder (`-p` doesn't); without auto mode (Haiku, tier 4) it runs in manual mode, asking there for what isn't pre-approved; the nudge is typed up to about a second after the turn ends, so a permission dialog opened by then gets the keys. After the outcome or a give-up the open session is an unwatched agent with the run's pre-approvals and `drive.py`'s environment, nothing it does reported: end it with `tmux kill-session -t '=<session>'`.
 
@@ -78,15 +78,26 @@ python3 core/src/tui_claude.py show a --show ''                          # only 
 python3 core/src/tui_claude.py --help                                    # options; how --show replaces the split
 ```
 
+### Plugin
+
+`core/` is the Claude Code plugin `agent-pm` (`core/.claude-plugin/plugin.json`), listed by this repo's marketplace (`.claude-plugin/marketplace.json`): the tmux skill (`/agent-pm:tmux`) and `/agent-pm:act-as <role> <task> <input>`, which runs a core role/task in the current conversation. Install it (a private repo: your git credentials):
+
+```
+/plugin marketplace add ophis/agent-pm
+/plugin install agent-pm@agent-pm
+```
+
+Only `core/` is installed, copied per version to `~/.claude/plugins/cache/agent-pm/agent-pm/<version>/`; its files reference nothing outside it. `drive.py` and `workers.py` need Python 3.11+. The orchestrator doesn't use the plugin: its schedules run this repo's scripts.
+
 ### tmux skill
 
-`.claude/skills/tmux/` builds on `tui_claude.py`: with `/tmux`, a Claude Code session in this repo starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. It also runs a core role/task through `drive.py`, `--runner tui` in a pane or `headless`. Steps, commands and gotchas: [SKILL.md](.claude/skills/tmux/SKILL.md).
+`core/skills/tmux/` builds on `tui_claude.py`: with `/agent-pm:tmux`, a Claude Code session starts other `claude` sessions (workers) in iTerm2 or tmux panes and directs them through its helper `scripts/workers.py` (`start`, `reply`, `restart`; tests: `workers_test.py`); each worker's hooks append a `done` or `blocked` line to an events file the session watches. It also runs a core role/task through `drive.py`, `--runner tui` in a pane or `headless`. Steps, commands and gotchas: [SKILL.md](core/skills/tmux/SKILL.md).
 
 ```bash
-python3 .claude/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md' -- --permission-mode auto      # prints "a <session id>"; a pane right of this one
-python3 .claude/skills/tmux/scripts/workers.py start b --events ~/w.events -- --permission-mode auto --model sonnet                      # a pane below a's; claude flags after --
-python3 .claude/skills/tmux/scripts/workers.py reply a                                                                                   # a's last answer, from its transcript
-python3 .claude/skills/tmux/scripts/workers.py restart a                                                                                 # a resumes its conversation in its pane
+python3 core/skills/tmux/scripts/workers.py start a --events ~/w.events --prompt 'Summarize README.md' -- --permission-mode auto      # prints "a <session id>"; a pane right of this one
+python3 core/skills/tmux/scripts/workers.py start b --events ~/w.events -- --permission-mode auto --model sonnet                      # a pane below a's; claude flags after --
+python3 core/skills/tmux/scripts/workers.py reply a                                                                                   # a's last answer, from its transcript
+python3 core/skills/tmux/scripts/workers.py restart a                                                                                 # a resumes its conversation in its pane
 ```
 
 ### Core configuration
@@ -221,4 +232,4 @@ Core's configuration is under Core pack.
 
 ## Development
 
-Tests and architecture notes: `CLAUDE.md`.
+Tests and architecture notes: `CLAUDE.md`. To try plugin edits, start `claude --plugin-dir core` from the repo root (it loads as `agent-pm@inline`, in place of an installed `agent-pm` for that session); after an edit, `/reload-plugins`.
