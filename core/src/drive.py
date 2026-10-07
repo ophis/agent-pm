@@ -7,9 +7,9 @@ drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR 
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--beside SESSION] [--prefix PREFIX]
          [--events FILE] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
---out is where the deliverable is saved (local and orchestrator destinations). The run starts in the `cwd` run key, unset → the caller's current directory; a resume
-in its session's recorded one (place()). By default (start's sinks) a run shows its text and progress on stderr; every
-run leaves the record <workdir>/run.json (Record).
+--out is where the deliverable is saved (local and orchestrator destinations). The run starts in the `cwd` run key,
+unset → the caller's current directory; a resume in its session's recorded one (place()). By default (start's sinks) a
+run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
 command in a detached tmux session <prefix>-<sid[:8]> (tui_claude.py; --prefix, default <role>-<task>), shown as the
 `show` run key says (by default stacked with the panes of the same opener; --split/--beside place it explicitly), done

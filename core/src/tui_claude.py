@@ -110,8 +110,8 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
           status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
     CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session (status_line too), then show it.
-    events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it
-    leaves no session of its own."""
+    events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through
+    tmux. Raising, it leaves no session of its own."""
     _name(session)
     if template is None:
         _layout(split, beside, opener)
