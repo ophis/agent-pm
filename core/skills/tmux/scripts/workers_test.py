@@ -762,11 +762,12 @@ class NextEventTest(unittest.TestCase):
         self.assertEqual(sleep.call_count, 2)
 
     def test_consumed_bytes_not_read_again(self):
-        self.append("0123456789abcdef\n")
+        consumed = "0123456789abcdef\n"
+        self.append(consumed)
 
         def rewrite():
             with open(self.path, "r+b") as f:
-                f.write(self.A.encode())
+                f.write(b"\n" * len(consumed))
         with self.sleeping(rewrite, lambda: self.append(nl(self.B))):
             self.assertEqual(workers.next_event(self.path, 0), (2, self.B))
 

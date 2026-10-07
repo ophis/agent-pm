@@ -178,6 +178,7 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
     returns (its line number, its text). Stops with WorkersError if the file can't be read, shrinks or is replaced."""
     offset = lines = 0
     ident = None
+    skip = after
     while True:
         try:
             with open(events, "rb") as f:
@@ -193,16 +194,16 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         except FileNotFoundError:
             data = b""
         except OSError as e:
-            raise WorkersError(f"events file {events}: {e.strerror}") from e
+            raise WorkersError(f"events file {events}: {e.strerror or e}") from e
         complete = data[:data.rfind(b"\n") + 1]
         offset += len(complete)
         batch = complete.split(b"\n")[:-1]
-        if after is None:
-            after = len(batch)
+        if skip is None:
+            skip = len(batch)
         for raw in batch:
             lines += 1
             text = raw.decode("utf-8", errors="replace")
-            if lines > after and EVENT.fullmatch(text):
+            if lines > skip and EVENT.fullmatch(text):
                 return lines, text
         time.sleep(0.5)
 
