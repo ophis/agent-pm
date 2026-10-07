@@ -25,6 +25,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - **done** → `workers.py reply <name>` prints its last answer; `tui_claude.py read <name> --lines <N>` shows the pane's last N lines.
 - **blocked** → `tui_claude.py read <name>` shows the dialog. Within the user's mandate, answer it: `tmux send-keys -t '=<name>:' Enter` picks the highlighted option, a digit the numbered one, `Escape` cancels. Outside it, ask the user.
 - **dead** → `tui_claude.py read <name>` shows why; then `workers.py restart <name>`, or report it to the user.
+- **outcome** (a role run's driver) → Role runs › Outcome.
 - **Monitor expired** → re-arm it, then catch up: `tail -n 20 <file>` for events after the last one you received.
 
 ## Direct
@@ -32,7 +33,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - Follow up: `tui_claude.py send <name> '<text>'`.
 - Rename: `tmux rename-session -t '=<old>' <new>`, then `tui_claude.py send <new> '/rename <new>'`. Its events then carry `<new>`.
 - Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change.
-- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor (TaskStop) once no worker or tui role run is left.
+- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor (TaskStop) once no worker or role run is left.
 
 ## Role runs
 
@@ -40,20 +41,20 @@ A core role doing one task (`${CLAUDE_SKILL_DIR}/../../CLAUDE.md`): `--runner tu
 
 1. Pick the role and task. Each runnable pair, its destination type and description, from the merged core config: `python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import compose, repo; [print(r, t, (c := compose.load_run(compose.ROOT, r, t)).output["type"], c.task_description, sep="  ") for r, v in repo.read_config(os.path.join(compose.ROOT, compose.CONFIG))["roles"].items() for t in v.get("tasks", {})]' ${CLAUDE_SKILL_DIR}/../../src`. What the input must hold: `${CLAUDE_SKILL_DIR}/../../team/tasks/<task>.md` (`## Input`, else its first steps) and `${CLAUDE_SKILL_DIR}/../../team/roles/<role>.md`. A task on a repo takes it in the input: a `Repo: <owner>/<name>` line, a repo URL or a local clone path; `--repo <dir>` only fills a `read`/`write` entry `repo`, which no task in `${CLAUDE_SKILL_DIR}/../../config.toml` has.
 2. Write the input to `<workdir>/input.md`, `<workdir>` a new `~/.agent-pm/adhoc/<YYYY-MM-DD>-<role>-<task>-<short name>/` per run: under the trusted `~/.agent-pm`, so no trust dialog; prune never cleans it.
-3. The command, run from the workdir so it is the run's cwd:
-   - tui: `cd <workdir> && drive.py --role <role> --task <task> --input input.md --out out.md --workdir . --runner tui --events <file> [--split right|below] [--split-from <session>] [--prefix <prefix>]`, `<file>` your workers' events file (Start 1–2), placement as for a worker.
-   - headless: `cd <workdir> && drive.py --role <role> --task <task> --input input.md --out out.md --workdir . --runner headless`.
-4. Check it with `--dry-run` appended: it prints the run's argv and cwd, starting nothing; exit 2 names a config error. Then start it with Bash `run_in_background`: it blocks until the outcome.
+3. The command, run from the workdir so it is the run's cwd, `<file>` your workers' events file (Start 1–2):
+   - tui: `cd <workdir> && drive.py --role <role> --task <task> --input input.md --out out.md --workdir . --runner tui --events <file> --detach [--split right|below] [--split-from <session>] [--prefix <prefix>]`, placement as for a worker.
+   - headless: `cd <workdir> && drive.py --role <role> --task <task> --input input.md --out out.md --workdir . --runner headless --events <file> --detach`.
+4. Check it with `--dry-run` appended: it prints the run's argv and cwd, starting nothing; exit 2 names a config error. Then run it as a plain Bash command, not `run_in_background`: `--detach` starts the driver in its own tmux session and exits at once (2: a config error or a `--split-from` no terminal shows; 3: tmux failed; either way nothing runs), so the run outlives this conversation. Only if the user asks, run it without `--detach` with `run_in_background`: it then blocks until the outcome and ends with this conversation.
 
 What differs from a worker:
 
-- **Names**: the output opens with `drive.py: session <sid>`; tui's tmux session is `<prefix>-<sid[:8]>` (`--prefix` default `<role>-<task>`), printed next as `tui: session <name>: tmux attach -t '=<name>'`.
-- **Events** (tui): `done` is a turn end, not the outcome; drive.py nudges a turn that ends without one. `blocked` as for a worker (tier 4, Haiku, has no auto mode: it asks there for what isn't pre-approved). `dead`: drive.py exits too; `tui_claude.py read <name>` shows why, then resume or report it.
-- **Outcome**: when drive.py exits, its output ending `drive.py: status <done|needs_input|failed>` (exit 0) or the error (1 no valid outcome, 2 config error, 3 the client or its tmux session failed). `<workdir>/run.json` holds the `outcome`, the `progress` reports (also `Progress (<name>): …` lines in the output) and each session's sid. The deliverable: destination `local` → `<workdir>/out.md`; else the outcome's `url`. `needs_input`: ask the user its `questions`, add the answers to `input.md`, resume.
-- **Give-up** (tui: 3 more turn ends without an outcome after its nudge, or 2 h without a progress report or outcome): drive.py prints `drive.py: <reason>; session <name> left open: …` and exits 1, no outcome. The session's `claude` still runs, but nothing it reports now is read: for an outcome, resume.
-- **Resume**: `tmux kill-session -t '=<name>'` if it still runs, then the same command plus `--sid <sid> --resume`.
+- **Names**: the output is `drive.py: session <sid>`, then `drive.py: driver session <driver>: tmux attach -t '=<driver>'`, the driver's tmux session `<prefix>-<sid[:8]>-drive`, and for tui `drive.py: tui session <name>: …`, the run's `<prefix>-<sid[:8]>` (`--prefix` default `<role>-<task>`). The driver's pane shows its progress, until it ends.
+- **Events** (tui): `done` is a turn end, not the outcome; drive.py nudges a turn that ends without one. `blocked` as for a worker (tier 4, Haiku, has no auto mode: it asks there for what isn't pre-approved). `dead`: the driver ends too; `tui_claude.py read <name>` shows why, then resume or report it.
+- **Outcome**: when the driver ends, the event `HH:MM:SS <driver> outcome <done|needs_input|failed|error>` (headless too). `error`: no valid outcome (a give-up, a dead or killed session, a failed client or config). `<workdir>/run.json` holds the `outcome`, the `progress` reports and each session's sid. The deliverable: destination `local` → `<workdir>/out.md`; else the outcome's `url`. `needs_input`: ask the user its `questions`, add the answers to `input.md`, resume. Without `--detach` drive.py's output ends `drive.py: status <status>` (exit 0) or the error (1 no valid outcome, 2 config error, 3 the client or its tmux session failed).
+- **Give-up** (tui: 3 more turn ends without an outcome after its nudge, or 2 h without a progress report or outcome): `outcome error`. The session's `claude` still runs, but nothing it reports now is read: for an outcome, resume.
+- **Resume**: `tmux kill-session -t '=<name>'` and `tmux kill-session -t '=<driver>'` for whichever still runs, then the same command plus `--sid <sid> --resume`.
 - After the outcome the tui session stays open, unwatched and unreported, until killed: stop it as a worker.
-- `tui_claude.py read`/`send`, the `blocked` keys and Stop work as for a worker (a kill before the outcome: exit 1). `workers.py reply` and `restart` don't: they need the options only `workers.py start` stores; `run.json` and resume replace them. Never rename it: drive.py watches it by name.
+- `tui_claude.py read`/`send`, the `blocked` keys and Stop work as for a worker (a kill before the outcome: `outcome error`). `workers.py reply` and `restart` don't: they need the options only `workers.py start` stores; `run.json` and resume replace them. Never rename it: drive.py watches it by name.
 
 ## In a container
 
