@@ -1286,7 +1286,7 @@ class TuiRunner(Base):
                              (drive.Layout("right", None, "mine"), ("right", None, "mine"))):
             with self.subTest(layout=layout):
                 _, kw = self.launched(layout)
-                self.assertEqual((kw["split"], kw["beside"], kw["opener"]), want)
+                self.assertEqual((kw["split"], kw["anchor"], kw["opener"]), want)
 
     def test_the_launchs_status_line_reaches_tui_start(self):
         for status_line in (False, True):
@@ -1311,8 +1311,8 @@ class TuiRunner(Base):
 
     def test_a_bad_layout_is_a_config_error_before_the_workdir_or_channel(self):
         cases = (("headless", {"layout": drive.Layout()}, "no layout"), ("tui", {"layout": drive.Layout("left")}, "split"),
-                 ("tui", {"layout": drive.Layout(beside="a b")}, "beside"),
-                 ("tui", {"layout": drive.Layout(beside="")}, "beside"),
+                 ("tui", {"layout": drive.Layout(anchor="a b")}, "anchor"),
+                 ("tui", {"layout": drive.Layout(anchor="")}, "anchor"),
                  ("tui", {"layout": drive.Layout(opener="a b")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="a:b:c")}, "opener"),
@@ -1333,7 +1333,7 @@ class TuiRunner(Base):
                        drive.Layout("below", "s", "mine")):
             drive.check_layout("tui", layout)
 
-    def test_main_split_and_beside_build_the_layout(self):
+    def test_main_split_and_anchor_build_the_layout(self):
         seen = []
         real = drive.start
 
@@ -1341,8 +1341,8 @@ class TuiRunner(Base):
             seen.append(kw["layout"])
             return real(*a, **kw)
 
-        for flags, want in ((["--split", "below", "--beside", "s"], drive.Layout("below", "s")),
-                            (["--beside", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
+        for flags, want in ((["--split", "below", "--anchor", "s"], drive.Layout("below", "s")),
+                            (["--anchor", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
                             ([], None)):
             with unittest.mock.patch.object(drive, "start", start):
                 self.main([outcome(DONE)], extra=flags)

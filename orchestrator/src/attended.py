@@ -26,29 +26,29 @@ class Bad(Exception):
     """No usable place for the TUI pane; the message is for the user."""
 
 
-def layout(split, beside, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: split and beside as given, and the caller's opener (tui_claude.opener). Bad
-    unless tui_claude.anchor finds a pane (beside's, else the caller's), and, without beside, the caller has an
+def layout(split, anchor, *, proc=subprocess.run):
+    """The drive.Layout for the TUI pane: split and anchor as given, and the caller's opener (tui_claude.opener). Bad
+    unless tui_claude.anchor finds a pane (anchor's, else the caller's), and, without anchor, the caller has an
     opener."""
     if split is not None and split not in tui_claude.SPLITS:
         raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
-    if beside is not None:
-        if not tui_claude.NAME.fullmatch(beside):
+    if anchor is not None:
+        if not tui_claude.NAME.fullmatch(anchor):
             raise Bad("bad tmux session name")
-        if tui_claude.status(beside, proc=proc) is None:
-            raise Bad(f"no tmux session {beside}")
+        if tui_claude.status(anchor, proc=proc) is None:
+            raise Bad(f"no tmux session {anchor}")
     try:
-        tui_claude.anchor(beside, proc=proc)
+        tui_claude.anchor(anchor, proc=proc)
         try:
             opener = tui_claude.opener(proc=proc)
         except tui_claude.TuiError:
-            if beside is None:
+            if anchor is None:
                 raise
             opener = None
     except tui_claude.TuiError as e:
-        hint = "" if beside else ": run from tmux or iTerm2, or pass --beside SESSION"
+        hint = "" if anchor else ": run from tmux or iTerm2, or pass --anchor SESSION"
         raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
-    return drive.Layout(split, beside, opener)
+    return drive.Layout(split, anchor, opener)
 
 
 def prefix(role, ident):

@@ -4,7 +4,7 @@ channel the run reports its progress and outcome to (report.py, pre-approved for
 outcome.
 
 drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
-         [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--beside SESSION] [--prefix PREFIX]
+         [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--anchor SESSION] [--prefix PREFIX]
          [--events FILE] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable is saved (local and orchestrator destinations). The run starts in the `cwd` run key,
@@ -12,9 +12,9 @@ unset → the caller's current directory; a resume in its session's recorded one
 run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
 command in a detached tmux session <prefix>-<sid[:8]> (tui_claude.py; --prefix, default <role>-<task>), shown as the
-`show` run key says (by default stacked with the panes of the same opener; --split/--beside place it explicitly), done
+`show` run key says (by default stacked with the panes of the same opener; --split/--anchor place it explicitly), done
 once the outcome arrives or it gives up, and left open for the user. --events FILE appends the session's state events
-there. --split, --beside, --prefix and --events are tui only.
+there. --split, --anchor, --prefix and --events are tui only.
 The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} and changes nothing.
@@ -439,10 +439,10 @@ def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> st
 @dataclass(frozen=True)
 class Layout:
     """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits, and
-    the opener whose panes it stacks with (tui_claude.OPENER; None: the caller's own). With split and beside both None
+    the opener whose panes it stacks with (tui_claude.OPENER; None: the caller's own). With split and anchor both None
     the pane goes by the stacking rule (tui_claude.py)."""
     split: str | None = None
-    beside: str | None = None
+    anchor: str | None = None
     opener: str | None = None
 
 
@@ -524,7 +524,7 @@ class Tui:
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
             tui_claude.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
-                             split=self.layout.split, beside=self.layout.beside, opener=self.layout.opener,
+                             split=self.layout.split, anchor=self.layout.anchor, opener=self.layout.opener,
                              status_line=self.status_line)
         except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
@@ -601,8 +601,8 @@ def check_layout(runner: str, layout: Layout | None) -> None:
         raise ConfigError("the headless runner takes no layout")
     if layout.split is not None and layout.split not in tui_claude.SPLITS:
         raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tui_claude.SPLITS)}")
-    if layout.beside is not None and not tui_claude.NAME.fullmatch(layout.beside):
-        raise ConfigError(f"layout beside {layout.beside!r}: want {tui_claude.NAME.pattern}")
+    if layout.anchor is not None and not tui_claude.NAME.fullmatch(layout.anchor):
+        raise ConfigError(f"layout anchor {layout.anchor!r}: want {tui_claude.NAME.pattern}")
     if layout.opener is not None and not tui_claude.OPENER.fullmatch(layout.opener):
         raise ConfigError(f"layout opener {layout.opener!r}: want a tmux session name or an iTerm2 session id")
 
@@ -730,7 +730,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
     ap.add_argument("--split", choices=tui_claude.SPLITS,
                     help="the tui runner's split (default: stacked with the panes of the same opener)")
-    ap.add_argument("--beside", metavar="SESSION", help="split the pane showing this tmux session")
+    ap.add_argument("--anchor", metavar="SESSION", help="split the pane showing this tmux session")
     ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>-<task>)")
     ap.add_argument("--events", metavar="FILE", help="the tui runner appends the session's state events to FILE")
     ap.add_argument("--dry-run", action="store_true")
@@ -738,7 +738,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     if a.input == "-":
         a.input = sys.stdin.read()
     params = run = None
-    layout = Layout(a.split, a.beside) if a.split or a.beside is not None else None
+    layout = Layout(a.split, a.anchor) if a.split or a.anchor is not None else None
     name = a.client or "claude"
     try:
         check_naming(a.runner, a.prefix, a.events)

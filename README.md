@@ -67,12 +67,12 @@ The `Stop` hook (`report.py … stop --pending background_tasks`) reports each t
 
 ### tui_claude.py
 
-`core/src/tui_claude.py` hosts Claude Code TUIs in detached tmux sessions, so an agent or you can drive another's TUI; one file needing only tmux and Python 3.9+: copy it anywhere. Hooks, pane border, placement: `core/CLAUDE.md`; a `--beside`/`--split` pane still joins the stack. `--events FILE` appends `HH:MM:SS <session> done|blocked|dead` lines to FILE (created 0600). Outside tmux the opener is the iTerm2 pane only with `TERM_PROGRAM=iTerm.app`; a nested client's pane is the tmux pane hosting it; an iTerm2 pane gets an iTerm2 split, any other a `tmux split-window` running `tmux attach`. Only the sessions' `@opener` and `@pane` options are stored.
+`core/src/tui_claude.py` hosts Claude Code TUIs in detached tmux sessions, so an agent or you can drive another's TUI; one file needing only tmux and Python 3.9+: copy it anywhere. Hooks, pane border, placement: `core/CLAUDE.md`; a `--anchor`/`--split` pane still joins the stack. `--events FILE` appends `HH:MM:SS <session> done|blocked|dead` lines to FILE (created 0600). Outside tmux the opener is the iTerm2 pane only with `TERM_PROGRAM=iTerm.app`; a nested client's pane is the tmux pane hosting it; an iTerm2 pane gets an iTerm2 split, any other a `tmux split-window` running `tmux attach`. Only the sessions' `@opener` and `@pane` options are stored.
 
 ```bash
 python3 core/src/tui_claude.py start a -- claude                         # claude in session a, pane right of this one
 python3 core/src/tui_claude.py start b --events ~/c.events -- claude     # pane below a's; done/blocked/dead lines to the file
-python3 core/src/tui_claude.py start c --beside a --split right -- claude   # pane right of a's
+python3 core/src/tui_claude.py start c --anchor a --split right -- claude   # pane right of a's
 python3 core/src/tui_claude.py send a 'Summarize README.md'              # pastes the text, then Enter
 python3 core/src/tui_claude.py read a --lines 50                         # last 50 lines, with history
 python3 core/src/tui_claude.py show a --show ''                          # only prints a's attach command
@@ -213,11 +213,11 @@ tmux attach -t '=agent-pm-<role>-<ID>'              # watch one agent run; = mat
 Watch an agent run in a TUI pane and step in: the same claim, input, write-back, session comment and `runs.log` lines, by hand only (launchd never passes `--tui`).
 
 ```bash
-python3 orchestrator/src/run.py --issue TASK-12 --tui [--split right|below] [--beside <session>] [--events <file>]
-python3 orchestrator/src/router.py --now --tui [--split right|below] [--beside <session>]   # not with --issue or --brake
+python3 orchestrator/src/run.py --issue TASK-12 --tui [--split right|below] [--anchor <session>] [--events <file>]
+python3 orchestrator/src/router.py --now --tui [--split right|below] [--anchor <session>]   # not with --issue or --brake
 ```
 
-`run.py --issue … --tui` claims that ready Todo issue like `router.py --now --issue`, minus the hours, `max_runs` and usage gates; `router.py --now --tui` is a normal tick (resume too), attended. Both print to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (lock and slot: CLAUDE.md › Architecture), whose pane opens as in tui_claude.py, you the opener, or where `--split`/`--beside` say. No pane to split (pass `--beside`) or a bad `--events` file → nothing claimed, exit 2; a good one gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session; the issue stays In Progress and Recover resumes it. After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run (Recover's resume too) or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
+`run.py --issue … --tui` claims that ready Todo issue like `router.py --now --issue`, minus the hours, `max_runs` and usage gates; `router.py --now --tui` is a normal tick (resume too), attended. Both print to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (lock and slot: CLAUDE.md › Architecture), whose pane opens as in tui_claude.py, you the opener, or where `--split`/`--anchor` say. No pane to split (pass `--anchor`) or a bad `--events` file → nothing claimed, exit 2; a good one gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session; the issue stays In Progress and Recover resumes it. After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run (Recover's resume too) or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
 
 ### Session records
 
