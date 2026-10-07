@@ -3,21 +3,23 @@
 channel the run reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the
 outcome.
 
-drive.py --role ROLE [--task TASK] [--input FILE|TEXT|-] --out PATH [--workdir DIR] [--repo DIR] [--client NAME]
+drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--beside SESSION] [--prefix PREFIX]
          [--events FILE] [--dry-run]
---out is where the deliverable is saved (local and orchestrator destinations), or for a client that only writes files
-(skill) the dir it writes under. The run starts in the `cwd` run key, unset → the caller's current directory; a resume
-in its session's recorded one (place()). By default (start's sinks) a run shows its text and progress on stderr; every
-run leaves the record <workdir>/run.json (Record).
+drive.py --client skill --role ROLE [--task TASK]
+--out is where the deliverable is saved (local and orchestrator destinations). The run starts in the `cwd` run key,
+unset → the caller's current directory; a resume in its session's recorded one (place()). By default (start's sinks) a
+run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
 --runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
 command in a detached tmux session <prefix>-<sid[:8]> (tui_claude.py; --prefix, default <role>-<task>), shown as the
 `show` run key says (by default stacked with the panes of the same opener; --split/--beside place it explicitly), done
 once the outcome arrives or it gives up, and left open for the user. --events FILE appends the session's state events
 there. --split, --beside, --prefix and --events are tui only.
-Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env", "files"} and changes
-nothing. Exits 0 when the run returns a valid outcome (or the files are written), 1 when it doesn't, 2 on a config
-error, 3 when the client or its tmux session fails.
+The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
+follow (the act-as skill), its paths this core's.
+Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} and changes nothing.
+Exits 0 when the run returns a valid outcome (or the prompt is printed), 1 when it doesn't, 2 on a config error, 3 when
+the client or its tmux session fails.
 """
 import argparse
 import errno
@@ -118,6 +120,14 @@ def trusted_dirs(root: str) -> frozenset[str]:
         raise ConfigError(str(e)) from None
 
 
+def status_line(root: str) -> bool:
+    """The global `status_line` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
+    try:
+        return repos.status_line(repos.read_config(os.path.join(root, CONFIG)))
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+
+
 def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
     """(the agent run's cwd, whether its client loads the cwd's project settings and instructions). A new run's cwd is
     the `cwd` run key, else `cwd`, else the caller's current directory; project is on when trusted_dirs holds its real
@@ -148,29 +158,22 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     """The Launch for one agent run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after
     the client's config; `cwd` is the cwd when the run key is unset (place())."""
     if not client.runs:
-        raise ConfigError(f"{type(client).__name__} writes files; use export()")
+        raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
     run = load_run(root, role, task, layers=[client.config, *layers])
     here, project = place(root, run, params, cwd)
     prompt = render(root, run, params, client=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root), cwd=here,
                  project=project)
     launch = client.launch(prompt, run, params=params, access=acc)
-    return replace(launch, project=project), run
+    return replace(launch, project=project, status_line=status_line(root)), run
 
 
-def export(root: str, client: Client, role: str, task: str | None = None, *, dest: str) -> Launch:
-    """The files an export client (skill) writes for role/task under `dest`; raises ConfigError."""
+def inline(root: str, client: Client, role: str, task: str | None = None) -> str:
+    """The prompt an inline client (skill) gives for role/task; raises ConfigError."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     run = load_run(root, role, task, layers=[client.config])
-    return client.export(render(root, run, client=client), run, dest=dest)
-
-
-def write(files: dict[str, str]) -> None:
-    for path, text in files.items():
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+    return client.inline(render(root, run, client=client))
 
 
 # The agent run controls its workdir, where the driver writes too: writes replace a symlink planted at the path, never
@@ -462,7 +465,7 @@ class Headless:
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None):
+                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
@@ -512,8 +515,8 @@ class Tui:
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None):
-        self.run, self.layout, self.events = run, layout or Layout(), events
+                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
+        self.run, self.layout, self.events, self.status_line = run, layout or Layout(), events, status_line
         self.name = tui_session(run.role, run.task, params.sid, prefix)
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started, self.since = False, 0.0
@@ -521,7 +524,8 @@ class Tui:
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
             tui_claude.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
-                             split=self.layout.split, beside=self.layout.beside, opener=self.layout.opener)
+                             split=self.layout.split, beside=self.layout.beside, opener=self.layout.opener,
+                             status_line=self.status_line)
         except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started, self.since = True, time.monotonic()
@@ -630,8 +634,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     check_layout(runner, layout)
     check_naming(runner, prefix, events)
     host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout, prefix=prefix,
-                           events=events)
-    write(launch.files)
+                           events=events, status_line=launch.status_line)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
     sinks = [terminal()] if sinks is None else sinks
@@ -716,10 +719,12 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
     ap.add_argument("--role", required=True)
     ap.add_argument("--task")
     ap.add_argument("--input")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out")
     ap.add_argument("--workdir")
     ap.add_argument("--repo")
-    ap.add_argument("--client", default="claude")
+    # Given once: the act-as skill pre-approves `--client skill --role *`, which a second --client must not turn into
+    # an agent run.
+    ap.add_argument("--client", action=repos.Once, help="default: claude")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
@@ -734,36 +739,32 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen) -> int:
         a.input = sys.stdin.read()
     params = run = None
     layout = Layout(a.split, a.beside) if a.split or a.beside is not None else None
+    name = a.client or "claude"
     try:
         check_naming(a.runner, a.prefix, a.events)
-        client = clients.get(a.client, root)
+        client = clients.get(name, root)
         if client.runs:
-            if a.input is None or a.workdir is None:
-                raise ConfigError(f"client {a.client!r} needs --input and --workdir")
+            if a.input is None or a.out is None or a.workdir is None:
+                raise ConfigError(f"client {name!r} needs --input, --out and --workdir")
             params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume)
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
             cmd = command(launch, a.runner, client)
             check_layout(a.runner, layout)
         else:
             if a.runner != "headless":
-                raise ConfigError(f"{type(client).__name__} writes files; it takes no --runner {a.runner}")
+                raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no --runner {a.runner}")
             if layout:
-                raise ConfigError(f"{type(client).__name__} writes files; it takes no layout")
-            launch = export(root, client, a.role, a.task, dest=a.out)
-            cmd = launch.argv
+                raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no layout")
+            prompt = inline(root, client, a.role, a.task)
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2
-    if params:
-        print(f"drive.py: session {params.sid}", file=sys.stderr)
-    if a.dry_run:
-        print(json.dumps({"argv": cmd, "cwd": launch.cwd, "env": launch.env, "files": launch.files},
-                         ensure_ascii=False, indent=1))
-        return 0
     if not params:
-        write(launch.files)
-        for path in launch.files:
-            print(f"drive.py: wrote {path}", file=sys.stderr)
+        print(prompt, end="")
+        return 0
+    print(f"drive.py: session {params.sid}", file=sys.stderr)
+    if a.dry_run:
+        print(json.dumps({"argv": cmd, "cwd": launch.cwd, "env": launch.env}, ensure_ascii=False, indent=1))
         return 0
     result = start(launch, run, params, client=client, runner=a.runner, layout=layout, prefix=a.prefix,
                    events=a.events, popen=popen)

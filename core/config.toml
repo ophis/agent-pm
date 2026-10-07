@@ -1,10 +1,10 @@
-# DO NOT MODIFY this file. This machine's settings go in config.local.toml next to it (gitignored, read on top of this
-# file): create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any
-# other key too: tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a
-# table cannot drop a key this file sets, so a local [output] keeps this file's other keys at that level.
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/core.local.toml, read on top of this file: create
+# it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any other key too:
+# tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a table cannot
+# drop a key this file sets, so a local [output] keeps this file's other keys at that level.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
-#   layers  this file (config.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
+#   layers  this file (core.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
 #           a later layer's global value beats an earlier layer's task value
 #   levels  within a layer: global → role ([roles.<role>]) → task ([roles.<role>.tasks.<task>])
 
@@ -22,10 +22,11 @@
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); unset → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
 #                   notice unless it is the workdir; a trusted cwd in the workdir is refused. A listed local clone's
-#                   worktrees check out symlinks as links; every other checkout, a skill's bundled repo.py included,
-#                   gets core.symlinks=false. A listed clone trusts every link in fetched origin/<branch> commits, which
-#                   may point outside the worktree: list only stable paths only you write. An agent run cannot add one
-#                   (no flag; the overlay rejects it)
+#                   worktrees check out symlinks as links; every other checkout gets core.symlinks=false. A listed
+#                   clone trusts every link in fetched origin/<branch> commits, which may point outside the worktree:
+#                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
+#   status_line     local, global only: true → TUI sessions (the tui runner's, the tmux skill's workers) show tmux's
+#                   status line; unset → false
 tier = 2
 effort = "high"
 language = "English"
@@ -34,6 +35,7 @@ language = "English"
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
+# local: status_line = true
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on
@@ -42,7 +44,7 @@ language = "English"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# Every task saves locally unless config.local.toml gives it a destination. The orchestrator needs deep-research,
+# Every task saves locally unless core.local.toml gives it a destination. The orchestrator needs deep-research,
 # light-research and product-design on one github.com repo and branch (local: their [output] below).
 [output]
 type = "local"
@@ -160,8 +162,8 @@ max = "max"
 [clients.claude.env]
 CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
-# Skill client, read by SkillClient (src/clients/skill.py). A skill's description is its task file's frontmatter
-# `description` (core/CLAUDE.md).
+# Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
+# conversation to follow (the act-as skill).
 #   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
 #           tasks without an entry keep their own (build, light-build: pull-request)
 [clients.skill]

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import TASKS  # noqa: E402
+from config import LOCAL, TASKS  # noqa: E402
 from linear import append, call, comment, move, one_line, reraise_signal, subscribe  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
@@ -244,7 +244,7 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
     if src and src["team"]["id"] == ctx.team:
         text = (f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
                 "`Repo: <owner>/<name>` naming the target repo."
-                + (" Or fix orchestrator/config.local.toml's [project_repos] entry." if reason.startswith(MAPPED) else ""))
+                + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else ""))
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         except (Exception, SystemExit) as e:

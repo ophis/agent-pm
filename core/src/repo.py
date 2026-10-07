@@ -21,7 +21,7 @@ second `--dir`.
 Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
 failure.
 Errors mask URL userinfo.
-Core config: config.toml beside src/, with config.local.toml on top (read_config); a skill's copy has none.
+Core config: config.toml beside src/, with ~/.agent-pm/core.local.toml on top (read_config).
 """
 import argparse
 import json
@@ -50,7 +50,7 @@ SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
-LOCAL = "config.local.toml"
+LOCAL = "~/.agent-pm/core.local.toml"
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
@@ -121,11 +121,11 @@ def merge(base: dict, over: dict) -> dict:
     return out
 
 
-def read_config(path: str) -> dict:
-    """TOML file `path`, with config.local.toml beside it merged on top when it exists (merge())."""
+def read_config(path: str, local: str = LOCAL) -> dict:
+    """TOML file `path`, with TOML file `local` (~ expanded) merged on top when it exists (merge())."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
-    local = os.path.join(os.path.dirname(path), LOCAL)
+    local = os.path.expanduser(local)
     if os.path.isfile(local):
         with open(local, "rb") as f:
             cfg = merge(cfg, tomllib.load(f))
@@ -141,6 +141,14 @@ def trusted_dirs(cfg: dict) -> frozenset[str]:
         if not isinstance(p, str) or not p.startswith(("/", "~")) or os.path.expanduser(p).startswith("~"):
             raise ValueError(f"trusted_dirs: {p!r:.80} is not an absolute or expandable ~ path")
     return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
+
+
+def status_line(cfg: dict) -> bool:
+    """The global `status_line`: whether a TUI session shows tmux's status line; unset → off."""
+    v = cfg.get("status_line", False)
+    if not isinstance(v, bool):
+        raise ValueError("status_line: want true or false")
+    return v
 
 
 def temp_dirs() -> tuple[str, ...]:
@@ -434,7 +442,7 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_config(config) if os.path.isfile(config) else {}   # a skill's copy has no config.toml beside it
+        cfg = read_config(config)
         if a.cmd == "worktree":
             r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
         else:

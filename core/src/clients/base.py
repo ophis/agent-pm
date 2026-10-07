@@ -22,11 +22,11 @@ class Launch:
     argv: list[str]                                        # empty: nothing to start
     env: dict[str, str] = field(default_factory=dict)      # added to the caller's environment
     cwd: str = ""
-    files: dict[str, str] = field(default_factory=dict)    # path → text, written by the driver
     interactive: list[str] = field(default_factory=list)   # the same agent run's interactive command; empty: none
     transcript: str = ""   # where the client saves the session; "": unknown
     resume: str = ""       # the shell command a human resumes the session with; "": none
     project: bool = False  # Access.project, set by drive.plan
+    status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Event:
 class Client:
     keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
-    runs = True            # True: launch() starts an agent run; False: export() writes files instead
+    runs = True            # True: launch() starts an agent run; False: inline() gives the prompt to print instead
 
     def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):
@@ -78,12 +78,13 @@ class Client:
         for line in lines:
             yield Event("text", line.rstrip("\n"))
 
-    def export(self, prompt: str, run: RunConfig, *, dest: str) -> Launch:
+    def inline(self, prompt: str) -> str:
+        """The prompt for the calling conversation to follow."""
         raise NotImplementedError
 
 
 def load_config(name: str, root: str) -> dict:
-    """[clients.<name>] of <root>/config.toml with config.local.toml on top."""
+    """[clients.<name>] of <root>/config.toml with repo.LOCAL on top."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")

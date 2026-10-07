@@ -107,11 +107,11 @@ class Anchor(NamedTuple):
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           template: str | None = None, split: str | None = None, beside: str | None = None, opener: str | None = None,
-          proc=subprocess.run, sleep=time.sleep) -> None:
+          status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
-    CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session, then show it. events goes through
-    events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it
-    leaves no session of its own."""
+    CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session (status_line too), then show it.
+    events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through
+    tmux. Raising, it leaves no session of its own."""
     _name(session)
     if template is None:
         _layout(split, beside, opener)
@@ -156,7 +156,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
             sleep(POLL)
         if os.path.exists(path):
             raise TuiError("the session did not start")
-        decorate(session, events, proc=proc)
+        decorate(session, events, status_line=status_line, proc=proc)
         show(session, template, split=split, beside=beside, opener=opener, proc=proc)
         may_run = False
     except OSError as e:
@@ -231,16 +231,16 @@ def events_file(path: str) -> str:
     return path
 
 
-def decorate(session: str, events: str | None = None, *, proc=subprocess.run) -> None:
+def decorate(session: str, events: str | None = None, *, status_line: bool = False, proc=subprocess.run) -> None:
     """On the session: @events (when given), the pane-died hook (@state dead; with events, `HH:MM:SS <session> dead`
-    appended to @events), the pane border showing `<session> <state>` and no status line."""
+    appended to @events), the pane border showing `<session> <state>` and tmux's status line on or off."""
     target = f"={_name(session)}:"
     died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
     for args in [*([["set-option", "-t", target, "@events", events]] if events is not None else []),
                  ["set-hook", "-p", "-t", target, "pane-died", died],
                  ["set-option", "-w", "-t", target, "pane-border-status", "top"],
                  ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
-                 ["set-option", "-t", target, "status", "off"]]:
+                 ["set-option", "-t", target, "status", "on" if status_line else "off"]]:
         _tmux_ok(args, proc)
 
 

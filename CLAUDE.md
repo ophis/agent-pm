@@ -8,8 +8,9 @@ Agent pipeline on a Linear board: launchd runs `router.py`, which starts one `ru
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
 python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
-python3 -m unittest discover -s .claude/skills/tmux/scripts -p "*_test.py"         # tmux skill tests
-core/regen_skills.sh                                              # when: core/CLAUDE.md
+python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"           # tmux skill tests
+claude --plugin-dir core                                          # this checkout's agent-pm plugin; /reload-plugins after edits
+claude plugin validate core && claude plugin validate .           # plugin and marketplace manifests (core/CLAUDE.md at the plugin root: a warning)
 ```
 
 Operating commands: README › Operating, README › Attended runs. Python 3.11+ (`tomllib`; macOS's `python3` is 3.9, so launchd uses `/opt/homebrew/bin/python3`). Without `--dry-run`, router and promote change real issues and start real agent runs.
@@ -33,15 +34,15 @@ Operating commands: README › Operating, README › Attended runs. Python 3.11+
 
 ## Roles, tasks, rules
 
-- Config: each committed `config.toml` has a gitignored `config.local.toml` merged over it; `config.toml` documents every key, marking with commented `# local:` lines those the local file sets (README › Core configuration); `repo.read_config` is the one loader, and validation runs on the merge. Tests never read a real local file: a test module reading the repo's config (in `orchestrator/src/tests`, every one: `config` reads it on import) imports `hermetic` first, which hides them and merges `core/src/tests/config.local.fixture.toml` over `core/config.toml`.
-- Core owns roles, tasks, methods, principles and templates: `core/team/` (text), `core/config.toml` and `core/config.local.toml` (keys: README › Core configuration). A role's default task is its `default_task`.
+- Config: each committed `config.toml` has a local file merged over it, `~/.agent-pm/core.local.toml` and `~/.agent-pm/orchestrator.local.toml`; `config.toml` documents every key, marking with commented `# local:` lines those the local file sets (README › Core configuration); `repo.read_config` is the one loader, and validation runs on the merge. Tests never read a real local file: a test module reading the repo's config (in `orchestrator/src/tests`, every one: `config` reads it on import) imports `hermetic` first, which hides them and merges `core/src/tests/core.local.fixture.toml` over `core/config.toml`; a test writes its own under `hermetic.home`.
+- Core owns roles, tasks, methods, principles and templates: `core/team/` (text), `core/config.toml` and `~/.agent-pm/core.local.toml` (keys: README › Core configuration). A role's default task is its `default_task`.
 - The orchestrator config adds what core must not know (which key goes in which file: README › Orchestrator configuration); missing required keys stop the caller, naming them and the example. `[core]`, the overlay: core run keys for the orchestrator's agent runs, layered after `core/config.toml`'s `[clients.claude]` (`config.overlay()` fills `{{root}}`). An invalid or inconsistent config stops router, run and promote (`config.runnable`; it also checks the `[local_clones]` paths).
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py` / `config.TASKS`. One rule, one place. Precedence: principles > charter > task.
 - Every task has a `## Resume` section; shared text: `compose.RESUME`.
 
 ## Gotchas
 
-- Agent runs get `--strict-mcp-config` (`core/config.toml`'s `[clients.claude]`) and `--setting-sources user` (the driver's; a trusted cwd adds project settings: README › An agent run's command): this file and project settings never load in them. An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
+- Agent runs get `--strict-mcp-config` (`core/config.toml`'s `[clients.claude]`) and `--setting-sources user` (the driver's; a trusted cwd adds project settings: README › An agent run's command): this file and project settings never load in them. Their `--settings` turns the `agent-pm` plugin off (`clients/claude.py`); other user plugins load. An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `run_test.py` pins the tmux argv.
 - Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks); without it write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.

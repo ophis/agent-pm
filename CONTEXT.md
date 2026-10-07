@@ -36,7 +36,7 @@ The part of the delegate that assembles principles, role, task and input into a 
 The part of the delegate that starts an agent run through a client and checks its output; the same for every client.
 
 **Client**:
-A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or files) and enforces what hard constraints it can.
+A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or a prompt to print) and enforces what hard constraints it can.
 _Avoid_: runtime, backend, vehicle
 
 **Runner**:
@@ -60,4 +60,4 @@ _Avoid_: runner
 The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear (start, progress, finish).
 
 **Overlay**:
-The core run keys the orchestrator adds to its own agent runs, in `orchestrator/config.toml`'s `[core]` table (`config.local.toml`'s on top), applied after the client's config.
+The core run keys the orchestrator adds to its own agent runs, in `orchestrator/config.toml`'s `[core]` table (`~/.agent-pm/orchestrator.local.toml`'s on top), applied after the client's config.

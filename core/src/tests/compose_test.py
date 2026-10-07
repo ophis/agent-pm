@@ -9,7 +9,7 @@ import unittest
 from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
+import hermetic  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 
@@ -89,6 +89,10 @@ class Fake(unittest.TestCase):
     def config(self, text):
         self.write({compose.CONFIG: textwrap.dedent(text)})
 
+    def local(self, text):
+        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
+            f.write(text)
+
     def compose(self, role="writer", task=None, *, layers=(), **params):
         run = compose.load_run(self.root, role, task, layers=layers)
         return compose.render(self.root, run, replace(PARAMS, **params), client=Plain()), run
@@ -163,10 +167,10 @@ class Resolve(Fake):
         self.assertEqual(self.compose(task="short-note")[1].progress, ["start", "round-1"])
         self.assertEqual(self.compose(task="long-note")[1].progress, [])
 
-    def test_config_local_toml_goes_on_top(self):
-        self.write({"config.local.toml": 'language = "French"\nshow = ""\ncwd = "/srv"\n'
-                    '[roles.writer.tasks.long-note]\ntier = 3\n[roles.writer.tasks.long-note.output]\nbranch = "trunk"\n'
-                    '[roles.writer.tasks.short-note]\nread = ["/data"]\n'})
+    def test_the_local_file_goes_on_top(self):
+        self.local('language = "French"\nshow = ""\ncwd = "/srv"\n'
+                   '[roles.writer.tasks.long-note]\ntier = 3\n[roles.writer.tasks.long-note.output]\nbranch = "trunk"\n'
+                   '[roles.writer.tasks.short-note]\nread = ["/data"]\n')
         _, run = self.compose(task="long-note")
         self.assertEqual((run.language, run.show, run.cwd, run.tier, run.effort), ("French", "", "/srv", 3, "medium"))
         self.assertEqual(run.output, {"type": "github", "repo": "o/docs", "branch": "trunk"})
@@ -182,8 +186,8 @@ class Validate(Fake):
         self.config(CONFIG.replace("tier = 1", "tier = 9"))
         self.fails("tier must be an integer 1–4", task="long-note", layers=[{"tier": 2}])
 
-    def test_config_local_toml_is_checked_with_config_toml(self):
-        self.write({"config.local.toml": '[roles.writer.tasks.long-note]\nmodel = "opus"\n'})
+    def test_the_local_file_is_checked_with_config_toml(self):
+        self.local('[roles.writer.tasks.long-note]\nmodel = "opus"\n')
         self.fails("unknown key 'model' in roles.writer.tasks.long-note", task="long-note")
 
     def test_config_errors_come_before_missing_rule_files(self):
@@ -294,8 +298,7 @@ class Prompt(Fake):
     def test_task_frontmatter_gives_the_description_and_never_reaches_the_prompt(self):
         self.write({"team/tasks/short-note.md": '---\ndescription: "Notes: short. Use for \\"x\\"."\n---\n\n# Short Note\n\nWrite a note.\n'})
         prompt, run = self.compose(task="short-note")
-        self.assertEqual((run.task_description, run.task_title, run.task_summary),
-                         ('Notes: short. Use for "x".', "Short Note", "Write a note."))
+        self.assertEqual((run.task_description, run.task_title), ('Notes: short. Use for "x".', "Short Note"))
         self.assertNotIn("description:", prompt)
         self.assertIn("# Writer\n\nWrite well.\n\n# Short Note\n\nWrite a note.\n", prompt)
         self.assertEqual(self.compose(task="long-note")[1].task_description, "")
@@ -368,7 +371,7 @@ class Prompt(Fake):
         prompt = compose.render(self.root, run, client=Plain())
         self.assertNotIn("Workdir: ", prompt)
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
-        self.assertEqual((run.role_title, run.task_title, run.task_summary), ("Writer", "Short Note", "Write a note."))
+        self.assertEqual((run.role_title, run.task_title), ("Writer", "Short Note"))
 
     def test_resume_starts_with_resumed_run(self):
         prompt, _ = self.compose(task="short-note", resume=True)
@@ -443,7 +446,7 @@ class RealCore(unittest.TestCase):
             for d in ("team", "output"):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
             shutil.copy(os.path.join(CORE, compose.CONFIG), root)
-            with open(os.path.join(root, "config.local.toml"), "w") as f:
+            with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
                 f.write('users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\n')
             for role, task in ALL:
                 run = compose.load_run(root, role, task)

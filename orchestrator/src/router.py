@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import (PATH, PROJECTS, ROOT, RUNS_LOG, RUNS_DIR, load_config, role_for, runnable, session,  # noqa: E402
+from config import (LOCAL, PATH, PROJECTS, ROOT, RUNS_LOG, RUNS_DIR, load_config, role_for, runnable, session,  # noqa: E402
                     stage_order, transcript)
 import attended  # noqa: E402
 import linear  # noqa: E402
@@ -183,7 +183,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
-        return None, f'Task label "{name}" is not in orchestrator/config.local.toml\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+        return None, f'Task label "{name}" is not in {LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
     if task not in role_tasks:
         return None, (f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
                       "Fix the label or the assignee, then move the issue back to Todo.")

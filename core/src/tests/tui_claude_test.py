@@ -75,13 +75,13 @@ def osa(split, kind, session, *anchors):
     return ["osascript", "-e", tui_claude.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
-def decorations(session, events=None):
+def decorations(session, events=None, status="off"):
     target = f"={session}:"
     return [*([["tmux", "set-option", "-t", target, "@events", events]] if events else []),
             ["tmux", "set-hook", "-p", "-t", target, "pane-died", DIED_EVENTS if events else DIED],
             ["tmux", "set-option", "-w", "-t", target, "pane-border-status", "top"],
             ["tmux", "set-option", "-w", "-t", target, "pane-border-format", " #{session_name} #{@state} "],
-            ["tmux", "set-option", "-t", target, "status", "off"]]
+            ["tmux", "set-option", "-t", target, "status", status]]
 
 
 def panes(*rows):
@@ -403,6 +403,13 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.calls[2:], decorations("s", path))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
 
+    def test_status_line_is_the_callers_choice(self):
+        for status_line, status in ((False, "off"), (True, "on")):
+            with self.subTest(status_line=status_line):
+                fake = Tmux()
+                self.start(fake, status_line=status_line)
+                self.assertEqual(fake.calls[2:], decorations("s", status=status))
+
     def test_a_failed_decoration_kills_the_session(self):
         fake = Tmux(fail={"set-hook"})
         with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
@@ -589,6 +596,9 @@ class Decorate(unittest.TestCase):
                 tui_claude.decorate("s", events, proc=fake)
                 self.assertEqual(fake.calls, decorations("s", events))
                 self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
+        fake = Tmux()
+        tui_claude.decorate("s", status_line=True, proc=fake)
+        self.assertEqual(fake.calls, decorations("s", status="on"))
 
     def test_failure(self):
         for events, step in ((None, "set-hook"), ("/e", "set-option")):

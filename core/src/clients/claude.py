@@ -14,6 +14,8 @@ from .base import PROGRESS, Access, Client, Event, Launch
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS = os.path.expanduser("~/.claude/projects")
+# This core's own plugin (<plugin>@<marketplace>): agent runs load the user's plugins (--setting-sources user), not it.
+PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
 
 
 def resume(cwd: str, sid: str, workdir: str) -> str:
@@ -68,10 +70,11 @@ class ClaudeClient(Client):
         allow = [f"Bash({cmd})" for cmd in access.commands] + (self.value(run, "allow") or [])
         if allow:
             tail += ["--allowedTools", *allow]
-        argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", *tail]
+        argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", "--settings",
+                json.dumps(PLUGINS), *tail]
         stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
         hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
-        interactive = ["claude", prompt, *head, *tail, "--settings", json.dumps(hook)]
+        interactive = ["claude", prompt, *head, "--settings", json.dumps({**PLUGINS, **hook}), *tail]
         return Launch(argv, dict(c.get("env", {})), cwd=cwd, interactive=interactive,
                       transcript=transcript(cwd, params.sid), resume=resume(cwd, params.sid, workdir))
 
