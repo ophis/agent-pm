@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once (default 1), handing its output back for your review; once you approve, the next role takes it. `core/` runs a role on a task and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role on a task and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
 
 ```mermaid
 flowchart LR
@@ -11,16 +11,16 @@ flowchart LR
 
 ## Install
 
-`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; only a cwd in or under a `trusted_dirs` entry (`core/config.toml`'s `cwd` and `trusted_dirs`) adds its project settings, `CLAUDE.md`, skills and `.mcp.json`.
+`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
 
 - `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role/task in a pane or headless: `core/skills/tmux/SKILL.md`.
 - `/agent-pm:act-as <role> <task> <input>`: run a core role/task in this conversation: `core/skills/act-as/SKILL.md`.
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3` (3.11+), Install's requirements and `gh` logged in as you. The orchestrator runs this checkout's scripts, not the plugin.
+Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` logged in as you. The orchestrator runs this checkout's scripts, not the plugin.
 
-1. Create `~/.agent-pm/orchestrator.local.toml` from `orchestrator/config.toml`'s `# local:` lines, uncommented, with your values; router, run and promote stop naming any required key it lacks. Likewise `~/.agent-pm/core.local.toml` from `core/config.toml`'s: at least the document tasks' `[output]`: one github.com docs repo and branch, a folder per task. `<work_dir>` is the `work_dir` key, default `~/.agent-pm`: each issue's workdir `<work_dir>/work/<ID>/`, and the logs.
+1. Create `~/.agent-pm/orchestrator.local.toml` and `~/.agent-pm/core.local.toml` as each `config.toml`'s header says, core's with the document tasks' `[output]` (its Destination comment). `<work_dir>` below is the `work_dir` key.
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 3. Agent runs need no `linear` skill and get no Linear key: router and promote act in Linear as the harness account `frank.agent.w@gmail.com`, each role's write-back as its `[roles.<role>]` `account`, its API key in the Keychain under `key`. Per role:
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
@@ -88,7 +88,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | `<work_dir>/logs/promote.log` | Handoff and prune actions |
 | `<work_dir>/logs/runs.log` | Agent run start/resume/end; the router resumes from it: keep it |
 
-`input.md`, `run.json` and `writeback.json` stay in the workdir for inspection; documents are published from a per-agent-run clone in `<work_dir>/work/<ID>/publish`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` breaks resuming in-progress agent runs; moving it or the repo breaks the installed plists.
+`input.md`, `run.json` and `writeback.json` stay in the workdir for inspection; documents are published from a per-agent-run clone in `<work_dir>/work/<ID>/publish`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs; moving `<work_dir>` or the repo breaks the installed plists.
 
 ### Attended runs
 

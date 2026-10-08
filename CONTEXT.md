@@ -13,7 +13,7 @@ One job a role can do (deep research, light research, product design, build, lig
 _Avoid_: skill, job
 
 **Principles**:
-Rules every role follows; on conflict, principles > charter > task.
+Rules every role follows; precedence: `core/team/guide.md`.
 
 **Charter**:
 A role's text: the rules shared by all of that role's tasks.
@@ -23,7 +23,7 @@ One task done once as one role: a fresh client session (e.g. Claude Code's) host
 _Avoid_: job, subagent
 
 **Core pack**:
-The roles, tasks, templates and delegate, packaged as a Claude Code plugin; knows nothing of Linear or where documents are stored.
+The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
@@ -40,10 +40,10 @@ A way to execute a composed agent run (Claude Code, a skill); it turns the agent
 _Avoid_: runtime, backend, vehicle
 
 **Runner**:
-How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up, the session left open).
+How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up).
 
 **Attended run**:
-An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run. Its TUI session outlives it and is closed by the issue's next agent run or by prune.
+An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
 
 **Destination**:
 Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.
@@ -57,7 +57,7 @@ The code that turns a Linear issue into free text, calls the delegate and maps t
 _Avoid_: runner
 
 **Write-back**:
-The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear (start, progress, finish).
+The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear.
 
 **Overlay**:
-The core run keys the orchestrator adds to its own agent runs, in `orchestrator/config.toml`'s `[core]` table (`~/.agent-pm/orchestrator.local.toml`'s on top), applied after the client's config.
+The core run keys the orchestrator adds to its own agent runs, in `orchestrator/config.toml`'s `[core]` table (its comment).

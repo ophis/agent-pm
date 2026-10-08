@@ -44,8 +44,8 @@ language = "English"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# Every task saves locally unless core.local.toml gives it a destination. The orchestrator needs deep-research,
-# light-research and product-design on one github.com repo and branch (local: their [output] below).
+# The orchestrator needs deep-research, light-research and product-design on one github.com repo and branch (local:
+# their [output] below).
 [output]
 type = "local"
 
@@ -159,8 +159,8 @@ CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
 # Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
 # conversation to follow (the act-as skill).
-#   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
-#           tasks without an entry keep their own (build, light-build: pull-request)
+#   output  per task (roles.<role>.tasks.<task>.output); a task without one keeps its own (build, light-build:
+#           pull-request)
 [clients.skill]
 
 # ── Researcher ─────────────────────────────────────────
