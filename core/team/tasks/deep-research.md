@@ -24,7 +24,7 @@ Run research workflows, then write a verified report. These steps, not the workf
      [agent-pm-progress:round] the round and its agent count against its cap
 6. **Failure.** Outside Resume, never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
 7. **Report** (Researcher › Standards). Revising a Light Research report (its `Light Research.` line marks it, in any language) → drop that line.
-8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents that round's run records (beside its Script file) show as started; for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 (deep-research method) or the budget's cap (ultracode method).
+8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents that round's run records (beside its Script file) show as started; for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 (deep-research method) or the budget's cap (ultracode method). Either way, `<n>` includes Resume's re-votes.
 
 ## Resume
 
