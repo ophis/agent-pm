@@ -26,6 +26,9 @@ STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAU
 ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
+EARLY = 5
+POLL = 0.5
+REPORT_LINES = 20
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 
 
@@ -69,12 +72,30 @@ def _refuse(flags) -> None:
             raise WorkersError(f"{word}: workers.py picks the session; use start --resume <sid>")
 
 
+def _early(name: str, proc) -> None:
+    """Watches worker `name`'s pane for EARLY seconds; raises if claude exits or the session ends, the exit with the
+    pane's last REPORT_LINES non-blank lines."""
+    try:
+        for _ in range(round(EARLY / POLL)):
+            time.sleep(POLL)
+            state = tui_claude.status(name, proc=proc)
+            if state is None:
+                raise WorkersError(f"{name}: session ended at once")
+            if state != tui_claude.RUNNING:
+                lines = [x for x in tui_claude.read(name, 2000, proc=proc).splitlines() if x.strip()]
+                raise WorkersError(f"{name}: claude exited {state} at once; its pane's last lines:\n"
+                                   + "\n".join(lines[-REPORT_LINES:]))
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+
+
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
           resume: str | None = None, split_from: str | None = None, split: str | None = None,
           proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
     `resume` (a session id) resumes that session instead of starting a new one. `split_from` or `split` replaces
-    tui_claude's automatic placement; it defaults the other. Its status line: core config's status_line."""
+    tui_claude's automatic placement; it defaults the other. Its status line: core config's status_line. A claude that
+    exits within EARLY seconds raises, the session kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
@@ -110,6 +131,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
             except WorkersError:
                 pass
             raise WorkersError(f"{e}; start undone") from e
+    _early(name, proc)
     return sid
 
 
@@ -136,7 +158,7 @@ def _stored(name: str, proc) -> dict:
 
 def restart(name: str, *, proc=subprocess.run) -> str:
     """Respawn worker `name`'s pane resuming its session, its status line as core config's status_line says now; returns
-    the shell string it ran."""
+    the shell string it ran. A claude that exits within EARLY seconds raises (see _early)."""
     _check(name)
     opt = _stored(name, proc)
     status_line = _status_line()
@@ -154,6 +176,7 @@ def restart(name: str, *, proc=subprocess.run) -> str:
     res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
     if res.returncode != 0:
         raise WorkersError((res.stderr or "").strip() or f"tmux respawn-pane exited {res.returncode}")
+    _early(name, proc)
     return cmd
 
 
