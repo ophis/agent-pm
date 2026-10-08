@@ -574,6 +574,21 @@ class RealCore(unittest.TestCase):
         for task in ("build", "light-build"):
             self.assertIn("`push` false → `failed`", composed("engineer", task)[0], task)
 
+    def test_builds_merge_the_default_branch_before_autopilot_at_resume_and_before_the_pr(self):
+        for task in ("build", "light-build"):
+            prompt, _ = composed("engineer", task)
+            merge = section(prompt, "Merge")
+            for literal in ("Engineer › Repo step 1", "`git -C <worktree> merge --no-edit origin/<default>`",
+                            "`git -C <worktree> merge --abort`"):
+                self.assertIn(literal, merge, task)
+            for where in ("Autopilot", "Finish", "Resume"):
+                self.assertIn("Engineer › Merge", section(prompt, where), f"{task}: {where}")
+            self.assertIn("`origin/<default>`", section(prompt, "Autopilot"), task)
+
+    def test_light_builds_cutoff_skips_merge_commits(self):
+        self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`",
+                      composed("engineer", "light-build")[0])
+
     def test_research_hand_off_phrases(self):
         light, deep = composed("researcher", "light-research")[0], composed("researcher", "deep-research")[0]
         self.assertIn("`Light Research. Angles: ", light)
@@ -663,6 +678,11 @@ def method(name):
 
 def rule(text, name):
     return [line for line in text.splitlines() if line.startswith(f"- **{name}**:")]
+
+
+def section(text, name):
+    m = re.search(rf"^## {name}\n(.*?)(?=^#)", text, re.M | re.S)
+    return m.group(1) if m else ""
 
 
 class Methods(unittest.TestCase):

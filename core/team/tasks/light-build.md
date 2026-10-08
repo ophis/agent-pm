@@ -13,7 +13,7 @@ Engineer › Input, the requirement being the input's text; a PRD, if given, is 
 ## Steps
 
 1. **Read** the input. The user's requirements outrank the requirement, which outranks a PRD.
-2. **Repo** (Engineer › Repo); from status, count only entries after `<worktree>`'s latest commit (`git -C <worktree> log -1 --format=%cI`).
+2. **Repo** (Engineer › Repo); from status, count only entries after `<branch>`'s latest own commit (`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`).
 3. **Which build:**
    - A light-build state file in `<worktree>` (its `RESUME:` line) → continue it, adding the user's requirements.
    - Else a `pr` (a **finished build**) and a user requirement → a new build of the user's requirements. Review input alone never starts one.
