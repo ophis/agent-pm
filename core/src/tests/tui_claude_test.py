@@ -180,11 +180,19 @@ class Start(unittest.TestCase):
         fake = Tmux()
         self.start(fake, env=env)
         self.assertEqual(fake.handover, {"argv": [self.tool, "--settings", tui_claude.hooks(), "-x", "a b"],
-                                         "env": {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1"}, "cwd": self.cwd})
+                                         "env": {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "PWD": self.cwd},
+                                         "cwd": self.cwd})
         self.assertEqual(fake.mode, 0o600)
         self.assertEqual(fake.dir_mode, 0o700)
         self.assertEqual(os.path.dirname(os.path.dirname(fake.path)), self.temp)
         self.assertEqual(os.listdir(self.temp), [])
+
+    def test_pwd_is_the_cwd(self):
+        for given in ({"PATH": self.bin, "PWD": "/elsewhere"}, {"PATH": self.bin}):
+            with self.subTest(given=given):
+                fake = Tmux()
+                self.start(fake, env=given)
+                self.assertEqual(fake.handover["env"]["PWD"], self.cwd)
 
     def test_terminal_keys(self):
         self.assertEqual(set(tui_claude.TERMINAL_KEYS), {

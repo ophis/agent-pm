@@ -15,8 +15,9 @@ You, the commander, run each worker as an interactive `claude` in its own tmux s
 
 1. Events file: one for all your workers, e.g. `<scratchpad>/workers.events`.
 2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended), `HH:MM:SS <name> blocked` (it waits on a permission prompt or a dialog) or `HH:MM:SS <name> dead` (its `claude` exited; the pane stays). Without a Monitor tool: run `workers.py next-event` with `run_in_background`; after each event, handle it, then re-arm it at once. Arguments: first `--events <file> --after end`; it prints `<line> <event>` and exits; re-arm with `--after <line>`.
-3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--prompt '<text>'] [--split-from <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, the prompt is its first message, and the flags reach `claude` verbatim: pass `-- --permission-mode auto` unless the user asks for another mode, plus only the other flags the request warrants.
+3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--resume <sid>] [--prompt '<text>'] [--split-from <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, `--resume` resumes that session (a session id), the prompt is its first message (to color it first: Direct › Color), and the flags reach `claude` verbatim: pass `-- --permission-mode auto` unless the user asks for another mode, plus only the other flags the request warrants. A passed-through flag before a bare `--` that picks the session (`--resume`, `-r`, `--session-id`, `--continue`, `-c`, `--fork-session`, `--from-pr`, or a long one's `=…` form) is refused; use `--resume <sid>`.
    The first worker's pane opens right of yours; each later one splits below the newest pane you opened that still shows. A worker that starts workers gets its own column right of its pane. `--split-from`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; the command it prints (`tmux attach -t '=<name>'`, after `$TUI_ATTACH_PREFIX`: In a container) shows it. The pane's top border shows `<name> <state>` (working, done, blocked, dead) for the user.
+   `start` waits 5 s. If `claude` has exited by then (e.g. an unknown flag), it fails with exit 1 and stderr `workers: <name>: claude exited <status> at once; its pane's last lines:` plus the pane's last 20 non-blank lines, history included; the dead session stays (`start` again replaces it). A vanished session: `<name>: session ended at once`.
 4. Read its pane: `tui_claude.py read <name>`. In a folder claude doesn't trust yet it shows the trust dialog, which sends no event: handle it as blocked.
 
 ## Events
@@ -27,7 +28,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 
 - **done** → `workers.py reply <name>` prints its last answer; `tui_claude.py read <name> --lines <N>` shows the pane's last N lines.
 - **blocked** → `tui_claude.py read <name>` shows the dialog. Within the user's mandate, answer it: `tmux send-keys -t '=<name>:' Enter` picks the highlighted option, a digit the numbered one, `Escape` cancels. Outside it, ask the user.
-- **dead** → `tui_claude.py read <name>` shows why; then `workers.py restart <name>`, or report it to the user.
+- **dead** → `tui_claude.py read <name>` shows why (a death within 5 s of `start` or `restart` is already in that command's error); then `workers.py restart <name>`, or report it to the user.
 - **outcome** (a role run's driver) → Role runs › Outcome.
 - **Monitor expired** → re-arm it, then catch up: `tail -n 20 <file>` for events after the last one you received. A `next-event` task stopped (e.g. at its timeout) without printing → re-arm it with the same `--after`; if that was `end`, catch up too.
 
@@ -35,7 +36,8 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 
 - Follow up: `tui_claude.py send <name> '<text>'`.
 - Rename: `tmux rename-session -t '=<old>' <new>`, then `tui_claude.py send <new> '/rename <new>'`. Its events then carry `<new>`.
-- Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change.
+- Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change. It waits 5 s as `start` does and reports an early death the same way; the dead pane stays.
+- Color: give every worker and tui role run a color no other live one has, from red, blue, green, yellow, purple, orange, pink, cyan: `tui_claude.py send <name> '/color <color>'` while it is idle, before a worker's first prompt (start it without `--prompt`, send the prompt after the color) or after a `done`. The color isn't saved with the session: send it again after `workers.py restart` or a resume.
 - Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor or `next-event` task (TaskStop) once no worker or role run is left.
 
 ## Role runs

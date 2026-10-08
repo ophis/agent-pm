@@ -19,6 +19,13 @@ import hermetic  # noqa: E402
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 tui_claude = workers.tui_claude
+SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
+RUNNING_PANE, DEAD_PANE = "0  \n", "1 1 \n"
+ERROR = "Error: --session-id can only be used with --continue or --resume if --fork-session is also specified."
+DEAD_LINE = "Pane is dead (status 1, Wed Oct  7 19:54:08 2026)"
+DEAD_TEXT = f"{ERROR}\n" + "\n" * 40 + f"{DEAD_LINE}\n" + "\n" * 10
+DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD_LINE}"
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
 
 
 def executable(path, text):
@@ -33,6 +40,13 @@ def isolate(case):
     for p in (mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO())):
         p.__enter__()
         case.addCleanup(p.__exit__, None, None, None)
+
+
+def no_sleep(case):
+    """time.sleep as a recorder, `case.sleep`, for the rest of `case`'s test."""
+    p = mock.patch.object(workers.time, "sleep")
+    case.sleep = p.start()
+    case.addCleanup(p.stop)
 
 
 def decorate_calls(events, status_line=False):
@@ -51,13 +65,15 @@ def local(case, text):
 class Fake:
     """Records proc calls; `new_err` makes new-session fail; `results` maps a tmux command to a function of the argv
     giving its stdout. On new-session it reads the handover file tui_claude wrote and unlinks it as the pane's wrapper
-    would."""
+    would. A session's pane status (display-message), in `panes`, is empty (no session) until new-session or
+    respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers `text`."""
 
     def __init__(self, new_err="", results=None):
         self.new_err, self.results = new_err, results or {}
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
         self.fail_set, self.oserror, self.handover = None, None, None
+        self.panes, self.spawned, self.text = {}, RUNNING_PANE, ""
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
@@ -73,6 +89,7 @@ class Fake:
                 return subprocess.CompletedProcess(argv, 1, "", f"invalid option: {argv[5]}")
             return subprocess.CompletedProcess(argv, 0, self.store[argv[5]] + "\n", "")
         if argv[1] == "respawn-pane":
+            self.panes[argv[4][1:-1]] = self.spawned
             return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
         if argv[1] == "new-session":
             path = argv[argv.index(";") - 1]
@@ -81,6 +98,11 @@ class Fake:
             os.unlink(path)
             if self.new_err:
                 return subprocess.CompletedProcess(argv, 1, "", self.new_err)
+            self.panes[argv[argv.index("-s") + 1]] = self.spawned
+        if argv[1] == "display-message" and argv[-1].startswith("#{pane_dead}"):
+            return subprocess.CompletedProcess(argv, 0, self.panes.get(argv[4][1:-1], ""), "")
+        if argv[1] == "capture-pane":
+            return subprocess.CompletedProcess(argv, 0, self.text, "")
         if argv[1] in self.results:
             return subprocess.CompletedProcess(argv, 0, self.results[argv[1]](argv), "")
         return subprocess.CompletedProcess(argv, 0, "", "")
@@ -109,6 +131,7 @@ class StartTest(unittest.TestCase):
         spy = mock.patch.object(tui_claude, "start", wraps=tui_claude.start)
         self.tui = spy.start()
         self.addCleanup(spy.stop)
+        no_sleep(self)
 
     def start(self, fake, name="w1", **kw):
         kw.setdefault("cwd", self.dir)
@@ -134,6 +157,44 @@ class StartTest(unittest.TestCase):
                                          split_from=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
+    def test_resume(self):
+        fake = Fake()
+        sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
+        self.assertEqual(sid, SID)
+        self.assertEqual(self.tui.call_args.args[1],
+                         [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"])
+        self.assertEqual(fake.handover["argv"][1:3], ["--settings", tui_claude.hooks(self.events)])
+        self.assertEqual(fake.options()["@sid"], SID)
+
+    def test_no_resume_picks_a_new_session_id(self):
+        sid = self.start(Fake())
+        self.assertEqual(self.tui.call_args.args[1], [self.claude, "--session-id", sid, "--name", "w1"])
+
+    def test_bad_resume(self):
+        for bad in ("abc", SID.upper(), "", SID + "x", " " + SID, SID + "\n", SID.replace("-", "")):
+            with self.subTest(bad=bad):
+                fake = Fake()
+                self.assertEqual(self.assert_fails(fake, resume=bad), f"--resume {bad}: not a session id")
+                self.assertEqual(fake.calls, [])
+
+    def test_refused_flags(self):
+        for resume in (None, SID):
+            for flag in REFUSED:
+                forms = [(flag, "x")] + ([(f"{flag}=x",)] if flag.startswith("--") else [])
+                for given in forms:
+                    with self.subTest(resume=resume, given=given):
+                        fake = Fake()
+                        msg = self.assert_fails(fake, resume=resume, flags=("--model", "m", *given))
+                        self.assertEqual(msg, f"{flag}: workers.py picks the session; use start --resume <sid>")
+                        self.assertEqual(fake.calls, [])
+
+    def test_flags_after_a_bare_double_dash_are_not_scanned(self):
+        flags = ("--model=m", "--", *REFUSED, "--resume=x")
+        fake = Fake()
+        sid = self.start(fake, flags=flags)
+        self.assertEqual(self.tui.call_args.args[1], [self.claude, "--session-id", sid, "--name", "w1", *flags])
+        self.assertEqual(json.loads(fake.options()["@flags"]), list(flags))
+
     def test_no_prompt(self):
         self.start(Fake(), flags=("--x",))
         self.assertEqual(self.tui.call_args.args[1][-1], "--x")
@@ -148,6 +209,11 @@ class StartTest(unittest.TestCase):
         self.assertEqual({k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME")},
                          {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h"})
         self.assertIn("CLAUDECODE", self.env)
+
+    def test_pwd_in_the_handover_is_the_cwd(self):
+        fake = Fake()
+        self.start(fake, env={**self.env, "PWD": "/elsewhere"})
+        self.assertEqual(fake.handover["env"]["PWD"], self.dir)
 
     def test_relative_cwd_made_absolute(self):
         fake = Fake()
@@ -336,6 +402,7 @@ class WorkerCase(unittest.TestCase):
         executable(self.claude, "#!/bin/sh\n")
         self.events = os.path.join(self.dir, "it's events")
         self.env = {"PATH": self.bin + ":/a b", "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "cfg")}
+        no_sleep(self)
 
     def started(self, fake, flags=("--model", "m c")):
         return workers.start("w1", self.events, cwd=self.dir, flags=flags, env=self.env, proc=fake)
@@ -371,18 +438,142 @@ class ContainerTest(WorkerCase):
         self.assertEqual(err.getvalue(), "tui: session w1: tmux attach -t '=w1'\ntui: session w2: tmux attach -t '=w2'\n")
 
 
+def status_call():
+    """The tmux call tui_claude.status makes for worker w1."""
+    fake = Fake()
+    tui_claude.status("w1", proc=fake)
+    return fake.calls[0]
+
+
+class EarlyDeathTest(WorkerCase):
+    RUNS = ("start", "restart")
+
+    def interleaved(self, fake):
+        """Logs each sleep among fake's calls."""
+        self.sleep.side_effect = lambda secs: fake.calls.append(["sleep", secs])
+
+    def dead(self, fake, text=DEAD_TEXT, pane=DEAD_PANE):
+        fake.spawned, fake.text = pane, text
+
+    def attempt(self, run, fake, setup):
+        """Runs `run` (the start or the restart of w1) after setup(fake), and returns the WorkersError it raises.
+        A restart follows a start that finds a running pane."""
+        self.sleep.reset_mock(side_effect=True)
+        if run == "restart":
+            self.started(fake)
+            self.sleep.reset_mock()
+        setup(fake)
+        with self.assertRaises(workers.WorkersError) as cm:
+            self.started(fake) if run == "start" else workers.restart("w1", proc=fake)
+        return str(cm.exception)
+
+    def capture(self):
+        return ["tmux", "capture-pane", "-p", "-J", "-t", "=w1:", "-S", "-2000"]
+
+    def test_start_watches_a_running_pane_for_5_s(self):
+        fake = Fake()
+        self.interleaved(fake)
+        self.started(fake)
+        last = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option")
+        self.assertEqual(fake.calls[last][:5], ["tmux", "set-option", "-t", "=w1:", "@flags"])
+        self.assertEqual(fake.calls[last + 1:], [["sleep", 0.5], status_call()] * 10)
+        self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
+
+    def test_restart_watches_a_running_pane_for_5_s(self):
+        fake = Fake()
+        self.started(fake)
+        self.sleep.reset_mock()
+        self.interleaved(fake)
+        workers.restart("w1", proc=fake)
+        at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
+        self.assertEqual(fake.calls[at + 1:], [["sleep", 0.5], status_call()] * 10)
+        self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
+
+    def test_dead_pane(self):
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                fake = Fake()
+                self.assertEqual(self.attempt(run, fake, self.dead), DEAD_MSG)
+                self.assertEqual(self.sleep.call_args_list[-1:], [mock.call(0.5)])
+                self.assertEqual(fake.calls[-1], self.capture())
+                self.assertNotIn("kill-session", [c[1] for c in fake.calls])
+
+    def test_death_reported_at_the_first_dead_check(self):
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                fake = Fake()
+
+                def setup(fake):
+                    def die(secs):
+                        if self.sleep.call_count == 3:
+                            fake.panes["w1"] = DEAD_PANE
+                    self.sleep.side_effect = die
+                    fake.text = DEAD_TEXT
+                self.assertEqual(self.attempt(run, fake, setup), DEAD_MSG)
+                self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 3)
+
+    def test_pane_text_blank_lines_dropped_last_20_kept(self):
+        old = [f"old {i}" for i in range(7)]
+        kept = [f"kept {i}" for i in range(20)]
+        text = "".join(f"{line}\n\n  \n" for line in (*old, *kept)) + "\n\n"
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                msg = self.attempt(run, Fake(), lambda fake: self.dead(fake, text))
+                self.assertEqual(msg, "w1: claude exited 1 at once; its pane's last lines:\n" + "\n".join(kept))
+
+    def test_fewer_than_20_lines(self):
+        msg = self.attempt("start", Fake(), lambda fake: self.dead(fake, "\n\none\n\n\ntwo\n\n"))
+        self.assertEqual(msg, "w1: claude exited 1 at once; its pane's last lines:\none\ntwo")
+
+    def test_signal_status(self):
+        msg = self.attempt("start", Fake(), lambda fake: self.dead(fake, pane="1  9\n"))
+        self.assertRegex(msg, r"^w1: claude exited 137 at once; ")
+
+    def test_gone(self):
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                msg = self.attempt(run, Fake(), lambda fake: setattr(fake, "spawned", ""))
+                self.assertEqual(msg, "w1: session ended at once")
+                self.assertEqual(self.sleep.call_args_list[-1:], [mock.call(0.5)])
+
+    def test_status_failure(self):
+        def setup(fake):
+            fake.oserror = lambda argv: argv[1] == "display-message" and "w1" in fake.panes
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                self.assertRegex(self.attempt(run, Fake(), setup), r"^tmux: .*No such file")
+
+    def test_capture_failure(self):
+        def setup(fake):
+            self.dead(fake)
+            fake.oserror = lambda argv: argv[1] == "capture-pane"
+        for run in self.RUNS:
+            with self.subTest(run=run):
+                self.assertRegex(self.attempt(run, Fake(), setup), r"^tmux: .*No such file")
+
+    def test_option_failure_still_undoes_the_start(self):
+        fake = Fake()
+        fake.fail_set = "@sid"
+        self.dead(fake)
+        with self.assertRaisesRegex(workers.WorkersError, "set boom; start undone"):
+            self.started(fake)
+        self.assertEqual(self.sleep.call_args_list, [])
+        self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
+
+
 class RestartTest(WorkerCase):
     def test_argv_and_cmd(self):
         fake = Fake()
         sid = self.started(fake)
         cmd = workers.restart("w1", proc=fake)
-        argv = fake.calls[-1]
-        self.assertEqual(argv, ["tmux", "respawn-pane", "-k", "-t", "=w1:", "-c", self.dir, cmd])
-        self.assertEqual(fake.kwargs[-1]["stdin"], subprocess.DEVNULL)
+        at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
+        self.assertEqual(fake.calls[at], ["tmux", "respawn-pane", "-k", "-t", "=w1:", "-c", self.dir, cmd])
+        self.assertEqual(fake.kwargs[at]["stdin"], subprocess.DEVNULL)
         unset = [w for v in workers.STRIP for w in ("-u", v)]
         resumed = tui_claude.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
         self.assertEqual(shlex.split(cmd), ["env", *unset, f"PATH={self.env['PATH']}",
-                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", *resumed])
+                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", f"PWD={self.dir}",
+                                            *resumed])
         self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
 
     def test_own_settings_merged_with_the_hooks(self):
@@ -411,7 +602,7 @@ class RestartTest(WorkerCase):
         self.started(fake)
         n = len(fake.calls)
         workers.restart("w1", proc=fake)
-        tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
+        tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
         self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
         self.assertEqual(tail[-1][1], "respawn-pane")
 
@@ -421,7 +612,7 @@ class RestartTest(WorkerCase):
         local(self, "status_line = true\n")
         n = len(fake.calls)
         workers.restart("w1", proc=fake)
-        tail = [c for c in fake.calls[n:] if c[1] != "show-options"]
+        tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
         self.assertEqual(tail[:-2], decorate_calls(self.events, status_line=True))
 
     def test_decoration_failure_no_respawn(self):
@@ -484,9 +675,6 @@ class RestartTest(WorkerCase):
         cmd = workers.restart("w1", proc=fake)
         self.assertNotIn("CLAUDE_CONFIG_DIR", cmd)
         self.assertIn(tui_claude.hooks(self.events), shlex.split(cmd))
-
-
-SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 
 
 def line(kind, *blocks, mid=None):
@@ -605,6 +793,50 @@ class MainTest(WorkerCase):
         self.assertEqual(out, f"w1 {sid}\n")
         self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
         self.assertEqual(fake.handover["argv"][-1], "go")
+
+    def test_start_resume(self):
+        fake = Fake()
+        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--resume", SID,
+                                      "--", "--model", "m"], fake)
+        self.assertEqual((rc, out), (0, f"w1 {SID}\n"), err)
+        self.assertEqual(fake.store["@sid"], SID)
+        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
+            [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.events))
+
+    def test_start_early_death_exit_1(self):
+        fake = Fake()
+        fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
+        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir], fake)
+        self.assertEqual((rc, out), (1, ""))
+        self.assertTrue(err.endswith(f"workers: {DEAD_MSG}\n"), err)
+        self.assertEqual(err.count("workers:"), 1)
+
+    def test_restart_early_death_exit_1(self):
+        fake = Fake()
+        self.started(fake)
+        fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
+        rc, out, err = self.run_main(["restart", "w1"], fake)
+        self.assertEqual((rc, out), (1, ""))
+        self.assertTrue(err.endswith(f"workers: {DEAD_MSG}\n"), err)
+        self.assertEqual(err.count("workers:"), 1)
+
+    def test_start_refusals_exit_1_before_any_tmux_call(self):
+        for argv, msg in ((["--resume", "abc"], "--resume abc: not a session id"),
+                          (["--", "--model", "m", "-c"], "-c: workers.py picks the session; use start --resume <sid>"),
+                          (["--resume", SID, "--", "--session-id=x"],
+                           "--session-id: workers.py picks the session; use start --resume <sid>")):
+            with self.subTest(argv=argv):
+                fake = Fake()
+                self.assertEqual(self.run_main(["start", "w1", "--events", self.events, *argv], fake),
+                                 (1, "", f"workers: {msg}\n"))
+                self.assertEqual(fake.calls, [])
+
+    def test_start_help_names_the_resume_option(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            workers.main(["start", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertRegex(out.getvalue(), r"--resume SID\s+a session id")
 
     def test_start_split_from_below_opens_under_its_pane(self):
         sock = "/tmp/tmux-1/default"

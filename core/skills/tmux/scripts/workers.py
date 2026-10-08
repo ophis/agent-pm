@@ -24,6 +24,11 @@ STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAU
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
 ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
+SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
+EARLY = 5
+POLL = 0.5
+REPORT_LINES = 20
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 
 
@@ -57,14 +62,46 @@ def _tmux(argv: list, proc) -> None:
         raise WorkersError(f"tmux {argv[1]} {argv[-2]}: {(res.stderr or '').strip()}")
 
 
+def _refuse(flags) -> None:
+    """Raises on a flag, before the first bare `--`, that makes claude pick the session."""
+    for flag in flags:
+        if flag == "--":
+            return
+        word = flag.split("=", 1)[0] if flag.startswith("--") else flag
+        if word in REFUSED:
+            raise WorkersError(f"{word}: workers.py picks the session; use start --resume <sid>")
+
+
+def _early(name: str, proc) -> None:
+    """Watches worker `name`'s pane for EARLY seconds; raises if claude exits or the session ends, the exit with the
+    pane's last REPORT_LINES non-blank lines."""
+    try:
+        for _ in range(round(EARLY / POLL)):
+            time.sleep(POLL)
+            state = tui_claude.status(name, proc=proc)
+            if state is None:
+                raise WorkersError(f"{name}: session ended at once")
+            if state != tui_claude.RUNNING:
+                lines = [x for x in tui_claude.read(name, 2000, proc=proc).splitlines() if x.strip()]
+                raise WorkersError(f"{name}: claude exited {state} at once; its pane's last lines:\n"
+                                   + "\n".join(lines[-REPORT_LINES:]))
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+
+
 def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
-          split_from: str | None = None, split: str | None = None, proc=subprocess.run) -> str:
+          resume: str | None = None, split_from: str | None = None, split: str | None = None,
+          proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
-    `split_from` or `split` replaces tui_claude's automatic placement; it defaults the other. Its status line: core config's
-    status_line."""
+    `resume` (a session id) resumes that session instead of starting a new one. `split_from` or `split` replaces
+    tui_claude's automatic placement; it defaults the other. Its status line: core config's status_line. A claude that
+    exits within EARLY seconds raises, the session kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
+    if resume is not None and not SESSION_ID.fullmatch(resume):
+        raise WorkersError(f"--resume {resume}: not a session id")
+    _refuse(flags)
     status_line = _status_line()
     events, cwd = os.path.abspath(events), os.path.abspath(cwd)
     if not os.path.isdir(cwd):
@@ -73,10 +110,10 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     if claude is None:
         raise WorkersError("claude not found on PATH")
     claude = os.path.abspath(claude)
-    sid = str(uuid.uuid4())
+    pick, sid = ("--session-id", str(uuid.uuid4())) if resume is None else ("--resume", resume)
     child_env = {k: v for k, v in env.items() if k not in STRIP}
     try:
-        tui_claude.start(name, [claude, "--session-id", sid, "--name", name, *flags,
+        tui_claude.start(name, [claude, pick, sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
                          cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, status_line=status_line,
                          proc=proc)
@@ -94,6 +131,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
             except WorkersError:
                 pass
             raise WorkersError(f"{e}; start undone") from e
+    _early(name, proc)
     return sid
 
 
@@ -120,7 +158,7 @@ def _stored(name: str, proc) -> dict:
 
 def restart(name: str, *, proc=subprocess.run) -> str:
     """Respawn worker `name`'s pane resuming its session, its status line as core config's status_line says now; returns
-    the shell string it ran."""
+    the shell string it ran. A claude that exits within EARLY seconds raises (see _early)."""
     _check(name)
     opt = _stored(name, proc)
     status_line = _status_line()
@@ -130,13 +168,15 @@ def restart(name: str, *, proc=subprocess.run) -> str:
         tui_claude.decorate(name, opt["events"], status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()), *resume]
+    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()),
+             f"PWD={opt['cwd']}", *resume]
     cmd = " ".join(shlex.quote(w) for w in words)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
     res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
     if res.returncode != 0:
         raise WorkersError((res.stderr or "").strip() or f"tmux respawn-pane exited {res.returncode}")
+    _early(name, proc)
     return cmd
 
 
@@ -144,7 +184,7 @@ def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
     """The text blocks of worker `name`'s last text-bearing assistant message, joined by newlines."""
     _check(name)
     sid = _option(name, "@sid", proc)
-    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", sid):
+    if not SESSION_ID.fullmatch(sid):
         raise WorkersError(f"{name}: bad session id {sid!r}")
     config = config or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     found = glob.glob(os.path.join(glob.escape(config), "projects", "*", sid + ".jsonl"))
@@ -229,6 +269,7 @@ def main(argv=None) -> int:
     p.add_argument("--events", required=True)
     p.add_argument("--cwd")
     p.add_argument("--prompt")
+    p.add_argument("--resume", metavar="SID", help="a session id")
     p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
@@ -240,7 +281,7 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "start":
             sid = start(a.name, a.events, cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
-                        env=dict(os.environ), split_from=a.split_from, split=a.split, proc=subprocess.run)
+                        env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, proc=subprocess.run)

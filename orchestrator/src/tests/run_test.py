@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import io
 import json
@@ -823,12 +824,15 @@ class Inner(Base):
             with mock.patch.object(drive, "start", return_value=drive.Result(0, drive.Outcome(**DONE))) as start:
                 self.assertEqual(self.inner(extra=extra), 0)
             os.remove(os.path.join(self.rd, writeback.LEDGER))
-            (pos, kw), = start.call_args_list
-            seen.append(([kw.pop(k) for k in ("runner", "layout", "prefix", "events")], pos,
+            ((launch, r, params), kw), = start.call_args_list
+            name = launch.interactive[launch.interactive.index("--name") + 1]
+            seen.append(([kw.pop(k) for k in ("runner", "layout", "events")] + [params.prefix, name],
+                         (dataclasses.replace(launch, interactive=[]), r, dataclasses.replace(params, prefix=None)),
                          [s.__qualname__ for s in kw.pop("sinks")], sorted(kw), self.gql.calls))
         (h_own, *headless), (t_own, *tui) = seen
-        self.assertEqual(h_own, ["headless", None, None, None])
-        self.assertEqual(t_own, ["tui", drive.Layout("below", "dev", "w0t0p0:ABC"), "engineer-TASK-7", "/x/ev.log"])
+        self.assertEqual(h_own, ["headless", None, None, None, f"engineer-build-{SID[:8]}"])
+        self.assertEqual(t_own, ["tui", drive.Layout("below", "dev", "w0t0p0:ABC"), "/x/ev.log", "engineer-TASK-7",
+                                 f"engineer-TASK-7-{SID[:8]}"])
         self.assertEqual(tui, headless)
         self.assertIn(("state", KEY, {"i": UUID, "s": STATES["in_review"]}), headless[-1])
         self.assertFalse(os.path.exists(os.path.join(self.root, "logs", "tui")))

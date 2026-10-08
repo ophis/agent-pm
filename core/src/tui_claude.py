@@ -111,9 +111,9 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
           template: str | None = None, split: str | None = None, split_from: str | None = None, opener: str | None = None,
           status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
-    CHILD_SESSION plus the pane's terminal keys; once it runs, decorate the session (status_line too), then show it.
-    events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover file, never through
-    tmux. Raising, it leaves no session of its own."""
+    CHILD_SESSION, its PWD set to cwd, plus the pane's terminal keys; once it runs, decorate the session (status_line
+    too), then show it. events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover
+    file, never through tmux. Raising, it leaves no session of its own."""
     _name(session)
     if template is None:
         _layout(split, split_from, opener)
@@ -138,8 +138,9 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if state is not None:
             kill(session, proc=proc)
-        handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": os.path.abspath(cwd),
-                    "env": {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, CHILD_SESSION)}}
+        cwd = os.path.abspath(cwd)
+        child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, CHILD_SESSION)}
+        handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": cwd, "env": {**child, "PWD": cwd}}
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)
         cols, rows = shutil.get_terminal_size()

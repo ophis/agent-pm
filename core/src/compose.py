@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
 import repo
+import tui_claude
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
@@ -96,16 +97,25 @@ class RunParams:
     workdir: str
     sid: str | None = None   # None → a new session id
     resume: bool = False
+    prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
 
     def __post_init__(self):
         if self.resume and not self.sid:
             raise ConfigError("--resume needs --sid")
+        if self.prefix is not None and not tui_claude.NAME.fullmatch(self.prefix):
+            raise ConfigError(f"prefix {self.prefix!r}: want {tui_claude.NAME.pattern}")
         if not self.sid:
             object.__setattr__(self, "sid", str(uuid.uuid4()))
 
     @property
     def channel(self) -> str:
         return os.path.join(os.path.abspath(self.workdir), CHANNEL)
+
+
+def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
+    """The name of the tui runner's tmux session for an agent run: `prefix` (default <role>-<task>), then the sid's
+    first 8 characters."""
+    return f"{prefix or f'{role}-{task}'}-{sid[:8]}"
 
 
 def lookup(layer: Mapping, role: str, task: str, key: str):

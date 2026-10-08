@@ -55,7 +55,7 @@ import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema,  # noqa: E402
-                     render, report_command)
+                     render, report_command, tui_session)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
@@ -440,12 +440,6 @@ class Tail:
 TUI_SESSION = re.compile(r"(?P<prefix>[A-Za-z0-9_-]+)-[0-9a-f]{8}")
 
 
-def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
-    """The name of the tui runner's tmux session for an agent run: `prefix` (default <role>-<task>), then the sid's
-    first 8 characters."""
-    return f"{prefix or f'{role}-{task}'}-{sid[:8]}"
-
-
 def driver_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
     """The name of a detached driver's tmux session (drive.py --detach): tui_session's, then `-drive`, so never a
     TUI_SESSION."""
@@ -481,7 +475,7 @@ class Headless:
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
+                 events: str | None = None, status_line: bool = False):
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
@@ -531,9 +525,9 @@ class Tui:
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 prefix: str | None = None, events: str | None = None, status_line: bool = False):
+                 events: str | None = None, status_line: bool = False):
         self.run, self.layout, self.events, self.status_line = run, layout or Layout(), events, status_line
-        self.name = tui_session(run.role, run.task, params.sid, prefix)
+        self.name = tui_session(run.role, run.task, params.sid, params.prefix)
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started, self.since = False, 0.0
 
@@ -629,8 +623,6 @@ def check_naming(runner: str, prefix: str | None, events: str | None) -> None:
         for what, value in (("prefix", prefix), ("events", events)):
             if value is not None:
                 raise ConfigError(f"the headless runner takes no {what}")
-    if prefix is not None and not tui_claude.NAME.fullmatch(prefix):
-        raise ConfigError(f"prefix {prefix!r}: want {tui_claude.NAME.pattern}")
 
 
 def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.run) -> Layout:
@@ -680,7 +672,7 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
 
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
-          layout: Layout | None = None, prefix: str | None = None, events: str | None = None,
+          layout: Layout | None = None, events: str | None = None,
           sinks: Sequence[Sink] | None = None, begun: Callable[[], None] | None = None,
           popen=subprocess.Popen) -> Result:
     """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its host's
@@ -688,15 +680,15 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. The Record holds the session, its progress and the checked outcome; `begun` is called once
     its first write is done, before the host starts. A done or failed new run whose task marks `start` but never reported it gets a stderr line
-    and a `missing` event first. The tui runner names its session `prefix` (default <role>-<task>) and sid, and
-    appends its state events to the `events` file. Raises ConfigError, before anything starts, when the client lacks
-    the runner's command or the layout, prefix or events is one the runner can't take (check_layout, check_naming);
-    a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
+    and a `missing` event first. The tui runner names its session tui_session(…, params.prefix) and appends its state
+    events to the `events` file. Raises ConfigError, before anything starts, when the client lacks the runner's command
+    or the layout, params.prefix or events is one the runner can't take (check_layout, check_naming); a RunnerError
+    stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
-    check_naming(runner, prefix, events)
-    host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout, prefix=prefix,
-                           events=events, status_line=launch.status_line)
+    check_naming(runner, params.prefix, events)
+    host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout, events=events,
+                           status_line=launch.status_line)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
     sinks = [terminal()] if sinks is None else sinks
@@ -845,11 +837,11 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         if client.runs:
             if a.input is None or a.out is None or a.workdir is None:
                 raise ConfigError(f"client {name!r} needs --input, --out and --workdir")
-            params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume)
+            params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume, prefix=a.prefix)
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
             cmd = command(launch, a.runner, client)
             check_layout(a.runner, layout)
-            driver = driver_session(run.role, run.task, params.sid, a.prefix)
+            driver = driver_session(run.role, run.task, params.sid, params.prefix)
             if a.detach and not tui_claude.NAME.fullmatch(driver):
                 raise ConfigError(f"driver session {driver!r}: want {tui_claude.NAME.pattern}")
         else:
@@ -873,7 +865,7 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         return 0, None
     if a.detach:
         return _detach(a, run, params, driver, proc), None
-    result = start(launch, run, params, client=client, runner=a.runner, layout=layout, prefix=a.prefix,
+    result = start(launch, run, params, client=client, runner=a.runner, layout=layout,
                    events=a.events if a.runner == "tui" else None, popen=popen)
     if result.outcome is None:
         print(f"drive.py: {result.error}", file=sys.stderr)
@@ -907,7 +899,7 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
         return 3
     print(f"drive.py: driver session {driver}: {tui_claude.attach_command(driver)}", file=sys.stderr)
     if a.runner == "tui":
-        tui = tui_session(run.role, run.task, params.sid, a.prefix)
+        tui = tui_session(run.role, run.task, params.sid, params.prefix)
         print(f"drive.py: tui session {tui}: {tui_claude.attach_command(tui)}", file=sys.stderr)
     return 0
 
