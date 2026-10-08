@@ -157,8 +157,9 @@ def _stored(name: str, proc) -> dict:
 
 
 def restart(name: str, *, proc=subprocess.run) -> str:
-    """Respawn worker `name`'s pane resuming its session, its status line as core config's status_line says now; returns
-    the shell string it ran. A claude that exits within EARLY seconds raises (see _early)."""
+    """Clear worker `name`'s pane history, then respawn the pane resuming its session, its status line as core config's
+    status_line says now; returns the shell string it ran. A claude that exits within EARLY seconds raises (see
+    _early)."""
     _check(name)
     opt = _stored(name, proc)
     status_line = _status_line()
@@ -173,6 +174,9 @@ def restart(name: str, *, proc=subprocess.run) -> str:
     cmd = " ".join(shlex.quote(w) for w in words)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
+    res = _run(proc, ["tmux", "clear-history", "-t", f"={name}:"])
+    if res.returncode != 0:
+        raise WorkersError((res.stderr or "").strip() or f"tmux clear-history exited {res.returncode}")
     res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
     if res.returncode != 0:
         raise WorkersError((res.stderr or "").strip() or f"tmux respawn-pane exited {res.returncode}")
