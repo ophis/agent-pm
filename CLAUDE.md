@@ -45,7 +45,7 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 
 - This file never loads in an agent run outside a trusted cwd (README › Install; core/CLAUDE.md › An agent run's command). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `router_test.py` pins the tmux argv.
-- Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line (`compose_test.py` checks): without it write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
+- Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`compose_test.py` checks): without the start line write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts or skills; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
