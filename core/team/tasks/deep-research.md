@@ -24,35 +24,19 @@ Run research workflows, then write a verified report. These steps, not the workf
      [agent-pm-progress:round] the round and its agent count against its cap
 6. **Failure.** Never retry or replace a run. Usable findings (supported refutations count) → report. None → `failed`, stop.
 7. **Report** (Researcher › Standards). Revising a Light Research report (its `Light Research.` line marks it, in any language) → drop that line.
-8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents with a `started` entry in its `<session>/subagents/workflows/<runId>/journal.jsonl` (`<runId>` and `<session>` from that round's Workflow result: `Run ID: <runId>`, `Script file: <session>/workflows/scripts/…`); for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 (deep-research method) or the budget's cap (ultracode method).
+8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards); for local or mixed, one line per round run: `<round>: <n>/<cap> agents`; a braked round: `<round>: skipped` with the gate's output, `<n>` the distinct agents that round's run records (beside its Script file) show as started; for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 (deep-research method) or the budget's cap (ultracode method).
 
 ## Resume
 
-The prompt starts "Resumed agent run" → re-read the input (it may have changed) and reuse everything this session produced. This overrides steps 5–6: run only what's missing.
+The prompt starts "Resumed agent run" → re-read the input (it may have changed). Do only what is missing; never redo finished work.
 
-**Web.** Never call the Workflow again (except 3a), write or run no other workflow, and skip `resumeFromRunId` (it re-runs nearly everything).
+- **What finished**: each Workflow call this session reported a Run ID and a Script file; that run's records (its status, each agent's result) sit in this session's directory beside the script. A round is completed only if its records say so.
+- **Limits stand**: the budget reported this session binds: no new round, no higher cap. A re-run that fills a gap replaces its agent, uncounted. A brake-skipped round stays skipped; a planned round never started brakes first if it is second; finishing an interrupted round needs no brake.
+- **Each round**:
+  - Completed → use its result as is; give each claim left unverified (< 2 valid votes) 3 fresh votes.
+  - Interrupted ultracode round → call the Workflow with its Script file as `scriptPath`, the same `args` and its Run ID as `resumeFromRunId`.
+  - Interrupted `/deep-research` round → never pass `resumeFromRunId` (it re-runs nearly everything). Stopped before its search finished → call it once more with the same `args`. Otherwise finish only its missing fetch and verify work with Agent calls (≤ 10 at a time), reusing every result that came back, by the script's own prompts and limits.
+  - Never started → step 5.
+- **Same standards**: step 5's voting rule and privacy filter apply to every re-run; local or mixed prepares again first.
 
-This session's latest Workflow result prints `Run ID: wf_…` and `Script file: <session>/workflows/scripts/…`. Under `<session>`:
-- `workflows/<runId>.json`, one line, read with `jq`: `status`, and `result` with `findings` (empty if synthesis failed), `confirmed`, `refuted`, `unverified` and `sources`.
-- `subagents/workflows/<runId>/journal.jsonl`, large, read with `jq` projections: each agent's `started` (agentId, phase), `result` and `failed`.
-- `subagents/workflows/<runId>/agent-<id>.jsonl`: line 1 holds its prompt (`head -1 … | jq -r .message.content`: a header, then the prompt indented 2 spaces); `agent-<id>.meta.json` has its `workflowPhase`. Find a claim's votes with `grep -lF -f <file holding the claim> agent-*.jsonl`, keeping `Verify` agents.
-
-1. No Workflow call this session → step 5.
-2. **Completed** (`status` `completed`): the result stands; don't re-fetch. Use `findings`, plus claims the re-votes confirm: each `unverified` claim (< 2 valid votes) gets 3 fresh votes with its original vote prompt, only the voter number changed.
-3. **Killed** (no completed json): continue the pipeline where it stopped, by the `Script file:`'s rules and prompts (`FETCH_PROMPT`, `VERIFY_PROMPT`, URL dedup, `MAX_FETCH`, claim ranking by importance then source quality, `MAX_VERIFY_CLAIMS`, 3 votes per claim):
-   a. A Search agent without a result → call the Workflow once more with the same `args`.
-   b. Fetch: reuse results; run the rest, up to `MAX_FETCH`.
-   c. Verify: select claims as the script does from all Fetch claims. One with ≥ 2 valid votes keeps them (find its vote agents by claim text and source as above, the claim's quote and control characters stripped and whitespace collapsed as in the prompts; read `refuted` from the journal by agentId); every other gets 3 fresh votes.
-4. A re-run is one Agent call with the prompt (header removed, dedented), ending "Reply with only JSON: {refuted, evidence, confidence}" for a vote, or with the script's fetch fields; ≤ 10 at a time.
-5. Votes: ≥ 2 refutes → refuted; else ≥ 2 valid → confirmed; else unverified.
-6. Reuse what earlier resumes got back.
-7. No `findings` → merge the confirmed claims yourself.
-
-**Local or mixed.** The budget reported this session binds: no new round, no higher cap; a re-run filling a gap replaces its agent, uncounted. Identify each round by its own Workflow call, never by the latest result.
-1. No Workflow call this session → step 5.
-2. Prepare again (Researcher › Type and target).
-3. ultracode round completed → use its result. Interrupted or failed → call the Workflow with its `Script file:` as `scriptPath`, the same `args` and its Run ID as `resumeFromRunId`.
-4. A started `/deep-research` round → Web checks 2–7, for that round only.
-5. A planned round never started → step 5, braking first if it is second. A brake-skipped round stays skipped; finishing an interrupted one needs no brake.
-
-**Then** finish what's missing of steps 7–8. Nothing usable → `failed`.
+Then steps 7–8. Nothing usable → `failed`.
