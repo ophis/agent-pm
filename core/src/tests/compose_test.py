@@ -572,7 +572,7 @@ class RealCore(unittest.TestCase):
         both = ["worktree", "status"]
         self.assertEqual(found, {"deep-research": ["worktree"], "light-research": ["worktree"],
                                  "product-design": ["worktree"], "build": both, "light-build": both,
-                                 "echo": ["worktree"], "prepare-test": ["worktree"]})
+                                 "echo": []})
 
     def test_every_repo_named_by_url_may_be_a_local_clone_path(self):
         named = []
@@ -582,8 +582,7 @@ class RealCore(unittest.TestCase):
                 named.append(task)
                 self.assertEqual(prompt.count("repo URL"),
                                  len(re.findall(r"repo URLs? or local clone paths?", prompt)), task)
-        self.assertEqual(sorted(named), ["build", "deep-research", "echo", "light-build", "light-research",
-                                         "prepare-test", "product-design"])
+        self.assertEqual(sorted(named), ["build", "deep-research", "light-build", "light-research", "product-design"])
 
     def test_builds_fail_without_push_permission(self):
         for task in ("build", "light-build"):

@@ -125,11 +125,6 @@ default_task = "echo"
 tier = 4
 effort = "low"
 
-[roles.dummy-tester.tasks.prepare-test]
-tier = 4
-effort = "low"
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-
 # ── Clients ─────────────────────────────────────────────
 # [clients.<name>], global only: a client's data, plus run keys in the layout above.
 # Claude Code, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
@@ -181,7 +176,4 @@ type = "orchestrator"
 
 # ── Dummy Tester ───────────────────────────────────────
 [clients.skill.roles.dummy-tester.tasks.echo.output]
-type = "orchestrator"
-
-[clients.skill.roles.dummy-tester.tasks.prepare-test.output]
 type = "orchestrator"

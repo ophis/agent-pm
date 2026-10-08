@@ -521,7 +521,7 @@ class Skill(Base):
 
     def test_every_task_renders(self):
         for role, task in (("researcher", "deep-research"), ("pm", "product-design"), ("engineer", "build"),
-                           ("engineer", "light-build"), ("dummy-tester", "echo"), ("dummy-tester", "prepare-test")):
+                           ("engineer", "light-build"), ("dummy-tester", "echo")):
             self.assertNotIn("{{", self.text(role, task))
 
     def test_main_prints_the_prompt_and_runs_nothing(self):
