@@ -64,10 +64,10 @@ def local(case, text):
 
 class Fake:
     """Records proc calls; `new_err` makes new-session fail; `results` maps a tmux command to a function of the argv
-    giving its stdout. On new-session it reads the handover file tui_claude wrote and unlinks it as the pane's wrapper
-    would. A session's pane status (display-message), in `panes`, is empty (no session) until new-session or
-    respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers `history` (until
-    a clear-history, which fails with `clear_err`) then `text`."""
+    giving its stdout. On new-session or respawn-pane it reads the handover file tui_claude wrote and unlinks it as the
+    pane's wrapper would. A session's pane status (display-message), in `panes`, is empty (no session) until
+    new-session or respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers
+    `history` (until a clear-history, which fails with `clear_err`) then `text`."""
 
     def __init__(self, new_err="", results=None):
         self.new_err, self.results = new_err, results or {}
@@ -94,8 +94,12 @@ class Fake:
                 return subprocess.CompletedProcess(argv, 1, "", self.clear_err)
             self.history = ""
         if argv[1] == "respawn-pane":
+            if self.respawn_rc:
+                return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
+            with open(argv[-1]) as f:
+                self.handover = json.load(f)
+            os.unlink(argv[-1])
             self.panes[argv[4][1:-1]] = self.spawned
-            return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
         if argv[1] == "new-session":
             path = argv[argv.index(";") - 1]
             with open(path) as f:
@@ -234,12 +238,11 @@ class StartTest(unittest.TestCase):
         fake = Fake()
         sid = self.start(fake, flags=("--model", "m"), prompt="p")
         opts = fake.options()
-        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@claude", "@env", "@flags", "status"})
+        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@claude", "@flags", "status"})
         self.assertEqual(opts["@sid"], sid)
         self.assertEqual(opts["@cwd"], self.dir)
         self.assertEqual(opts["@events"], self.events)
         self.assertEqual(opts["@claude"], self.claude)
-        self.assertEqual(json.loads(opts["@env"]), {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg"})
         self.assertEqual(json.loads(opts["@flags"]), ["--model", "m"])
         for c in fake.calls:
             if c[1] == "set-option" and c[2] == "-t":
@@ -256,7 +259,7 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.calls[at + len(want)][:5], ["tmux", "set-option", "-t", "=w1:", "@sid"])
 
     def test_option_failure_kills_session(self):
-        for fail in ("@sid", "@env", "@flags"):
+        for fail in ("@sid", "@flags"):
             fake = Fake()
             fake.fail_set = fail
             with self.assertRaisesRegex(workers.WorkersError, "set boom.*undone", msg=fail):
@@ -271,12 +274,6 @@ class StartTest(unittest.TestCase):
                 self.start(fake)
             self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
             self.assertNotIn("@sid", fake.options())
-
-    def test_env_without_config_dir(self):
-        del self.env["CLAUDE_CONFIG_DIR"]
-        fake = Fake()
-        self.start(fake)
-        self.assertEqual(json.loads(fake.options()["@env"]), {"PATH": self.bin})
 
     def test_events_file(self):
         self.start(Fake())
@@ -470,7 +467,7 @@ class EarlyDeathTest(WorkerCase):
             self.sleep.reset_mock()
         setup(fake)
         with self.assertRaises(workers.WorkersError) as cm:
-            self.started(fake) if run == "start" else workers.restart("w1", proc=fake)
+            self.started(fake) if run == "start" else workers.restart("w1", env=self.env, proc=fake)
         return str(cm.exception)
 
     def capture(self):
@@ -490,7 +487,7 @@ class EarlyDeathTest(WorkerCase):
         self.started(fake)
         self.sleep.reset_mock()
         self.interleaved(fake)
-        workers.restart("w1", proc=fake)
+        workers.restart("w1", env=self.env, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
         self.assertEqual(fake.calls[at + 1:], [["sleep", 0.5], status_call()] * 10)
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
@@ -574,28 +571,35 @@ class EarlyDeathTest(WorkerCase):
 
 
 class RestartTest(WorkerCase):
-    def test_argv_and_cmd(self):
+    def test_respawns_through_the_handover(self):
         fake = Fake()
         sid = self.started(fake)
-        cmd = workers.restart("w1", proc=fake)
+        cmd = workers.restart("w1", env=self.env, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
-        self.assertEqual(fake.calls[at], ["tmux", "respawn-pane", "-k", "-t", "=w1:", "-c", self.dir, cmd])
+        self.assertEqual(fake.calls[at][:-1], ["tmux", "respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c",
+                                               tui_claude.EXEC])
         self.assertEqual(fake.kwargs[at]["stdin"], subprocess.DEVNULL)
-        unset = [w for v in workers.STRIP for w in ("-u", v)]
         resumed = tui_claude.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
-        self.assertEqual(shlex.split(cmd), ["env", *unset, f"PATH={self.env['PATH']}",
-                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", f"PWD={self.dir}",
-                                            *resumed])
         self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
+        self.assertEqual(fake.handover, {"argv": resumed, "cwd": self.dir, "env": {**self.env, "PWD": self.dir}})
+        self.assertEqual(shlex.split(cmd), resumed)
+
+    def test_env_is_the_callers_minus_strip(self):
+        fake = Fake()
+        self.started(fake)
+        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in workers.STRIP}}
+        workers.restart("w1", env=caller, proc=fake)
+        self.assertEqual(fake.handover["env"], {"PATH": self.bin, "FOO": "1", "PWD": self.dir})
         for k in ("CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
-            self.assertIn(f"-u {k} ", cmd)
+            self.assertIn(k, workers.STRIP)
 
     def test_own_settings_merged_with_the_hooks(self):
         own = {"type": "command", "command": "mine"}
         flags = ("--settings", json.dumps({"model": "x", "hooks": {"Stop": [{"hooks": [own]}]}}))
         fake = Fake()
         self.started(fake, flags=flags)
-        words = shlex.split(workers.restart("w1", proc=fake))
+        workers.restart("w1", env=self.env, proc=fake)
+        words = fake.handover["argv"]
         self.assertEqual(words.count("--settings"), 1)
         settings = json.loads(words[words.index("--settings") + 1])
         ours = json.loads(tui_claude.hooks(self.events))["hooks"]
@@ -608,14 +612,14 @@ class RestartTest(WorkerCase):
         self.started(fake)
         fake.store["@flags"] = json.dumps(["--settings", "[]"])
         with self.assertRaisesRegex(workers.WorkersError, "--settings"):
-            workers.restart("w1", proc=fake)
+            workers.restart("w1", env=self.env, proc=fake)
         self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
     def test_redecorates_and_clears_state_and_history_before_respawn(self):
         fake = Fake()
         self.started(fake)
         n = len(fake.calls)
-        workers.restart("w1", proc=fake)
+        workers.restart("w1", env=self.env, proc=fake)
         tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
         self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""],
                                      ["tmux", "clear-history", "-t", "=w1:"]])
@@ -626,7 +630,7 @@ class RestartTest(WorkerCase):
         self.started(fake)
         local(self, "status_line = true\n")
         n = len(fake.calls)
-        workers.restart("w1", proc=fake)
+        workers.restart("w1", env=self.env, proc=fake)
         tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
         self.assertEqual(tail[:-3], decorate_calls(self.events, status_line=True))
 
@@ -635,7 +639,7 @@ class RestartTest(WorkerCase):
         self.started(fake)
         fake.fail_set = "pane-died"
         with self.assertRaisesRegex(workers.WorkersError, "set boom"):
-            workers.restart("w1", proc=fake)
+            workers.restart("w1", env=self.env, proc=fake)
         self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
     def test_clear_history_failure_no_respawn(self):
@@ -643,7 +647,7 @@ class RestartTest(WorkerCase):
         self.started(fake)
         fake.clear_err = "can't find pane\n"
         with self.assertRaisesRegex(workers.WorkersError, "can't find pane"):
-            workers.restart("w1", proc=fake)
+            workers.restart("w1", env=self.env, proc=fake)
         self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
     def test_prints_cmd_to_stderr(self):
@@ -651,24 +655,23 @@ class RestartTest(WorkerCase):
         self.started(fake)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            cmd = workers.restart("w1", proc=fake)
+            cmd = workers.restart("w1", env=self.env, proc=fake)
         self.assertEqual(err.getvalue(), cmd + "\n")
 
     def test_not_a_worker(self):
         fake = Fake()
         with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
-            workers.restart("w1", proc=fake)
+            workers.restart("w1", env=self.env, proc=fake)
         self.assertEqual([c[1] for c in fake.calls if c[1] == "respawn-pane"], [])
 
     def test_corrupt_options_not_a_worker(self):
-        for key, bad in (("@env", ""), ("@env", "{"), ("@env", "[]"), ("@env", '{"PATH": 1}'),
-                         ("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
+        for key, bad in (("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
                          ("@sid", ""), ("@claude", ""), ("@cwd", ""), ("@events", "")):
             fake = Fake()
             self.started(fake)
             fake.store[key] = bad
             with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker", msg=f"{key}={bad!r}"):
-                workers.restart("w1", proc=fake)
+                workers.restart("w1", env=self.env, proc=fake)
             self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
 
     def test_oserror_from_proc(self):
@@ -676,12 +679,12 @@ class RestartTest(WorkerCase):
         self.started(fake)
         fake.oserror = lambda argv: argv[1] == "respawn-pane"
         with self.assertRaises(workers.WorkersError):
-            workers.restart("w1", proc=fake)
+            workers.restart("w1", env=self.env, proc=fake)
 
     def test_bad_name(self):
         fake = Fake()
         with self.assertRaises(workers.WorkersError):
-            workers.restart("a b", proc=fake)
+            workers.restart("a b", env=self.env, proc=fake)
         self.assertEqual(fake.calls, [])
 
     def test_respawn_failure(self):
@@ -689,15 +692,7 @@ class RestartTest(WorkerCase):
         self.started(fake)
         fake.respawn_rc, fake.respawn_err = 1, "can't find pane\n"
         with self.assertRaisesRegex(workers.WorkersError, "can't find pane"):
-            workers.restart("w1", proc=fake)
-
-    def test_no_config_dir(self):
-        del self.env["CLAUDE_CONFIG_DIR"]
-        fake = Fake()
-        self.started(fake, flags=())
-        cmd = workers.restart("w1", proc=fake)
-        self.assertNotIn("CLAUDE_CONFIG_DIR", cmd)
-        self.assertIn(tui_claude.hooks(self.events), shlex.split(cmd))
+            workers.restart("w1", env=self.env, proc=fake)
 
 
 def line(kind, *blocks, mid=None):
@@ -891,9 +886,11 @@ class MainTest(WorkerCase):
     def test_restart(self):
         fake = Fake()
         self.started(fake)
+        self.env["FOO"] = "the caller's"
         rc, out, err = self.run_main(["restart", "w1"], fake)
         self.assertEqual((rc, out), (0, ""))
         self.assertIn("--resume", err)
+        self.assertEqual(fake.handover["env"]["FOO"], "the caller's")
 
     def test_reply(self):
         fake = Fake()

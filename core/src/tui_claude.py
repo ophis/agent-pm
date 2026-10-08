@@ -118,11 +118,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     _name(session)
     if template is None:
         _layout(split, split_from, opener)
-    if not argv:
-        raise TuiError("no command")
-    exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
-    if exe is None:
-        raise TuiError(f"command not found: {argv[0]}")
+    argv = _command(argv, env)
     if events is not None:
         events = events_file(events)
     argv = with_hooks(argv, events)
@@ -130,35 +126,23 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
-        path = os.path.join(tmp, "handover.json")
-        for arg in (sys.executable, path):
-            if "#" in arg or arg.endswith(";"):
-                raise TuiError(f"tmux would misread {arg!r}")
+        path, wrapper = _wrapper(tmp)
         state = status(session, proc=proc)
         if state == RUNNING:
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if state is not None:
             kill(session, proc=proc)
-        cwd = os.path.abspath(cwd)
-        child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, *PARENT_KEYS)}
-        handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": cwd, "env": {**child, "PWD": cwd}}
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
-            json.dump(handover, f)
+        _handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
         # a session may run from here on, even when the tmux call fails (new-session ran, set-option didn't)
         may_run = True
-        res = _tmux(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows),
-                     sys.executable, "-I", "-c", EXEC, path,
+        res = _tmux(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows), *wrapper,
                      ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on"], proc)
         if res.returncode:
             if _err(res).startswith("duplicate session:"):   # another start took the name: not ours to kill
                 may_run = False
             raise TuiError(f"tmux: {_err(res)}")
-        for _ in range(round(HANDOVER_TIMEOUT / POLL)):
-            if not os.path.exists(path):
-                break
-            sleep(POLL)
-        if os.path.exists(path):
+        if not _taken(path, sleep):
             raise TuiError("the session did not start")
         decorate(session, events, status_line=status_line, proc=proc)
         show(session, template, split=split, split_from=split_from, opener=opener, proc=proc)
@@ -171,6 +155,65 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
+
+
+def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], proc=subprocess.run,
+            sleep=time.sleep) -> None:
+    """Run argv in the session's pane in place of its command (respawn-pane -k), handed over as start hands over its
+    command: in cwd with env minus PARENT_KEYS, its PWD set to cwd, plus the pane's terminal keys. Returns once it
+    runs."""
+    _name(session)
+    argv = _command(argv, env)
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp()
+        path, wrapper = _wrapper(tmp)
+        _handover(path, argv, cwd, env)
+        _tmux_ok(["respawn-pane", "-k", "-t", f"={session}:", *wrapper], proc)
+        if not _taken(path, sleep):
+            raise TuiError("the pane did not respawn")
+    except OSError as e:
+        raise TuiError(f"handover: {e}") from e
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _command(argv: list[str], env: dict[str, str]) -> list[str]:
+    """argv with argv[0] resolved on env's PATH, made absolute."""
+    if not argv:
+        raise TuiError("no command")
+    exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
+    if exe is None:
+        raise TuiError(f"command not found: {argv[0]}")
+    return [os.path.abspath(exe), *argv[1:]]
+
+
+def _wrapper(tmp: str) -> tuple[str, list[str]]:
+    """The handover file's path in tmp, and the pane command running EXEC on it."""
+    path = os.path.join(tmp, "handover.json")
+    for arg in (sys.executable, path):
+        if "#" in arg or arg.endswith(";"):
+            raise TuiError(f"tmux would misread {arg!r}")
+    return path, [sys.executable, "-I", "-c", EXEC, path]
+
+
+def _handover(path: str, argv: list[str], cwd: str, env: dict[str, str]) -> None:
+    """Writes the 0600 handover file at path: argv, cwd made absolute, and env minus TERMINAL_KEYS and PARENT_KEYS with
+    PWD set to cwd."""
+    cwd = os.path.abspath(cwd)
+    child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, *PARENT_KEYS)}
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        json.dump({"argv": argv, "cwd": cwd, "env": {**child, "PWD": cwd}}, f)
+
+
+def _taken(path: str, sleep) -> bool:
+    """Whether the wrapper takes (unlinks) the handover file within HANDOVER_TIMEOUT."""
+    for _ in range(round(HANDOVER_TIMEOUT / POLL)):
+        if not os.path.exists(path):
+            return True
+        sleep(POLL)
+    return not os.path.exists(path)
 
 
 def hooks(events: str | None = None) -> str:
