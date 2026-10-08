@@ -5,11 +5,11 @@ An unattended pipeline that runs role agents on tasks, split into a core pack th
 ## Language
 
 **Role**:
-A persona with standards and boundaries (researcher, pm, engineer), defined by a charter plus config.
+A persona with standards and boundaries (researcher, pm, engineer, dummy-tester), defined by a charter plus config.
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, light research, product design, build, light build), defined by steps plus run config.
+One job a role can do (deep research, light research, product design, build, light build, echo), defined by steps plus run config.
 _Avoid_: skill, job
 
 **Principles**:
@@ -43,7 +43,7 @@ _Avoid_: runtime, backend, vehicle
 How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up, the session left open).
 
 **Attended run**:
-An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input, write-back and lock as an unattended agent run. Its TUI session outlives it and is closed by the issue's next agent run or by prune.
+An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run. Its TUI session outlives it and is closed by the issue's next agent run or by prune.
 
 **Destination**:
 Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.

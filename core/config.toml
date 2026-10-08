@@ -13,7 +13,7 @@
 #   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
 #   show            local: tui runner only: how the agent run's TUI window opens.
-#                   unset        → split the current pane (iTerm2, else tmux)
+#                   unset        → open a pane, stacked by caller (core/CLAUDE.md › Rules: the built-in show)
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory
@@ -52,7 +52,7 @@ type = "local"
 # Roles: [roles.<role>] and its tasks, [roles.<role>.tasks.<task>].
 #   default_task  role only: the task run when none is named; unset → one must be named
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
-#   read          extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/
+#   read          extra dirs the agent run reads; `repo` is drive.py's --repo dir, {{methods}} core's team/methods/
 #                 dir. Read-only by the prompt only: no deny rules. unset → none
 #   write         extra dirs the agent run writes; the workdir is always reachable; unset → none
 #   commands      shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any
