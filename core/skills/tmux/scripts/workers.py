@@ -146,7 +146,8 @@ def restart(name: str, *, proc=subprocess.run) -> str:
         tui_claude.decorate(name, opt["events"], status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()), *resume]
+    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()),
+             f"PWD={opt['cwd']}", *resume]
     cmd = " ".join(shlex.quote(w) for w in words)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)

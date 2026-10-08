@@ -189,6 +189,11 @@ class StartTest(unittest.TestCase):
                          {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h"})
         self.assertIn("CLAUDECODE", self.env)
 
+    def test_pwd_in_the_handover_is_the_cwd(self):
+        fake = Fake()
+        self.start(fake, env={**self.env, "PWD": "/elsewhere"})
+        self.assertEqual(fake.handover["env"]["PWD"], self.dir)
+
     def test_relative_cwd_made_absolute(self):
         fake = Fake()
         old = os.getcwd()
@@ -422,7 +427,8 @@ class RestartTest(WorkerCase):
         unset = [w for v in workers.STRIP for w in ("-u", v)]
         resumed = tui_claude.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
         self.assertEqual(shlex.split(cmd), ["env", *unset, f"PATH={self.env['PATH']}",
-                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", *resumed])
+                                            f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", f"PWD={self.dir}",
+                                            *resumed])
         self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
 
     def test_own_settings_merged_with_the_hooks(self):
