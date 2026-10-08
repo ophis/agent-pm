@@ -67,7 +67,8 @@ class Fake:
     giving its stdout. On new-session or respawn-pane it reads the handover file tui_claude wrote and unlinks it as the
     pane's wrapper would. A session's pane status (display-message), in `panes`, is empty (no session) until
     new-session or respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers
-    `history` (until a clear-history, which fails with `clear_err`) then `text`."""
+    `history` (until a clear-history, which fails with `clear_err`) then `text`. Until a respawn-pane, every call first
+    adds `late` to `history`: what the old run prints meanwhile. A clear-history stops a sequence (`;`) as it fails."""
 
     def __init__(self, new_err="", results=None):
         self.new_err, self.results = new_err, results or {}
@@ -75,10 +76,12 @@ class Fake:
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
         self.fail_set, self.oserror, self.handover = None, None, None
         self.panes, self.spawned, self.text, self.history, self.clear_err = {}, RUNNING_PANE, "", "", ""
+        self.late = ""
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         self.kwargs.append(kw)
+        self.history += self.late
         if self.oserror and self.oserror(argv):
             raise OSError(2, "No such file or directory")
         if argv[1] in ("set-option", "set-hook") and self.fail_set in argv:
@@ -93,13 +96,14 @@ class Fake:
             if self.clear_err:
                 return subprocess.CompletedProcess(argv, 1, "", self.clear_err)
             self.history = ""
-        if argv[1] == "respawn-pane":
+        if "respawn-pane" in argv:
             if self.respawn_rc:
                 return subprocess.CompletedProcess(argv, self.respawn_rc, "", self.respawn_err)
             with open(argv[-1]) as f:
                 self.handover = json.load(f)
             os.unlink(argv[-1])
-            self.panes[argv[4][1:-1]] = self.spawned
+            self.panes[argv[argv.index("respawn-pane") + 3][1:-1]] = self.spawned
+            self.late = ""
         if argv[1] == "new-session":
             path = argv[argv.index(";") - 1]
             with open(path) as f:
@@ -115,6 +119,9 @@ class Fake:
         if argv[1] in self.results:
             return subprocess.CompletedProcess(argv, 0, self.results[argv[1]](argv), "")
         return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def respawns(self):
+        return [c for c in self.calls if "respawn-pane" in c]
 
     def new_sessions(self):
         return [c for c in self.calls if c[:2] == ["tmux", "new-session"]]
@@ -488,7 +495,7 @@ class EarlyDeathTest(WorkerCase):
         self.sleep.reset_mock()
         self.interleaved(fake)
         workers.restart("w1", env=self.env, proc=fake)
-        at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
+        at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
         self.assertEqual(fake.calls[at + 1:], [["sleep", 0.5], status_call()] * 10)
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
 
@@ -530,7 +537,7 @@ class EarlyDeathTest(WorkerCase):
 
     def test_restart_report_shows_no_earlier_run(self):
         def setup(fake):
-            fake.history = "an earlier run's line\n"
+            fake.history, fake.late = "an earlier run's line\n", "a line the earlier run printed late\n"
             self.dead(fake)
         self.assertEqual(self.attempt("restart", Fake(), setup), DEAD_MSG)
 
@@ -575,9 +582,9 @@ class RestartTest(WorkerCase):
         fake = Fake()
         sid = self.started(fake)
         cmd = workers.restart("w1", env=self.env, proc=fake)
-        at = max(i for i, c in enumerate(fake.calls) if c[1] == "respawn-pane")
-        self.assertEqual(fake.calls[at][:-1], ["tmux", "respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c",
-                                               tui_claude.EXEC])
+        at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
+        respawn = fake.calls[at][fake.calls[at].index("respawn-pane"):-1]
+        self.assertEqual(respawn, ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tui_claude.EXEC])
         self.assertEqual(fake.kwargs[at]["stdin"], subprocess.DEVNULL)
         resumed = tui_claude.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
         self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
@@ -613,17 +620,16 @@ class RestartTest(WorkerCase):
         fake.store["@flags"] = json.dumps(["--settings", "[]"])
         with self.assertRaisesRegex(workers.WorkersError, "--settings"):
             workers.restart("w1", env=self.env, proc=fake)
-        self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
+        self.assertEqual(fake.respawns(), [])
 
-    def test_redecorates_and_clears_state_and_history_before_respawn(self):
+    def test_redecorates_and_clears_state_then_clears_history_in_the_respawns_tmux_command(self):
         fake = Fake()
         self.started(fake)
         n = len(fake.calls)
         workers.restart("w1", env=self.env, proc=fake)
         tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
-        self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""],
-                                     ["tmux", "clear-history", "-t", "=w1:"]])
-        self.assertEqual(tail[-1][1], "respawn-pane")
+        self.assertEqual(tail[:-1], [*decorate_calls(self.events), ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
+        self.assertEqual(tail[-1][:6], ["tmux", "clear-history", "-t", "=w1:", ";", "respawn-pane"])
 
     def test_redecorates_with_the_status_line_core_config_now_has(self):
         fake = Fake()
@@ -632,7 +638,7 @@ class RestartTest(WorkerCase):
         n = len(fake.calls)
         workers.restart("w1", env=self.env, proc=fake)
         tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
-        self.assertEqual(tail[:-3], decorate_calls(self.events, status_line=True))
+        self.assertEqual(tail[:-2], decorate_calls(self.events, status_line=True))
 
     def test_decoration_failure_no_respawn(self):
         fake = Fake()
@@ -640,15 +646,15 @@ class RestartTest(WorkerCase):
         fake.fail_set = "pane-died"
         with self.assertRaisesRegex(workers.WorkersError, "set boom"):
             workers.restart("w1", env=self.env, proc=fake)
-        self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
+        self.assertEqual(fake.respawns(), [])
 
     def test_clear_history_failure_no_respawn(self):
         fake = Fake()
         self.started(fake)
-        fake.clear_err = "can't find pane\n"
+        fake.clear_err, fake.handover = "can't find pane\n", None
         with self.assertRaisesRegex(workers.WorkersError, "can't find pane"):
             workers.restart("w1", env=self.env, proc=fake)
-        self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
+        self.assertIsNone(fake.handover)
 
     def test_prints_cmd_to_stderr(self):
         fake = Fake()
@@ -662,7 +668,7 @@ class RestartTest(WorkerCase):
         fake = Fake()
         with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
             workers.restart("w1", env=self.env, proc=fake)
-        self.assertEqual([c[1] for c in fake.calls if c[1] == "respawn-pane"], [])
+        self.assertEqual(fake.respawns(), [])
 
     def test_corrupt_options_not_a_worker(self):
         for key, bad in (("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
@@ -672,12 +678,12 @@ class RestartTest(WorkerCase):
             fake.store[key] = bad
             with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker", msg=f"{key}={bad!r}"):
                 workers.restart("w1", env=self.env, proc=fake)
-            self.assertNotIn("respawn-pane", [c[1] for c in fake.calls])
+            self.assertEqual(fake.respawns(), [])
 
     def test_oserror_from_proc(self):
         fake = Fake()
         self.started(fake)
-        fake.oserror = lambda argv: argv[1] == "respawn-pane"
+        fake.oserror = lambda argv: "respawn-pane" in argv
         with self.assertRaises(workers.WorkersError):
             workers.restart("w1", env=self.env, proc=fake)
 

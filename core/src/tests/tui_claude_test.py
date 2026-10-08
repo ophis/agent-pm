@@ -121,7 +121,7 @@ class Tmux:
             return done(argv, 1, err="boom\n")
         if argv[1] == "display-message":
             return done(argv, 1, err="no server running\n") if self.pane is None else done(argv, 0, self.pane + "\n")
-        if argv[1] in ("new-session", "respawn-pane"):
+        if argv[1] == "new-session" or "respawn-pane" in argv:
             self.path = argv[argv.index(";") - 1] if argv[1] == "new-session" else argv[-1]
             self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
             self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
@@ -446,11 +446,11 @@ class Respawn(unittest.TestCase):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         tui_claude.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
 
-    def test_respawns_the_pane_running_the_wrapper(self):
+    def test_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_tmux_command(self):
         fake = Tmux()
         self.respawn(fake)
-        self.assertEqual(fake.calls, [["tmux", "respawn-pane", "-k", "-t", "=s:", sys.executable, "-I", "-c",
-                                       tui_claude.EXEC, fake.path]])
+        self.assertEqual(fake.calls, [["tmux", "clear-history", "-t", "=s:", ";", "respawn-pane", "-k", "-t", "=s:",
+                                       sys.executable, "-I", "-c", tui_claude.EXEC, fake.path]])
         self.assertEqual(fake.kwargs, [TMUX_KW])
         self.sleep.assert_not_called()
 
@@ -486,10 +486,10 @@ class Respawn(unittest.TestCase):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_a_failed_respawn(self):
-        fake = Tmux(fail={"respawn-pane"})
+        fake = Tmux(fail={"clear-history"})
         with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
             self.respawn(fake)
-        self.assertEqual(fake.commands(), ["respawn-pane"])
+        self.assertEqual(fake.commands(), ["clear-history"])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_wrapper_never_reads(self):

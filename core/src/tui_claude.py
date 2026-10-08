@@ -160,7 +160,8 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
 def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], proc=subprocess.run,
             sleep=time.sleep) -> None:
     """Run argv in the session's pane in place of its command (respawn-pane -k), handed over as start hands over its
-    command. Returns once it runs."""
+    command, clearing the pane's history in the same tmux command, so no line the old command prints lands in between.
+    Returns once it runs."""
     _name(session)
     argv = _command(argv, env)
     tmp = None
@@ -168,7 +169,8 @@ def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], pro
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
         _handover(path, argv, cwd, env)
-        _tmux_ok(["respawn-pane", "-k", "-t", f"={session}:", *wrapper], proc)
+        target = f"={session}:"
+        _tmux_ok(["clear-history", "-t", target, ";", "respawn-pane", "-k", "-t", target, *wrapper], proc)
         if not _taken(path, sleep):
             raise TuiError("the pane did not respawn")
     except OSError as e:
