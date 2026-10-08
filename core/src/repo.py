@@ -10,18 +10,13 @@ repo.py status --dir DIR --branch B [--name SLUG] REPO
     doc commit
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
-and outside the temp dirs (prune runs no git in a clone there). A local clone gets a git worktree after a fetch that
-moves only `origin/*`, with core.symlinks=false for that worktree (this turns on the clone's extensions.worktreeConfig),
-true if core config's `trusted_dirs` lists the clone's real path; an existing worktree with the other setting is
-refused. Any other REPO gets a blobless clone with core.symlinks=false. B: the local B, else tracking origin/B, else new
-from origin/<default>.
-Git lock failures (runs sharing a clone) are retried.
+and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
+blobless clone. Symlinks: core/CLAUDE.md › Rules. B: the local B, else tracking origin/B, else new from origin/<default>.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
 Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
 failure.
 Errors mask URL userinfo.
-Core config: config.toml beside src/, with ~/.agent-pm/core.local.toml on top (read_config).
 """
 import argparse
 import json
@@ -326,8 +321,8 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
             opts, start = ["--no-track", "-b", branch], f"origin/{default}"
         if add:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
-            # Untrusted content gets no symlinks, as in a remote clone; per worktree, so the clone's own checkout
-            # keeps its config. --force re-adds our own path when it was deleted by hand but is still registered.
+            # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds our own path
+            # when it was deleted by hand but is still registered.
             if run(["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT).stdout.strip() != "true":
                 git(run, clone, "config", "extensions.worktreeConfig", "true")
             force = ["--force"] if mine in trees else []

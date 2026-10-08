@@ -26,8 +26,7 @@ def resume(cwd: str, sid: str, workdir: str) -> str:
 
 
 def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
-    """Where Claude Code saves session `sid` started in `cwd`: a folder named for cwd's real path, each
-    non-alphanumeric character turned into "-"."""
+    """Where Claude Code saves session `sid` started in `cwd`."""
     return os.path.join(projects, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)), f"{sid}.jsonl")
 
 

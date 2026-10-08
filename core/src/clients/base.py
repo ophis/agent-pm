@@ -31,8 +31,8 @@ class Launch:
 
 @dataclass(frozen=True)
 class Event:
-    """One thing an agent run says: text to show (its stdout), a progress report (named by its point) or its outcome
-    (the last one counts), both through report.py; or, from the driver, a progress point the run never reported
+    """One thing an agent run says: text to show (its stdout), a progress report (named by its point) or its outcome,
+    both through report.py; or, from the driver, a progress point the run never reported
     (`missing`, named by it); or a turn end (`stop`, the interactive client's Stop hook, whose `pending` counts the
     background work still running; meaningful on `stop` only)."""
     kind: Literal["text", "progress", "outcome", "missing", "stop"]

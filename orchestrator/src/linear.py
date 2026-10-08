@@ -1,6 +1,5 @@
 """Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
 and history, and small shared helpers.
-Imports config, which puts core/src on sys.path.
 """
 import functools
 import json

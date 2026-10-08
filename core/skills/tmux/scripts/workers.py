@@ -20,12 +20,11 @@ import tui_claude  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
-STRIP = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+STRIP = (*tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
-ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
@@ -119,9 +118,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
                          proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    options = {"@sid": sid, "@cwd": cwd, "@claude": claude,
-               "@env": json.dumps({k: child_env[k] for k in ENV_KEYS if k in child_env}),
-               "@flags": json.dumps(list(flags))}
+    options = {"@sid": sid, "@cwd": cwd, "@claude": claude, "@flags": json.dumps(list(flags))}
     for argv in (["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()):
         try:
             _tmux(argv, proc)
@@ -143,22 +140,22 @@ def _option(name: str, key: str, proc) -> str:
 
 
 def _stored(name: str, proc) -> dict:
-    opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "claude", "env", "flags")}
+    opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "claude", "flags")}
     try:
-        env, flags = json.loads(opt["env"]), json.loads(opt["flags"])
-        ok = (all(opt[k] for k in ("sid", "cwd", "events", "claude")) and isinstance(env, dict)
-              and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
+        flags = json.loads(opt["flags"])
+        ok = (all(opt[k] for k in ("sid", "cwd", "events", "claude"))
               and isinstance(flags, list) and all(isinstance(f, str) for f in flags))
     except ValueError:
         ok = False
     if not ok:
         raise WorkersError(f"{name}: not a worker")
-    return {**opt, "env": env, "flags": flags}
+    return {**opt, "flags": flags}
 
 
-def restart(name: str, *, proc=subprocess.run) -> str:
-    """Respawn worker `name`'s pane resuming its session, its status line as core config's status_line says now; returns
-    the shell string it ran. A claude that exits within EARLY seconds raises (see _early)."""
+def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
+    """Respawn worker `name`'s pane, its history cleared, resuming its session (tui_claude.respawn) with env minus
+    STRIP, its status line as core config's status_line says now; returns the command, shell-quoted. A claude that
+    exits within EARLY seconds raises (see _early)."""
     _check(name)
     opt = _stored(name, proc)
     status_line = _status_line()
@@ -168,14 +165,14 @@ def restart(name: str, *, proc=subprocess.run) -> str:
         tui_claude.decorate(name, opt["events"], status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    words = ["env", *(w for v in STRIP for w in ("-u", v)), *(f"{k}={v}" for k, v in opt["env"].items()),
-             f"PWD={opt['cwd']}", *resume]
-    cmd = " ".join(shlex.quote(w) for w in words)
+    cmd = " ".join(shlex.quote(w) for w in resume)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
-    res = _run(proc, ["tmux", "respawn-pane", "-k", "-t", f"={name}:", "-c", opt["cwd"], cmd])
-    if res.returncode != 0:
-        raise WorkersError((res.stderr or "").strip() or f"tmux respawn-pane exited {res.returncode}")
+    try:
+        tui_claude.respawn(name, resume, cwd=opt["cwd"], env={k: v for k, v in env.items() if k not in STRIP},
+                           proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
     _early(name, proc)
     return cmd
 
@@ -284,7 +281,7 @@ def main(argv=None) -> int:
                         env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
-            restart(a.name, proc=subprocess.run)
+            restart(a.name, env=dict(os.environ), proc=subprocess.run)
         elif a.cmd == "reply":
             text = reply(a.name, proc=subprocess.run)
             if text:

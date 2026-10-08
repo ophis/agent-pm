@@ -1,11 +1,16 @@
-"""Imported first by every test module: hides this machine's ~/.agent-pm/core.local.toml and orchestrator.local.toml
-(os.path.isfile, which repo.read_config asks, says they are absent, through symlinks too), from config's import on, and
-merges core's test fixture over the committed core/config.toml (core/src/tests/hermetic.py), so tests read only the
-committed configs and their fixtures. A test writes its own local files under home()."""
+"""Imported first by every test module (CLAUDE.md › Roles, tasks, rules): points HOME at a temp dir of this process's own
+(removed at exit) before config's import, never this machine's ~/.agent-pm, which may hold this checkout; then loads
+core/src/tests/hermetic.py and adds orchestrator.local.toml to what it hides."""
+import atexit
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 
+HOME = tempfile.mkdtemp(prefix="agent-pm-tests-home-")
+atexit.register(shutil.rmtree, HOME, ignore_errors=True)
+os.environ["HOME"] = HOME
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 sys.path.insert(0, os.path.join(ROOT, "core", "src"))
 _spec = importlib.util.spec_from_file_location("core_hermetic", os.path.join(ROOT, "core", "src", "tests", "hermetic.py"))

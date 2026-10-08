@@ -5,7 +5,7 @@ An issue is finished once it is Done or Canceled and its finish time (its latest
 move into either, from its history; unknown means skip) is at least 24 hours ago.
 
 Entries: for each finished issue, <work_dir>/work/<ID>/src/<owner>/*, <work_dir>/work/<ID>/publish and
-<work_dir>/work/<ID>/tmp, each a real directory inside its own folder (not a symlink); a src or publish entry must be a clone
+<work_dir>/work/<ID>/tmp, each a real directory inside its own folder; a src or publish entry must be a clone
 or a worktree (.git a directory or a file), else it is skipped. Each goes with shutil.rmtree, uncommitted work included;
 the rest of <work_dir>/work/<ID>/ and <work_dir>/logs stay. A worktree's .git file is read first (repo.common_dir, no git) for its
 local clone; there, unless the clone lies in <work_dir>/work or a temp dir, git reads refs only: `worktree prune`, then each
@@ -13,14 +13,13 @@ local clone; there, unless the clone lies in <work_dir>/work or a temp dir, git 
 branches are never touched. Agent runs and the harness are the same macOS user: this keeps code an agent run planted
 (filters, hooks, submodules) from running outside auto mode's review; it is no privilege boundary.
 
-TUI sessions: attended.close ends a finished issue's live ones, found by name (<role>-<ID>-<sid[:8]>), before its
-checkouts go, since a left-open claude may work in one.
+TUI sessions: attended.close ends a finished issue's live ones before its checkouts go, since a left-open claude may
+work in one.
 
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
-Runs at the end of promote's tick (Pruner); an issue is queried on its own only when it has such an entry or a live TUI
-session.
+An issue is queried on its own only when it has such an entry or a live TUI session.
 """
 import os
 import re
@@ -128,8 +127,7 @@ class Pruner:
         return True
 
     def clean_clone(self, ident, common):
-        """In the local clone of deleted worktrees: drops their records and the <ident>-* branches origin holds. Only refs
-        are read: no git runs on a working tree, or in a clone an agent run could write."""
+        """In the local clone of deleted worktrees: drops their records and the <ident>-* branches origin holds."""
         clone = os.path.dirname(common)
         if root := repo.under(common, self.writable):
             self.say(f"prune-skip {ident}: {clone} is under {root}, so no git runs there")

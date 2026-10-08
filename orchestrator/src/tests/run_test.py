@@ -593,7 +593,7 @@ class AttendedEntry(Base):
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
         self.tmux = Tmux(live=["dev"])
-        for k in ("TMUX", "ITERM_SESSION_ID"):  # Base's patch.dict restores them
+        for k in ("TMUX", "ITERM_SESSION_ID"):
             os.environ.pop(k, None)
         os.environ["TERM_PROGRAM"] = "iTerm.app"
         p = mock.patch.object(attended, "layout", functools.partial(LAYOUT, proc=self.tmux))

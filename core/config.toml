@@ -13,7 +13,7 @@
 #   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
 #   show            local: tui runner only: how the agent run's TUI window opens.
-#                   unset        → split the current pane (iTerm2, else tmux)
+#                   unset        → open a pane, stacked by caller (core/CLAUDE.md › Rules: the built-in show)
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory
@@ -44,15 +44,15 @@ language = "English"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# Every task saves locally unless core.local.toml gives it a destination. The orchestrator needs deep-research,
-# light-research and product-design on one github.com repo and branch (local: their [output] below).
+# The orchestrator needs deep-research, light-research and product-design on one github.com repo and branch (local:
+# their [output] below).
 [output]
 type = "local"
 
 # Roles: [roles.<role>] and its tasks, [roles.<role>.tasks.<task>].
 #   default_task  role only: the task run when none is named; unset → one must be named
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
-#   read          extra dirs the agent run reads; `repo` is the target repo's worktree, {{methods}} core's team/methods/
+#   read          extra dirs the agent run reads; `repo` is drive.py's --repo dir, {{methods}} core's team/methods/
 #                 dir. Read-only by the prompt only: no deny rules. unset → none
 #   write         extra dirs the agent run writes; the workdir is always reachable; unset → none
 #   commands      shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any
@@ -125,11 +125,6 @@ default_task = "echo"
 tier = 4
 effort = "low"
 
-[roles.dummy-tester.tasks.prepare-test]
-tier = 4
-effort = "low"
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-
 # ── Clients ─────────────────────────────────────────────
 # [clients.<name>], global only: a client's data, plus run keys in the layout above.
 # Claude Code, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
@@ -164,8 +159,8 @@ CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
 # Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
 # conversation to follow (the act-as skill).
-#   output  per task (roles.<role>.tasks.<task>.output): orchestrator → the deliverable goes back to the orchestrator;
-#           tasks without an entry keep their own (build, light-build: pull-request)
+#   output  per task (roles.<role>.tasks.<task>.output); a task without one keeps its own (build, light-build:
+#           pull-request)
 [clients.skill]
 
 # ── Researcher ─────────────────────────────────────────
@@ -181,7 +176,4 @@ type = "orchestrator"
 
 # ── Dummy Tester ───────────────────────────────────────
 [clients.skill.roles.dummy-tester.tasks.echo.output]
-type = "orchestrator"
-
-[clients.skill.roles.dummy-tester.tasks.prepare-test.output]
 type = "orchestrator"

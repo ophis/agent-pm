@@ -1,7 +1,5 @@
-"""Session registry: one comment per Claude session on its issue, written by the harness account.
-
-post() finds the harness account's comments starting `Run <sid> · ` and updates the earliest, else creates one:
-one attempt, bounded by LIMIT seconds.
+"""Session registry: one comment per Claude session on its issue, written by the harness account
+(CLAUDE.md › Architecture).
 """
 import functools
 import os

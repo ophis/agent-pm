@@ -3,7 +3,7 @@
 # other key too: tables merge key by key, the local value wins, a list is replaced whole; a table cannot drop a key
 # this file sets. Missing required keys stop router, run and promote.
 
-# Linear entities by id, since names change with a rename.
+# Linear entities, by id.
 #   team              local, required: the Linear team id
 #   human_members     local: the human users' emails; each is subscribed to every issue moved to In Review; unset → none
 #   harness_key       local, required: Keychain service of the harness account's Linear API key (router, promote, prune)
@@ -34,11 +34,10 @@
 # local: light-research = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
-# A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. An issue
-# assigned to its account runs the role's default task unless its Tasks label picks another through [task_labels].
-# A role added in orchestrator.local.toml is orchestrated too.
+# A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. A role added in
+# orchestrator.local.toml is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
-#   key                   local, required: Keychain service of that account's API key; write-back acts as it
+#   key                   local, required: Keychain service of that account's API key
 #   next                  the role promote hands this role's Handoff issues to; unset → the last stage
 #   require_instructions  true → a Handoff issue with no human_members comment goes back to In Review; unset → true
 #   max_runs              agent runs of this role at once; unset → 1
@@ -78,10 +77,9 @@ max_runs = 3
 # local: "<owner>/<name>" = "~/src/<name>"
 
 # The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
-# [core], applied after core/config.toml's [clients.claude] (drive.plan layers). config.overlay() fills {{root}}
-# with this repo's root.
-#   <run key>  as in core/config.toml, local keys included (e.g. a trusted cwd or a show command); users, trusted_dirs
-#              and clients are refused
+# [core], the last of core/config.toml's layers. config.overlay() fills {{root}} with this repo's root.
+#   <run key>  as in core/config.toml, local keys included (e.g. a trusted cwd or a show command); users, trusted_dirs,
+#              status_line, clients and default_task are refused
 [core.roles.researcher.tasks.deep-research]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"
 # local: [core.roles.researcher]

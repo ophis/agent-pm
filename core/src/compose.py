@@ -1,9 +1,9 @@
 """Composer: resolves a role + task's run config and compiles principles + role + task + templates + output into its
-prompt. A module for the driver (drive.py); needs Python 3.11+.
+prompt. A module for the driver (drive.py).
 
-Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); role and
-task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and {{gate}}; a
-destination gets its output values.
+Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); principles,
+role and task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and
+{{gate}}; a destination gets its output values.
 """
 import json
 import os
@@ -18,9 +18,9 @@ import repo
 import tui_claude
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
-OUTPUT = "output"  # output.md, outcome.schema.json and destinations/: how an agent run hands back
-CONFIG = "config.toml"   # repo.LOCAL goes on top (repo.read_config)
+TEXT = "team"
+OUTPUT = "output"
+CONFIG = "config.toml"
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -31,11 +31,12 @@ GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_l
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
-# A task marks a progress point with a line `[agent-pm-progress:<name>] what to report`.
+# The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
-CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the agent run's progress and outcome, drive.start tails it
-RESUME = "Resumed agent run after an interruption. These rules are current; they may have changed since this session started.\n\n"
+CHANNEL = ".report.jsonl"
+RESUME = ("Resumed agent run after an interruption. These rules and the input are current; either may have changed since this "
+          "session started, so re-read the input.\n\n")
 
 
 class ConfigError(Exception):
@@ -44,10 +45,9 @@ class ConfigError(Exception):
 
 class PromptClient(Protocol):
     """The part of a Client (clients/base.py) that render() uses; compose cannot import Client (base.py imports compose)."""
-    def scripts_path(self, root: str) -> str: ...   # how the prompt names core's src/ dir
-    def methods_path(self, root: str) -> str: ...   # how the prompt names core's team/methods/ dir
-    def handover(self) -> str: ...                  # how the agent run returns its outcome and progress (Output › Return);
-                                                    # {{report}}: report_command()
+    def scripts_path(self, root: str) -> str: ...
+    def methods_path(self, root: str) -> str: ...
+    def handover(self) -> str: ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -113,8 +113,7 @@ class RunParams:
 
 
 def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
-    """The name of the tui runner's tmux session for an agent run: `prefix` (default <role>-<task>), then the sid's
-    first 8 characters."""
+    """The name of the tui runner's tmux session for an agent run."""
     return f"{prefix or f'{role}-{task}'}-{sid[:8]}"
 
 
@@ -154,7 +153,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
-    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names, "principles.md")]
+    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names | paths, "principles.md")]
     role_rel, task_rel = _rule_files(run.role, run.task)
     parts += [fill(_read(text, role_rel), paths, role_rel), fill(_task(text, task_rel)[1], paths, task_rel)]
     for name in run.templates:
@@ -202,7 +201,7 @@ def fill(text: str, values: Mapping, where: str) -> str:
 
 
 def anchor(heading: str) -> str:
-    """GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens."""
+    """GitHub's heading anchor."""
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
@@ -247,8 +246,7 @@ def _read(root: str, rel: str) -> str:
 
 
 def _task(root: str, rel: str) -> tuple[str, str]:
-    """(description, body) of a task file. Its optional YAML frontmatter holds only `description: "<JSON string>"`
-    (what role/task listings show) and never reaches a prompt."""
+    """(description, body) of a task file (its frontmatter: core/CLAUDE.md › Rules)."""
     text = _read(root, rel)
     if not (m := FRONTMATTER.match(text)):
         return "", text

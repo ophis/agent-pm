@@ -96,8 +96,8 @@ def panes(*rows):
 class Tmux:
     """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command or another program to its
     (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what display-message
-    prints (None: no server). On new-session it reads the handover file named in its argv, then unlinks it as the
-    wrapper would, unless `hand_over` is False."""
+    prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv, then unlinks
+    it as the wrapper would, unless `hand_over` is False."""
 
     def __init__(self, pane=None, fail=(), hand_over=True, results=None):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
@@ -121,8 +121,8 @@ class Tmux:
             return done(argv, 1, err="boom\n")
         if argv[1] == "display-message":
             return done(argv, 1, err="no server running\n") if self.pane is None else done(argv, 0, self.pane + "\n")
-        if argv[1] == "new-session":
-            self.path = argv[argv.index(";") - 1]
+        if argv[1] == "new-session" or "respawn-pane" in argv:
+            self.path = argv[argv.index(";") - 1] if argv[1] == "new-session" else argv[-1]
             self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
             self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
             with open(self.path) as f:
@@ -175,7 +175,7 @@ class Start(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_handover_file(self):
-        env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
+        env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j",
                **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
@@ -436,6 +436,67 @@ class Start(unittest.TestCase):
                 with self.assertRaises(tui_claude.TuiError):
                     self.start(fake, **kw)
                 self.assertEqual(fake.calls, [])
+        self.assertEqual(os.listdir(self.temp), [])
+
+
+class Respawn(unittest.TestCase):
+    setUp = Start.setUp
+
+    def respawn(self, fake, session="s", argv=("tool", "-x", "a b"), env=None):
+        env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
+        tui_claude.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
+
+    def test_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_tmux_command(self):
+        fake = Tmux()
+        self.respawn(fake)
+        self.assertEqual(fake.calls, [["tmux", "clear-history", "-t", "=s:", ";", "respawn-pane", "-k", "-t", "=s:",
+                                       sys.executable, "-I", "-c", tui_claude.EXEC, fake.path]])
+        self.assertEqual(fake.kwargs, [TMUX_KW])
+        self.sleep.assert_not_called()
+
+    def test_handover_file_as_start_writes_it(self):
+        env = {"PATH": self.bin, "HOME": "/h", "PWD": "/stale",
+               **{k: "x" for k in (*tui_claude.PARENT_KEYS, *tui_claude.TERMINAL_KEYS)}}
+        fake = Tmux()
+        self.respawn(fake, env=env)
+        self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"], "cwd": self.cwd,
+                                         "env": {"PATH": self.bin, "HOME": "/h", "PWD": self.cwd}})
+        self.assertEqual(fake.mode, 0o600)
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_cwd_never_reaches_tmux(self):
+        self.cwd = os.path.join(self.root, "#(x)#{y}")
+        os.makedirs(self.cwd)
+        fake = Tmux()
+        self.respawn(fake)
+        self.assertEqual(fake.handover["cwd"], self.cwd)
+        self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
+
+    def test_refused_before_tmux(self):
+        for kw in ({"session": "a b"}, {"argv": ()}, {"argv": ("no-such-tool",)}):
+            with self.subTest(**kw):
+                fake = Tmux()
+                with self.assertRaises(tui_claude.TuiError):
+                    self.respawn(fake, **kw)
+                self.assertEqual(fake.calls, [])
+        with unittest.mock.patch.object(sys, "executable", "/opt/py#3/bin/python3"), \
+                self.assertRaisesRegex(tui_claude.TuiError, "tmux would misread"):
+            self.respawn(fake)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_a_failed_respawn(self):
+        fake = Tmux(fail={"clear-history"})
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+            self.respawn(fake)
+        self.assertEqual(fake.commands(), ["clear-history"])
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_wrapper_never_reads(self):
+        fake = Tmux(hand_over=False)
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^the pane did not respawn$"):
+            self.respawn(fake)
+        self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui_claude.HANDOVER_TIMEOUT)
         self.assertEqual(os.listdir(self.temp), [])
 
 
@@ -1328,6 +1389,7 @@ class Cli(unittest.TestCase):
                 self.assertIn("a command must follow --", self.main(*argv.split())[2])
         start.assert_not_called()
 
+    @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})   # beats FORCE_COLOR, which colors argparse's help (3.14)
     def test_help(self):
         rc, out, _ = self.main("-h")
         self.assertEqual(rc, 0)

@@ -24,7 +24,7 @@ Unknowns, and the low-confidence or single-source findings the PRD relies on.
 Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs, which one is chosen and why.
 
 ## Requirements
-Ids (`FR-<n>`, `NFR-<n>`, `P<n>`) stay as written, in ASCII, and are never renumbered on revision.
+Ids (`FR-<n>`, `NFR-<n>`, `P<n>`) stay ASCII and are never renumbered on revision.
 ### Functional requirements
 One per line: `FR-<n>`: the requirement. `Check:` an observable pass condition (an input → an output or state).
 ### Non-functional requirements
