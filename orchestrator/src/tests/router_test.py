@@ -1,3 +1,5 @@
+import argparse
+import functools
 import io
 import json
 import os
@@ -14,11 +16,20 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402,F401
 from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
+from run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEER, ID, INPUT, KEY, LISTING,  # noqa: E402
+                          LS_REMOTE, PM, PROJECT, RESEARCHER, SID, TS, USER_NOTE, UUID, Base as RunBase, Gql,
+                          forwarded, node, res)
+from attended_test import Tmux  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
+import inputs  # noqa: E402
+import issues  # noqa: E402
 import linear  # noqa: E402
 import router  # noqa: E402
+import target  # noqa: E402
+import compose  # noqa: E402
 import drive  # noqa: E402
+import repo  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
 AGENT, USER = "agent", "user"   # history actor ids: an agent account, a human_members user
@@ -92,9 +103,6 @@ class FakeLinear:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         if "issues(filter" in query:
             f = v["f"]
-            if "id" in f:
-                i = self.issues.get(f["id"]["eq"]) if f["team"]["id"]["eq"] == TEAM else None
-                return {"issues": {"nodes": [{"assignee": i["assignee"]}] if i else []}}
             if self.todo_error and "inverseRelations" in query:
                 raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
             drop = {"state", "labels"} if "inverseRelations" in query else {"state", "labels", "inverseRelations"}
@@ -247,13 +255,14 @@ class Base(unittest.TestCase):
         return [line.split(" ", 2)[2] for line in self.err.splitlines()]
 
     def tick(self, fake, *argv, hour=2, shell=None):
+        """router.main with argv (a tick, or --issue), the outer faked by self.sh.start."""
         self.sh = shell or FakeShell()
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + ("\n" if self.lines else ""))
         err = io.StringIO()
         with redirect_stderr(err), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
             rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
-                             sh=self.sh, hour=hour, root=self.root)
+                             sh=self.sh, hour=hour, root=self.root, start=self.sh.start)
             self.path = os.environ["PATH"]
         self.err = self.unmap(err.getvalue())
         with open(self.log) as f:
@@ -262,11 +271,11 @@ class Base(unittest.TestCase):
 
     def launched(self):
         (launch,) = self.sh.launches()
-        return launch[launch.index("--issue") + 1]
+        return launch.issue
 
     def launched_runs(self):
-        """(ID, mode) of each run.py launch, in order."""
-        return [(c[c.index("--issue") + 1], c[-1]) for c in self.sh.launches()]
+        """(ID, mode) of each outer call, in order."""
+        return [(a.issue, a.mode) for a in self.sh.launches()]
 
     def probes(self):
         return [c[0] for c in self.sh.calls].count("claude")
@@ -685,22 +694,33 @@ class Prune(Base):
 class Usage(unittest.TestCase):
     def test_unknown_flags_rejected(self):
         for argv in (["--help"], ["--prune", "x"], ["--gate", "new"], ["--gate", "resume"],
-                     ["-h"], ["--issue", "TASK-1"],
+                     ["-h"], ["--now", "--issue", "TASK-1"], ["--issue", "TASK-1", "--now"],
                      ["--brake", "new"], ["--brake", "--dry-run"], ["--dry-run", "--brake"], ["--brake", "--brake"],
-                     ["--tui", "--issue", "TASK-1"], ["--now", "--issue", "TASK-1", "--tui"], ["--tui", "--brake"],
+                     ["--now", "--issue", "TASK-1", "--tui"], ["--tui", "--brake"], ["--issue", "TASK-1", "--brake"],
                      ["--brake", "--tui"], ["--split", "right"], ["--now", "--split-from", "dev"], ["--dry-run", "--split", "below"],
                      ["--tui", "--split"], ["--tui", "--split-from", "--now"], ["--now", "--issue", "--dry-run"],
                      ["--tui", "--split", "right", "--split", "below"], ["--tui", "dev"], ["--split=right"],
                      ["--now", "--split-from=dev"], ["--tui", "--split=right", "--split=below"],
-                     ["--tui", "--split-from=dev", "--split-from", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"]):
+                     ["--tui", "--split-from=dev", "--split-from", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"],
+                     ["--events", "x"], ["--issue", "TASK-1", "--events=x"], ["--tui", "--events"],
+                     ["--tui", "--events", "a", "--events", "b"], ["--issue", "TASK-1", "--issue", "TASK-2"], ["--issue"],
+                     ["--issue", "TASK-1", "--split", "below"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("probe ran"))), 2)
                 self.assertEqual(err.getvalue(), router.USAGE + "\n")
-        self.assertEqual(router.USAGE,
-                         "usage: router.py [--now] [--dry-run] [--issue ID | --tui [--split right|below] [--split-from SESSION]] | --brake")
+        self.assertEqual(router.USAGE, "usage: router.py [--now] [--dry-run] [--issue ID] "
+                                       "[--tui [--split right|below] [--split-from SESSION] [--events FILE]] | --brake")
         self.assertNotIn("--gate", router.USAGE + router.__doc__)
+
+    def test_bad_issue_id(self):
+        for argv in (["--issue", "task-7"], ["--tui", "--issue", "TASK"]):
+            with self.subTest(argv=argv):
+                err = io.StringIO()
+                with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
+                    self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("sh ran"))), 2)
+                self.assertEqual(err.getvalue(), f"router.py: bad issue id: {argv[-1]}\n")
 
 
 class Claim(Base):
@@ -888,17 +908,19 @@ class Blockers(Base):
             self.assertEqual(fake.mutations, [], argv)
 
 
-def is_launch(cmd):
-    return len(cmd) > 1 and cmd[1].endswith("run.py")
+def outer_args(ident, project, assignee, sid, task, mode, runner="headless", split=None, split_from=None, events=None):
+    """The outer's arguments the router passes."""
+    return argparse.Namespace(issue=ident, project=project, assignee=assignee, sid=sid, task=task, mode=mode, runner=runner,
+                              split=split, split_from=split_from, events=events)
 
 
 class FakeShell:
     """sessions: the tmux session names list-sessions prints; none = no tmux server (exit 1). fives: five_hour of the first
-    probes, then probe_five. A run.py launch exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from --assignee)
-    unless ID is in bounce."""
-    def __init__(self, sessions=(), probe_five=0.2, fives=(), exits=None, bounce=()):
+    probes, then probe_five. start, the fake outer, records ("launch", its arguments) in calls; it raises raises.get(ID),
+    else exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from the assignee) unless ID is in bounce."""
+    def __init__(self, sessions=(), probe_five=0.2, fives=(), exits=None, bounce=(), raises=None):
         self.calls, self.five, self.sessions = [], probe_five, list(sessions)
-        self.fives, self.exits, self.bounce = list(fives), exits or {}, set(bounce)
+        self.fives, self.exits, self.bounce, self.raises = list(fives), exits or {}, set(bounce), raises or {}
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
@@ -909,17 +931,19 @@ class FakeShell:
             ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
                 "five_hour": {"utilization": five}, "seven_day": {"utilization": 0.1}}}}
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(ev) + "\n")
-        if is_launch(cmd):
-            ident = cmd[cmd.index("--issue") + 1]
-            rc = self.exits.get(ident, 0)
-            if not rc and ident not in self.bounce:
-                role = next(r for r, a in ROLE.items() if a == cmd[cmd.index("--assignee") + 1])
-                self.sessions.append(config.session(role, ident))
-            return subprocess.CompletedProcess(cmd, rc)
         return subprocess.CompletedProcess(cmd, 0)
 
+    def start(self, a):
+        self.calls.append(("launch", a))
+        if a.issue in self.raises:
+            raise self.raises[a.issue]
+        rc = self.exits.get(a.issue, 0)
+        if not rc and a.issue not in self.bounce:
+            self.sessions.append(config.session(next(r for r, e in ROLE.items() if e == a.assignee), a.issue))
+        return rc
+
     def launches(self):
-        return [c for c in self.calls if is_launch(c)]
+        return [c[1] for c in self.calls if c[0] == "launch"]
 
 
 class Tick(Base):
@@ -944,11 +968,9 @@ class Tick(Base):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, "--now", hour=12)
         (launch,) = self.sh.launches()
-        sid = launch[launch.index("--sid") + 1]
-        self.assertEqual(launch[:2], [sys.executable, router.RUN])
+        sid = launch.sid
         self.assertEqual(router.RUN, os.path.join(config.ROOT, "orchestrator", "src", "run.py"))
-        self.assertEqual(launch[2:], ["--issue", "TASK-1", "--project", IDS[DR],
-                                      "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research", "--mode", "new"])
+        self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], sid, "deep-research", "new"))
         self.assertRegex(self.state, rf"start TASK-1 session={sid} task=deep-research\n$")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
@@ -977,7 +999,7 @@ class Tick(Base):
                           (CONFIG_ENG2, ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7",
                                          "agent-pm-engineer-TASK-9"])):
             self.config = self.write_config(cfg)
-            for argv in ((), ("--dry-run",), ("--now", "--issue", "TASK-1")):
+            for argv in ((), ("--dry-run",), ("--now",)):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, shell=FakeShell(live)), 0)
                 self.assertEqual(self.said(), ["skip: all roles full (engineer, pm, researcher)"], (cfg, argv))
@@ -1050,41 +1072,6 @@ class Tick(Base):
         self.assertEqual([v["e"] for q, v in fake.queries if "users(filter" in q], [ROLE["researcher"], ROLE["pm"], ROLE["engineer"]])
         self.assertEqual(fake.mutations, [])
 
-    def test_issue_flag_of_full_role_skips(self):
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
-        for argv in (("--now", "--issue", "TASK-1"), ("--now", "--issue", "TASK-1", "--dry-run")):
-            fake = FakeLinear([issue("TASK-1", "Todo", "engineer"), issue("TASK-2", "Todo", "researcher")])
-            self.assertEqual(self.tick(fake, *argv, shell=FakeShell(["agent-pm-engineer-TASK-5"])), 0)
-            self.assertEqual(self.said(), ["live: engineer 1/1", "skip: TASK-1 belongs to full role engineer"], argv)
-            self.assertEqual([v for _, v in fake.queries], [{"f": {"team": {"id": {"eq": TEAM}}, "id": {"eq": "TASK-1"}}}], argv)
-            self.assertEqual(fake.mutations, [], argv)
-            self.assertEqual(self.sh.calls, [LIST], argv)
-            self.assertIn("TASK-8", self.state, argv)
-
-    def test_issue_flag_of_not_full_role(self):
-        for cfg, ident, live in ((CONFIG, "TASK-2", "agent-pm-engineer-TASK-5"), (CONFIG_ENG2, "TASK-1", "agent-pm-engineer-TASK-5")):
-            self.config = self.write_config(cfg)
-            fake = FakeLinear([issue("TASK-1", "Todo", "engineer", priority=1), issue("TASK-2", "Todo", "researcher", priority=4)])
-            self.tick(fake, "--now", "--issue", ident, shell=FakeShell([live]))
-            self.assertEqual(self.launched(), ident, cfg)
-            self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
-                             {"TASK-1": "Todo", "TASK-2": "Todo", ident: "In Progress"}, cfg)
-
-    def test_issue_flag_with_live_session_skips(self):
-        self.config = self.write_config(CONFIG_ENG2)
-        for argv in (("--now", "--issue", "TASK-1"), ("--now", "--issue", "TASK-1", "--dry-run")):
-            fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
-            self.assertEqual(self.tick(fake, *argv, shell=FakeShell(["agent-pm-engineer-TASK-1"])), 0)
-            self.assertEqual(self.said(), ["live: engineer 1/2", "skip: TASK-1 has a live session"], argv)
-            self.assertEqual((fake.queries, fake.mutations, self.sh.calls), ([], [], [LIST]), argv)
-
-    def test_issue_flag_not_a_role_issue_while_full(self):
-        for ident in ("TASK-9", "TASK-2", "TASK-3"):
-            fake = FakeLinear([issue("TASK-1", "Todo", "researcher"), issue("TASK-2", "Todo", "someone"), issue("TASK-3", "Todo")])
-            self.tick(fake, "--now", "--issue", ident, shell=FakeShell(["agent-pm-engineer-TASK-5"]))
-            self.assertIn(f"pick: {ident} is not a Todo issue assigned to a role account", self.err)
-            self.assertEqual((self.sh.launches(), fake.mutations), ([], []))
-
     def test_one_run_per_tick_resume_first(self):
         self.config = self.write_config(CONFIG_ENG2)
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", priority=3),
@@ -1107,32 +1094,8 @@ class Tick(Base):
         self.tick(fake)
         self.assertEqual(self.said(), ["plan: new (3 in queue)", "pick: TASK-1 (3 in queue)", "claim: TASK-1 task=deep-research",
                                        "launch TASK-1 (Deep Research) exit=0"])
-        self.assertEqual([c[3] if is_launch(c) else c[0] for c in self.sh.calls], ["tmux", "claude", "TASK-1"])
+        self.assertEqual([c[1].issue if c[0] == "launch" else c[0] for c in self.sh.calls], ["tmux", "claude", "TASK-1"])
         self.assertEqual({i: t["state"] for i, t in fake.issues.items()}, {"TASK-1": "In Progress", "TASK-2": "Todo", "TASK-3": "Todo"})
-
-    def test_issue_flag_launches_only_that_issue(self):
-        for dry in (False, True):
-            self.lines, self.hist = [], {}
-            fake = FakeLinear([issue("TASK-1", "In Progress", "researcher"), issue("TASK-2", "Todo", "researcher", priority=1),
-                               issue("TASK-3", "Todo", "pm", priority=2, project=PD),
-                               issue("TASK-4", "Todo", "engineer", priority=3, project=PD)], self.hist)
-            self.resumable("TASK-1", "a", 60)
-            self.tick(fake, "--now", "--issue", "TASK-4", *["--dry-run"] * dry)
-            said = self.said()
-            self.assertEqual(self.probes(), 1, dry)
-            self.assertNotIn("resume TASK-1", self.state, dry)
-            self.assertEqual(len(fake.reads()), 1, dry)
-            self.assertFalse(any("id" in v["f"] for q, v in fake.queries if "issues(filter" in q), dry)
-            if dry:
-                self.assertEqual(said[0], "pick: TASK-4 (1 in queue)")
-                self.assertRegex(said[1], r"^usage: status=allowed .* \(1 planned, allowed\)$")
-                self.assertEqual((len(said), self.sh.launches(), fake.mutations), (2, [], []))
-                continue
-            self.assertEqual(said, ["pick: TASK-4 (1 in queue)", "claim: TASK-4 task=build",
-                                    "launch TASK-4 (Product Design) exit=0"])
-            self.assertEqual(self.launched_runs(), [("TASK-4", "new")])
-            self.assertEqual({i: t["state"] for i, t in fake.issues.items()},
-                             {"TASK-1": "In Progress", "TASK-2": "Todo", "TASK-3": "Todo", "TASK-4": "In Progress"})
 
     def test_dry_run_plans_one_run(self):
         self.config = self.write_config(CONFIG_ENG2)
@@ -1188,24 +1151,8 @@ class Tick(Base):
         self.assertEqual(len(self.said()), 5)
         self.assertEqual(([c[0] for c in self.sh.calls].count("claude"), self.sh.launches(), fake.mutations), (1, [], []))
 
-    def test_blocked_issue_flag_skips_before_probe(self):
-        for argv in (("--now", "--issue", "TASK-1"), ("--now", "--issue", "TASK-1", "--dry-run")):
-            for resume in (False, True):
-                self.lines = []
-                issues = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")]), issue("TASK-4", "Todo", "pm", project=PD)]
-                if resume:
-                    issues.append(issue("TASK-2", "In Progress", "researcher"))
-                    self.resumable("TASK-2", "a", 60)
-                fake = FakeLinear(issues, self.hist)
-                before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
-                self.assertEqual(self.tick(fake, *argv), 0, (argv, resume))
-                self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7"], (argv, resume))
-                self.assertEqual(([c[0] for c in self.sh.calls].count("claude"), self.sh.launches(), fake.mutations), (0, [], []), (argv, resume))
-                self.assertEqual(self.state, before, (argv, resume))
-                self.assertEqual(len(fake.reads()), 1, (argv, resume))
-
     def test_ready_tick_reads_todo_once(self):
-        for argv, runs in (((), [("TASK-2", "new")]), (("--now", "--issue", "TASK-2"), [("TASK-2", "new")])):
+        for argv, runs in (((), [("TASK-2", "new")]), (("--issue", "TASK-2"), [("TASK-2", "new")])):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1, inverse=[blocker("TASK-7")]),
                                issue("TASK-2", "Todo", "researcher", priority=2), issue("TASK-3", "Todo", "pm", priority=3, project=PD)])
             self.assertEqual(self.tick(fake, *argv), 0, argv)
@@ -1228,18 +1175,8 @@ class Tick(Base):
         self.assertEqual([c for c in self.sh.calls if c[0] == "claude"], [router.PROBE])
         self.assertNotIn(" n=", self.state.splitlines()[-1])
         (launch,) = self.sh.launches()
-        self.assertEqual(launch[2:8], ["--issue", "TASK-1", "--project", IDS[DR],
-                                        "--assignee", ROLE["researcher"]])
-        self.assertEqual(launch[-2:], ["--mode", "resume"])
-        self.assertIn("--sid", launch)
+        self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), "deep-research", "resume"))
         self.assertTrue(self.state.endswith("resume TASK-1 session=a task=deep-research\n"))
-
-    def test_issue_flag_still_recovers(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)), issue("TASK-2", "Todo", "researcher")])
-        self.tick(fake, "--now", "--issue", "TASK-1")
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
-        (launch,) = self.sh.launches()
-        self.assertEqual(launch[launch.index("--issue") + 1], "TASK-1")
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
@@ -1252,6 +1189,18 @@ class Tick(Base):
             self.tick(fake)
         self.assertIn("skip: prune failed", self.err)
         self.assertEqual(len(self.sh.launches()), 1)
+
+    def test_the_outers_exit_and_exceptions_never_break_the_tick(self):
+        cases = [(FakeShell(exits={"TASK-1": 3}), "exit=3"),
+                 (FakeShell(raises={"TASK-1": SystemExit("linear api error: boom")}), "failed: SystemExit: linear api error: boom"),
+                 (FakeShell(raises={"TASK-1": RuntimeError("x")}), "failed: RuntimeError: x")]
+        for shell, end in cases:
+            with self.subTest(end=end):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tick(fake, shell=shell), 0)
+                self.assertEqual(self.said()[-1], f"launch TASK-1 (Deep Research) {end}")
+                (launch,) = self.sh.launches()
+                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", launch.sid, "deep-research") + "\n"))
 
     def test_start_line(self):
         sid = self.sid("a")
@@ -1279,8 +1228,153 @@ class Tick(Base):
         self.assertEqual(router.live_sessions(["engineer"], FakeShell([tui, "agent-pm-engineer-TASK-9"])), {"engineer": ["TASK-9"]})
 
 
+class IssueFlag(Base):
+    """router.py --issue ID: only that issue, without the hours, max_runs and usage gates; the outer faked."""
+    def test_todo_is_claimed_and_started_whatever_the_gates(self):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)),
+                         issue("TASK-2", "In Progress", "researcher", priority=1), issue("TASK-3", "Todo", "researcher", priority=1),
+                         issue("TASK-4", "Todo", "engineer", priority=3, project=PD))
+        self.resumable("TASK-2", "b", 60)
+        full = FakeShell(["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"], probe_five=0.95)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, shell=full), 0)
+        self.assertEqual(self.said(), ["pick: TASK-4 (1 in queue)", "claim: TASK-4 task=build"])
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch, outer_args("TASK-4", IDS[PD], ROLE["engineer"], launch.sid, "build", "new"))
+        self.assertRegex(launch.sid, config.UUID_RE)
+        self.assertTrue(self.state.endswith(" " + router.start_line("TASK-4", launch.sid, "build") + "\n"))
+        self.assertIn("TASK-8", self.state)
+        self.assertEqual(self.sh.calls, [LIST, ("launch", launch)])
+        self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
+                         {"TASK-1": ("In Progress", None), "TASK-2": ("In Progress", None), "TASK-3": ("Todo", None),
+                          "TASK-4": ("In Progress", None)})
+        self.assertEqual(len(fake.reads()), 1)
+
+    def test_exits_with_the_outers_code(self):
+        for rc in (0, 1, 3):
+            with self.subTest(rc=rc):
+                self.assertEqual(self.tick(FakeLinear([issue("TASK-1", "Todo", "researcher")]), "--issue", "TASK-1",
+                                           shell=FakeShell(exits={"TASK-1": rc})), rc)
+
+    def test_a_live_agent_run_is_refused_with_its_attach_command(self):
+        for state in ("Todo", "In Progress", "In Review"):
+            for dry in (False, True):
+                with self.subTest(state=state, dry=dry):
+                    fake = FakeLinear([issue("TASK-1", state, "engineer")])
+                    argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
+                    self.assertEqual(self.tick(fake, *argv, shell=FakeShell(["agent-pm-engineer-TASK-1"])), 0 if dry else 1)
+                    self.assertEqual(self.err, "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-engineer-TASK-1'\n")
+                    self.assertEqual((fake.queries, self.sh.calls, self.state), ([], [LIST], ""))
+
+    def test_in_progress_resumes_inside_recovers_time_windows(self):
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
+        self.resumable("TASK-1", "a", 20)
+        self.touch("TASK-1", "a", 5)
+        self.assertEqual(self.plan(fake), "")
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", hour=12), 0)
+        self.assertEqual(self.said(), ["plan: resume TASK-1 session=a"])
+        (launch,) = self.sh.launches()
+        self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), "deep-research", "resume"))
+        self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=deep-research\n"))
+        self.assertEqual((fake.mutations, self.probes()), ([], 0))
+
+    def nothing_resumable(self):
+        """(name, issue, runs.log lines and transcripts, said, state, comment) per kind of In Progress issue Recover
+        settles without resuming; the last two inside Recover's time windows."""
+        def capped():
+            for m in (390, 380, 370, 360):
+                self.add("start", "TASK-1", f"s{m}", m)
+        bad_task = ('The interrupted agent run\'s task "orphan" is not one of researcher\'s tasks '
+                    '(deep-research, light-research); needs a look.')
+        return [("cap", issue("TASK-1", "In Progress", "researcher"), capped,
+                 "recover: TASK-1 reached 4 attempts; In Review", "In Review", router.CAP_COMMENT),
+                ("task", issue("TASK-1", "In Progress", "researcher"), lambda: self.resumable("TASK-1", "a", 60, "orphan"),
+                 "recover: TASK-1 task=orphan is not one of researcher's tasks; In Review", "In Review", bad_task),
+                ("no transcript", issue("TASK-1", "In Progress", "researcher"), lambda: self.add("start", "TASK-1", "n", 5),
+                 "recover: TASK-1 session=n has no transcript", "Todo", router.INTERRUPTED),
+                ("no sid", issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=5)), lambda: None,
+                 f"recover: TASK-1 (last updated {ago(minutes=5)})", "Todo", router.INTERRUPTED)]
+
+    def test_in_progress_with_nothing_to_resume_is_settled_at_once(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        for name, todo, given, said, state, comment in self.nothing_resumable():
+            with self.subTest(name=name):
+                self.lines, self.hist = [], {}
+                given()
+                fake = self.fake(todo)
+                before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
+                if name in ("no transcript", "no sid"):
+                    self.assertEqual((self.plan(fake), fake.mutations), ("", []))
+                self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 1)
+                self.assertEqual(self.said(), [said])
+                self.assertEqual((fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["comments"]), (state, [comment]))
+                self.assertEqual((self.sh.launches(), self.probes(), self.state), ([], 0, before))
+
+    def test_dry_run_prints_the_decision_only(self):
+        def todo():
+            return self.fake(issue("TASK-1", "Todo", "researcher"))
+
+        def resumable():
+            self.resumable("TASK-1", "a", 20)
+            return self.fake(issue("TASK-1", "In Progress", "researcher"))
+        cases = [("todo", todo, ["pick: TASK-1 (1 in queue)"]), ("resume", resumable, ["plan: resume TASK-1 session=a"])]
+        cases += [(name, lambda ip=ip, given=given: (given(), self.fake(ip))[1], [said])
+                  for name, ip, given, said, _, _ in self.nothing_resumable()]
+        for name, given, said in cases:
+            with self.subTest(name=name):
+                self.lines, self.hist = [], {}
+                fake = given()
+                before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
+                self.assertEqual(self.tick(fake, "--dry-run", "--issue", "TASK-1"), 0)
+                self.assertEqual(self.said(), said)
+                self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("Todo" if name == "todo" else "In Progress", []))
+                self.assertEqual((self.sh.launches(), self.probes(), self.state), ([], 0, before))
+                self.assertNotIn(RECHECK, [q for q, _ in fake.queries])
+
+    def test_todo_not_claimable_starts_nothing(self):
+        self.config = self.write_config('human_members = ["me@x.com"]\n' + CONFIG)
+        for argv in (("--issue", "TASK-1"), ("--issue", "TASK-1", "--dry-run")):
+            with self.subTest(argv=argv):
+                self.lines = []
+                for sid in "abcd":
+                    self.add("start", "TASK-1", sid, 300)
+                before = self.unmap("\n".join(self.lines) + "\n")
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tick(fake, *argv), 0 if "--dry-run" in argv else 1)
+                self.assertEqual(self.said(), ["pick: TASK-1 reached 4 attempts; In Review", "pick: nothing claimable"])
+                self.assertEqual(fake.issues["TASK-1"]["state"], "Todo" if "--dry-run" in argv else "In Review")
+                self.assertEqual((self.sh.launches(), self.state), ([], before))
+
+    def test_blocked_starts_nothing(self):
+        for dry in (False, True):
+            for resume in (False, True):
+                with self.subTest(dry=dry, resume=resume):
+                    self.lines, self.hist = [], {}
+                    issues = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")]), issue("TASK-4", "Todo", "pm", project=PD)]
+                    if resume:
+                        issues.append(issue("TASK-2", "In Progress", "researcher"))
+                        self.resumable("TASK-2", "a", 60)
+                    fake = FakeLinear(issues, self.hist)
+                    before = self.unmap("\n".join(self.lines) + ("\n" if self.lines else ""))
+                    self.assertEqual(self.tick(fake, "--issue", "TASK-1", *["--dry-run"] * dry), 0 if dry else 1)
+                    self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7"])
+                    self.assertEqual((self.probes(), self.sh.launches(), fake.mutations, self.state), (0, [], [], before))
+                    self.assertEqual(len(fake.reads()), 1)
+
+    def test_another_state_or_not_a_role_account_starts_nothing(self):
+        fake = FakeLinear([issue("TASK-1", "In Review", "researcher"), issue("TASK-2", "Todo", "someone"), issue("TASK-3", "Todo"),
+                           issue("TASK-4", "In Progress", "someone", updated=ago(hours=3)),
+                           issue("TASK-5", "Todo", "researcher", project=None)])
+        for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-9"):
+            with self.subTest(ident=ident):
+                self.assertEqual(self.tick(fake, "--issue", ident), 1)
+                self.assertEqual(self.said(), [f"pick: {ident} is not a Todo issue assigned to a role account"])
+                self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
+
+
 class TuiTick(Base):
-    """router.py --tui: attended.layout (patched) before the tick; the tick's run.py launch gains --runner=tui."""
+    """router.py --tui: attended.layout (patched) and the events file before the tick or --issue; the outer gets the tui
+    runner."""
     def tui_tick(self, fake, *argv, layout=None, **kw):
         place = mock.Mock(side_effect=layout, return_value=drive.Layout())
         with mock.patch.object(attended, "layout", place):
@@ -1289,61 +1383,81 @@ class TuiTick(Base):
         return rc
 
     def test_new_run_launch_argv(self):
-        rows = ((("--now", "--tui"), None, None, ["--runner=tui"]),
-                (("--tui", "--split-from", "dev", "--now", "--split", "below"), "below", "dev",
-                 ["--runner=tui", "--split=below", "--split-from=dev"]),
-                (("--split-from", "-x", "--tui"), None, "-x", ["--runner=tui", "--split-from=-x"]),
-                (("--split", "right", "--tui"), "right", None, ["--runner=tui", "--split=right"]),
-                (("--now", "--tui", "--split=below", "--split-from=dev"), "below", "dev",
-                 ["--runner=tui", "--split=below", "--split-from=dev"]),
-                (("--split-from=dev", "--tui", "--split", "right"), "right", "dev", ["--runner=tui", "--split=right", "--split-from=dev"]))
-        for argv, split, split_from, tail in rows:
+        events = os.path.join(self.tmp.name, "events.log")
+        rows = ((("--now", "--tui"), None, None, None),
+                (("--tui", "--split-from", "dev", "--now", "--split", "below"), "below", "dev", None),
+                (("--split-from", "-x", "--tui"), None, "-x", None),
+                (("--split", "right", "--tui"), "right", None, None),
+                (("--now", "--tui", "--split=below", "--split-from=dev"), "below", "dev", None),
+                (("--split-from=dev", "--tui", "--split", "right"), "right", "dev", None),
+                (("--tui", "--events", events), None, None, events),
+                (("--tui", f"--events={events}", "--split", "below"), "below", None, events),
+                (("--issue", "TASK-1", "--tui"), None, None, None),
+                (("--tui", "--split", "below", "--issue", "TASK-1", "--split-from", "dev", "--events", events),
+                 "below", "dev", events))
+        for argv, split, split_from, ev in rows:
             with self.subTest(argv=argv):
                 self.lines = []
+                if os.path.exists(events):
+                    os.remove(events)
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tui_tick(fake, *argv), 0)
                 (launch,) = self.sh.launches()
-                sid = launch[launch.index("--sid") + 1]
-                self.assertEqual(launch, [sys.executable, router.RUN, "--issue", "TASK-1", "--project", IDS[DR],
-                                          "--assignee", ROLE["researcher"], "--sid", sid, "--task", "deep-research",
-                                          "--mode", "new", *tail])
-                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", sid, "deep-research") + "\n"))
+                self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, "deep-research", "new",
+                                                    "tui", split, split_from, ev))
+                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", launch.sid, "deep-research") + "\n"))
                 self.assertEqual(self.layout, [mock.call(split, split_from)])
                 self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+                self.assertEqual(os.path.exists(events), ev is not None)
 
     def test_resume_launch_argv(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
-        self.resumable("TASK-1", "a", 60)
-        self.tui_tick(fake, "--tui", "--split", "below")
-        (launch,) = self.sh.launches()
-        self.assertEqual(launch[-4:], ["--mode", "resume", "--runner=tui", "--split=below"])
-        self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=deep-research\n"))
+        for argv in (("--tui", "--split", "below"), ("--issue", "TASK-1", "--tui", "--split", "below")):
+            with self.subTest(argv=argv):
+                self.lines, self.hist = [], {}
+                fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
+                self.resumable("TASK-1", "a", 60)
+                self.tui_tick(fake, *argv)
+                (launch,) = self.sh.launches()
+                self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from), ("resume", "tui", "below", None))
+                self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=deep-research\n"))
 
     def test_dry_run_launches_nothing(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.tui_tick(fake, "--tui", "--dry-run", "--now")
-        self.assertEqual(self.said()[:2], ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)"])
-        self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
-        self.assertEqual(self.layout, [mock.call(None, None)])
-
-    def test_no_place_for_the_pane_exits_2_before_the_tick(self):
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
-        before = self.unmap("\n".join(self.lines) + "\n")
-        for argv in (("--tui", "--split-from", "gone"), ("--now", "--tui", "--dry-run", "--split-from", "gone")):
+        for argv, said in ((("--tui", "--dry-run", "--now"), ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)"]),
+                           (("--tui", "--dry-run", "--issue", "TASK-1"), ["pick: TASK-1 (1 in queue)"])):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tui_tick(fake, *argv, layout=attended.Bad("no tmux session gone")), 2)
-                self.assertEqual(self.err, "router.py: no tmux session gone\n")
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                self.assertEqual(self.said()[:len(said)], said)
+                self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
+                self.assertEqual(self.layout, [mock.call(None, None)])
+
+    def test_no_place_for_the_pane_or_a_bad_events_file_exits_2_before_any_linear_call(self):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        before = self.unmap("\n".join(self.lines) + "\n")
+        bad = os.path.join(self.tmp.name, "a#b")
+        cases = [(("--tui", "--split-from", "gone"), "no tmux session gone"),
+                 (("--now", "--tui", "--dry-run", "--split-from", "gone"), "no tmux session gone"),
+                 (("--issue", "TASK-1", "--tui", "--split-from", "gone"), "no tmux session gone"),
+                 (("--issue", "TASK-1", "--tui", "--dry-run", "--split-from", "gone"), "no tmux session gone"),
+                 (("--tui", "--events", self.tmp.name), f"events file {self.tmp.name}: Is a directory"),
+                 (("--issue", "TASK-1", "--tui", "--events", bad), f"events file {bad}: tmux would misread it")]
+        for argv, msg in cases:
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                layout = attended.Bad(msg) if "gone" in argv else None
+                self.assertEqual(self.tui_tick(fake, *argv, layout=layout), 2)
+                self.assertEqual(self.err, f"router.py: {msg}\n")
                 self.assertEqual((fake.queries, self.sh.calls, self.state), ([], [], before))
 
     def test_without_tui_no_layout_and_a_headless_launch(self):
-        for argv in ((), ("--now",), ("--now", "--issue", "TASK-1")):
+        for argv in ((), ("--now",), ("--issue", "TASK-1")):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 with mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.tick(fake, *argv)
                 (launch,) = self.sh.launches()
-                self.assertEqual(launch[-2:], ["--mode", "new"])
+                self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from, launch.events),
+                                 ("new", "headless", None, None, None))
 
 
 class TaskLabels(Base):
@@ -1409,19 +1523,20 @@ class TaskLabels(Base):
         self.assertEqual(fake.issues["TASK-4"]["state"], "Todo")
 
     def test_blocked_invalid_label_waits_for_its_blocker(self):
-        for argv, skip, plan in (((), ["plan: nothing to do", "skip: nothing to do"], ["plan: new (1 in queue)"]),
-                                 (("--now", "--issue", "TASK-1"), [], [])):
+        for argv, skip, plan, end, rc in (((), ["plan: nothing to do", "skip: nothing to do"], ["plan: new (1 in queue)"],
+                                           ["skip: nothing claimed"], 0),
+                                          (("--issue", "TASK-1"), [], [], [], 1)):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")])])
-            self.tick(fake, *argv)
+            self.assertEqual(self.tick(fake, *argv), rc, argv)
             self.assertEqual(self.said(), ["blocked: TASK-1 by TASK-7"] + skip, argv)
             self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations, self.sh.launches()), ("Todo", [], []), argv)
             self.assertNotIn(RECHECK, [q for q, _ in fake.queries], argv)
             fake.issues["TASK-1"]["inverseRelations"]["nodes"][0]["issue"]["state"]["type"] = "completed"
-            self.tick(fake, *argv)
+            self.assertEqual(self.tick(fake, *argv), rc, argv)
             t = fake.issues["TASK-1"]
             self.assertEqual((t["state"], t["comments"]), ("In Review", [self.ORPHAN]), argv)
             self.assertEqual(self.said(), plan + ["pick: TASK-1 (1 in queue)", "claim: TASK-1 bad task label; In Review",
-                                                  "pick: nothing claimable", "skip: nothing claimed"], argv)
+                                                  "pick: nothing claimable"] + end, argv)
             self.assertEqual((self.sh.launches(), self.state), ([], ""), argv)
 
     def test_fr4_label_read_from_recheck(self):
@@ -1435,7 +1550,7 @@ class TaskLabels(Base):
         fake = Relabel([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake)
         self.assertIn("claim: TASK-1 task=light-research", self.said())
-        self.assertEqual(self.sh.launches()[0][-4:], ["--task", "light-research", "--mode", "new"])
+        self.assertEqual((self.sh.launches()[0].task, self.sh.launches()[0].mode), ("light-research", "new"))
         self.assertNotIn("labels", fake.reads()[0])
 
     def test_fr8_dry_run_resolves_nothing(self):
@@ -1471,7 +1586,7 @@ class TaskLabels(Base):
         self.touch("TASK-1", "a", 40)
         self.tick(fake)
         (launch,) = self.sh.launches()
-        self.assertEqual(launch[launch.index("--sid"):], ["--sid", self.sid("a"), "--task", "light-research", "--mode", "resume"])
+        self.assertEqual((launch.sid, launch.task, launch.mode), (self.sid("a"), "light-research", "resume"))
         self.assertTrue(self.state.endswith(" resume TASK-1 session=a task=light-research\n"))
         self.assertIn("plan: resume TASK-1 session=a", self.said())
 
@@ -1511,9 +1626,481 @@ class TaskLabels(Base):
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
         self.assertIn("claim: TASK-1 task=light-research", self.said())
         (launch,) = self.sh.launches()
-        self.assertEqual(launch[-4:], ["--task", "light-research", "--mode", "new"])
+        self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
         self.assertTrue(self.state.endswith(" task=light-research\n"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+
+TUI_NAME = "engineer-TASK-7-0b6f2c1e"
+ATTACH = ("router.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'\n"
+          f"router.py: tui: tmux attach -t '={TUI_NAME}'\n")
+# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before a printed `tmux attach`
+PREFIXES = ((None, ""), (" \t", ""), (" docker exec -it box ", "docker exec -it box "))
+LAYOUT = attended.layout
+
+
+class OuterBase(RunBase):
+    """The outer on run_fixtures' root, fake Linear and fake gh/git; its stderr lands in self.err."""
+    def outer(self, assignee=ENGINEER, task="build", mode="new", runner="headless", ident=ID, sid=SID, **tui):
+        a = outer_args(ident, PROJECT, assignee, sid, task, mode, runner, **tui)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = router.outer(a, sh=self.sh, gql=self.gql, run=self.run, projects=self.projects, keychain=self.keychain,
+                              root=self.root)
+        self.err = err.getvalue()
+        return rc
+
+
+class Outer(OuterBase):
+    def test_build_starts_the_inner_in_tmux(self):
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
+                                           sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM",
+                                           *forwarded()], {"check": True})])
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+        self.assertEqual(os.listdir(self.rd), ["input.md"])
+        self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})])
+        self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
+        self.assertEqual(os.environ["PATH"], config.PATH)
+        self.assertEqual((self.err, os.path.exists(self.plog_path())), ("", False))
+
+    def test_research_has_no_target(self):
+        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
+        self.run.table = [(LISTING, res("[]"))]
+        self.assertEqual(self.outer(RESEARCHER, "deep-research"), 0)
+        (argv, _), = self.sh_calls
+        self.assertEqual(argv[-8:], ["--uuid", UUID, *forwarded(RESEARCHER, "deep-research")])
+        self.assertNotIn("--target", argv)
+        self.assertEqual(self.run.calls, [(LISTING, 60)])
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
+                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['research']}\n\n"
+                         "## Question\n\nCompare queues\n\nWhich queue fits?")
+
+    def test_design_gets_the_research_target(self):
+        self.gql.issue = node(title="Queues PRD", description="Build a PRD for X.")
+        self.run.table = [(DESIGN_LISTING, res("[]"))]
+        self.assertEqual(self.outer(PM, "product-design"), 0)
+        (argv, _), = self.sh_calls
+        self.assertNotIn("--target", argv)
+        self.assertEqual(self.run.calls, [(DESIGN_LISTING, 60)])
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
+                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['design']}\n\n"
+                         "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")
+
+    def local_clone(self):
+        """A real clone (no network) of the target in the temp root, configured under [local_clones]; its realpath."""
+        path = os.path.realpath(os.path.join(self.tmp, "clone"))
+        for argv in (["init", "-q", path], ["-C", path, "remote", "add", "origin", "https://github.com/ophis/agent-pm.git"]):
+            subprocess.run(["git", *argv], check=True)
+        self.write(self.config, RUN_CONFIG + f'[local_clones]\n"Ophis/Agent-PM" = "{path}"\n')
+        return path
+
+    def test_a_configured_local_clone_is_the_inputs_repo(self):
+        clone = self.local_clone()
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}"))
+        self.assertEqual(self.sh_calls[0][0][self.sh_calls[0][0].index("--target") + 1], "Ophis/Agent-PM")
+        self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
+        self.assertEqual(self.err, "")
+
+    def test_research_and_design_name_the_local_clone(self):
+        clone = self.local_clone()
+        for who_, task, listing in ((RESEARCHER, "deep-research", LISTING), (PM, "product-design", DESIGN_LISTING)):
+            with self.subTest(task=task):
+                self.run.table = [(listing, res("[]"))]
+                self.assertEqual(self.outer(who_, task), 0)
+                self.assertEqual(self.read(os.path.join(self.rd, "input.md")).splitlines()[1], f"Repo: {clone}")
+                self.assertNotIn("--target", self.sh_calls[-1][0])
+
+    def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
+        self.local_clone()
+        self.transcript()
+        name = re.search(r"^Checkout: (.+)$", INPUT, re.M).group(1)
+        # Where `repo.py worktree --dir <Workdir>/src --name <Checkout>` puts it, as core's tasks give the command.
+        os.makedirs(os.path.join(repo.checkout(os.path.join(self.rd, "src"), "Ophis", "Agent-PM", name), ".git"))
+        self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+        self.assertEqual([argv[0] for argv, _ in self.run.calls], ["gh", "git", "git"])
+
+    def test_resume_rebuilds_the_input(self):
+        self.transcript()
+        self.write(os.path.join(self.rd, "input.md"), "stale")
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.sh_calls[0][0][-6:], forwarded(mode="resume"))
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+
+    def test_bad_issue_or_session_id(self):
+        for ident, sid in (("task-7", SID), (ID, "not-a-sid"), (ID, "z" * 36)):
+            with self.subTest(ident=ident, sid=sid):
+                self.assertEqual(self.outer(ident=ident, sid=sid), 2)
+                self.assertEqual(self.err, f"router.py: bad issue or session id: {ident} {sid}\n")
+        self.assertEqual((self.sh_calls, self.gql.calls), ([], []))
+
+    def test_config_error_exits_1(self):
+        self.write(self.config, RUN_CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
+        self.assertEqual(self.outer(), 1)
+        self.assertEqual(self.err, "router.py: orchestrator/config.toml: unknown keys: bogus\n")
+
+    def test_not_a_role_account(self):
+        self.assertEqual(self.outer(assignee="x@y.com"), 2)
+        self.assertEqual(self.err, "router.py: 'x@y.com' is not a role account\n")
+
+    def test_task_not_the_roles_goes_to_the_default_task_log(self):
+        self.assertEqual(self.outer(RESEARCHER, "build"), 2)
+        self.assertEqual(self.plog("deep-research"), ["<ts> config-error TASK-7: task 'build' is not one of "
+                                                      "researcher's tasks (deep-research, light-research)"])
+        self.assertFalse(os.path.exists(self.plog_path()))
+
+    def test_resume_without_transcript(self):
+        self.assertEqual(self.outer(mode="resume"), 3)
+        path = config.transcript(ID, SID, self.projects)
+        self.assertEqual(self.plog(), [f"<ts> transient TASK-7: no transcript to resume at {path}"])
+        self.assertEqual(TS.sub("<ts> ", self.err), f"<ts> transient TASK-7: no transcript to resume at {path}\n")
+
+    def test_no_keychain_item(self):
+        self.missing.add(KEY)
+        self.assertEqual(self.outer(), 2)
+        self.assertEqual(self.plog(), ["<ts> config-error TASK-7: no Keychain item for role key linear-api-key-engineer"])
+        self.assertEqual(self.gql.calls, [])
+
+    def test_linear_errors_are_transient(self):
+        cases = [(Gql(None), "LookupError: TASK-7: issue not found"),
+                 (Gql(node(), lambda n, v: SystemExit("linear api error: boom")), "SystemExit: linear api error: boom")]
+        for gql, reason in cases:
+            with self.subTest(reason=reason):
+                self.gql = gql
+                self.assertEqual(self.outer(), 3)
+                self.assertEqual(self.plog()[-1], f"<ts> transient TASK-7: Linear: {reason}")
+        self.assertEqual(self.sh_calls, [])
+
+    def test_invalid_new_bounces_without_a_run(self):
+        self.run.table = [(("gh", "api"), res(code=1, stderr="gh: Not Found (HTTP 404)"))]
+        reason = "project mapping ophis/agent-pm: not found or no access (HTTP 404)"
+        for task in ("build", "light-build"):
+            with self.subTest(task=task):
+                self.gql = Gql(node(comments=[USER_NOTE]))
+                self.assertEqual(self.outer(task=task), 0)
+                self.assertEqual(self.gql.calls, [
+                    ("issue", None, {"i": ID}),
+                    ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
+                    ("comment", KEY, {"i": UUID, "b": f"Question: repo check failed: {reason}. Fix the description's "
+                                                      "`Repo:` line, then move this issue back to Todo."}),
+                    ("reread", KEY, {"i": UUID}),
+                    ("state", KEY, {"i": UUID, "s": IDS_BY_KEY["in_review"]})])
+                self.assertEqual(self.plog()[-1], f"<ts> bounce TASK-7: {reason}")
+                self.assertEqual((self.sh_calls, os.path.exists(self.rd)), ([], False))
+
+    def test_bounce_failure_is_transient(self):
+        self.run.table = [(("gh", "api"), res(code=1, stderr="HTTP 404"))]
+        self.gql = Gql(node(), lambda n, v: SystemExit("linear api error: boom") if n == "comment" else None)
+        self.assertEqual(self.outer(), 3)
+        self.assertEqual(self.plog(), ["<ts> transient TASK-7: bounce: SystemExit: linear api error: boom"])
+        self.assertEqual(self.sh_calls, [])
+
+    def test_invalid_resume_and_transient_check_start_nothing(self):
+        self.transcript()
+        cases = [("resume", res(code=1, stderr="HTTP 404"),
+                  "project mapping ophis/agent-pm: not found or no access (HTTP 404)"),
+                 ("new", res(code=1, stderr="HTTP 502: Bad Gateway"), "gh api repos/ophis/agent-pm: HTTP 502: Bad Gateway"),
+                 ("new", subprocess.TimeoutExpired(["gh", "api"], 60),
+                  "repo check: TimeoutExpired: Command '['gh', 'api']' timed out after 60 seconds")]
+        for mode, r, reason in cases:
+            with self.subTest(reason=reason):
+                self.run.table = [(("gh", "api"), r)]
+                self.assertEqual(self.outer(mode=mode), 3)
+                self.assertEqual(self.plog()[-1], f"<ts> transient TASK-7: {reason}")
+        self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})] * 3)
+        self.assertEqual(self.sh_calls, [])
+
+    def test_docs_failure_is_transient(self):
+        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
+        for r, reason in ((res(code=1, stderr="HTTP 500"), "gh api contents Research: HTTP 500"),
+                          (OSError("gh missing"), "gh missing")):
+            with self.subTest(reason=reason):
+                self.run.table = [(LISTING, r)]
+                self.assertEqual(self.outer(RESEARCHER, "deep-research"), 3)
+                self.assertEqual(self.plog("deep-research")[-1], f"<ts> transient TASK-7: docs: {reason}")
+        self.assertEqual(self.sh_calls, [])
+
+    def test_input_write_failure_leaves_no_temp(self):
+        with mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
+            self.assertEqual(self.outer(), 1)
+        self.assertEqual((os.listdir(self.rd), self.sh_calls), ([], []))
+        self.assertEqual(self.err, "router.py: input.md: OSError: disk full\n")
+
+    def test_tmux_failure_exits_1(self):
+        self.sh_error = subprocess.CalledProcessError(1, ["tmux"])
+        self.assertEqual(self.outer(), 1)
+        self.assertEqual(len(self.sh_calls), 1)
+        self.assertIn("router.py: tmux: CalledProcessError", self.err)
+
+
+class Attended(OuterBase):
+    """The outer with the tui runner; attended.layout sees a fake tmux, no $TMUX or $ITERM_SESSION_ID, and iTerm2's
+    $TERM_PROGRAM."""
+    def setUp(self):
+        super().setUp()
+        for k in ("TMUX", "ITERM_SESSION_ID"):  # RunBase's patch.dict restores them
+            os.environ.pop(k, None)
+        os.environ["TERM_PROGRAM"] = "iTerm.app"
+
+    def tui(self, live=(), assignee=ENGINEER, **opts):
+        self.tmux = Tmux(live)
+        place = functools.partial(LAYOUT, proc=self.tmux)
+        with mock.patch.object(attended, "layout", place):
+            return self.outer(assignee, runner="tui", **opts)
+
+    def driver(self, *tail, iterm=""):
+        return [(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
+                  "agent-pm-engineer-TASK-7", "-c", self.rd,
+                  sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), *tail],
+                 {"check": True})]
+
+    def rename_engineer(self, name):
+        """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
+        core, roles = os.path.join(self.root, "core"), os.path.join("team", "roles")
+        os.remove(core)
+        for parent, own in (("", {compose.CONFIG, "team"}), ("team", {"roles"}), (roles, set())):
+            os.makedirs(os.path.join(core, parent), exist_ok=True)
+            for n in set(os.listdir(os.path.join(config.CORE, parent))) - own:
+                os.symlink(os.path.join(config.CORE, parent, n), os.path.join(core, parent, n))
+        os.symlink(os.path.join(config.CORE, roles, "engineer.md"), os.path.join(core, roles, f"{name}.md"))
+        self.write(os.path.join(core, compose.CONFIG),
+                   self.read(os.path.join(config.CORE, compose.CONFIG)).replace("[roles.engineer", f"[roles.{name}"))
+        self.write(os.path.join(hermetic.home(self), "core.local.toml"), self.read(hermetic.FIXTURE))
+        self.write(self.config, RUN_CONFIG.replace(role_table("engineer"), role_table(name)))
+
+    def test_split_from_a_session(self):
+        self.assertEqual(self.tui(split="below", split_from="dev", live=["dev"]), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=below", "--split-from=dev"))
+        self.assertEqual(self.err, ATTACH)
+        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+
+    def test_an_iterm2_pane_gets_the_tui_and_a_detached_driver(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.assertEqual(self.tui(), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=w0t0p0:ABC", iterm="w0t0p0:ABC"))
+        self.assertEqual(self.err, ATTACH)
+
+    def test_the_callers_tmux_session_is_the_opener_never_split_from(self):
+        os.environ.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
+        self.assertEqual(self.tui(live=["mine"]), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=mine"))
+        self.assertEqual(self.err, ATTACH)
+
+    def test_events_reach_the_inner_as_an_absolute_path(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        events = os.path.join(self.tmp, "events.log")
+        self.assertEqual(self.tui(split="below", events=os.path.join(self.tmp, ".", "events.log")), 0)
+        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=below", "--opener=w0t0p0:ABC",
+                                                    f"--events={events}", iterm="w0t0p0:ABC"))
+        self.assertEqual(os.stat(events).st_mode & 0o777, 0o600)
+
+    def test_a_bad_events_file_starts_nothing(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        cases = [(self.tmp, f"events file {self.tmp}: Is a directory"),
+                 (os.path.join(self.tmp, "a#b"), f"events file {self.tmp}/a#b: tmux would misread it")]
+        for path, msg in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(self.tui(events=path), 2)
+                self.assertEqual(self.err, f"router.py: {msg}\n")
+        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
+        self.assertFalse(os.path.exists(self.rd))
+
+    def test_a_role_outside_the_session_name_contract_starts_nothing(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.rename_engineer("eng_x")
+        self.assertEqual(self.tui(assignee="eng_x@agents.test"), 2)
+        (line,) = self.plog()
+        self.assertTrue(line.startswith("<ts> config-error TASK-7: TUI session prefix 'eng_x-TASK-7': want "), line)
+        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
+        self.assertEqual(self.outer("eng_x@agents.test"), 0)  # headless: no TUI session to name
+
+    def test_attach_lines_come_before_the_driver_session(self):
+        printed = []
+        self.sh = lambda argv, **kw: printed.append(sys.stderr.getvalue())
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        self.assertEqual(self.tui(), 0)
+        self.assertEqual(printed, [ATTACH])
+
+    def test_attach_lines_take_the_prefix(self):
+        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
+        for value, prefix in PREFIXES:
+            with self.subTest(value=value):
+                if value is not None:
+                    os.environ["TUI_ATTACH_PREFIX"] = value
+                self.assertEqual(self.tui(), 0)
+                self.assertEqual(self.err, ATTACH.replace("tmux attach", prefix + "tmux attach"))
+
+    def test_no_place_for_the_pane_starts_nothing(self):
+        cases = [({}, "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
+                      "run from tmux or iTerm2, or pass --split-from SESSION"),
+                 ({"split": "left"}, "split must be one of right, below"),
+                 ({"split_from": "gone"}, "no tmux session gone")]
+        for opts, msg in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(self.tui(**opts), 2)
+                self.assertEqual(self.err, f"router.py: {msg}\n")
+        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
+        self.assertFalse(os.path.exists(self.rd))
+
+
+class ClaimLinear(FakeLinear):
+    """FakeLinear for the claim; issues.Q_ISSUE, the outer's read, gets the outer's issue node."""
+    def __init__(self, todo, outer_issue):
+        super().__init__([todo])
+        self.issue = outer_issue
+
+    def __call__(self, query, **v):
+        if query == issues.Q_ISSUE:
+            self.queries.append((query, v))
+            return {"issue": self.issue}
+        return super().__call__(query, **v)
+
+
+class AttendedEntry(OuterBase):
+    """router.py --issue ID --tui: the claim on a fake Linear, then the real outer with the tui runner."""
+    def setUp(self):
+        super().setUp()
+        self.todo = issue(ID, "Todo", "engineer")
+        self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
+        self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
+        self.tmux = Tmux(live=["dev"])
+        for k in ("TMUX", "ITERM_SESSION_ID"):
+            os.environ.pop(k, None)
+        os.environ["TERM_PROGRAM"] = "iTerm.app"
+        p = mock.patch.object(attended, "layout", functools.partial(LAYOUT, proc=self.tmux))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def sh(self, argv, **kw):
+        """RunBase's, noting runs.log's text when the driver session starts."""
+        if argv[1] == "new-session":
+            self.at_launch.append(self.read(self.runs))
+        return super().sh(argv, **kw)
+
+    def main(self, argv):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = router.main(argv, gql=self.gql, tdir=self.projects, config=self.config, runs=self.runs, sh=self.sh,
+                             root=self.root, run=self.run, keychain=self.keychain)
+        self.err = err.getvalue()
+        return rc
+
+    def entry(self, *extra):
+        return self.main(["--issue", ID, "--tui", *extra])
+
+    def said(self):
+        return [TS.sub("", line) for line in self.err.splitlines()]
+
+    def test_claims_then_starts_the_run_attended(self):
+        events = os.path.join(self.tmp, "events.log")
+        cases = [(("--split", "below", "--split-from", "dev"), "", ["--runner=tui", "--split=below", "--split-from=dev"]),
+                 ((), "w0t0p0:ABC", ["--runner=tui", "--opener=w0t0p0:ABC"]),
+                 (("--events", events), "w0t0p0:ABC", ["--runner=tui", "--opener=w0t0p0:ABC", f"--events={events}"])]
+        for extra, iterm, tail in cases:
+            with self.subTest(extra=extra):
+                os.environ["ITERM_SESSION_ID"] = iterm
+                self.todo["state"], self.sh_calls, self.gql.mutations = "Todo", [], []
+                self.tmux_sessions = [TUI_NAME, "agent-pm-engineer-TASK-70", "agent-pm-engineer-TASK-8"]
+                if os.path.exists(self.runs):
+                    os.remove(self.runs)
+                self.at_launch = []
+                self.assertEqual(self.entry(*extra), 0)
+                (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
+                sid = line.split(" ")[2].removeprefix("session=")
+                self.assertRegex(sid, config.UUID_RE)
+                self.assertEqual(line, router.start_line(ID, sid, "build"))
+                self.assertEqual(self.at_launch, [self.read(self.runs)])
+                self.assertEqual(self.sh_calls, [
+                    (LIST, {"capture_output": True, "text": True}),
+                    (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
+                      "agent-pm-engineer-TASK-7", "-c", self.rd,
+                      sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(sid=sid),
+                      *tail], {"check": True})])
+                self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 task=build",
+                                               "router.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'",
+                                               f"router.py: tui: tmux attach -t '=engineer-TASK-7-{sid[:8]}'"])
+                self.assertEqual(self.gql.mutations, [(linear.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})])
+                self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+
+    def test_only_issue_split_split_from_and_events(self):
+        for argv in (["--issue", ID, "--tui", *x] for x in (
+                ["--project", PROJECT], ["--assignee", ENGINEER], ["--sid", SID], ["--task", "build"], ["--mode", "new"],
+                ["--inner"], ["--uuid", UUID], ["--target", "Ophis/Agent-PM"], ["--runner", "tui"], ["--runner", "headless"],
+                ["--opener", "mine"], ["--spl", "below"], ["--bes", "dev"], ["--eve", "x"])):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.main(argv), 2)
+                self.assertEqual(self.err, router.USAGE + "\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_bad_issue_id(self):
+        self.assertEqual(self.main(["--issue", "task-7", "--tui"]), 2)
+        self.assertEqual(self.err, "router.py: bad issue id: task-7\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_config_error_exits_1(self):
+        self.write(self.config, RUN_CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
+        self.assertEqual(self.entry(), 1)
+        self.assertEqual(self.err, "router.py: orchestrator/config.toml: unknown keys: bogus\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
+    def test_no_place_for_the_pane_or_a_bad_events_file_before_any_linear_call(self):
+        cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
+                      "run from tmux or iTerm2, or pass --split-from SESSION"),
+                 (("--split", "left"), "split must be one of right, below"),
+                 (("--split-from", "gone"), "no tmux session gone"),
+                 (("--split-from", "dev", "--events", self.tmp), f"events file {self.tmp}: Is a directory")]
+        for extra, msg in cases:
+            with self.subTest(msg=msg):
+                self.assertEqual(self.entry(*extra), 2)
+                self.assertEqual(self.err, f"router.py: {msg}\n")
+        self.assertEqual((self.sh_calls, self.gql.queries, os.path.exists(self.runs)), ([], [], False))
+        self.assertEqual(os.environ["PATH"], config.PATH)
+
+    def test_a_live_run_is_refused(self):
+        for role in ("engineer", "pm"):
+            with self.subTest(role=role):
+                self.sh_calls, self.tmux_sessions = [], [f"agent-pm-{role}-{ID}"]
+                self.assertEqual(self.entry("--split-from", "dev"), 1)
+                self.assertEqual(self.err, f"router.py: {ID} has a live agent run: tmux attach -t '=agent-pm-{role}-{ID}'\n")
+                self.assertEqual(self.sh_calls, [(LIST, {"capture_output": True, "text": True})])
+        self.assertEqual((self.gql.queries, os.path.exists(self.runs)), ([], False))
+
+    def test_the_live_run_refusal_takes_the_prefix(self):
+        self.tmux_sessions = [f"agent-pm-engineer-{ID}"]
+        for value, prefix in PREFIXES:
+            with self.subTest(value=value):
+                if value is not None:
+                    os.environ["TUI_ATTACH_PREFIX"] = value
+                self.assertEqual(self.entry("--split-from", "dev"), 1)
+                self.assertEqual(self.err, f"router.py: {ID} has a live agent run: {prefix}tmux attach -t "
+                                           f"'=agent-pm-engineer-{ID}'\n")
+
+    def test_nothing_started_exits_1_without_a_start_line(self):
+        cases = [(dict(state="In Review"), "pick: TASK-7 is not a Todo issue assigned to a role account", "In Review"),
+                 (dict(state="In Progress"), f"recover: TASK-7 (last updated {self.todo['updatedAt']})", "Todo"),
+                 (dict(inverseRelations={"nodes": [blocker("TASK-9")]}), "blocked: TASK-7 by TASK-9", "Todo"),
+                 (dict(labels=[label("Stray", STRAY)]),
+                  "claim: TASK-7 bad task label; In Review", "In Review")]
+        for change, said, state in cases:
+            with self.subTest(said=said):
+                self.todo.update(state="Todo", inverseRelations={"nodes": []}, labels=[])
+                self.todo.update(change)
+                self.sh_calls = []
+                self.assertEqual(self.entry("--split-from", "dev"), 1)
+                self.assertIn(said, self.said())
+                self.assertEqual((self.todo["state"], self.sh_calls), (state, [(LIST, {"capture_output": True, "text": True})]))
+        self.assertFalse(os.path.exists(self.runs))
+
+
+class HasKey(unittest.TestCase):
+    def test_has_key_never_reads_the_secret(self):
+        for code, want in ((0, True), (44, False)):
+            with mock.patch.object(router.subprocess, "run", return_value=subprocess.CompletedProcess([], code)) as m:
+                self.assertIs(router.has_key("svc"), want)
+            self.assertEqual(m.call_args.args[0], ["security", "find-generic-password", "-s", "svc"])
 
 
 if __name__ == "__main__":
