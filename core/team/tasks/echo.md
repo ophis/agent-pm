@@ -13,4 +13,4 @@ Return the input unchanged.
 
 ## Resume
 
-The prompt starts "Resumed agent run" → redo steps 1–2.
+Redo steps 1–2.

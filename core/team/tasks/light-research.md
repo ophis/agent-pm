@@ -8,20 +8,15 @@ Run one round of parallel agents, then write a short report.
 
 ## Steps
 
-1. **Read** the input; decide its type (Researcher › Type and target).
-2. **Too vague** (Output; Researcher › Type and target) → `needs_input`, stop.
-3. **Prepare** (local, mixed): Researcher › Type and target.
-4. **Report progress:**
+1. **Read** the input; decide its type (Researcher › Type and target). Too vague → `needs_input`, stop.
+2. **Prepare** (local, mixed): Researcher › Type and target.
+3. **Report progress:**
    [agent-pm-progress:start] the type, plus each target repo and its commit for local or mixed
-5. **Research.** Split the question into 3–6 **angles**: web for web, worktree for local, both for mixed. Dispatch one subagent per angle, all in parallel, each prompt self-contained and restricted per Researcher › Type and target. Each agent prefers primary sources, checks its own findings and returns, per finding, the claim, its sources (direct or indirect; code per Researcher › Standards), how many are independent, and confidence; plus what it couldn't cover.
-6. **Failure.** Never retry or replace an agent. Some usable findings → report, failed angles under Gaps. None → `failed`, stop.
-7. **Report** (Researcher › Standards), after the type line `Light Research. Angles: <angle 1>; <angle 2>; …. No independent verification stage: each finding is checked only by the agent that found it.`, ≤ 3000 words.
-8. **Finish.** `status: done`; `summary` (Researcher › Standards). One round can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Deep Research: <reason>`.
+4. **Research.** 3–6 **angles** (web for web, worktree for local, both for mixed), one subagent each, all in parallel, restricted per Researcher › Type and target; each checks its own findings.
+5. **Failure.** Never retry or replace an agent. No usable findings → `failed`, stop; else failed angles go under Gaps.
+6. **Report** (Researcher › Standards), after the type line `Light Research. Angles: <angle 1>; <angle 2>; …. No independent verification stage: each finding is checked only by the agent that found it.`, ≤ 3000 words.
+7. **Finish.** `status: done`. One round can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Deep Research: <reason>`.
 
 ## Resume
 
-The prompt starts "Resumed agent run" → re-read the input (it may have changed); reuse this session's results. This overrides steps 3–6:
-- No agent dispatched this session → steps 3–8.
-- Report not written → prepare again (local, mixed), then re-dispatch each angle without a result (none, or an error) with its original prompt, once, in one parallel batch.
-
-Then steps 7–8. Still nothing usable → `failed`.
+Reuse this session's results. Nothing dispatched → step 2. Report not written → re-dispatch each angle without a result (none, or an error) with its original prompt, once, in one parallel batch. Then steps 6–7; still nothing usable → `failed`.

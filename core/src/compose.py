@@ -1,9 +1,9 @@
 """Composer: resolves a role + task's run config and compiles principles + role + task + templates + output into its
 prompt. A module for the driver (drive.py); needs Python 3.11+.
 
-Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); role and
-task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and {{gate}}; a
-destination gets its output values.
+Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); principles,
+role and task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and
+{{gate}}; a destination gets its output values.
 """
 import json
 import os
@@ -35,7 +35,8 @@ FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the agent run's progress and outcome, drive.start tails it
-RESUME = "Resumed agent run after an interruption. These rules are current; they may have changed since this session started.\n\n"
+RESUME = ("Resumed agent run after an interruption. These rules and the input are current; either may have changed since this "
+          "session started, so re-read the input.\n\n")
 
 
 class ConfigError(Exception):
@@ -154,7 +155,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
-    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names, "principles.md")]
+    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names | paths, "principles.md")]
     role_rel, task_rel = _rule_files(run.role, run.task)
     parts += [fill(_read(text, role_rel), paths, role_rel), fill(_task(text, task_rel)[1], paths, task_rel)]
     for name in run.templates:

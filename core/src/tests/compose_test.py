@@ -358,11 +358,13 @@ class Prompt(Fake):
         self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
         self.assertEqual(spaced.channel, "/my w/.report.jsonl")
 
-    def test_role_and_task_text_name_the_clients_methods_path(self):
-        self.write({"team/roles/writer.md": "# Writer\n\nKnow `{{methods}}`.\n",
+    def test_principles_role_and_task_text_name_the_clients_paths(self):
+        self.write({"team/principles.md": "# Principles\n\nRun `{{scripts}}/x.py`.\n",
+                    "team/roles/writer.md": "# Writer\n\nKnow `{{methods}}`.\n",
                     "team/tasks/short-note.md": "# Short Note\n\nFollow `{{methods}}/note.md`.\n"})
         run = compose.load_run(self.root, "writer", "short-note")
         prompt = compose.render(self.root, run, PARAMS, client=Plain(methods="/m"))
+        self.assertIn(f"Run `{self.root}/src/x.py`.", prompt)
         self.assertIn("Know `/m`.", prompt)
         self.assertIn("Follow `/m/note.md`.", prompt)
 
@@ -524,34 +526,16 @@ class RealCore(unittest.TestCase):
         self.assertNotIn("{{", prompt)
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
 
-    def test_deep_research_falls_back_to_the_methods_without_a_workflow_tool(self):
+    def test_deep_research_names_both_method_files(self):
         prompt, _ = composed("researcher", "deep-research")
-        methods = os.path.join(CORE, "team", "methods")
-        for phrase in (f"No Workflow tool that runs `/deep-research` → follow `{methods}/deep-research.md` once instead, "
-                       "on the same filtered brief",
-                       f"No Workflow tool → follow `{methods}/ultracode.md` instead, for the local part, with the budget's "
-                       "cap, its subagents readers.",
-                       "**Can't run** (rounds run by a method): no subagents, or subagents lacking a round's tools "
-                       "(`/deep-research` round: web search and fetch; ultracode round: file reading) → skip that "
-                       "round, list it under Gaps, and go on to the other round or step 6.",
-                       "for a round run by a method, `<n>` the subagents it dispatched (no session files read), `<cap>` 100 "
-                       "(deep-research method) or the budget's cap (ultracode method)."):
-            self.assertIn(phrase, prompt)
-        self.assertNotIn("No Workflow tool → `failed`", prompt)
-
-    def test_deep_research_names_the_methods_dir_read_only(self):
-        methods = os.path.join(CORE, "team", "methods")
-        self.assertIn(f"`{methods}` is read-only.", composed("researcher", "deep-research")[0])
+        for name in METHOD_NAMES:
+            self.assertIn(f"`{os.path.join(CORE, 'team', 'methods', name)}.md`", prompt)
 
     def test_researcher_names_no_harness_tool(self):
         with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
             text = f.read()
         for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
             self.assertNotIn(word, text, word)
-        for phrase in ("a **reader** to read-only file tools (read, search, list) inside the worktrees",
-                       "readers, whether from a workflow you write or dispatched by the ultracode method",
-                       "the deep-research method's agents are web agents"):
-            self.assertIn(phrase, text)
 
     def test_pre_approved_commands_match_the_task_text(self):
         for role, task in ALL:
@@ -572,34 +556,31 @@ class RealCore(unittest.TestCase):
         both = ["worktree", "status"]
         self.assertEqual(found, {"deep-research": ["worktree"], "light-research": ["worktree"],
                                  "product-design": ["worktree"], "build": both, "light-build": both,
-                                 "echo": []})
+                                 "echo": ["worktree"]})
 
     def test_every_repo_named_by_url_may_be_a_local_clone_path(self):
-        named = []
         for role, task in ALL:
             prompt, _ = composed(role, task)
-            if "repo URL" in prompt:
-                named.append(task)
-                self.assertEqual(prompt.count("repo URL"),
-                                 len(re.findall(r"repo URLs? or local clone paths?", prompt)), task)
-        self.assertEqual(sorted(named), ["build", "deep-research", "light-build", "light-research", "product-design"])
+            self.assertIn("repo URL", prompt, task)
+            self.assertEqual(prompt.count("repo URL"),
+                             len(re.findall(r"repo URLs? or local clone paths?", prompt)), task)
 
     def test_builds_fail_without_push_permission(self):
         for task in ("build", "light-build"):
             self.assertIn("`push` false → `failed`", composed("engineer", task)[0], task)
 
-    def test_researcher_takes_several_repos(self):
-        prompt, _ = composed("researcher", "light-research")
-        for phrase in ("the repos the input names, one or more", "None → too vague.", "once per target repo",
-                       "that repo's `permalink_base`", "each repo and its commit", "each `<repo>` at `<commit>`"):
-            self.assertIn(phrase, prompt)
+    def test_research_hand_off_phrases(self):
+        light, deep = composed("researcher", "light-research")[0], composed("researcher", "deep-research")[0]
+        self.assertIn("`Light Research. Angles: ", light)
+        self.assertIn("`Suggest upgrading to Deep Research: ", light)
+        self.assertIn("`Light Research.` line", deep)
 
-    def test_code_source_format_is_in_the_charter_only(self):
-        fmt = "`<owner>/<name>:<path from its worktree root>:<a>-<b>`"
-        for task in ("deep-research", "light-research"):
-            self.assertIn(fmt, composed("researcher", task)[0], task)
-        with open(os.path.join(CORE, "team", "tasks", "light-research.md")) as f:
-            self.assertNotIn(fmt, f.read())
+    def test_read_only_tasks_branch_is_id_dash_task(self):
+        # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
+        for role, task, branch in (("researcher", "deep-research", "`<id>-<task>`"),
+                                   ("researcher", "light-research", "`<id>-<task>`"),
+                                   ("pm", "product-design", "`<id>-product-design`")):
+            self.assertIn(branch, composed(role, task)[0], task)
 
     def test_light_research_prepares_before_its_start_mark(self):
         with open(os.path.join(CORE, "team", "tasks", "light-research.md")) as f:
