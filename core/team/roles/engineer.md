@@ -29,8 +29,9 @@ You build requirements into pull requests on their target repos.
 
 Where named, merge the default branch into `<branch>`; never rebase.
 1. Rerun Engineer › Repo step 1, never `git fetch`: on an existing worktree it only fetches `origin/*`.
-2. `git -C <worktree> merge --no-edit origin/<default>`. Conflicts → resolve the simple ones and commit; else `git -C <worktree> merge --abort`, then `needs_input`, `questions` naming the conflicting files; stop.
-3. Commits merged in → rerun the target repo's checks (those its `CLAUDE.md`, README or CI name). One failing → the build fixes it; once the build converged, Engineer › Finish › Failure.
+2. `git -C <worktree> status` shows uncommitted changes or a merge in progress → first commit the work in progress, or finish that merge by step 3's conflict rule; can't → `needs_input`, `questions` naming the files; stop. Never stash, reset or check out over them.
+3. `git -C <worktree> merge --no-edit origin/<default>`. Conflicts → resolve the simple ones and commit; else `git -C <worktree> merge --abort`, then `needs_input`, `questions` naming the conflicting files; stop.
+4. Commits merged in → rerun the target repo's checks (those its `CLAUDE.md`, README or CI name). One failing → from Engineer › Finish › Done, Engineer › Finish › Failure; else the failing checks go into the build's requirement.
 
 ## Autopilot
 

@@ -578,8 +578,8 @@ class RealCore(unittest.TestCase):
         for task in ("build", "light-build"):
             prompt, _ = composed("engineer", task)
             merge = section(prompt, "Merge")
-            for literal in ("Engineer › Repo step 1", "`git -C <worktree> merge --no-edit origin/<default>`",
-                            "`git -C <worktree> merge --abort`"):
+            for literal in ("Engineer › Repo step 1", "`git -C <worktree> status`", "a merge in progress",
+                            "`git -C <worktree> merge --no-edit origin/<default>`", "`git -C <worktree> merge --abort`"):
                 self.assertIn(literal, merge, task)
             for where in ("Autopilot", "Finish", "Resume"):
                 self.assertIn("Engineer › Merge", section(prompt, where), f"{task}: {where}")
