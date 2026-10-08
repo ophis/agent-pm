@@ -725,8 +725,9 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
             sink(event)
 
     env = {k: v for k, v in os.environ.items() if k not in tui_claude.PARENT_KEYS}
+    cwd = launch.cwd or workdir
     try:
-        host.begin(argv, cwd=launch.cwd or workdir, env={**env, **launch.env})
+        host.begin(argv, cwd=cwd, env={**env, **launch.env, "PWD": cwd})   # Linux claude takes its cwd from $PWD
         while True:
             events, ended = host.poll(POLL)
             for event in tail():   # first: a report made before a stdout line comes before it

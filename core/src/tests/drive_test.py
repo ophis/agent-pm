@@ -906,6 +906,11 @@ class Start(Base):
         self.assertNotIn("CLAUDE_JOB_DIR", kw["env"])
         self.assertEqual((kw["env"]["CLAUDECODE"], kw["env"]["FAKE"]), ("1", "1"))
 
+    def test_pwd_is_the_runs_cwd(self):
+        with unittest.mock.patch.dict(os.environ, {"PWD": "/stale"}):
+            _, ((_, kw),), _ = self.start([outcome(DONE)])
+        self.assertEqual((kw["cwd"], kw["env"]["PWD"]), (self.work, self.work))
+
     def test_stop_events_reach_no_sink(self):
         seen = []
         r, _, _ = self.start([{"kind": "stop"}, progress("round", "x"), {"kind": "stop"}, outcome(DONE)],
@@ -1274,6 +1279,12 @@ class TuiRunner(Base):
         self.assertEqual((name, argv, kw["cwd"]), (self.NAME, ["claude", "hi"], self.work))
         self.assertEqual(kw["template"], "echo {{session}}")
         self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
+
+    def test_pwd_is_the_runs_cwd(self):
+        with unittest.mock.patch.dict(os.environ, {"PWD": "/stale"}):
+            _, calls, _, _ = self.start([outcome(DONE)])
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((kw["cwd"], kw["env"]["PWD"]), (self.work, self.work))
 
     def test_tui_session_name(self):
         self.assertIs(drive.tui_session, compose.tui_session)
