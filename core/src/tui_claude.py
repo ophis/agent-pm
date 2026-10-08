@@ -36,7 +36,9 @@ SHOW_TIMEOUT = 30
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
-MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
+# every notification type but idle_prompt; a matcher with a character outside [A-Za-z0-9_|, -] is an unanchored
+# JavaScript regex
+MATCHER = "^(?!idle_prompt$)"
 DIED = "set-option @state dead"
 # tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
 DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
@@ -217,9 +219,9 @@ def _taken(path: str, sleep) -> bool:
 
 
 def hooks(events: str | None = None) -> str:
-    """The --settings JSON: Stop, a blocking Notification and UserPromptSubmit set the session's @state to done, blocked
-    and working; with events, Stop and Notification also append `HH:MM:SS <session> done|blocked` to it. Each is a
-    no-op outside tmux."""
+    """The --settings JSON: Stop sets the session's @state to done, PermissionRequest and a Notification but idle_prompt
+    to blocked, UserPromptSubmit to working; with events, all but UserPromptSubmit also append
+    `HH:MM:SS <session> done|blocked` to it. Each is a no-op outside tmux."""
     def entry(word: str, log: bool = True) -> list:
         cmd = f'tmux set-option -t "$TMUX_PANE" @state {word} >/dev/null 2>&1'
         if log and events is not None:
@@ -229,6 +231,7 @@ def hooks(events: str | None = None) -> str:
 
     return json.dumps({"hooks": {
         "Stop": [{"hooks": entry("done")}],
+        "PermissionRequest": [{"hooks": entry("blocked")}],
         "Notification": [{"matcher": MATCHER, "hooks": entry("blocked")}],
         "UserPromptSubmit": [{"hooks": entry("working", log=False)}]}})
 

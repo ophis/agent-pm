@@ -27,7 +27,14 @@ OSA_KW = {**TMUX_KW, "timeout": 30}
 TMUX = '/opt/a"b\\c/bin/tmux'   # the script text must never carry it
 ATTACH = "tui: session s: tmux attach -t '=s'\n"
 WATCH = "; watch it with tmux attach -t '=s'"
-MATCHER = "permission_prompt|elicitation_dialog|agent_needs_input"
+MATCHER = "^(?!idle_prompt$)"
+# Claude Code's documented notification types, plus one it sends undocumented
+NOTIFICATIONS = ("permission_prompt", "idle_prompt", "auth_success", "elicitation_dialog", "elicitation_url_dialog",
+                 "elicitation_complete", "elicitation_response", "agent_needs_input", "agent_completed",
+                 "quota_auto_resume_fired", "quota_auto_resume_stale", "quota_auto_resume_disabled",
+                 "worker_permission_prompt")
+STATES = (("Stop", "done"), ("PermissionRequest", "blocked"), ("Notification", "blocked"),
+          ("UserPromptSubmit", "working"))
 DIED = "set-option @state dead"
 DIED_EVENTS = DIED + " ; run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
 DECORATE = ["set-hook", "set-option", "set-option", "set-option"]
@@ -534,14 +541,20 @@ class Hooks(unittest.TestCase):
                 hooks = json.loads(tui_claude.hooks(events))
                 self.assertEqual(list(hooks), ["hooks"])
                 self.assertEqual({k: [set(e) for e in v] for k, v in hooks["hooks"].items()},
-                                 {"Stop": [{"hooks"}], "Notification": [{"matcher", "hooks"}],
-                                  "UserPromptSubmit": [{"hooks"}]})
+                                 {"Stop": [{"hooks"}], "PermissionRequest": [{"hooks"}],
+                                  "Notification": [{"matcher", "hooks"}], "UserPromptSubmit": [{"hooks"}]})
                 self.assertEqual(hooks["hooks"]["Notification"][0]["matcher"], MATCHER)
                 for entries in hooks["hooks"].values():
                     self.assertEqual([h["type"] for h in entries[0]["hooks"]], ["command"])
 
+    def test_notification_matcher_is_every_type_but_idle_prompt(self):
+        """MATCHER is on Claude Code's regex path, where re.search agrees with JavaScript's RegExp.prototype.test."""
+        self.assertIsNone(re.fullmatch(r"[A-Za-z0-9_|, -]*", tui_claude.MATCHER))
+        self.assertEqual([t for t in (*NOTIFICATIONS, "idle_prompt_x", "") if not re.search(tui_claude.MATCHER, t)],
+                         ["idle_prompt"])
+
     def test_state_without_events(self):
-        for event, word in (("Stop", "done"), ("Notification", "blocked"), ("UserPromptSubmit", "working")):
+        for event, word in STATES:
             with self.subTest(event=event):
                 res, calls = self.run_hook(None, event)
                 self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
@@ -552,21 +565,21 @@ class Hooks(unittest.TestCase):
         for sub in ("a b", "it's", "$(touch x)"):
             events = os.path.join(self.root, sub, "e")
             os.makedirs(os.path.dirname(events))
-            for event, word in (("Stop", "done"), ("Notification", "blocked"), ("UserPromptSubmit", "working")):
+            for event, word in STATES:
                 with self.subTest(sub=sub, event=event):
                     res, calls = self.run_hook(events, event)
                     self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
                     self.assertEqual(calls[0], f"set-option -t %1 @state {word}")
             with open(events) as f:
                 lines = f.readlines()
-            self.assertEqual(len(lines), 2)
-            for line, word in zip(lines, ("done", "blocked")):
+            self.assertEqual(len(lines), 3)
+            for line, word in zip(lines, ("done", "blocked", "blocked")):
                 self.assertRegex(line, rf"^\d\d:\d\d:\d\d w1 {word}\n$")
         self.assertFalse(os.path.exists(os.path.join(self.root, "x")))
 
     def test_outside_tmux_a_no_op(self):
         events = os.path.join(self.root, "e")
-        for event in ("Stop", "Notification", "UserPromptSubmit"):
+        for event, _ in STATES:
             with self.subTest(event=event):
                 res, calls = self.run_hook(events, event, pane=None)
                 self.assertEqual((res.returncode, calls), (0, []))
@@ -590,6 +603,7 @@ class WithHooks(unittest.TestCase):
         pre = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}]
         for settings, want in (({"model": "m", "hooks": {"Stop": [self.STOP], "PreToolUse": pre}},
                                 {"model": "m", "hooks": {"Stop": [self.STOP, *ours["Stop"]], "PreToolUse": pre,
+                                                         "PermissionRequest": ours["PermissionRequest"],
                                                          "Notification": ours["Notification"],
                                                          "UserPromptSubmit": ours["UserPromptSubmit"]}}),
                                ({"model": "m"}, {"model": "m", "hooks": ours})):
