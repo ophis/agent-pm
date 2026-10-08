@@ -2,7 +2,7 @@
   "name": "agent-pm",
   "displayName": "Agent-PM",
   "version": "0.1.2",
-  "description": "Start and direct Claude Code workers in tmux panes (/agent-pm:tmux), and run agent-pm's core roles and tasks, researcher, pm and engineer, in a pane, headless or in this conversation (/agent-pm:act-as).",
+  "description": "Start and direct Claude Code workers in tmux panes (/agent-pm:tmux), run agent-pm's core roles and tasks, researcher, pm and engineer, in a pane, headless or in this conversation (/agent-pm:act-as), and load manager guidelines for a session that coordinates them (/agent-pm:manage).",
   "author": {
     "name": "Frank Wang"
   }
