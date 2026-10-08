@@ -1328,6 +1328,7 @@ class Cli(unittest.TestCase):
                 self.assertIn("a command must follow --", self.main(*argv.split())[2])
         start.assert_not_called()
 
+    @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})   # beats FORCE_COLOR, which colors argparse's help (3.14)
     def test_help(self):
         rc, out, _ = self.main("-h")
         self.assertEqual(rc, 0)
