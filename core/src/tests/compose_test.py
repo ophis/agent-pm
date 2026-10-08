@@ -526,10 +526,14 @@ class RealCore(unittest.TestCase):
         self.assertNotIn("{{", prompt)
         self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
 
-    def test_deep_research_names_both_method_files(self):
+    def test_deep_research_falls_back_to_both_method_files(self):
         prompt, _ = composed("researcher", "deep-research")
         for name in METHOD_NAMES:
             self.assertIn(f"`{os.path.join(CORE, 'team', 'methods', name)}.md`", prompt)
+        methods = os.path.join(CORE, "team", "methods")
+        for phrase in (f"No such tool → follow `{methods}/deep-research.md`", "No Workflow tool → follow that file.",
+                       "No subagents with a round's tools → skip that round, under Gaps."):
+            self.assertIn(phrase, prompt)
 
     def test_researcher_names_no_harness_tool(self):
         with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
