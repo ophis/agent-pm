@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 import shutil
@@ -609,6 +610,14 @@ class RealCore(unittest.TestCase):
             prompt, _ = composed(role, task)
             for word in ("router.py", "research.py", "usage.py", "eng.py", "Linear", "In Review", "Todo", "Handoff", "issue"):
                 self.assertNotIn(word, prompt, f"{task}: {word}")
+
+    def test_no_tracker_name_in_skills(self):
+        # Only the name: the manage skill needs "issue" and "Todo".
+        paths = glob.glob(os.path.join(CORE, "skills", "**", "SKILL.md"), recursive=True)
+        self.assertTrue(paths)
+        for path in paths:
+            with open(path) as f:
+                self.assertNotIn("Linear", f.read(), os.path.relpath(path, CORE))
 
     def test_deep_research_gate_defaults_to_none_and_a_layers_gate_is_named(self):
         self.assertIn("the gate is `none`", composed("researcher", "deep-research")[0])

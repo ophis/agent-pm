@@ -15,6 +15,7 @@ flowchart LR
 
 - `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role/task in a pane or headless: `core/skills/tmux/SKILL.md`.
 - `/agent-pm:act-as <role> <task> <input>`: run a core role/task in this conversation: `core/skills/act-as/SKILL.md`.
+- `/agent-pm:manage`: load manager guidelines at the start of a session that coordinates agent work: `core/skills/manage/SKILL.md`.
 
 ## Setup
 
