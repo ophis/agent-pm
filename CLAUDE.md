@@ -7,7 +7,7 @@ Agent pipeline on a Linear board (README): launchd runs `router.py`, which start
 ```bash
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"      # orchestrator tests; no network, Keychain or Claude
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py" -k attempt   # tests whose name matches
-python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests
+python3 -m unittest discover -s core/src/tests -p "*_test.py"     # core tests; no network, Claude, tmux or osascript
 python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"           # tmux skill tests
 claude --plugin-dir core                                          # this checkout's agent-pm plugin, as agent-pm@inline in place of an installed one; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .           # plugin and marketplace (.claude-plugin/marketplace.json) manifests (core/CLAUDE.md at the plugin root: a warning)
@@ -45,7 +45,7 @@ Operating commands: README › Operating, README › Attended runs. Python 3.11+
 
 ## Gotchas
 
-- This file and project settings never load in an agent run outside a trusted cwd (what loads: README › Install; flags: core/CLAUDE.md › An agent run's command). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
+- This file never loads in an agent run outside a trusted cwd (what loads: README › Install; flags: core/CLAUDE.md › An agent run's command). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs; give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `run_test.py` pins the tmux argv.
 - Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line (`core/src/tests/compose_test.py` checks); without it write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts; `compose_test.py` fails on it.

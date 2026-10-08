@@ -5,13 +5,11 @@ The portable core pack: `team/` text (`guide.md` opens the prompt; what goes whe
 ## Commands
 
 ```bash
-python3 -m unittest discover -s core/src/tests -p "*_test.py"   # no network, Claude, tmux or osascript
 python3 core/src/drive.py --role R --task T --input X --out O --workdir W [--runner tui [--split right|below] [--split-from SESSION] [--prefix PREFIX] [--events FILE]] --dry-run   # the command an agent run gets
 python3 core/src/drive.py --role R --task T --input X --out O --workdir W --runner tui   # a live agent run in tmux session <prefix>-<sid[:8]>
 python3 core/src/drive.py --role R --task T --input X --out O --workdir W [--runner tui] --events FILE --detach   # the driver in its own detached tmux session; exits at once
 python3 core/src/drive.py --client skill --role R --task T      # the prompt /agent-pm:act-as follows (skills/act-as/)
 python3 core/src/tui_claude.py --help                            # host claude in tmux: start, send, read, show
-python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"   # tmux skill (workers.py)
 ```
 
 ## Rules

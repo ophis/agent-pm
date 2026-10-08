@@ -44,10 +44,10 @@ flowchart LR
     T -->|"bad Tasks label, or 4 attempts"| R[In Review]
     P -->|"output, questions, failure or 4 attempts; you subscribed"| R
     P -->|"failed new research run, or Recover"| T
-    P -->|"failed repo check of a handed-off build; its source → In Review"| C
     R -->|Approve| H[Handoff]
     R -->|Revise| T
     R -->|you| C[Canceled]
+    P -->|"failed repo check of a handed-off build; its source → In Review"| C
     H -->|"promote, after the 10-min undo window: the next role's Todo issue"| D[Done]
     D & C -->|"Finish, 24 h later"| X[cleaned up]
 ```
