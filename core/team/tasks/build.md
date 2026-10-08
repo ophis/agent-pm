@@ -1,5 +1,5 @@
 ---
-description: "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review, then push the branch and open the PR. Use when an approved PRD is ready to implement."
+description: "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review. Use when an approved PRD is ready to implement."
 ---
 
 # Build
