@@ -1,11 +1,5 @@
-"""Clients: one class per agent client, turning a composed agent run into the command that starts it.
-
-A client gets the prompt and the run config and returns a Launch: a run client (runs = True) a command to start, from
-launch() with the RunParams and neutral Access (extra dirs, commands to pre-approve); an inline client the prompt to
-print, from inline(). Its data (model names, effort names, fixed flags, env) comes from
-config.toml's [clients.<name>] when it needs any; its behavior is code.
-Add a client: a module here with a Client subclass, registered in REGISTRY, plus [clients.<name>] in config.toml
-if it needs data.
+"""Clients: one class per agent client, turning a composed agent run into the command that starts it. Add one:
+core/CLAUDE.md › Add a client.
 """
 from compose import ConfigError
 

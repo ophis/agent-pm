@@ -160,8 +160,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
 def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], proc=subprocess.run,
             sleep=time.sleep) -> None:
     """Run argv in the session's pane in place of its command (respawn-pane -k), handed over as start hands over its
-    command: in cwd with env minus PARENT_KEYS, its PWD set to cwd, plus the pane's terminal keys. Returns once it
-    runs."""
+    command. Returns once it runs."""
     _name(session)
     argv = _command(argv, env)
     tmp = None
@@ -199,8 +198,7 @@ def _wrapper(tmp: str) -> tuple[str, list[str]]:
 
 
 def _handover(path: str, argv: list[str], cwd: str, env: dict[str, str]) -> None:
-    """Writes the 0600 handover file at path: argv, cwd made absolute, and env minus TERMINAL_KEYS and PARENT_KEYS with
-    PWD set to cwd."""
+    """Writes the handover file at path."""
     cwd = os.path.abspath(cwd)
     child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, *PARENT_KEYS)}
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
@@ -307,7 +305,6 @@ def status(session: str, *, proc=subprocess.run):
 
 
 def kill(session: str, *, proc=subprocess.run) -> None:
-    """End the session."""
     _tmux_ok(["kill-session", "-t", f"={_name(session)}"], proc)
 
 

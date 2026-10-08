@@ -613,7 +613,7 @@ class RealCore(unittest.TestCase):
         self.assertIn(f"the gate is `{gate}`", compose.render(CORE, run, PARAMS, client=Plain()))
 
     def test_each_task_marks_its_start_once_and_never_a_budget(self):
-        # build_cutoff needs the start mark: a task without it silently loses its start comment.
+        # Why: the root CLAUDE.md › Gotchas.
         for task in ("deep-research", "light-research", "product-design", "build", "light-build"):
             with open(os.path.join(CORE, "team", "tasks", f"{task}.md")) as f:
                 text = f.read()

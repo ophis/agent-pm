@@ -1,25 +1,15 @@
 #!/usr/bin/env python3
 """Driver: composes an agent run, has its client (src/clients/) build the command, starts it through a runner, tails the
-channel the run reports its progress and outcome to (report.py, pre-approved for every run), then checks and saves the
-outcome.
+channel the run reports its progress and outcome to (report.py), then checks and saves the outcome.
 
 drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
          [--events FILE] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
---out is where the deliverable is saved (local and orchestrator destinations). The run starts in the `cwd` run key,
-unset → the caller's current directory; a resume in its session's recorded one (place()). By default (start's sinks) a
-run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
---runner hosts the run: headless (default) runs the client's command on a pipe until it exits; tui runs its interactive
-command in a detached tmux session <prefix>-<sid[:8]> (tui_claude.py; --prefix, default <role>-<task>), shown as the
-`show` run key says (by default stacked with the panes of the same opener; --split/--split-from place it explicitly), done
-once the outcome arrives or it gives up, and left open for the user. --events FILE appends the session's state events
-there. --split, --split-from, --prefix and, without --detach, --events are tui only.
---detach (needs --events) runs the driver itself, this command, in a new detached tmux session <prefix>-<sid[:8]>-drive
-(driver_session) on the caller's tmux server, prints its name and attach command, and exits; a tui pane goes where the
-caller's would (its opener; a --split-from session must be shown). When the driver ends, on SIGHUP or SIGTERM too
-(even one sent as it starts), it appends `HH:MM:SS <session> outcome <done|needs_input|failed|error>` to the events
-file (error: no valid outcome).
+--out is where the deliverable is saved (local and orchestrator destinations); the run's cwd: place(). By default
+(start's sinks) a run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
+--runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
+core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
@@ -63,8 +53,8 @@ SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable
 RECORD = "run.json"   # in the workdir: the driver's record of the agent run (Record)
 NAME = re.compile(r"[\w-]+")
 POLL = 0.5   # seconds between reads of the channel while the host is quiet
-WAIT_LIMIT = 2 * 60 * 60   # seconds the tui runner waits for an outcome or a progress report before it gives up
-STOP_LIMIT = 3   # turn ends with no outcome and no pending work, after its nudge, before the tui runner gives up
+WAIT_LIMIT = 2 * 60 * 60   # seconds
+STOP_LIMIT = 3
 NUDGE = ("Finish your task, then report its outcome with the report command your instructions name. "
          "If you are waiting for background work, wait for it first.")
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)   # end a detached driver (tmux kill-session: SIGHUP)
@@ -108,7 +98,7 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
            project: bool = False) -> Access:
     """The agent run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands
     filled, then the report command and the gate (used verbatim) pre-approved too; the workdir is the first dir when
-    `cwd` (default the workdir) is another. Edit limits are left to the client's permission mode (auto)."""
+    `cwd` (default the workdir) is another."""
     workdir = os.path.abspath(params.workdir)
     cwd = cwd or workdir
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
@@ -139,11 +129,10 @@ def status_line(root: str) -> bool:
 
 
 def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
-    """(the agent run's cwd, whether its client loads the cwd's project settings and instructions). A new run's cwd is
-    the `cwd` run key, else `cwd`, else the caller's current directory; project is on when trusted_dirs holds its real
-    path or a parent. A resume reuses its session's record (none: the workdir, project off). ConfigError when the cwd
-    is no directory, or project would be on with the cwd in the workdir or no longer trusted. An untrusted cwd other
-    than the workdir gets a stderr notice."""
+    """(the agent run's cwd, whether its client loads the cwd's project settings and instructions), as config.toml's
+    `cwd` and `trusted_dirs` comments say. A new run's cwd is the `cwd` run key, else `cwd`, else the caller's current
+    directory; a resume reuses its session's record (none: the workdir, project off). ConfigError when the cwd is no
+    directory, or project would be on with the cwd in the workdir or no longer trusted."""
     workdir, trusted = os.path.abspath(params.workdir), trusted_dirs(root)
     if params.resume:
         entry = session(workdir, params.sid)
@@ -304,11 +293,11 @@ def _file(path, workdir: str) -> str:
         raise InvalidOutcome(f"file {str(path)[:200]!r} is not a single-link .md file under the workdir")
     return str(real)
 
-Sink = Callable[[Event], None]   # receives each text and progress event as the agent run goes, then a missing mark and the checked outcome
+Sink = Callable[[Event], None]
 
 
 def terminal(log=sys.stderr) -> Sink:
-    """Shows the agent run's text and progress, e.g. in its tmux pane."""
+    """Shows the agent run's text and progress."""
     def sink(event: Event) -> None:
         if event.kind == "text":
             print(printable(event.text), file=log, flush=True)
@@ -518,10 +507,8 @@ class Headless:
 
 class Tui:
     """The client's interactive command in a detached tmux session (tui_claude.py), never killed after the outcome. Done once
-    the outcome arrives, or once it gives up and leaves the session to a human. A turn end without an outcome
-    (`stop`) with background work pending is ignored; any other gets one NUDGE, and STOP_LIMIT more, counted since the
-    last progress report, give up. So does WAIT_LIMIT seconds since the last progress report, or the agent run's start,
-    without an outcome."""
+    the outcome arrives, or once it gives up (core/CLAUDE.md › An agent run's command: tui give-up) and leaves the session
+    to a human."""
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
