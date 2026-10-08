@@ -27,7 +27,7 @@ Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` log
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
    2. Open the invite in a private window, choosing **Continue with email** (Google signs in as the harness account).
    3. As the role account, create a personal API key in its settings.
-   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `run.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` line in `<work_dir>/logs/projects/<task>.log`.
+   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `router.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` line in `<work_dir>/logs/projects/<task>.log`.
 4. The harness account's key, the logs dir and the schedules:
    ```bash
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # the only item under orchestrator.local.toml's harness_key
@@ -67,7 +67,8 @@ The issue's label in the `Tasks` label group picks one of the assignee role's ta
 
 ```mermaid
 flowchart LR
-    L[launchd] -->|every 30 min| R[router.py] -->|claim or resume| O["run.py outer: input.md"] -->|tmux| I[run.py inner]
+    L[launchd] -->|every 30 min| R["router.py: claim or resume, input.md"] -->|tmux| I[run.py]
+    Y[you] -->|"--issue, --tui"| R
     I --> D["drive.py: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
     L -->|every 5 min| P[promote.py] --> X[prune.py]
 ```
@@ -75,12 +76,15 @@ flowchart LR
 ```bash
 python3 orchestrator/src/router.py --now --dry-run           # the next tick's plan and usage probe; changes nothing
 python3 orchestrator/src/router.py --now                     # a tick now, outside the schedule
-python3 orchestrator/src/router.py --now --issue TASK-12     # start that Todo issue, unless blocked or its role is full
+python3 orchestrator/src/router.py --issue TASK-12           # start that Todo issue or resume that In Progress one now
+python3 orchestrator/src/router.py --issue TASK-12 --dry-run # what --issue would do; changes nothing
 python3 orchestrator/src/promote.py --dry-run                # what Handoff and prune would do
 python3 orchestrator/src/promote.py --now                    # Handoff now, skipping the 10-minute undo window
 tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
 tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent run; = matches the exact name
 ```
+
+`--issue` skips the hours, `max_runs` and usage gates and Recover's waits (`tmux ls` is the truth): a ready Todo issue is claimed as in a tick; an In Progress one resumes its session in `runs.log`, or, with none to resume, goes where Recover sends it; an issue with a live agent run gets its attach command instead (exit 1).
 
 | Log | Contents |
 |---|---|
@@ -94,8 +98,8 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 ### Attended runs
 
 ```bash
-python3 orchestrator/src/run.py --issue TASK-12 --tui [--split right|below] [--split-from <session>] [--events <file>]
-python3 orchestrator/src/router.py --now --tui [--split right|below] [--split-from <session>]   # not with --issue or --brake
+python3 orchestrator/src/router.py --issue TASK-12 --tui [--split right|below] [--split-from <session>] [--events <file>]
+python3 orchestrator/src/router.py --now --tui [--split right|below] [--split-from <session>] [--events <file>]   # a tick
 ```
 
-Watch an agent run in a TUI pane and step in: the same claim, input, write-back, session comment and `runs.log` lines; launchd never passes `--tui`. `run.py --issue … --tui` claims that ready Todo issue like `router.py --now --issue`, minus the hours, `max_runs` and usage gates; `router.py --now --tui` is a normal tick (resume too), attended. Both print to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (live run and `max_runs` slot: `CLAUDE.md` › Architecture), whose pane opens as a worker's does (`core/skills/tmux/SKILL.md` › Start), you the opener, or where `--split`/`--split-from` say. No pane to split (pass `--split-from`) or a bad `--events` file → nothing claimed, exit 2; a good one gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session; the issue stays In Progress and Recover resumes it. After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
+Watch an agent run in a TUI pane and step in: the same claim, input, write-back, session comment and `runs.log` lines; launchd never passes `--tui`. `--tui` attends the agent run `--issue` (Operating) or a tick starts or resumes, and prints to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (live run and `max_runs` slot: `CLAUDE.md` › Architecture), whose pane opens as a worker's does (`core/skills/tmux/SKILL.md` › Start), you the opener, or where `--split`/`--split-from` say. No pane to split (pass `--split-from`) or a bad `--events` file → nothing claimed, exit 2; a good one gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session; the issue stays In Progress and Recover resumes it (`--issue`: at once). After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
