@@ -25,7 +25,7 @@ ERROR = "Error: --session-id can only be used with --continue or --resume if --f
 DEAD_LINE = "Pane is dead (status 1, Wed Oct  7 19:54:08 2026)"
 DEAD_TEXT = f"{ERROR}\n" + "\n" * 40 + f"{DEAD_LINE}\n" + "\n" * 10
 DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD_LINE}"
-REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 
 
 def executable(path, text):

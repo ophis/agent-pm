@@ -25,7 +25,7 @@ STRIP = (*tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUD
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
 ENV_KEYS = ("PATH", "CLAUDE_CONFIG_DIR")
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
