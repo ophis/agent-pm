@@ -28,10 +28,17 @@ REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
+REPLY_LINES = 80
+PANE_LINES = 40
+BLOCK = 1 << 16
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 
 
 class WorkersError(Exception):
+    pass
+
+
+class NotAWorker(WorkersError):
     pass
 
 
@@ -135,7 +142,7 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
 def _option(name: str, key: str, proc) -> str:
     res = _run(proc, ["tmux", "show-options", "-t", f"={name}:", "-v", key])
     if res.returncode != 0:
-        raise WorkersError(f"{name}: not a worker")
+        raise NotAWorker(f"{name}: not a worker")
     return res.stdout.rstrip("\n")
 
 
@@ -148,7 +155,7 @@ def _stored(name: str, proc) -> dict:
     except ValueError:
         ok = False
     if not ok:
-        raise WorkersError(f"{name}: not a worker")
+        raise NotAWorker(f"{name}: not a worker")
     return {**opt, "flags": flags}
 
 
@@ -178,7 +185,8 @@ def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
 
 
 def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
-    """The text blocks of worker `name`'s last text-bearing assistant message, joined by newlines."""
+    """The text blocks of worker `name`'s last text-bearing assistant message, joined by newlines; the transcript
+    read from its end back to that message's first record."""
     _check(name)
     sid = _option(name, "@sid", proc)
     if not SESSION_ID.fullmatch(sid):
@@ -187,27 +195,47 @@ def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
     found = glob.glob(os.path.join(glob.escape(config), "projects", "*", sid + ".jsonl"))
     if not found:
         raise WorkersError(f"no transcript for {sid}: started with a leaked Claude Code variable?")
-    blocks = []
+    last, texts = None, []
     try:
-        with open(found[0], encoding="utf-8", errors="replace") as f:
-            for n, raw in enumerate(f):
+        with open(found[0], "rb") as f:
+            for raw in _lines_back(f):
                 try:
-                    entry = json.loads(raw)
+                    entry = json.loads(raw.decode("utf-8", errors="replace"))
                     message = entry["message"]
                     content = message["content"]
                     if entry["type"] != "assistant" or not isinstance(content, list):
                         continue
-                    texts = [b["text"] for b in content if b["type"] == "text"]
-                    mid = message.get("id") or f"line{n}"
+                    blocks = [b["text"] for b in content if b["type"] == "text"]
+                    mid = message.get("id") or object()   # no id: a message of its own
                 except (ValueError, KeyError, TypeError, AttributeError):
                     continue
-                if texts:
-                    blocks.append((mid, texts))
+                if last is None:
+                    if blocks:
+                        last, texts = mid, blocks
+                elif mid != last:
+                    break
+                else:
+                    texts = blocks + texts
     except OSError as e:
         raise WorkersError(f"transcript {found[0]}: {e.strerror}") from e
-    if not blocks:
-        return ""
-    return "\n".join(t for mid, texts in blocks if mid == blocks[-1][0] for t in texts)
+    return "\n".join(texts)
+
+
+def _lines_back(f):
+    """The binary file f's lines, last first, each without its newline; read from the end in BLOCK-byte reads."""
+    pos = f.seek(0, os.SEEK_END)
+    tail = []   # the pieces, last first, of the line whose start isn't read yet
+    while pos > 0:
+        size = min(BLOCK, pos)
+        pos -= size
+        f.seek(pos)
+        parts = f.read(size).split(b"\n")
+        tail.append(parts[-1])
+        if len(parts) > 1:
+            yield b"".join(reversed(tail))
+            yield from reversed(parts[1:-1])
+            tail = [parts[0]]
+    yield b"".join(reversed(tail))
 
 
 def next_event(events: str, after: int | None) -> tuple[int, str]:
@@ -243,6 +271,23 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
             if lines > skip and EVENT.fullmatch(text):
                 return lines, text
         time.sleep(0.5)
+
+
+def content(event: str, *, proc=subprocess.run, config: str | None = None) -> str:
+    """What next-event prints after the event: a worker's done → the first REPLY_LINES lines of its reply; blocked,
+    dead or a role run's done (not a worker) → the pane's last PANE_LINES lines, history included; else ""."""
+    name, kind = event.split(" ")[1:3]
+    if kind not in ("done", "blocked", "dead"):
+        return ""
+    if kind == "done":
+        try:
+            return "\n".join(reply(name, proc=proc, config=config).split("\n")[:REPLY_LINES])
+        except NotAWorker:
+            pass
+    try:
+        return tui_claude.read(name, PANE_LINES, proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
 
 
 def _after(value: str) -> int | None:
@@ -289,6 +334,12 @@ def main(argv=None) -> int:
         else:
             line, event = next_event(a.events, a.after)
             print(f"{line} {event}")
+            try:
+                text = content(event, proc=subprocess.run)
+            except WorkersError as e:
+                text = f"workers: {e}"   # stdout: background readers watch only it
+            if text:
+                print(text)
     except WorkersError as e:
         print(f"workers: {e}", file=sys.stderr)
         return 1

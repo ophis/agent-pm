@@ -705,7 +705,7 @@ def line(kind, *blocks, mid=None):
     message = {"content": list(blocks)}
     if mid:
         message["id"] = mid
-    return json.dumps({"type": kind, "message": message}) + "\n"
+    return json.dumps({"type": kind, "message": message}, ensure_ascii=False) + "\n"
 
 
 def text(t):
@@ -749,6 +749,50 @@ class ReplyTest(WorkerCase):
     def test_lines_without_id_are_own_messages(self):
         self.transcript(line("assistant", text("a")), line("assistant", text("b")))
         self.assertEqual(self.reply(), "b")
+
+    def test_other_records_inside_a_message_skipped(self):
+        self.transcript(line("assistant", text("old"), mid="m0"), line("assistant", text("a"), mid="m1"),
+                        line("user", text("result")), "not json\n", line("assistant", text("b"), mid="m1"))
+        self.assertEqual(self.reply(), "a\nb")
+
+    def test_long_transcript_read_from_its_end(self):
+        """The last message's records span several reads, one starting inside a UTF-8 character; the reads stop at
+        the record before that message."""
+        big = "\u00e9" * 40000
+        earlier = [line("assistant", text(f"old {i} " + "x" * 1000), mid=f"m{i}") for i in range(300)]
+        last = [line("assistant", text("a " + big), mid="mL"), line("assistant", TOOL, mid="mL"),
+                line("assistant", text("b " + big), mid="mL"), line("assistant", text("c " + big), mid="mL")]
+        tail = [line("user", text("q")), line("assistant", TOOL, mid="mN")]
+        data = "".join([*earlier, *last, *tail]).encode()
+        if data[len(data) - workers.BLOCK] & 0xC0 != 0x80:
+            tail[0] = line("user", text("qq"))
+            data = "".join([*earlier, *last, *tail]).encode()
+        self.assertEqual(data[len(data) - workers.BLOCK] & 0xC0, 0x80)
+        self.transcript(*earlier, *last, *tail)
+        reads = []
+
+        def spy(*args, **kw):
+            f = open(*args, **kw)
+            read = f.read
+            f.read = lambda n=-1: reads.append(read(n)) or reads[-1]
+            return f
+        with mock.patch.object(workers, "open", side_effect=spy, create=True):
+            self.assertEqual(self.reply(), "\n".join(("a " + big, "b " + big, "c " + big)))
+        self.assertGreater(len(reads), 3)
+        self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + workers.BLOCK)
+
+    def test_a_partial_last_line(self):
+        for last, want in ((line("assistant", text("cut"), mid="m2")[:-10], "a"),
+                           (line("assistant", text("whole"), mid="m2").rstrip("\n"), "whole")):
+            with self.subTest(want=want):
+                self.transcript(line("assistant", text("a"), mid="m1"), last)
+                self.assertEqual(self.reply(), want)
+
+    def test_no_assistant_text(self):
+        for lines in ((), ("\n", "\n"), (line("user", text("q")), line("assistant", TOOL, mid="m1"), "x")):
+            with self.subTest(lines=lines):
+                self.transcript(*lines)
+                self.assertEqual(self.reply(), "")
 
     def test_bad_name(self):
         fake = self.fake()
@@ -946,7 +990,8 @@ class NextEventTest(unittest.TestCase):
 
     def run_main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with mock.patch.object(workers.subprocess, "run", Fake()), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rc = workers.main(["next-event", *argv])
         return rc, out.getvalue(), err.getvalue()
 
@@ -1069,6 +1114,90 @@ class NextEventTest(unittest.TestCase):
             with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
                 workers.main(["next-event", "--events", self.path, *argv])
             self.assertEqual(cm.exception.code, 2, argv)
+
+
+class Gone(Fake):
+    """No session: show-options and capture-pane fail as tmux does."""
+
+    def __call__(self, argv, **kw):
+        if argv[1] == "capture-pane":
+            self.calls.append(argv)
+            return subprocess.CompletedProcess(argv, 1, "", "can't find session: w1\n")
+        return super().__call__(argv, **kw)
+
+
+class NextEventContentTest(WorkerCase):
+    """What next-event prints after `<line> <event>`."""
+    PANE = [f"pane {i}" for i in range(50)]
+    CAPTURE = ["tmux", "capture-pane", "-p", "-J", "-t", "=w1:", "-S", "-40"]
+
+    def run_event(self, event, fake, *transcript):
+        """main's (exit code, stdout, stderr) for next-event on an events file holding only `event`; transcript: the
+        lines of session SID's transcript, if any."""
+        if transcript:
+            d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "-p")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, SID + ".jsonl"), "w") as f:
+                f.write("".join(transcript))
+        with open(self.events, "w") as f:
+            f.write(event + "\n")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(workers.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = workers.main(["next-event", "--events", self.events, "--after", "0"])
+        return rc, out.getvalue(), err.getvalue()
+
+    def pane(self, worker=True, fake=None):
+        """A fake tmux whose w1 pane shows PANE; a worker's session holds @sid SID."""
+        fake = fake or Fake()
+        fake.text = nl(*self.PANE)
+        if worker:
+            fake.store["@sid"] = SID
+        return fake
+
+    def test_worker_done_prints_the_first_80_lines_of_its_reply(self):
+        reply = [f"r{i}" for i in range(100)]
+        fake = self.pane()
+        got = self.run_event("10:00:01 w1 done", fake, line("assistant", text("\n".join(reply)), mid="m1"))
+        self.assertEqual(got, (0, nl("1 10:00:01 w1 done", *reply[:80]), ""))
+        self.assertNotIn(self.CAPTURE, fake.calls)
+
+    def test_role_run_done_prints_the_panes_last_40_lines(self):
+        fake = self.pane(worker=False)
+        self.assertEqual(self.run_event("10:00:01 w1 done", fake), (0, nl("1 10:00:01 w1 done", *self.PANE[10:]), ""))
+        self.assertEqual(fake.calls[-1], self.CAPTURE)
+
+    def test_blocked_and_dead_print_the_panes_last_40_lines(self):
+        for kind in ("blocked", "dead"):
+            with self.subTest(kind=kind):
+                fake = self.pane()
+                got = self.run_event(f"10:00:01 w1 {kind}", fake, line("assistant", text("reply"), mid="m1"))
+                self.assertEqual(got, (0, nl(f"1 10:00:01 w1 {kind}", *self.PANE[10:]), ""))
+                self.assertEqual([c[1] for c in fake.calls], ["capture-pane"])
+
+    def test_other_events_print_nothing_more(self):
+        for event in ("10:00:01 w1-drive outcome done", "10:00:01 w1 new kind"):
+            with self.subTest(event=event):
+                fake = self.pane()
+                self.assertEqual(self.run_event(event, fake), (0, nl(f"1 {event}"), ""))
+                self.assertEqual(fake.calls, [])
+
+    def test_empty_reply_prints_nothing_more(self):
+        fake = self.pane()
+        got = self.run_event("10:00:01 w1 done", fake, line("user", text("q")), line("assistant", TOOL, mid="m1"))
+        self.assertEqual(got, (0, nl("1 10:00:01 w1 done"), ""))
+        self.assertNotIn(self.CAPTURE, fake.calls)
+
+    def test_a_content_failure_is_printed_on_stdout_exit_0(self):
+        no_transcript = f"workers: no transcript for {SID}: started with a leaked Claude Code variable?"
+        gone = "workers: tmux: can't find session: w1"
+        for event, fake, msg in (("10:00:01 w1 done", self.pane(), no_transcript),
+                                 ("10:00:01 w1 done", self.pane(False, Gone()), gone),
+                                 ("10:00:01 w1 blocked", self.pane(False, Gone()), gone),
+                                 ("10:00:01 a.b dead", self.pane(), "workers: invalid session name 'a.b': want "
+                                                                    "[A-Za-z0-9_-]+")):
+            with self.subTest(event=event, msg=msg):
+                self.assertEqual(self.run_event(event, fake), (0, nl(f"1 {event}", msg), ""))
 
 
 if __name__ == "__main__":
