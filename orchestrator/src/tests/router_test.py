@@ -1318,8 +1318,8 @@ class IssueFlag(Base):
             self.resumable("TASK-1", "a", 20)
             return self.fake(issue("TASK-1", "In Progress", "researcher"))
         cases = [("todo", todo, ["pick: TASK-1 (1 in queue)"]), ("resume", resumable, ["plan: resume TASK-1 session=a"])]
-        cases += [(name, lambda todo=todo, given=given: (given(), self.fake(todo))[1], [said])
-                  for name, todo, given, said, _, _ in self.nothing_resumable()]
+        cases += [(name, lambda ip=ip, given=given: (given(), self.fake(ip))[1], [said])
+                  for name, ip, given, said, _, _ in self.nothing_resumable()]
         for name, given, said in cases:
             with self.subTest(name=name):
                 self.lines, self.hist = [], {}
