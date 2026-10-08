@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
-(no mode)           One tick (launchd): hours, live sessions vs max_runs (all roles full -> skip), prune, Recover, plan over
-                    roles not full, usage gate, resume or claim, launch; at most one agent run per tick.
+(no mode)           One tick (launchd): the hours check, then CLAUDE.md › Architecture's steps.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
   --tui [--split right|below] [--split-from SESSION]
-                    Hand-run, not with --issue: the tick's agent run is attended (run.py --runner tui, with the given --split
+                    Not with --issue: the tick's agent run is attended (run.py --runner tui, with the given --split
                     and --split-from); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
---brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start (five_hour < 0.8).
-Needs Python 3.11+.
+--brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start.
 """
 import json
 import os

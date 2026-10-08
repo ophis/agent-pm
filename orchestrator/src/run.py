@@ -1,25 +1,18 @@
 #!/usr/bin/env python3
 """Runner: one core agent run, per orchestrator/config.toml, of an issue claimed by the router or the attended entry (or
-one the router resumes).
+one the router resumes). Each form's steps: CLAUDE.md › Architecture.
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--split-from SESSION] [--events FILE]
-  Outer: checks the agent run can start, bounces an engineering issue whose repo check fails, writes <work_dir>/work/<ID>/input.md,
-  then starts the inner in tmux agent-pm-<role>-<ID>; any failure starts nothing. Exits 0 started or bounced, 1 config,
-  input or tmux failure, 2 bad arguments, not a role account or config error, 3 transient; a config error or transient
-  failure is also logged to the task's project log. --runner tui (--split, --split-from and --events need it) checks first
-  where the TUI pane goes and the caller's opener (attended.layout), the events file (created 0600) and the session
-  name (attended.prefix), exit 2 when one fails; the inner gets the opener and only the options given, and the
-  sessions' attach commands go to stderr.
+  Outer, in the router tick. Exits 0 started or bounced, 1 config, input or tmux failure, 2 bad arguments, not a role
+  account or config error, 3 transient; a config error or transient failure is also logged to the task's project log.
+  --split, --split-from and --events need --runner tui, whose checks exit 2 when one fails; the sessions' attach
+  commands go to stderr.
 run.py --issue ID --tui [--split right|below] [--split-from SESSION] [--events FILE]
-  Attended entry, by hand: claims the issue (router.Board.take, without the tick's hours, max_runs or usage gate), logs
-  its start line, then runs the outer with --runner tui. Exits 2 bad arguments, no place for the TUI pane or a bad
-  events file, 1 config error, a live agent run of the issue or nothing claimed, else the outer's code.
+  Attended entry, by hand. Exits 2 bad arguments, no place for the TUI pane or a bad events file, 1 config error, a
+  live agent run of the issue or nothing claimed, else the outer's code.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] [--opener OPENER] <the same arguments>
-  Inner, in that tmux session: attended.close (the issue's TUI sessions), the session comments, core's agent run with
-  the orchestrator's sinks (tui: session <role>-<ID>-<sid[:8]>, its pane placed by --split/--split-from, else stacked with
-  the opener's), the end lines in the project log and runs.log, then write-back as the role account.
-Needs Python 3.11+.
+  Inner, in the outer's tmux session.
 """
 import argparse
 import functools
@@ -270,7 +263,7 @@ def inner(a, *, layout, gql, popen, runs, root):
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume",
                                    prefix=attended.prefix(name, a.issue) if layout else None)
         launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
-        with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
+        with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane
             sinks = [drive.terminal(sys.stderr), drive.terminal(err), writeback.sink(ctx)]
             result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
                                  sinks=sinks, begun=begun, popen=functools.partial(popen, stderr=err))

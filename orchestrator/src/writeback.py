@@ -1,5 +1,5 @@
 """Write-back: a core agent run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the engineering bounce before an agent run. Per-task differences are config.TASKS data."""
+and the engineering bounce before an agent run."""
 import fcntl
 import hashlib
 import json

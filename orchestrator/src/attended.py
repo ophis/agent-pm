@@ -1,7 +1,5 @@
-"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>.
-
-attended.py owns that name: prefix builds it, ISSUE_TUI matches it. An issue's TUI sessions are the live tmux sessions
-so named; nothing records them.
+"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>
+(CLAUDE.md › Architecture).
 """
 import os
 import re

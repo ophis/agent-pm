@@ -191,13 +191,12 @@ class Promoter:
 
 
 def run_prune(gql, now, dry, team, roles, pruner=None):
-    """Prune finished issues' worktrees and clones and archive finished pm and engineer issues.
-    A prune failure, even an ImportError, is logged and never breaks promote."""
+    """prune.Pruner's run; a failure, even an ImportError, is logged."""
     try:
         if pruner is None:
             from prune import Pruner as pruner
         pruner(gql, now, dry, team=team, roles=roles).run()
-    except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
+    except (Exception, SystemExit) as e:
         print(f"{stamp()} prune-error: {e}", flush=True)
 
 

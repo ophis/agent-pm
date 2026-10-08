@@ -1,5 +1,5 @@
 """Paths, orchestrator/config.toml (LOCAL on top), core config with its [core] overlay, and TASKS; imports no
-other orchestrator module. Needs Python 3.11+ (tomllib).
+other orchestrator module.
 """
 import os
 import re
@@ -17,7 +17,7 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
-# No orchestrator module may be named clients, compose, drive, repo, report or tui_claude: these come from core/src.
+# Module names this reserves: CLAUDE.md › Architecture (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402
@@ -135,7 +135,7 @@ TASKS = {
 
 @dataclass(frozen=True)
 class Role:
-    """A orchestrator/config.toml role checked by runnable(); key is a Keychain service name, never the secret."""
+    """An orchestrator/config.toml role checked by runnable()."""
     account: str        # Linear email
     key: str            # Keychain service of its API key
     tasks: tuple        # core config tasks, default_task first, then core order
@@ -276,7 +276,7 @@ def overlay(root=ROOT):
 
 
 def layers(root=ROOT):
-    """The orchestrator's config layers, applied after `core/config.toml`'s `[clients.claude]`; the one source for run_config and run.py."""
+    """The orchestrator's config layers; the one source for run_config and run.py."""
     return [overlay(root)]
 
 
@@ -311,7 +311,7 @@ def clone_error(path, slug, *, run=sh_run):
 
 def runnable(cfg, root=ROOT):
     """{role: Role} of orchestrator/config.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
-    broken one stops the caller (fail loud). Core roles absent from orchestrator/config.toml are not orchestrated."""
+    broken one stops the caller. Core roles absent from orchestrator/config.toml are not orchestrated."""
     core_roles = repo.read_config(os.path.join(root, "core", compose.CONFIG)).get("roles", {})
     try:
         trusted = drive.trusted_dirs(os.path.join(root, "core"))

@@ -1,9 +1,6 @@
-"""Imported first by every test module: points HOME at a temp dir of this process's own (removed at exit) before config's
-import, so ~ and config.WORK_DIR resolve there, never in this machine's ~/.agent-pm, which may hold this checkout; hides
-~/.agent-pm/core.local.toml and orchestrator.local.toml (os.path.isfile, which repo.read_config asks, says they are
-absent, through symlinks too), and merges core's test fixture over the committed core/config.toml
-(core/src/tests/hermetic.py), so tests read only the committed configs and their fixtures. A test writes its own local
-files under home()."""
+"""Imported first by every test module (CLAUDE.md › Roles, tasks, rules): points HOME at a temp dir of this process's own
+(removed at exit) before config's import, never this machine's ~/.agent-pm, which may hold this checkout; then loads
+core/src/tests/hermetic.py and adds orchestrator.local.toml to what it hides."""
 import atexit
 import importlib.util
 import os
