@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 HOME = tempfile.mkdtemp(prefix="agent-pm-tests-home-")
-atexit.register(shutil.rmtree, HOME)
+atexit.register(shutil.rmtree, HOME, ignore_errors=True)
 os.environ["HOME"] = HOME
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 sys.path.insert(0, os.path.join(ROOT, "core", "src"))

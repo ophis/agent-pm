@@ -45,6 +45,12 @@ class Config(ConfigFile, unittest.TestCase):
     def test_tests_never_read_this_machines_local_file(self):
         self.assertIn(os.path.realpath(os.path.expanduser(config.LOCAL)), hermetic.HIDDEN)
 
+    def test_tests_home_already_gone_at_exit_prints_nothing(self):
+        res = subprocess.run([sys.executable, "-c", "import shutil, hermetic; shutil.rmtree(hermetic.HOME)"],
+                             cwd=os.path.dirname(os.path.abspath(hermetic.__file__)), capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+
     def test_stage_order(self):
         self.assertEqual(config.stage_order(self.load(BASE)),
                          {"researcher": 0, "pm": 1, "engineer": 2, "solo": 0})
