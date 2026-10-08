@@ -8,12 +8,12 @@ Run one round of parallel agents, then write a short report.
 
 ## Steps
 
-1. **Read** the input; decide its type (Researcher › Type and target). Too vague → `needs_input`, stop.
+1. **Input** (Researcher › Input).
 2. **Prepare** (local, mixed): Researcher › Type and target.
 3. **Report progress:**
    [agent-pm-progress:start] the type, plus each target repo and its commit for local or mixed
 4. **Research.** 3–6 **angles** (web for web, worktree for local, both for mixed), one subagent each, all in parallel, restricted per Researcher › Type and target; each checks its own findings.
-5. **Failure.** Never retry or replace an agent. No usable findings → `failed`, stop; else failed angles go under Gaps.
+5. **Failure** (Researcher › Failure). Failed angles go under Gaps.
 6. **Report** (Researcher › Standards), after the type line `Light Research. Angles: <angle 1>; <angle 2>; …. No independent verification stage: each finding is checked only by the agent that found it.`, ≤ 3000 words.
 7. **Finish.** `status: done`. One round can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Deep Research: <reason>`.
 
