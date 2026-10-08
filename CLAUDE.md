@@ -15,6 +15,8 @@ claude plugin validate core && claude plugin validate .           # plugin and m
 
 Operating commands: README › Operating, README › Attended runs. Python 3.11+ (`tomllib`; macOS's `python3` is 3.9, so launchd uses `/opt/homebrew/bin/python3`). Without `--dry-run`, router and promote change real issues and start real agent runs.
 
+A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless, besides the unit tests (they fake tmux), its tmux isolated as core/CLAUDE.md › Rules says (a live check); say in the PR what ran and what it showed.
+
 ## Architecture
 
 - `router.py`: live tmux sessions vs `max_runs` → Recover dead In Progress agent runs (not ones with a live session) → usage gate (5-hour usage ≥ 90% or a weekly limit full → skip the tick) → resume or claim → `run.py`; at most one agent run per tick, for a role below `max_runs`. Claims only ready Todo issues (README › Using the board), changing their state, never the assignee. `task_for` maps the `Tasks` label's id to the task (a bad label: README › Task labels). `--tui`: `run.py --runner tui`. `--brake`, deep-research's second-round `gate` (the overlay's): exit 0 if a second round may start (5-hour usage < 80%, no weekly limit full, status not rejected), no `rate_limit_event` → 1.
