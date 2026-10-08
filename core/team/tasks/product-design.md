@@ -19,8 +19,8 @@ Turn the input into a reviewed PRD.
 6. **Write** the PRD:
    - The input gives a PRD → revise it for the user's later words, keeping earlier decisions they didn't change.
    - Else follow `templates/prd.md`, title `PRD: [Reference] [Product name]`: `[Reference]` the id the input gives (none → dropped), `[Product name]` short; the outcome's `title` is that name alone, unchanged on revision.
-7. **Review.** One fresh subagent flags missing, contradictory or untestable requirements and anything beyond the brief; fix the findings that hold up, once.
-8. **Finish.** `status: done`; `summary` 3–5 lines.
+7. **Review.** One fresh subagent, given the PRD's full text, the brief and the user's later words, flags missing, contradictory or untestable requirements, scope beyond what the user asked for and over-engineering, asking no more rigor than the brief does; fix the findings that hold up, once.
+8. **Finish.** `status: done`.
 
 **Failure** (can't finish): `failed`, `summary` says what failed.
 

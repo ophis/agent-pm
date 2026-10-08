@@ -9,14 +9,14 @@ Run one round of parallel agents, then write a short report.
 ## Steps
 
 1. **Read** the input; decide its type (Researcher › Type and target).
-2. **Too vague** (Output): no clear question, scope, deliverable or, for local or mixed, target → `needs_input`, stop.
+2. **Too vague** (Output; Researcher › Type and target) → `needs_input`, stop.
 3. **Prepare** (local, mixed): Researcher › Type and target.
 4. **Report progress:**
    [agent-pm-progress:start] the type, plus each target repo and its commit for local or mixed
-5. **Research.** Split the question into 3–6 **angles**; dispatch one subagent per angle, all in parallel, each restricted per Researcher › Type and target.
+5. **Research.** Split the question into 3–6 **angles**: web for web, worktree for local, both for mixed. Dispatch one subagent per angle, all in parallel, each prompt self-contained and restricted per Researcher › Type and target. Each agent checks its own findings and returns, per finding, the claim, its sources (direct or indirect; code per Researcher › Standards), how many are independent, and confidence; plus what it couldn't cover.
 6. **Failure.** Never retry or replace an agent. Some usable findings → report, failed angles under Gaps. None → `failed`, stop.
 7. **Report** (Researcher › Standards), after the type line `Light Research. Angles: <angle 1>; <angle 2>; …. No independent verification stage: each finding is checked only by the agent that found it.`, ≤ 3000 words.
-8. **Finish.** `status: done`; `summary` 3–5 lines (Researcher › Standards). One round can't settle the question → end `summary` with `Suggest upgrading to Deep Research: <reason>`.
+8. **Finish.** `status: done`; `summary` (Researcher › Standards). One round can't settle the question (core gaps, single-source key claims, conflicting sources) → end `summary` with `Suggest upgrading to Deep Research: <reason>`.
 
 ## Resume
 

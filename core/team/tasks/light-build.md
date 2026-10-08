@@ -15,7 +15,7 @@ Build the requirement with `autopilot:light-build`, then open a pull request.
 ## Steps
 
 1. **Read** the input. The user's requirements outrank the requirement, which outranks a PRD.
-2. **Repo.** Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>` as its own command (no `cd`, pipe, redirect or `&&`); `<repo>` the target repo, verbatim; `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; `<id>` the input's id, else `build`; `<slug>` 2–4 lowercase English words). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`. In the target repo, inspect only `<worktree>`.
+2. **Repo.** Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>` as its own command (no `cd`, pipe, redirect or `&&`); `<repo>` the target repo, verbatim; `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; `<id>` the input's id, else `build`; `<slug>` 2–4 lowercase English words joined by `-`). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`. In the target repo, inspect only `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.

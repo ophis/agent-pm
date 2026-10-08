@@ -15,7 +15,7 @@ Build the PRD with `autopilot:build`, then open a pull request.
 ## Steps
 
 1. **Read** the input and the PRD. The user's requirements outrank the PRD.
-2. **Repo.** Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>` as its own command (no `cd`, pipe, redirect or `&&`); `<repo>` the target repo, verbatim; `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; `<id>` the input's id, else `build`; `<slug>` 2–4 lowercase English words). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`. In the target repo, inspect only `<worktree>`.
+2. **Repo.** Run exactly `python3 {{scripts}}/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>` as its own command (no `cd`, pipe, redirect or `&&`); `<repo>` the target repo, verbatim; `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; `<id>` the input's id, else `build`; `<slug>` 2–4 lowercase English words joined by `-`). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`. In the target repo, inspect only `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.
@@ -36,7 +36,7 @@ Build the PRD with `autopilot:build`, then open a pull request.
      - "Skip S8; keep the commits. After each task and review round, run exactly `git -C <worktree> push -u origin <branch>`."
    - **Report progress** at the end of each build step (`S<n>`) you run:
      [agent-pm-progress:step] the step and its result
-7. **Finish**, once the build converges: `status: done`; `files` the absolute paths of this build's spec and plan doc; `deliverable` the PR description: what changed, the PRD (path or title), the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
+7. **Finish**, once the build converges: `status: done`; `files` the absolute paths of this build's spec (its plan doc's `spec_file=`) and plan doc; `deliverable` the PR description: what changed, the PRD (path or title), the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` 3–5 lines including how to verify. Deliver it (Output › Destination).
 8. **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>` unless the push was denied; `status: failed`; `files` whichever spec and plan exist; `summary` the failing tests, blockers or denied action; `url` `https://<host>/<owner>/<name>/tree/<branch>`.
 
 ## Resume
