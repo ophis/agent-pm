@@ -37,7 +37,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - Follow up: `tui_claude.py send <name> '<text>'`.
 - Rename: `tmux rename-session -t '=<old>' <new>`, then `tui_claude.py send <new> '/rename <new>'`. Its events then carry `<new>`.
 - Restart in place (dead or stuck): `workers.py restart <name>`; it clears the pane's history and resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`), which any same-user process can change, in your current environment. It waits 5 s as `start` does and reports an early death the same way; the dead pane stays.
-- Color: give every worker and tui role run a color no other live one has, from red, blue, green, yellow, purple, orange, pink, cyan: `tui_claude.py send <name> '/color <color>'` while it is idle, before a worker's first prompt (start it without `--prompt`, send the prompt after the color) or after a `done`. The color isn't saved with the session: send it again after `workers.py restart` or a resume.
+- Color: give every worker and tui role run a color no other live one has, from red, blue, green, yellow, purple, orange, pink, cyan: `tui_claude.py send <name> '/color <color>'` while it is idle: a worker before its first prompt (start it without `--prompt`, send the prompt after the color) or after a `done`; a tui role run after its first `done` (`/color` fires no hook, so it doesn't count toward drive.py's nudges). The color isn't saved with the session: send it again after `workers.py restart` or a resume.
 - Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so; stop the Monitor or `next-event` task (TaskStop) once no worker or role run is left.
 
 ## Role runs
