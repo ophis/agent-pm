@@ -267,12 +267,12 @@ def inner(a, *, layout, gql, popen, runs, root):
         core = os.path.join(root, "core")
         client = clients.get("claude", core)
         params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
-                                   workdir=rd, sid=a.sid, resume=a.mode == "resume")
+                                   workdir=rd, sid=a.sid, resume=a.mode == "resume",
+                                   prefix=attended.prefix(name, a.issue) if layout else None)
         launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
         with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane, as live's `2>&1 | tee -a <plog>` did
             sinks = [drive.terminal(sys.stderr), drive.terminal(err), writeback.sink(ctx)]
-            result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout,
-                                 prefix=attended.prefix(name, a.issue) if layout else None, events=a.events,
+            result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
                                  sinks=sinks, begun=begun, popen=functools.partial(popen, stderr=err))
         rc = result.returncode
     except (Exception, SystemExit) as e:

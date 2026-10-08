@@ -7,7 +7,7 @@ import re
 import shlex
 from collections.abc import Iterable, Iterator
 
-from compose import ConfigError, RunConfig, RunParams, report_command
+from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
 from .base import PROGRESS, Access, Client, Event, Launch
 
@@ -74,7 +74,8 @@ class ClaudeClient(Client):
                 json.dumps(PLUGINS), *tail]
         stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
         hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
-        interactive = ["claude", prompt, *head, "--settings", json.dumps({**PLUGINS, **hook}), *tail]
+        interactive = ["claude", prompt, *head, "--name", tui_session(run.role, run.task, params.sid, params.prefix),
+                       "--settings", json.dumps({**PLUGINS, **hook}), *tail]
         return Launch(argv, dict(c.get("env", {})), cwd=cwd, interactive=interactive,
                       transcript=transcript(cwd, params.sid), resume=resume(cwd, params.sid, workdir))
 

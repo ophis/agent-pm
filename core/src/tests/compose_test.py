@@ -237,6 +237,12 @@ class Validate(Fake):
     def test_new_params_get_a_sid(self):
         self.assertRegex(compose.RunParams(input="x", out="o", workdir="w").sid, r"^[0-9a-f-]{36}$")
 
+    def test_a_prefix_is_a_tmux_session_name(self):
+        for prefix in ("bad name", "", "a.b"):
+            with self.subTest(prefix=prefix), self.assertRaisesRegex(compose.ConfigError, "prefix"):
+                compose.RunParams(input="x", out="o", workdir="w", prefix=prefix)
+        self.assertEqual(compose.RunParams(input="x", out="o", workdir="w", prefix="A_b-0").prefix, "A_b-0")
+
     def test_unknown_role(self):
         self.fails("unknown role 'nobody'", role="nobody")
 

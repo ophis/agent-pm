@@ -168,8 +168,20 @@ class Claude(Base):
             rest = [a for i, a in enumerate(argv) if i not in (1, 2, j, j + 1)]
             for flag in ("--output-format", "stream-json", "--verbose"):
                 rest.remove(flag)
-            i = launch.interactive.index("--settings")
-            self.assertEqual(launch.interactive[:i] + launch.interactive[i + 2:], ["claude", argv[2], *rest[1:]])
+            interactive = list(launch.interactive)
+            for flag in ("--settings", "--name"):
+                i = interactive.index(flag)
+                del interactive[i:i + 2]
+            self.assertEqual(interactive, ["claude", argv[2], *rest[1:]])
+
+    def test_interactive_names_the_claude_session_after_the_tui_session(self):
+        for resume in (False, True):
+            for prefix, name in ((None, f"researcher-light-research-{SID[:8]}"), ("p-1", f"p-1-{SID[:8]}")):
+                with self.subTest(resume=resume, prefix=prefix):
+                    launch = self.plan(client="claude", resume=resume, prefix=prefix)
+                    i = launch.interactive.index("--name")
+                    self.assertEqual((launch.interactive.count("--name"), launch.interactive[i + 1]), (1, name))
+                    self.assertNotIn("--name", launch.argv)
 
     def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
@@ -1262,6 +1274,7 @@ class TuiRunner(Base):
         self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
 
     def test_tui_session_name(self):
+        self.assertIs(drive.tui_session, compose.tui_session)
         self.assertEqual(drive.tui_session("r", "t", SID), self.NAME)
         self.assertEqual(drive.tui_session("r", "t", SID, prefix="engineer-TASK-1"), "engineer-TASK-1-11111111")
         self.assertEqual(drive.tui_session("r", "t", SID, prefix=None), self.NAME)
@@ -1272,9 +1285,9 @@ class TuiRunner(Base):
         for name in ("r-t-xyz", "r-t-1111111", "r-t-111111111", "-11111111", "11111111", "r t-11111111", "r-t-11111111\n"):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
-    def launched(self, layout=None, status_line=False, **kw):
+    def launched(self, layout=None, status_line=False, prefix=None, **kw):
         """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
-        p = self.params()
+        p = self.params(prefix=prefix)
         fake = FakeTui(p.channel, [[outcome(DONE)]])
         launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line)
         with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
@@ -1305,12 +1318,23 @@ class TuiRunner(Base):
         def sink(event):
             raise RuntimeError("sink")
 
-        p = self.params()
+        p = self.params(prefix="p-1")
         fake = FakeTui(p.channel, [[progress("round", "x")]])
         launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
         with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), self.assertRaises(RuntimeError):
-            drive.start(launch, run(), p, client=claude(), runner="tui", sinks=[sink], prefix="p-1")
+            drive.start(launch, run(), p, client=claude(), runner="tui", sinks=[sink])
         self.assertEqual(fake.calls[-1], ("kill", "p-1-11111111"))
+
+    def test_the_tui_session_has_the_name_its_command_gives_claude(self):
+        for prefix in (None, "engineer-TASK-1"):
+            with self.subTest(prefix=prefix):
+                p, c = self.params(prefix=prefix), claude()
+                launch, r = drive.plan(CORE, c, "researcher", "light-research", params=p, cwd=self.work)
+                fake = FakeTui(p.channel, [[outcome(DONE)]])
+                with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
+                    drive.start(launch, r, p, client=c, runner="tui", sinks=[])
+                (_, name, argv, _), = [call for call in fake.calls if call[0] == "start"]
+                self.assertEqual(argv[argv.index("--name") + 1], name)
 
     def test_a_bad_layout_is_a_config_error_before_the_workdir_or_channel(self):
         cases = (("headless", {"layout": drive.Layout()}, "no layout"), ("tui", {"layout": drive.Layout("left")}, "split"),
@@ -1319,12 +1343,10 @@ class TuiRunner(Base):
                  ("tui", {"layout": drive.Layout(opener="a b")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="")}, "opener"),
                  ("tui", {"layout": drive.Layout(opener="a:b:c")}, "opener"),
-                 ("tui", {"prefix": "a b"}, "prefix"), ("tui", {"prefix": ""}, "prefix"),
-                 ("tui", {"prefix": "a.b"}, "prefix"),
                  ("headless", {"prefix": "p"}, "prefix"), ("headless", {"events": "/tmp/ev.log"}, "events"))
         for runner, kw, word in cases:
             with self.subTest(runner=runner, **kw):
-                p = self.params()
+                p = self.params(prefix=kw.pop("prefix", None))
                 launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
                 with self.assertRaisesRegex(drive.ConfigError, word):
                     drive.start(launch, run(), p, client=claude(), runner=runner, sinks=[], **kw)
@@ -1356,7 +1378,7 @@ class TuiRunner(Base):
         real = drive.start
 
         def start(*a, **kw):
-            seen.append((kw["prefix"], kw["events"]))
+            seen.append((a[2].prefix, kw["events"]))
             return real(*a, **kw)
 
         for flags, want in (([], (None, None)), (["--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log"],
@@ -1856,6 +1878,11 @@ class Main(Base):
         launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.", cwd=os.getcwd())
         code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui")
         self.assertEqual((code, json.loads(out)["argv"]), (0, launch.interactive))
+
+    def test_dry_run_tui_argv_names_the_claude_session_after_the_tui_session(self):
+        code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui", "--prefix", "p")
+        argv = json.loads(out)["argv"]
+        self.assertEqual((code, argv[argv.index("--name") + 1]), (0, f"p-{SID[:8]}"))
 
     def test_a_client_without_the_runners_command_exits_2(self):
         for extra in ((), ("--dry-run",)):

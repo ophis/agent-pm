@@ -35,6 +35,7 @@ PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the agent run's progress and outcome, drive.start tails it
 RESUME = "Resumed agent run after an interruption. These rules are current; they may have changed since this session started.\n\n"
+PREFIX = re.compile(r"[A-Za-z0-9_-]+")   # RunParams.prefix's form: tui_claude.NAME's
 
 
 class ConfigError(Exception):
@@ -96,16 +97,25 @@ class RunParams:
     workdir: str
     sid: str | None = None   # None → a new session id
     resume: bool = False
+    prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
 
     def __post_init__(self):
         if self.resume and not self.sid:
             raise ConfigError("--resume needs --sid")
+        if self.prefix is not None and not PREFIX.fullmatch(self.prefix):
+            raise ConfigError(f"prefix {self.prefix!r}: want {PREFIX.pattern}")
         if not self.sid:
             object.__setattr__(self, "sid", str(uuid.uuid4()))
 
     @property
     def channel(self) -> str:
         return os.path.join(os.path.abspath(self.workdir), CHANNEL)
+
+
+def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
+    """The name of the tui runner's tmux session for an agent run: `prefix` (default <role>-<task>), then the sid's
+    first 8 characters."""
+    return f"{prefix or f'{role}-{task}'}-{sid[:8]}"
 
 
 def lookup(layer: Mapping, role: str, task: str, key: str):
