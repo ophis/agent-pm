@@ -175,7 +175,7 @@ class Start(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_handover_file(self):
-        env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1",
+        env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j",
                **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)

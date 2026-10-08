@@ -898,10 +898,12 @@ class Start(Base):
         self.assertEqual([p | {"ts": ""} for p in self.record()["progress"]], [{"ts": "", "name": "round", "text": "half way"}])
         self.assertEqual(log, "Progress (round): half way\nhi\n")
 
-    def test_run_env_drops_claude_code_child_session(self):
-        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDECODE": "1"}):
+    def test_run_env_drops_the_parent_session_keys(self):
+        parent = {"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j", "CLAUDECODE": "1"}
+        with unittest.mock.patch.dict(os.environ, parent):
             _, ((_, kw),), _ = self.start([outcome(DONE)])
         self.assertNotIn("CLAUDE_CODE_CHILD_SESSION", kw["env"])
+        self.assertNotIn("CLAUDE_JOB_DIR", kw["env"])
         self.assertEqual((kw["env"]["CLAUDECODE"], kw["env"]["FAKE"]), ("1", "1"))
 
     def test_stop_events_reach_no_sink(self):

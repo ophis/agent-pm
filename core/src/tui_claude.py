@@ -78,8 +78,9 @@ APPLESCRIPT = """on run argv
 end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
-# Set in a Claude Code session's commands: a claude inheriting it saves no transcript and can't be resumed.
-CHILD_SESSION = "CLAUDE_CODE_CHILD_SESSION"
+# Set in a Claude Code session's commands. A claude inheriting CLAUDE_CODE_CHILD_SESSION saves no transcript and can't
+# be resumed; one inheriting CLAUDE_JOB_DIR takes that session's name over --name and writes in its job dir.
+PARENT_KEYS = ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_JOB_DIR")
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does. The handover's `block` signals
 # are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them.
@@ -111,7 +112,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
           template: str | None = None, split: str | None = None, split_from: str | None = None, opener: str | None = None,
           status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
-    CHILD_SESSION, its PWD set to cwd, plus the pane's terminal keys; once it runs, decorate the session (status_line
+    PARENT_KEYS, its PWD set to cwd, plus the pane's terminal keys; once it runs, decorate the session (status_line
     too), then show it. events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover
     file, never through tmux. Raising, it leaves no session of its own."""
     _name(session)
@@ -139,7 +140,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
         if state is not None:
             kill(session, proc=proc)
         cwd = os.path.abspath(cwd)
-        child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, CHILD_SESSION)}
+        child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, *PARENT_KEYS)}
         handover = {"argv": [os.path.abspath(exe), *argv[1:]], "cwd": cwd, "env": {**child, "PWD": cwd}}
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump(handover, f)

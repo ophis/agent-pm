@@ -125,7 +125,7 @@ class StartTest(unittest.TestCase):
         self.claude = os.path.join(self.bin, "claude")
         executable(self.claude, "#!/bin/sh\n")
         self.events = os.path.join(self.dir, "workers.events")
-        self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h"}
+        self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h", "CLAUDE_JOB_DIR": "/j"}
         for k in workers.STRIP:
             self.env[k] = "x"
         spy = mock.patch.object(tui_claude, "start", wraps=tui_claude.start)
@@ -204,7 +204,7 @@ class StartTest(unittest.TestCase):
         self.start(fake)
         self.assertEqual(fake.handover["cwd"], self.dir)
         env = fake.handover["env"]
-        for k in workers.STRIP:
+        for k in (*workers.STRIP, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
             self.assertNotIn(k, env)
         self.assertEqual({k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME")},
                          {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h"})
@@ -575,6 +575,8 @@ class RestartTest(WorkerCase):
                                             f"CLAUDE_CONFIG_DIR={self.env['CLAUDE_CONFIG_DIR']}", f"PWD={self.dir}",
                                             *resumed])
         self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
+        for k in ("CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
+            self.assertIn(f"-u {k} ", cmd)
 
     def test_own_settings_merged_with_the_hooks(self):
         own = {"type": "command", "command": "mine"}

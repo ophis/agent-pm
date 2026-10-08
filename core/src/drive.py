@@ -724,7 +724,7 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         for sink in sinks:
             sink(event)
 
-    env = {k: v for k, v in os.environ.items() if k != tui_claude.CHILD_SESSION}
+    env = {k: v for k, v in os.environ.items() if k not in tui_claude.PARENT_KEYS}
     try:
         host.begin(argv, cwd=launch.cwd or workdir, env={**env, **launch.env})
         while True:
