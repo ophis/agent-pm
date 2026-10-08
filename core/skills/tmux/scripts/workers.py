@@ -28,6 +28,8 @@ REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
+REPLY_LINES = 80
+PANE_LINES = 40
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 
 
@@ -245,6 +247,26 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         time.sleep(0.5)
 
 
+def show(event: str, *, proc=subprocess.run) -> str:
+    """What to act on for next_event's `event`: a worker's done → its reply's first REPLY_LINES lines; a role run's
+    done (no stored session id), a blocked or a dead → the pane's last PANE_LINES lines; any other → ""."""
+    _, name, kind = event.split(" ", 2)
+    if kind not in ("done", "blocked", "dead"):
+        return ""
+    _check(name)
+    if kind == "done":
+        try:
+            _option(name, "@sid", proc)
+        except WorkersError:
+            pass
+        else:
+            return "\n".join(reply(name, proc=proc).splitlines()[:REPLY_LINES])
+    try:
+        return tui_claude.read(name, PANE_LINES, proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+
+
 def _after(value: str) -> int | None:
     if value == "end":
         return None
@@ -274,6 +296,9 @@ def main(argv=None) -> int:
     p = sub.add_parser("next-event")
     p.add_argument("--events", required=True)
     p.add_argument("--after", type=_after, required=True)
+    p.add_argument("--show", action="store_true",
+                   help=f"then print a done worker's reply (first {REPLY_LINES} lines), else, for a done, blocked or "
+                        f"dead, the pane (last {PANE_LINES} lines)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "start":
@@ -288,7 +313,10 @@ def main(argv=None) -> int:
                 print(text)
         else:
             line, event = next_event(a.events, a.after)
-            print(f"{line} {event}")
+            print(f"{line} {event}", flush=True)
+            text = show(event, proc=subprocess.run) if a.show else ""
+            if text:
+                print(text)
     except WorkersError as e:
         print(f"workers: {e}", file=sys.stderr)
         return 1

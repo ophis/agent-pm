@@ -917,6 +917,81 @@ class MainTest(WorkerCase):
             self.assertEqual(cm.exception.code, 2, argv)
 
 
+def capture(name):
+    """The tmux call `tui_claude.py read <name> --lines 40` makes."""
+    return ["tmux", "capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-40"]
+
+
+class ShowTest(WorkerCase):
+    run_main = MainTest.run_main
+    LINES = [f"line {i}" for i in range(1, 101)]
+
+    def setUp(self):
+        super().setUp()
+        self.path = os.path.join(self.dir, "events")
+
+    def next_event(self, event, fake, *show):
+        with open(self.path, "w") as f:
+            f.write(event + "\n")
+        return self.run_main(["next-event", "--events", self.path, "--after", "0", *show], fake)
+
+    def show(self, event, fake):
+        return self.next_event(event, fake, "--show")
+
+    def worker(self):
+        fake = Fake()
+        fake.store["@sid"] = SID
+        fake.text = nl(*self.LINES)
+        return fake
+
+    def test_a_workers_done_prints_its_replys_first_80_lines(self):
+        d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "p")
+        os.makedirs(d)
+        with open(os.path.join(d, SID + ".jsonl"), "w") as f:
+            f.write(line("assistant", text("\n".join(self.LINES))))
+        fake = self.worker()
+        self.assertEqual(self.show("10:00:01 w1 done", fake), (0, nl("1 10:00:01 w1 done", *self.LINES[:80]), ""))
+        self.assertNotIn("capture-pane", [c[1] for c in fake.calls])
+
+    def test_a_role_runs_done_prints_its_pane(self):
+        fake = Fake()
+        fake.text = nl(*self.LINES)
+        self.assertEqual(self.show("10:00:01 r-t-1a2b3c4d done", fake),
+                         (0, nl("1 10:00:01 r-t-1a2b3c4d done", *self.LINES[-40:]), ""))
+        self.assertEqual(fake.calls[-1], capture("r-t-1a2b3c4d"))
+
+    def test_blocked_and_dead_print_the_pane(self):
+        for kind in ("blocked", "dead"):
+            with self.subTest(kind=kind):
+                fake = self.worker()
+                self.assertEqual(self.show(f"10:00:01 w1 {kind}", fake),
+                                 (0, nl(f"1 10:00:01 w1 {kind}", *self.LINES[-40:]), ""))
+                self.assertEqual(fake.calls, [capture("w1")])
+
+    def test_other_events_print_only_the_line(self):
+        fake = self.worker()
+        self.assertEqual(self.show("10:00:01 r-t-1a2b3c4d-drive outcome done", fake),
+                         (0, "1 10:00:01 r-t-1a2b3c4d-drive outcome done\n", ""))
+        self.assertEqual(fake.calls, [])
+
+    def test_without_show_only_the_line(self):
+        fake = self.worker()
+        self.assertEqual(self.next_event("10:00:01 w1 done", fake), (0, "1 10:00:01 w1 done\n", ""))
+        self.assertEqual(fake.calls, [])
+
+    def test_bad_name_exits_1_after_the_line_before_any_tmux_call(self):
+        fake = Fake()
+        self.assertEqual(self.show("10:00:01 a/b blocked", fake),
+                         (1, "1 10:00:01 a/b blocked\n", "workers: bad name 'a/b': use [A-Za-z0-9_-]+\n"))
+        self.assertEqual(fake.calls, [])
+
+    def test_a_gone_session_exits_1_after_the_line(self):
+        def gone(argv, **kw):
+            return subprocess.CompletedProcess(argv, 1, "", "can't find session: w1")
+        self.assertEqual(self.show("10:00:01 w1 done", gone),
+                         (1, "1 10:00:01 w1 done\n", "workers: tmux: can't find session: w1\n"))
+
+
 def nl(*lines):
     return "".join(f"{x}\n" for x in lines)
 
