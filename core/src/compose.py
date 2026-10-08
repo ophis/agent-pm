@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
 import repo
+import tui_claude
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"     # guide.md, principles.md, roles/, tasks/, templates/ and methods/: who does what
@@ -35,7 +36,6 @@ PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 CHANNEL = ".report.jsonl"   # in the workdir: report.py appends the agent run's progress and outcome, drive.start tails it
 RESUME = "Resumed agent run after an interruption. These rules are current; they may have changed since this session started.\n\n"
-PREFIX = re.compile(r"[A-Za-z0-9_-]+")   # RunParams.prefix's form: tui_claude.NAME's
 
 
 class ConfigError(Exception):
@@ -102,8 +102,8 @@ class RunParams:
     def __post_init__(self):
         if self.resume and not self.sid:
             raise ConfigError("--resume needs --sid")
-        if self.prefix is not None and not PREFIX.fullmatch(self.prefix):
-            raise ConfigError(f"prefix {self.prefix!r}: want {PREFIX.pattern}")
+        if self.prefix is not None and not tui_claude.NAME.fullmatch(self.prefix):
+            raise ConfigError(f"prefix {self.prefix!r}: want {tui_claude.NAME.pattern}")
         if not self.sid:
             object.__setattr__(self, "sid", str(uuid.uuid4()))
 
