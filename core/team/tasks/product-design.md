@@ -14,7 +14,7 @@ Turn the input into a reviewed PRD.
    [agent-pm-progress:start] whether the PRD needs research and a self-grill
 4. **Research**, if needed, only what the PRD needs; too deep for now → Risks. The input names a target repo → check it out first (Principles › Worktree), `<branch>` `<id>-product-design`, and read the product's code there, read-only; exit 2 or 1 → the error under Risks, go on without the code.
 5. **Self-grill**, if needed: one fresh subagent, in one round, lists each key decision (one changing requirements or scope) with a suggested answer. Settle each in the PRD; what only the user can decide → Open questions.
-6. **Write** the PRD per `templates/prd.md`, title `PRD: [Reference] [Product name]`; the outcome's `title` is that name alone, unchanged on revision.
+6. **Write** the PRD per the Template; the outcome's `title` is `[Product name]` alone, unchanged on revision.
 7. **Review.** One fresh subagent, given the PRD's full text, the brief and the user's later words, flags missing, contradictory or untestable requirements, scope beyond what the user asked for and over-engineering, asking no more rigor than the brief does; fix the findings that hold up, once.
 8. **Finish.** `status: done`.
 

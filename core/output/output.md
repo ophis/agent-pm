@@ -1,6 +1,6 @@
 # Output
 
-Your result is an **outcome**, returned per Output › Return, plus a **deliverable** (the document itself) delivered per Output › Destination. The outcome's fields:
+Your result is an **outcome**, returned per Output › Return, plus a **deliverable** (the document itself). The outcome's fields:
 
 - `status`: `done` | `needs_input` | `failed`.
 - `title`: one line.

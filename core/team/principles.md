@@ -14,7 +14,7 @@
 
 ## Writing
 
-Documents and prompts you write: fewest words, full information. Cut until the next cut would lose information.
+Documents and prompts you write: fewest words, full information.
 - Cut what the reader does by default, already knows, or can look up (point to it).
 - Keep exact commands and literals, guards, and qualifiers of who, when and which (`the user`, `this session`, `existing`).
 - Keep a reason only where it prevents a likely mistake.

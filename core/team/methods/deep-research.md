@@ -7,7 +7,7 @@ One deep research round run with subagents. Input: the brief the calling task gi
 1. **Decompose**: write 5 complementary web search angles from the brief.
 2. **Search**: one web agent per angle; it returns 4–6 results, each with URL, title, relevance (high / medium / low) and why it is relevant.
 3. **Fetch**: after every search agent has returned (one that errors returns no results), drop duplicate URLs, rank the whole set by relevance (high → low) and dispatch fetches for the first ≤ 15. One web agent per source fetches it and returns the source's quality (primary / secondary / blog / forum / unreliable) and 2–5 falsifiable claims, each with a verbatim quote and importance (central / supporting / tangential). A failed or irrelevant fetch → no claims, `unreliable`.
-4. **Verify**: after all claims are in, rank them by importance, then source quality, and verify the top 25 by **Voting**, with web agents as voters. The rest stay unverified.
+4. **Verify**: rank all claims by importance, then source quality, and verify the top 25 by **Voting**, with web agents as voters. The rest stay unverified.
 5. **Synthesize**: merge into findings; list confirmed, refuted and unverified claims, each with its sources.
 
 ## Rules

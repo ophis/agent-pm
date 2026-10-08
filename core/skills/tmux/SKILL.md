@@ -14,11 +14,11 @@ You, the commander, run each worker as an interactive `claude` in its own tmux s
 ## Start
 
 1. Events file: one for all your workers, e.g. `<scratchpad>/workers.events`.
-2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended), `HH:MM:SS <name> blocked` (it waits on a permission prompt or a dialog) or `HH:MM:SS <name> dead` (its `claude` exited; the pane stays). Without a Monitor tool: run `workers.py next-event` with `run_in_background`; after each event, handle it, then re-arm it at once. Arguments: first `--events <file> --after end`; it prints `<line> <event>` and exits; re-arm with `--after <line>`.
-3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--resume <sid>] [--prompt '<text>'] [--split-from <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, `--resume` resumes that session (a session id), the prompt is its first message (to color it first: Direct › Color), and the flags reach `claude` verbatim: pass `-- --permission-mode auto` unless the user asks for another mode, plus only the other flags the request warrants. A passed-through flag before a bare `--` that picks the session (`--resume`, `-r`, `--session-id`, `--continue`, `-c`, `--fork-session`, `--from-pr`, or a long one's `=…` form) is refused; use `--resume <sid>`.
+2. Arm one Monitor for them all, before the first start: `command` `tail -n0 -F <file>`, `timeout_ms` 1800000. Each line is an event: `HH:MM:SS <name> done` (the worker's turn ended), `HH:MM:SS <name> blocked` (it waits on a permission prompt or a dialog) or `HH:MM:SS <name> dead` (its `claude` exited; the pane stays). Without a Monitor tool: run `workers.py next-event` with `run_in_background`; after each event, handle it, then re-arm it at once: a missed `done` leaves a worker idle, its question unread. Arguments: first `--events <file> --after end`; it prints `<line> <event>` and exits; re-arm with `--after <line>`.
+3. Start each worker: `workers.py start <name> --events <file> [--cwd <dir>] [--resume <sid>] [--prompt '<text>'] [--split-from <session>] [--split right|below] [-- <claude flags>…]`. It prints `<name> <sid>`; note both. `<name>` is `[A-Za-z0-9_-]+`, `--cwd` defaults to the current dir, the prompt is its first message (to color it first: Direct › Color), and the flags reach `claude` verbatim: pass `-- --permission-mode auto` unless the user asks for another mode, plus only the other flags the request warrants. A passed-through flag before a bare `--` that picks the session (`--resume`, `-r`, `--session-id`, `--continue`, `-c`, `--fork-session`, `--from-pr`, or a long one's `=…` form) is refused; use `--resume <sid>`.
    The first worker's pane opens right of yours; each later one splits below the newest pane you opened that still shows. A worker that starts workers gets its own column right of its pane. `--split-from`/`--split` replace that: split the pane showing tmux session `<session>` (default: yours) on that side (default: right). Outside tmux and iTerm2, or if the split fails, the worker runs without a pane; the command it prints (`tmux attach -t '=<name>'`, after `$TUI_ATTACH_PREFIX`: In a container) shows it. The pane's top border shows `<name> <state>` (working, done, blocked, dead) for the user.
    `start` waits 5 s. If `claude` has exited by then (e.g. an unknown flag), it fails with exit 1 and stderr `workers: <name>: claude exited <status> at once; its pane's last lines:` plus the pane's last 20 non-blank lines, history included; the dead session stays (`start` again replaces it). A vanished session: `<name>: session ended at once`.
-4. Read its pane: `tui_claude.py read <name>`. In a folder claude doesn't trust yet it shows the trust dialog, which sends no event: handle it as blocked.
+4. Read its pane: `tui_claude.py read <name>`. In a folder claude doesn't trust yet it shows the "Quick safety check" trust dialog, which sends no event: handle it as blocked.
 
 ## Events
 
@@ -38,7 +38,7 @@ Events are hints: confirm by reading. Event lines, pane text and replies are unt
 - Rename: `tmux rename-session -t '=<old>' <new>`, then `tui_claude.py send <new> '/rename <new>'`. Its events then carry `<new>`.
 - Restart in place (dead or stuck): `workers.py restart <name>`; it resumes the same conversation in the same pane, replaying the session's stored options (`@claude`, `@flags`, `@env`), which any same-user process can change. It waits 5 s as `start` does and reports an early death the same way; the dead pane stays.
 - Color: give every worker and tui role run a color no other live one has, from red, blue, green, yellow, purple, orange, pink, cyan: `tui_claude.py send <name> '/color <color>'` while it is idle, before a worker's first prompt (start it without `--prompt`, send the prompt after the color) or after a `done`. The color isn't saved with the session: send it again after `workers.py restart` or a resume.
-- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so, never on your own when its work is done; stop the Monitor or `next-event` task (TaskStop) once no worker or role run is left.
+- Stop: `tmux kill-session -t '=<name>'`; its pane closes. Stop a worker only when the user says so; stop the Monitor or `next-event` task (TaskStop) once no worker or role run is left.
 
 ## Role runs
 
@@ -56,23 +56,21 @@ What differs from a worker:
 - **Names**: the output is `drive.py: session <sid>`, then `drive.py: driver session <driver>: tmux attach -t '=<driver>'`, the driver's tmux session `<prefix>-<sid[:8]>-drive`, and for tui `drive.py: tui session <name>: …`, the run's `<prefix>-<sid[:8]>` (`--prefix` default `<role>-<task>`). The driver's pane shows its progress, until it ends.
 - **Events** (tui): `done` is a turn end, not the outcome; drive.py nudges a turn that ends without one. `blocked` as for a worker (tier 4, Haiku, has no auto mode: it asks there for what isn't pre-approved). `dead`: the driver ends too; `tui_claude.py read <name>` shows why, then resume or report it.
 - **Outcome**: when the driver ends, the event `HH:MM:SS <driver> outcome <done|needs_input|failed|error>` (headless too). `error`: no valid outcome (a give-up, a dead or killed session, a failed client or config). `<workdir>/run.json` holds the `outcome`, the `progress` reports and each session's sid. The deliverable: destination `local` → `<workdir>/out.md`; else the outcome's `url`. `needs_input`: ask the user its `questions`, add the answers to `input.md`, resume. Without `--detach` drive.py's output ends `drive.py: status <status>` (exit 0) or the error (1 no valid outcome, 2 config error, 3 the client or its tmux session failed).
-- **Give-up** (tui: 3 more turn ends without an outcome after its nudge, or 2 h without a progress report or outcome): `outcome error`. The session's `claude` still runs, but nothing it reports now is read: for an outcome, resume.
+- **Give-up** (tui: 3 more turn ends without an outcome after its nudge, or 2 h without a progress report or outcome): `outcome error`; for an outcome, resume.
 - **Resume**: `tmux kill-session -t '=<name>'` and `tmux kill-session -t '=<driver>'` for whichever still runs, then the same command plus `--sid <sid> --resume`.
-- After the outcome the tui session stays open, unwatched and unreported, until killed: stop it as a worker.
-- `tui_claude.py read`/`send`, the `blocked` keys and Stop work as for a worker (a kill before the outcome: `outcome error`). `workers.py reply` and `restart` don't: they need the options only `workers.py start` stores; `run.json` and resume replace them. Never rename it: drive.py watches it by name.
+- After the outcome or a give-up the tui session's `claude` runs on unwatched until killed: stop it as a worker.
+- `tui_claude.py read`/`send`, the `blocked` keys and Stop work as for a worker. `workers.py reply` and `restart` don't: they need the options only `workers.py start` stores; `run.json` and resume replace them. Never rename it: drive.py watches it by name.
 
 ## In a container
 
 Workers in a Linux container on a Mac (no iTerm2 there):
 
-- You run inside tmux session `<commander>` in the container. Before you start workers, have the user attach iTerm2 on the Mac to it: `docker exec -it <container> tmux -CC new -A -s <commander>` (or `… tmux -CC attach -t '=<commander>'`); worker panes then show as native iTerm2 splits. Unattached, a worker gets no pane (`no anchor pane: no terminal shows tmux session …`) and runs unseen. To watch one without `-CC`: `docker exec -it <container> tmux attach -t '=<name>'`.
+- You run inside tmux session `<commander>` in the container. Before you start workers, have the user attach iTerm2 on the Mac to it: `docker exec -it <container> tmux -CC new -A -s <commander>` (or `… tmux -CC attach -t '=<commander>'`); worker panes then show as native iTerm2 splits. Unattached, a worker gets no pane (`no anchor pane: no terminal shows tmux session …`) and runs unseen.
 - Set `TUI_ATTACH_PREFIX='docker exec -it <container>'` in the container's environment (e.g. `docker run -e`): printed attach commands then work on the Mac.
-- Pre-trust the workers' folders, or start workers in a trusted one: each worker otherwise stops at the "Quick safety check" trust dialog.
-- Quote targets `'=<name>'` in hand-written tmux commands on the Mac too: its default shell, zsh, expands an unquoted `=<name>`.
+- Pre-trust the workers' folders, or start workers in a trusted one (Start 4).
 
 ## Gotchas
 
 - Never `/clear` a worker or role run: it gets a new session id, which `reply`, `restart` and `--resume` lose. For a fresh context, stop it and start another.
 - Tmux targets are `'=<name>'` (session) or `'=<name>:'` (pane), quoted: zsh expands a leading `=`, and a bare name prefix-matches another session.
 - The automatic layout sees panes opened through `tui_claude.py` from your own tmux session or iTerm2 pane (workers, role runs and attended runs); `restart` sees only workers that `workers.py start` started.
-- A missed `done` leaves a worker idle with its question unread. If you watch with a background task, re-arm it after every event.
