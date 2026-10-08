@@ -12,7 +12,7 @@ Run research workflows, then write the report yourself.
 2. **Report progress:**
    [agent-pm-progress:start] the type and the rounds in order
 3. **Research** from one **brief**, one run per round, ≤ 100 agents each:
-   - **Web**: call `/deep-research` with the Workflow tool. No such tool → follow `{{methods}}/deep-research.md` (read-only).
+   - **Web**: call `/deep-research` with the Workflow tool once. No such tool → follow `{{methods}}/deep-research.md` (read-only).
    - **Local**: prepare (Researcher › Type and target); then the **ultracode round**: a Workflow call running a script you write per `{{methods}}/ultracode.md`, capping agents at 100 in code. No Workflow tool → follow that file.
    - **Mixed**: prepare; one round of each, each on its own part. Before the second, the **brake**: the gate is `{{gate}}`; unless `none`, run it. Nonzero exit → skip that round, its output under Gaps.
    - No other workflow. No subagents with a round's tools → skip that round, under Gaps.
