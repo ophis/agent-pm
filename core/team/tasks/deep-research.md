@@ -28,6 +28,7 @@ Run research workflows, then write the report yourself.
 - Completed rounds → use their results; redo nothing.
 - Interrupted ultracode round → call the Workflow with its Script file as `scriptPath`, the same `args` and its Run ID as `resumeFromRunId`.
 - Interrupted `/deep-research` round → never pass `resumeFromRunId` (it re-runs nearly everything); finish only what is missing.
+- Never started → step 3 (the brake first if it is the second round).
 - Rounds and brake as planned: no new round, no higher cap; a brake-skipped round stays skipped.
 
 Then steps 5–6. Nothing usable → `failed`.
