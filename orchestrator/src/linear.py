@@ -1,5 +1,8 @@
 """Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
 and history, and small shared helpers.
+
+Every move to In Review (write-back, bounce, router, promote) subscribes each human_members email (subscribe) and
+keeps the assignee.
 """
 import functools
 import json

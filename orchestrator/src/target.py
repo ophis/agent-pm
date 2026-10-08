@@ -1,4 +1,5 @@
-"""The target repo of an issue: `Repo:` line or project mapping, the engineering pre-check, branch name, PR title."""
+"""The target repo of an issue: `Repo:` line or project mapping, the engineering pre-check, branch name, PR title, the
+issue's checkout (checkout) and the clone the input's `Repo:` names (with_clone)."""
 import json
 import os
 import re

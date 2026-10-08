@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Runner: one core agent run, per orchestrator/config.toml, of an issue claimed by the router or the attended entry (or
-one the router resumes). Each form's steps: CLAUDE.md › Architecture.
+one the router resumes).
 
 run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --mode new|resume
        [--runner headless|tui] [--split right|below] [--split-from SESSION] [--events FILE]
@@ -8,11 +8,24 @@ run.py --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK --
   account or config error, 3 transient; a config error or transient failure is also logged to the task's project log.
   --split, --split-from and --events need --runner tui, whose checks exit 2 when one fails; the sessions' attach
   commands go to stderr.
+  Steps: tui only, the pane (attended.layout), --events (tui_claude.events_file) and the TUI session name
+  (attended.prefix) → config, role and task → a resume's transcript → the role's Keychain item → read the issue →
+  build tasks: target.check (Invalid on a new agent run → writeback.bounce, no agent run) → inputs.gather + render →
+  <work_dir>/work/<ID>/input.md → the inner in a detached tmux session agent-pm-<role>-<ID> (config.session), cwd
+  <work_dir>/work/<ID>/. Any failure starts nothing. With tui the session gets -e ITERM_SESSION_ID, and the inner
+  --opener and only the user's --split/--split-from/--events, never a derived --split-from; tui_claude.start places
+  the pane.
 run.py --issue ID --tui [--split right|below] [--split-from SESSION] [--events FILE]
   Attended entry, by hand. Exits 2 bad arguments, no place for the TUI pane or a bad events file, 1 config error, a
   live agent run of the issue or nothing claimed, else the outer's code.
+  Steps: pane and --events checks → refuse a live agent run (router.live_sessions) → router.Board.take (gates: README ›
+  Attended runs) → router.start_line into runs.log → the outer, --runner tui.
 run.py --inner --uuid ISSUE_UUID [--target OWNER/NAME] [--opener OPENER] <the same arguments>
   Inner, in the outer's tmux session.
+  Steps: attended.close → drive.plan (config.layers, the overlay; cwd default the workdir, passed explicitly) +
+  drive.start (sinks: terminal, project log, writeback.sink; begun posts the session comment) → end lines in
+  <work_dir>/logs/runs.log and the project log → writeback.finish → the session comment's end. No valid outcome: the
+  issue stays In Progress and Recover resumes it.
 """
 import argparse
 import functools

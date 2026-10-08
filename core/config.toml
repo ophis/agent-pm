@@ -13,7 +13,7 @@
 #   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
 #   show            local: tui runner only: how the agent run's TUI window opens.
-#                   unset        → open a pane, stacked by caller (core/CLAUDE.md › Rules: the built-in show)
+#                   unset        → open a pane, stacked by caller (src/tui_claude.py's docstring: the built-in show)
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory

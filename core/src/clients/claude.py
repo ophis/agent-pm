@@ -1,5 +1,19 @@
 """Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config.toml. The run
 reports progress and its outcome with the driver's report command; its stream-json output gives only the text to show.
+
+The command, as `drive.py … --dry-run` prints it (env: [clients.claude.env]):
+    claude -p '<prompt>' --session-id <sid> --model <tier's> --effort <effort's> <[clients.claude] flags>
+      --setting-sources user --output-format stream-json --verbose --settings '<PLUGINS>'
+      --add-dir <dir>… --allowedTools 'Bash(<command>)'…
+<prompt>: team/guide.md, then the sections it lists. A resume: --resume for --session-id, in the session's recorded cwd
+with its settings. --add-dir: the read/write dirs, and the workdir when the cwd is another (prompt paths stay
+absolute). A trusted cwd: --setting-sources user,project,local and, with a .mcp.json, --mcp-config <cwd>/.mcp.json.
+No deny list: --allowedTools pre-approves the task's commands, report.py, the gate and `allow`; auto mode and the
+user's settings decide the rest. interactive (tui): `claude '<prompt>' …` without -p, --output-format and --verbose,
+plus --name <session> and the Stop hook in --settings.
+claude needs (nothing checks; a missing one fails the run): -p, stream-json, --resume, --permission-mode auto,
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS; for tui, interactive mode and Stop hooks in --settings; subagents, web search
+and fetch, file and shell tools; the Workflow tool and built-in /deep-research (deep research).
 """
 import json
 import os

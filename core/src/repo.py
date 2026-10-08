@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG> (checkout()), on the run's branch.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG> (checkout(), the one checkout path
+rule for any caller), on the run's branch. Also read_config, the one config loader every reader uses. Stdlib only,
+importing nothing from src/.
 
 repo.py worktree --dir DIR --branch B [--name SLUG] REPO
     prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
@@ -11,7 +13,9 @@ repo.py status --dir DIR --branch B [--name SLUG] REPO
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
-blobless clone. Symlinks: core/CLAUDE.md › Rules. B: the local B, else tracking origin/B, else new from origin/<default>.
+blobless clone. Symlinks follow config.toml's `trusted_dirs` comment, set in the worktree's own config (which turns on
+the clone's extensions.worktreeConfig); an existing worktree whose setting disagrees is refused: remove it, run again.
+B: the local B, else tracking origin/B, else new from origin/<default>.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
 Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other

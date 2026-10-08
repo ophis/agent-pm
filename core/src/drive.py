@@ -8,14 +8,35 @@ drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR 
 drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable is saved (local and orchestrator destinations); the run's cwd: place(). By default
 (start's sinks) a run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
---runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
-core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
 "driver", the driver session's name) and changes nothing.
 Exits 0 when the run returns a valid outcome (or the prompt is printed, or --detach's session runs), 1 when it doesn't,
 2 on a config error, 3 when the client or its tmux session fails.
+
+Runners (RUNNERS, --runner) start the client's command in the run's cwd with PWD set to it: headless runs Launch.argv
+on a pipe until it exits; tui runs Launch.interactive in a detached tmux session through tui_claude.start, named
+tui_session(…, --prefix), `<prefix>-<sid[:8]>`, prefix default `<role>-<task>` (TUI_SESSION fullmatches such names).
+Its pane goes per Layout (--split, --split-from, the caller's opener), unless the `show` run key says otherwise: a
+/bin/sh -c command in the driver's context, so it carries the trust of `commands`. A new runner is a Runner naming
+its Launch field in `starts`.
+
+tui give-up: after the nudge, STOP_LIMIT more turn ends without an outcome (a progress report resets the count), or
+WAIT_LIMIT after the last progress report or the start without one → the driver prints the attach command, leaves the
+session and exits 1. Until then an unanswered dialog waits in the pane: interactive claude asks there to trust a new
+folder (-p doesn't) and, without auto mode (Haiku, tier 4), for what isn't pre-approved; the nudge is typed up to about
+a second after the turn ends, so a dialog opened by then gets the keys. After the outcome or a give-up the session is
+an unwatched agent with the run's pre-approvals and the driver's environment, nothing it does reported: end it with
+`tmux kill-session -t '=<session>'`.
+
+--detach (needs --events, which headless then takes too) checks the run as without it, then, for tui, the caller's
+placement (caller_layout: a --split-from session no terminal shows → exit 2; no opener → no pane), creates the events
+file and starts the same command, plus --sid and the hidden --opener and --driver <session>, as the driver in a new
+detached tmux session on the caller's tmux server (detach), driver_session(…), `<prefix>-<sid[:8]>-drive`. When the
+driver ends, on SIGNALS (SIGHUP: `tmux kill-session`) too, it appends one
+`HH:MM:SS <session> outcome <done|needs_input|failed|error>` line there (error: no valid outcome); only a client that
+runs writes it. run.py calls start() in-process instead.
 """
 import argparse
 import contextlib
@@ -507,7 +528,7 @@ class Headless:
 
 class Tui:
     """The client's interactive command in a detached tmux session (tui_claude.py), never killed after the outcome. Done once
-    the outcome arrives, or once it gives up (core/CLAUDE.md › An agent run's command: tui give-up) and leaves the session
+    the outcome arrives, or once it gives up (the module docstring: tui give-up) and leaves the session
     to a human."""
     starts = "interactive"
 

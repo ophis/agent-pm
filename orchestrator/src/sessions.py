@@ -1,5 +1,10 @@
-"""Session registry: one comment per Claude session on its issue, written by the harness account
-(CLAUDE.md › Architecture).
+"""Session registry: one `Run <sid> · …` comment per Claude session on its issue (body), posted by run.py's inner with
+harness_key, not the role's key, so isMe is the harness account: `running` just before claude starts, then its end.
+A resume of the session edits its comment; a new claim (e.g. after Revise) adds one. Earlier sessions have a
+`Run <sid>` attachment (is_record), or nothing; attachments stay. A comment stuck at `running` with no
+agent-pm-<role>-<ID> tmux session was killed before claude exited (`tmux ls` is the truth). A write is one try of at
+most LIMIT s; a failure only adds a registry-error line to the project log. Promote leaves the comments out of
+`## Comments` and the attachments out of `## Source`; issues.read_issue drops the comments.
 """
 import functools
 import os

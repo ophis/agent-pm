@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
 """Router: decides what runs next among the team's issues assigned to role accounts, then calls run.py.
 
-(no mode)           One tick (launchd): the hours check, then CLAUDE.md › Architecture's steps.
+(no mode)           One tick (launchd): the hours check, then the tick's steps below.
   --now             Skip the 01:00-06:59 hours check.
   --dry-run         Print the plan and one usage probe; change nothing, launch nothing.
   --issue ID        With --now: claim and launch only this Todo issue; skip if its role is full.
   --tui [--split right|below] [--split-from SESSION]
                     Not with --issue: the tick's agent run is attended (run.py --runner tui, with the given --split
                     and --split-from); attended.layout checks where the TUI pane goes before the tick (exit 2: nowhere).
---brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start.
+--brake             Deep-research's second-round gate (the overlay's): run the usage probe, print the usage, exit 0 if a
+                    round may start (5-hour usage < 80%, no weekly limit full, status not rejected), else 1 (also with
+                    no rate_limit_event).
+
+A tick: live tmux sessions (live_sessions) against each role's max_runs (all full: skip) → Recover the In Progress
+issues with no live session or transcript written within LIVE (a resume candidate, else back to Todo, or In Review
+after CAP attempts or for a task no longer the role's) → the usage gate (probe: 5-hour usage >= 90%, a weekly limit
+full or status rejected skips the tick) → resume a candidate or claim a ready Todo issue (README › Using the board),
+changing its state, never its assignee → run.py. At most one agent run per tick, for a role below max_runs. A claim's
+task: task_for (a bad label: README › Task labels).
+
+State between ticks: only <work_dir>/logs/runs.log (resume and Recover take the task from its task=) and Linear
+history, never session comments. A resumed agent run also reads <workdir>/writeback.json and run.json (cwd, settings)
+and needs its transcript (config.transcript: run.json's cwd, else the workdir).
 """
 import json
 import os

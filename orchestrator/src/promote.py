@@ -3,7 +3,8 @@
 
 For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in orchestrator/config.toml has a next:
 create that role's issue in the same project, assigned to its account, in Todo with the source links and the
-human instructions, relate it, and move the source to Done.
+human instructions, relate it, and move the source to Done. The new issue's id is hashed from the source, the next role
+and the first Handoff time, so a rerun finds it instead of creating another.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib).

@@ -4,6 +4,17 @@ prompt. A module for the driver (drive.py).
 Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); principles,
 role and task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and
 {{gate}}; a destination gets its output values.
+
+A task file (team/tasks/<task>.md):
+- may open with YAML frontmatter holding only `description: "<JSON string>"`: what the task does and when to use it,
+  shown where role/tasks are listed (skills/tmux/SKILL.md › Role runs); _task strips it, no prompt sees it.
+- marks where an agent run reports progress with a line `[agent-pm-progress:<name>] what to report`, under its own
+  **Report progress** item (a step, or a bullet under the parent it belongs to), never inside another item; how the
+  run reports it is the client's handover(). A done or failed new run whose task marks `start` but never reported it
+  gets a `missing` event (drive.start).
+- has a `## Resume` section. Shared resume text goes in RESUME (a resumed run's prompt opens with it), then in the
+  charter's `## Resume`, if any, which must be the charter's last section (the skill client cuts each `## Resume` up
+  to the next `# ` heading).
 """
 import json
 import os
@@ -31,7 +42,6 @@ GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_l
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
-# The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 CHANNEL = ".report.jsonl"
@@ -246,7 +256,7 @@ def _read(root: str, rel: str) -> str:
 
 
 def _task(root: str, rel: str) -> tuple[str, str]:
-    """(description, body) of a task file (its frontmatter: core/CLAUDE.md › Rules)."""
+    """(description, body) of a task file (its frontmatter: the module docstring)."""
     text = _read(root, rel)
     if not (m := FRONTMATTER.match(text)):
         return "", text

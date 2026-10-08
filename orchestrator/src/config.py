@@ -1,5 +1,10 @@
 """Paths, orchestrator/config.toml (LOCAL on top), core config with its [core] overlay, and TASKS; imports no
 other orchestrator module.
+
+The orchestrator config adds what core must not know, plus [core], the overlay (its comment). WORK_DIR is <work_dir>
+(the work_dir key), RUNS_DIR and LOGS_DIR its work/ and logs/. A work_dir in or containing the repo or a local clone,
+or one a core trusted_dirs entry is or contains, stops router, run and promote: git in a workdir must not see agent-pm,
+nor its CLAUDE.md and .claude/ reach an agent run. So does any invalid or inconsistent config (load_config, runnable).
 """
 import os
 import re
@@ -17,7 +22,7 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
 
-# Module names this reserves: CLAUDE.md › Architecture (Imports).
+# Module names this reserves: CLAUDE.md › Rules (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import compose  # noqa: E402

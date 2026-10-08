@@ -1,5 +1,11 @@
-"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>
-(CLAUDE.md › Architecture).
+"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>: prefix
+its only builder, ISSUE_TUI with drive.TUI_SESSION its only matcher.
+
+An issue's TUI sessions are the live tmux sessions so named (sessions, issues), nothing recorded; run.py's inner closes
+them before every agent run (no resume beside an old claude), as does prune, both wording the Closed results.
+A driver session (agent-pm-<role>-<ID>) is the issue's live agent run (router.live_sessions: no second one starts) and
+holds a max_runs slot only while its driver runs: `tmux kill-session` → SIGHUP → the inner's end lines say exit=129,
+its TUI session is killed and Recover resumes the issue. A TUI session holds neither.
 """
 import os
 import re

@@ -1,5 +1,7 @@
-"""Write-back: a core agent run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the engineering bounce before an agent run."""
+"""Write-back: a core agent run's start and progress marks (sink) and its outcome (finish), posted to its Linear issue as
+the role account, and the engineering bounce before an agent run (bounce). Per-task differences (title prefixes, texts,
+switches) are config.TASKS data. <workdir>/writeback.json ledgers each step per session, so a resume repeats none and a
+failed step leaves the issue In Progress."""
 import fcntl
 import hashlib
 import json

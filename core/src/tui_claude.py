@@ -2,6 +2,34 @@
 
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui_claude.py --help.
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
+
+Keep it usable alone: one file on tmux and the stdlib, in Python 3.9 syntax (python3 may be macOS's), importing no core
+module and reading no config (tui_claude_test.py checks). Its tmux, sh, pgrep and osascript calls go through the
+injectable `proc`, so tests run none.
+
+Live check: a private tmux server, `tmux -S <socket>` on every call, cleanup included (a program calling bare tmux:
+`env -u TMUX TMUX_TMPDIR=<dir>`); inside a tmux pane $TMUX beats TMUX_TMPDIR, so `TMUX_TMPDIR=… tmux kill-server`
+kills the caller's server.
+
+start takes a claude command: with_hooks merges the state hooks into its --settings (@state working, done, blocked),
+and decorate adds the pane-died hook (@state dead) and the pane border `<session> <state>`, for every session, and sets
+tmux's status line off, or on with status_line=True (drive.py's tui runner, through Launch.status_line, and workers.py
+start and restart pass core config's `status_line`); with events (a file created 0600), Stop, Notification and
+pane-died also append `HH:MM:SS <session> done|blocked|dead` lines to it. start runs the command in cwd, then its show
+(show(); the tui runner passes the `show` run key), resolved as config.toml's `show` comment says; respawn (workers.py
+restart) runs one in a session's pane the same way, without a show. start, respawn and drive.py drop PARENT_KEYS from
+their child's environment (why: its comment). Every printed attach command (this file's, drive.py's, run.py's) is
+attach_command's; no command run here carries its prefix.
+
+The built-in show (open_pane) stacks panes by opener, the caller (opener(): its tmux session, else, with
+TERM_PROGRAM=iTerm.app, its full $ITERM_SESSION_ID): the first splits right of the opener's pane, each later one below
+the newest pane of the opener's other sessions (@opener) that still shows (@pane); split_from or split splits
+split_from's pane (anchor(); default the opener's) on that side instead, the new pane still joining the stack. A
+session's pane is the one a terminal shows it in, a nested tmux client's being the tmux pane hosting it; an iTerm2 pane
+gets an iTerm2 split, any other a `tmux split-window` running `tmux attach`. @opener and @pane, the only placement
+state stored, are read back only after a fullmatch (any same-user process can set them). In a container (no iTerm2 or
+osascript): skills/tmux/SKILL.md › In a container, or a `show` command asking a host-side watcher (yours to deploy) to
+attach.
 """
 from __future__ import annotations
 

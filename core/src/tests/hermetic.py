@@ -1,6 +1,7 @@
-"""Imported first by the tests that read core's own config (the root CLAUDE.md › Roles, tasks, rules): hides this
-machine's repo.LOCAL (os.path.isfile, which repo.read_config asks, says it is absent, through symlinks too) and merges
-core.local.fixture.toml over the committed core/config.toml in its place."""
+"""Imported first by every test module that reads core's own config, so no test reads this machine's local file: hides
+repo.LOCAL (os.path.isfile, which repo.read_config asks, says it is absent, through symlinks too) and merges
+core.local.fixture.toml over the committed core/config.toml in its place. A test needing a local file writes its own
+under home()."""
 import os
 import tempfile
 import tomllib
