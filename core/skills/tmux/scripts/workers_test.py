@@ -19,6 +19,8 @@ import hermetic  # noqa: E402
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 tui_claude = workers.tui_claude
+SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr")
 
 
 def executable(path, text):
@@ -133,6 +135,44 @@ class StartTest(unittest.TestCase):
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
                                          split_from=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
+
+    def test_resume(self):
+        fake = Fake()
+        sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
+        self.assertEqual(sid, SID)
+        self.assertEqual(self.tui.call_args.args[1],
+                         [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"])
+        self.assertEqual(fake.handover["argv"][1:3], ["--settings", tui_claude.hooks(self.events)])
+        self.assertEqual(fake.options()["@sid"], SID)
+
+    def test_no_resume_picks_a_new_session_id(self):
+        sid = self.start(Fake())
+        self.assertEqual(self.tui.call_args.args[1], [self.claude, "--session-id", sid, "--name", "w1"])
+
+    def test_bad_resume(self):
+        for bad in ("abc", SID.upper(), "", SID + "x", " " + SID, SID + "\n", SID.replace("-", "")):
+            with self.subTest(bad=bad):
+                fake = Fake()
+                self.assertEqual(self.assert_fails(fake, resume=bad), f"--resume {bad}: not a session id")
+                self.assertEqual(fake.calls, [])
+
+    def test_refused_flags(self):
+        for resume in (None, SID):
+            for flag in REFUSED:
+                forms = [(flag, "x")] + ([(f"{flag}=x",)] if flag.startswith("--") else [])
+                for given in forms:
+                    with self.subTest(resume=resume, given=given):
+                        fake = Fake()
+                        msg = self.assert_fails(fake, resume=resume, flags=("--model", "m", *given))
+                        self.assertEqual(msg, f"{flag}: workers.py picks the session; use start --resume <sid>")
+                        self.assertEqual(fake.calls, [])
+
+    def test_flags_after_a_bare_double_dash_are_not_scanned(self):
+        flags = ("--model=m", "--", *REFUSED, "--resume=x")
+        fake = Fake()
+        sid = self.start(fake, flags=flags)
+        self.assertEqual(self.tui.call_args.args[1], [self.claude, "--session-id", sid, "--name", "w1", *flags])
+        self.assertEqual(json.loads(fake.options()["@flags"]), list(flags))
 
     def test_no_prompt(self):
         self.start(Fake(), flags=("--x",))
@@ -486,9 +526,6 @@ class RestartTest(WorkerCase):
         self.assertIn(tui_claude.hooks(self.events), shlex.split(cmd))
 
 
-SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
-
-
 def line(kind, *blocks, mid=None):
     message = {"content": list(blocks)}
     if mid:
@@ -605,6 +642,33 @@ class MainTest(WorkerCase):
         self.assertEqual(out, f"w1 {sid}\n")
         self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
         self.assertEqual(fake.handover["argv"][-1], "go")
+
+    def test_start_resume(self):
+        fake = Fake()
+        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--resume", SID,
+                                      "--", "--model", "m"], fake)
+        self.assertEqual((rc, out), (0, f"w1 {SID}\n"), err)
+        self.assertEqual(fake.store["@sid"], SID)
+        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
+            [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.events))
+
+    def test_start_refusals_exit_1_before_any_tmux_call(self):
+        for argv, msg in ((["--resume", "abc"], "--resume abc: not a session id"),
+                          (["--", "--model", "m", "-c"], "-c: workers.py picks the session; use start --resume <sid>"),
+                          (["--resume", SID, "--", "--session-id=x"],
+                           "--session-id: workers.py picks the session; use start --resume <sid>")):
+            with self.subTest(argv=argv):
+                fake = Fake()
+                self.assertEqual(self.run_main(["start", "w1", "--events", self.events, *argv], fake),
+                                 (1, "", f"workers: {msg}\n"))
+                self.assertEqual(fake.calls, [])
+
+    def test_start_help_names_the_resume_option(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            workers.main(["start", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertRegex(out.getvalue(), r"--resume SID\s+a session id")
 
     def test_start_split_from_below_opens_under_its_pane(self):
         sock = "/tmp/tmux-1/default"
