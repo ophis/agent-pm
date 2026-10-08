@@ -38,7 +38,7 @@ Operating commands: README › Operating, README › Attended runs. Python 3.11+
 - Core owns roles, tasks, methods, principles and templates: `core/team/` (text), `core/config.toml` and `~/.agent-pm/core.local.toml`. A role's default task is its `default_task`.
 - The orchestrator config adds what core must not know; missing required keys stop the caller, naming them and the example. `[core]`, the overlay: core run keys for the orchestrator's agent runs, layered after `core/config.toml`'s `[clients.claude]` (`config.overlay()` fills `{{root}}`). An invalid or inconsistent config stops router, run and promote (`config.runnable`; it also checks the `[local_clones]` paths).
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py` / `config.TASKS`. One rule, one place. Precedence: principles > charter > task.
-- Every task has a `## Resume` section; shared text: `compose.RESUME`.
+- Every task has a `## Resume` section; shared text: `compose.RESUME`, then the charter's `## Resume`, if any, which must be the charter's last section (the skill client cuts each `## Resume` up to the next `# ` heading).
 - Add a task to a role: `core/team/tasks/<task>.md` (its frontmatter: `core/CLAUDE.md` › Rules), `[roles.<role>.tasks.<task>]` in `core/config.toml`, the task in `config.TASKS`, its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
 
 ## Gotchas
