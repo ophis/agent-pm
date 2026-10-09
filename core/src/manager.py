@@ -1,11 +1,12 @@
 """A manager's directory, ~/.agent-pm/managers/<name>/: the fixed home of its `events` file, which workers.py (start,
-next-event), drive.py (--runner tui, --detach) and router.py --tui append to when given no --events.
+next-event), drive.py (--runner tui, --detach) and router.py --tui use when given no --events (all but next-event
+append to it).
 
 <name> is [A-Za-z0-9_-]+, resolved (directory) as `--manager <name>`, else the caller's tmux session
 (tui_claude.own_session), else none. The first command that resolves one creates it (ensure), and `events` (0600, a
 regular file of the caller's: tui_claude.events_file). ~/.agent-pm is made when missing and not checked; managers/ and
-<name>/ are made one level at a time, 0700 whatever the umask. One that exists keeps its mode but must be a directory (a
-symlink is none) owned by the caller, else ManagerError, so nothing is created through a bad managers/. Every failure is
+<name>/ are made one level at a time, 0700 whatever the umask. One that exists keeps its mode but must be a directory
+(not a symlink) owned by the caller, else ManagerError, so nothing is created through a bad managers/. Every failure is
 a ManagerError.
 """
 from __future__ import annotations

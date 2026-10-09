@@ -15,6 +15,7 @@ import uuid
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(CORE, "src"))
+import manager  # noqa: E402
 import repo  # noqa: E402
 import tui_claude  # noqa: E402
 
@@ -299,6 +300,18 @@ def content(event: str, *, proc=subprocess.run, config: str | None = None) -> st
         raise WorkersError(str(e)) from e
 
 
+def _events(name: str | None) -> str:
+    """The events file of manager `name`'s directory, made on first use; `name` None: the caller's tmux session's
+    (manager.directory). Raises outside tmux without a name."""
+    try:
+        directory = manager.directory(name, proc=subprocess.run)
+        if directory is None:
+            raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
+        return manager.events(directory)
+    except manager.ManagerError as e:
+        raise WorkersError(str(e)) from e
+
+
 def _after(value: str) -> int | None:
     if value == "end":
         return None
@@ -317,7 +330,7 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("start")
     p.add_argument("name")
-    p.add_argument("--events", required=True)
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p.add_argument("--cwd")
     p.add_argument("--prompt")
     p.add_argument("--resume", metavar="SID", help="a session id")
@@ -326,12 +339,12 @@ def main(argv=None) -> int:
     for cmd in ("restart", "reply"):
         sub.add_parser(cmd).add_argument("name")
     p = sub.add_parser("next-event")
-    p.add_argument("--events", required=True)
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p.add_argument("--after", type=_after, required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "start":
-            sid = start(a.name, a.events, cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
+            sid = start(a.name, _events(a.manager), cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
                         env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
@@ -341,7 +354,7 @@ def main(argv=None) -> int:
             if text:
                 print(text)
         else:
-            line, event = next_event(a.events, a.after)
+            line, event = next_event(_events(a.manager), a.after)
             print(f"{line} {event}")
             try:
                 text = content(event, proc=subprocess.run)
