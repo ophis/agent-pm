@@ -30,6 +30,7 @@ NO_ACCESS = drive.Access(dirs=[], commands=[])
 PARAMS = compose.RunParams(input="x", out="o", workdir="w", sid=SID)
 TASKS = os.path.join(CORE, "team", "tasks")
 METHODS = os.path.join(CORE, "team", "methods")
+INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3"}
 
 
 def run(**kw):
@@ -50,8 +51,21 @@ def claude(**overrides):
     return clients.ClaudeClient({**clients.load_config("claude", CORE), **overrides})
 
 
+def own(session="mgr"):
+    """A tmux fake answering every call with `session`, as `display-message` asks; its calls are in .calls."""
+    def proc(argv, **kw):
+        proc.calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, f"{session}\n", "")
+
+    proc.calls = []
+    return proc
+
+
 class Base(unittest.TestCase):
     def setUp(self):
+        self.enterContext(unittest.mock.patch.dict(os.environ))   # the suite may run inside tmux
+        for key in INSIDE:
+            os.environ.pop(key, None)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.work = os.path.join(self.tmp.name, "work")
@@ -1680,12 +1694,12 @@ class TuiRunner(Base):
                             sinks=[seen.append] if sinks is None else sinks)
         return r, self.fake.calls, [e.kind for e in seen], self.err.getvalue()
 
-    def main(self, *steps, api=None, extra=()):
+    def main(self, *steps, api=None, extra=(), **kw):
         fake, err = FakeTui(os.path.join(self.work, "run.jsonl"), steps), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
                 "--workdir", self.work, "--runner", "tui", *extra]
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
-            return drive.main(argv, root=CORE), fake.calls, err.getvalue()
+            return drive.main(argv, root=CORE, **kw), fake.calls, err.getvalue()
 
     def test_session_name_and_start_arguments(self):
         _, calls, _, _ = self.start([outcome(DONE)], show="echo {{session}}")
@@ -1821,6 +1835,69 @@ class TuiRunner(Base):
         (_, name, _, kw), = [c for c in calls if c[0] == "start"]
         self.assertRegex(name, r"engineer-TASK-1-[0-9a-f]{8}")
         self.assertEqual(kw["events"], "/tmp/ev.log")
+
+    def test_main_without_events_the_tui_run_uses_the_manager_directorys(self):
+        home = hermetic.home(self)
+        os.environ.update(INSIDE)
+        proc = own("mgr")
+        code, calls, _ = self.main([outcome(DONE)], proc=proc)
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        want = os.path.join(home, "managers", "mgr", "events")
+        self.assertEqual((code, kw["events"], len(proc.calls)), (0, want, 1))
+        self.assertEqual(stat.S_IMODE(os.stat(want).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(want)).st_mode), 0o700)
+
+    def test_main_manager_beats_tmux_and_events_beats_manager(self):
+        home = hermetic.home(self)
+        os.environ.update(INSIDE)
+        proc = own("mgr")
+        _, calls, _ = self.main([outcome(DONE)], extra=["--manager", "other"], proc=proc)
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((kw["events"], proc.calls), (os.path.join(home, "managers", "other", "events"), []))
+        shutil.rmtree(os.path.join(home, "managers"))
+        _, calls, _ = self.main([outcome(DONE)], extra=["--manager", "other", "--events", "/tmp/ev.log"], proc=proc)
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((kw["events"], os.path.exists(os.path.join(home, "managers"))), ("/tmp/ev.log", False))
+
+    def test_main_outside_tmux_without_manager_the_tui_run_has_no_events(self):
+        home = hermetic.home(self)
+        proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
+        code, calls, _ = self.main([outcome(DONE)], proc=proc)
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((code, kw["events"], os.listdir(home)), (0, None, []))
+
+    def test_main_a_bad_manager_exits_2_before_anything_starts(self):
+        home = hermetic.home(self)
+        os.symlink(self.tmp.name, os.path.join(home, "managers"))
+        os.environ.update(INSIDE)
+        bad = f"drive.py: manager directory {home}/managers: not a directory owned by you\n"
+        cases = ((["--manager", "a/b"], own(), "drive.py: manager 'a/b': want [A-Za-z0-9_-]+\n", ((), ("--dry-run",))),
+                 ([], own("a b"), "drive.py: own tmux session 'a b': want [A-Za-z0-9_-]+; give --manager <name>\n",
+                  ((), ("--dry-run",))),
+                 (["--manager", "m1"], own(), bad, ((),)))   # a dry run creates nothing, so checks nothing
+        for extra, proc, want, runs in cases:
+            for dry in runs:
+                with self.subTest(extra=extra, dry=dry):
+                    code, calls, err = self.main(extra=[*extra, *dry], proc=proc)
+                    self.assertEqual((code, calls, os.path.exists(self.work)), (2, [], False))
+                    self.assertTrue(err.endswith(want), err)
+        self.assertEqual(os.listdir(self.tmp.name), ["repo"])
+
+    def test_main_manager_needs_the_tui_runner_or_detach_before_anything_resolves(self):
+        os.environ.update(INSIDE)
+        proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
+        base = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
+                "--workdir", self.work]
+        cases = ([], ["--dry-run"], ["--runner", "headless"], ["--client", "skill"])
+        for extra in cases:
+            with self.subTest(extra=extra):
+                err, out = io.StringIO(), io.StringIO()
+                with redirect_stderr(err), redirect_stdout(out), unittest.mock.patch.object(drive, "start") as start:
+                    self.assertEqual(drive.main([*base, *extra, "--manager", "m1"], root=CORE, proc=proc), 2)
+                self.assertEqual((err.getvalue(), out.getvalue()), ("drive.py: --manager needs --runner tui or --detach\n", ""))
+                start.assert_not_called()
+                proc.assert_not_called()
+                self.assertFalse(os.path.exists(self.work))
 
     def test_main_a_bad_prefix_or_headless_prefix_or_events_exits_2_before_anything_starts(self):
         base = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
@@ -2018,13 +2095,15 @@ class Detach(Base):
         return ["--role", "dummy-tester", "--input", "Hello.",
                 "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID, *extra]
 
-    def outer(self, *extra, rc=0, proc=None):
-        """drive.main --detach, tmux through `proc`, else a fake that takes the handover file; (exit code, stderr, the
-        tmux calls, the handover)."""
+    def outer(self, *extra, rc=0, proc=None, events=True):
+        """drive.main --detach (--events self.events unless not `events`), tmux through `proc`, else a fake that takes
+        the handover file and names the caller's session mgr; (exit code, stderr, the tmux calls, the handover)."""
         calls, handover = [], {}
 
         def fake(argv, **kw):
             calls.append(argv)
+            if argv[1] == "display-message":
+                return subprocess.CompletedProcess(argv, 0, "mgr\n", "")
             if argv[1] == "new-session" and rc == 0:
                 with open(argv[-1]) as f:
                     handover.update(json.load(f))
@@ -2033,15 +2112,16 @@ class Detach(Base):
 
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
-            code = drive.main(self.argv("--detach", "--events", self.events, *extra), root=CORE, proc=proc or fake)
+            code = drive.main(self.argv("--detach", *(("--events", self.events) if events else ()), *extra), root=CORE,
+                              proc=proc or fake)
         return code, err.getvalue(), calls, handover
 
-    def inner(self, *steps, argv=None, api=None):
+    def inner(self, *steps, argv=None, api=None, **kw):
         """drive.main as the driver of a tui run over FakeTui(steps); (exit code, its calls)."""
         fake = FakeTui(os.path.join(self.work, "run.jsonl"), steps)
         argv = argv or self.argv("--runner", "tui", "--events", self.events, "--driver", "d-drive")
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
-            return drive.main(argv, root=CORE), fake.calls
+            return drive.main(argv, root=CORE, **kw), fake.calls
 
     def lines(self):
         with open(self.events) as f:
@@ -2060,10 +2140,13 @@ class Detach(Base):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name))
             self.assertIsNone(reserved.fullmatch(name))
 
-    def test_detach_needs_events_and_a_client_that_runs_before_anything_starts(self):
+    def test_detach_needs_an_events_file_and_a_client_that_runs_before_anything_starts(self):
+        home = hermetic.home(self)
         skill, no = ["--client", "skill", "--role", "dummy-tester"], "SkillClient prints a prompt; it takes no --detach"
-        cases = ((self.argv("--detach"), "--detach needs --events"),
-                 (self.argv("--detach", "--runner", "tui"), "--detach needs --events"),
+        need = "--detach needs --events or --manager"
+        cases = ((self.argv("--detach"), need), (self.argv("--detach", "--dry-run"), need),
+                 (self.argv("--detach", "--runner", "tui"), need),
+                 (self.argv("--detach", "--runner", "tui", "--dry-run"), need),
                  ([*skill, "--detach", "--events", self.events], no),
                  ([*skill, "--driver", "d", "--events", self.events], no))
         for argv, want in cases:
@@ -2071,10 +2154,12 @@ class Detach(Base):
                 err, out, proc = io.StringIO(), io.StringIO(), unittest.mock.Mock()
                 with redirect_stderr(err), redirect_stdout(out):
                     self.assertEqual(drive.main(argv, root=CORE, proc=proc), 2)
-                self.assertEqual((err.getvalue(), out.getvalue()), (f"drive.py: {want}\n", ""))
+                self.assertTrue(err.getvalue().endswith(f"drive.py: {want}\n"), err.getvalue())
+                self.assertEqual(out.getvalue(), "")
                 proc.assert_not_called()
                 self.assertFalse(os.path.exists(self.events))
                 self.assertFalse(os.path.exists(self.work))
+                self.assertEqual(os.listdir(home), [])
 
     def test_dry_run_prints_the_plan_and_the_driver_and_starts_nothing(self):
         for runner in ("tui", "headless"):   # with --detach, headless takes --events
@@ -2114,6 +2199,48 @@ class Detach(Base):
         (_, name, _, kw), = [c for c in calls if c[0] == "start"]
         self.assertEqual((code, name, kw["opener"], kw["events"]), (0, tui, "w0t0p0:AB-12", self.events))
         self.assertEqual(self.lines(), [f"{driver} outcome done\n"])
+
+    def test_without_events_the_driver_gets_the_manager_directorys_not_a_manager(self):
+        home = hermetic.home(self)
+        want = os.path.join(home, "managers", "mgr", "events")
+        os.environ.update(INSIDE)
+        for runner in ("tui", "headless"):
+            with self.subTest(runner=runner):
+                code, _, _, handover = self.outer("--runner", runner, "--manager", "mgr", events=False)
+                self.assertEqual(code, 0)
+                self.assertEqual([a for a in handover["argv"] if a.startswith(("--events", "--manager"))],
+                                 [f"--events={want}"])
+                self.assertEqual(stat.S_IMODE(os.stat(want).st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(want)).st_mode), 0o700)
+                os.unlink(want)
+        code, _, _, handover = self.outer("--runner", "tui", events=False)   # the caller's tmux session: mgr
+        self.assertEqual((code, f"--events={want}" in handover["argv"]), (0, True))
+        code, _ = self.inner([outcome(DONE)], argv=handover["argv"][2:])
+        self.assertEqual(code, 0)
+        with open(want) as f:
+            self.assertEqual([line[9:] for line in f], [f"{self.DRIVER} outcome done\n"])
+
+    def test_manager_beats_the_callers_tmux_session_and_events_beats_manager(self):
+        home = hermetic.home(self)
+        os.environ.update(INSIDE)
+        code, _, calls, handover = self.outer("--runner", "headless", "--manager", "other", events=False)
+        self.assertEqual((code, [c[1] for c in calls]), (0, ["new-session"]))   # no display-message
+        self.assertIn(f"--events={home}/managers/other/events", handover["argv"])
+        self.assertTrue(os.path.isfile(os.path.join(home, "managers", "other", "events")))
+        self.assertFalse(os.path.exists(os.path.join(home, "managers", "mgr")))
+        shutil.rmtree(os.path.join(home, "managers"))
+        code, _, _, handover = self.outer("--runner", "headless", "--manager", "other")
+        self.assertEqual(code, 0)
+        self.assertEqual([a for a in handover["argv"] if a.startswith("--events")], [f"--events={self.events}"])
+        self.assertFalse(os.path.exists(os.path.join(home, "managers")))
+
+    def test_a_driver_never_resolves_a_manager(self):
+        home = hermetic.home(self)
+        os.environ.update(INSIDE)
+        proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
+        code, calls = self.inner([outcome(DONE)], argv=self.argv("--runner", "tui", "--driver", "d-drive"), proc=proc)
+        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
+        self.assertEqual((code, kw["events"], os.listdir(home)), (0, None, []))
 
     def test_stdin_input_reaches_the_driver_as_text(self):
         with unittest.mock.patch.object(sys, "stdin", io.StringIO("# Echo\nthis")):
@@ -2366,7 +2493,7 @@ class Save(unittest.TestCase):
 
 
 class Main(Base):
-    def run_main(self, *extra, lines=(), rc=0):
+    def run_main(self, *extra, lines=(), rc=0, **kw):
         calls = []
 
         def popen(argv, **kw):
@@ -2377,7 +2504,7 @@ class Main(Base):
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
                 "--workdir", self.work, *extra]
         with redirect_stdout(out), redirect_stderr(err):
-            code = drive.main(argv, root=CORE, popen=popen)
+            code = drive.main(argv, root=CORE, popen=popen, **kw)
         return code, out.getvalue(), err.getvalue(), calls
 
     def test_dry_run_prints_plan_and_runs_nothing(self):
@@ -2397,6 +2524,40 @@ class Main(Base):
         code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui", "--prefix", "p")
         argv = json.loads(out)["argv"]
         self.assertEqual((code, argv[argv.index("--name") + 1]), (0, f"p-{SID[:8]}"))
+
+    def test_dry_run_shows_the_events_file_given_or_the_manager_directorys_and_creates_nothing(self):
+        home = hermetic.home(self)
+        want = os.path.join(home, "managers", "mgr", "events")
+        os.environ.update(INSIDE)
+        proc = own("mgr")
+        cases = (("--runner", "tui"), ("--detach",), ("--runner", "tui", "--detach"), ("--detach", "--manager", "mgr"))
+        for extra in cases:
+            with self.subTest(extra=extra):
+                code, out, _, _ = self.run_main("--dry-run", *extra, proc=proc)
+                self.assertEqual((code, json.loads(out)["events"]), (0, want))
+                self.assertEqual(os.listdir(home), [])
+        code, out, _, _ = self.run_main("--dry-run", "--runner", "tui", "--manager", "other", proc=proc)
+        self.assertEqual((code, json.loads(out)["events"]), (0, os.path.join(home, "managers", "other", "events")))
+        for extra in (("--runner", "tui"), ("--detach",)):
+            code, out, _, _ = self.run_main("--dry-run", *extra, "--events", "/tmp/ev.log", "--manager", "other", proc=proc)
+            self.assertEqual((code, json.loads(out)["events"]), (0, "/tmp/ev.log"))
+        self.assertEqual(os.listdir(home), [])
+
+    def test_dry_run_shows_no_events_when_there_is_none(self):
+        home = hermetic.home(self)
+        proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
+        code, out, _, _ = self.run_main("--dry-run", "--runner", "tui", proc=proc)   # outside tmux, no --manager
+        self.assertEqual((code, "events" in json.loads(out)), (0, False))
+        os.environ.update(INSIDE)
+        code, out, _, _ = self.run_main("--dry-run", proc=proc)   # headless: no events, no resolution
+        self.assertEqual((code, "events" in json.loads(out), os.listdir(home)), (0, False, []))
+
+    def test_a_headless_run_never_resolves_a_manager(self):
+        home = hermetic.home(self)
+        os.environ.update(INSIDE)
+        proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
+        code, _, _, calls = self.run_main(lines=[outcome(DONE)], proc=proc)
+        self.assertEqual((code, len(calls), os.listdir(home)), (0, 1, []))
 
     def test_a_client_without_the_runners_command_exits_2(self):
         for extra in ((), ("--dry-run",)):
