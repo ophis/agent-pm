@@ -305,15 +305,15 @@ class PruneTest(unittest.TestCase):
         os.makedirs(os.path.join(ident, "tmp", "deep"))
         write(os.path.join(ident, "tmp", "deep", "pr.md"), "x")
         os.chmod(os.path.join(ident, "tmp", "deep", "pr.md"), 0o444)
-        kept = [os.path.join(ident, f) for f in ("input.md", "run.json", "writeback.json", ".report.jsonl")]
+        kept = [os.path.join(ident, f) for f in ("run.jsonl", "writeback.json", "out.md")]
         for f in kept:
             write(f, "x")
         os.makedirs(logs)
-        write(os.path.join(logs, "runs.log"), "x")
+        write(os.path.join(logs, "runs.jsonl"), "x")
         code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
         self.assertEqual((code, out.splitlines()), (0, ["prune-removed entry=TASK-49/tmp what=temp files"]))
         self.assertFalse(os.path.lexists(os.path.join(ident, "tmp")))
-        self.assertTrue(all(os.path.isfile(f) for f in kept + [os.path.join(logs, "runs.log")]))
+        self.assertTrue(all(os.path.isfile(f) for f in kept + [os.path.join(logs, "runs.jsonl")]))
 
     def test_tmp_dry_run_and_a_symlinked_tmp(self):
         tmp = os.path.join(self.work, "TASK-49", "tmp")

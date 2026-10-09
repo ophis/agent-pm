@@ -605,6 +605,7 @@ class RealCore(unittest.TestCase):
                           with_params, dest)
             without = compose.render(CORE, run, client=Plain())
             self.assertNotIn("Write the deliverable to", without, dest)
+            self.assertIn("Put the deliverable in the outcome's `deliverable`", without, dest)
             self.assertIn("Leave `url` empty.", without, dest)
 
     def test_every_run_compiles_without_placeholders(self):

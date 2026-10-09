@@ -528,7 +528,7 @@ class Skill(Base):
         for role in ("researcher", "pm", "dummy-tester"):
             text = self.text(role)
             self.assertNotIn("Write the deliverable to", text, role)
-            self.assertIn("publish, post or save it nowhere. Leave `url` empty.", text, role)
+            self.assertIn("publish, post or save it nowhere else. Leave `url` empty.", text, role)
 
     def test_prints_the_prompt_with_this_cores_paths(self):
         text = self.text("pm")
@@ -551,7 +551,7 @@ class Skill(Base):
     def test_document_roles_return_to_the_orchestrator(self):
         for role, task in (("researcher", None), ("researcher", "light-research"), ("pm", None), ("dummy-tester", None)):
             text = self.text(role, task)
-            self.assertIn("publish, post or save it nowhere. Leave `url` empty.", text)
+            self.assertIn("publish, post or save it nowhere else. Leave `url` empty.", text)
             self.assertNotIn("ophis/private_docs", text)
             self.assertIn("## Return\n\nEnd with your final reply in this conversation", text)
             self.assertNotIn("Output: ", text)

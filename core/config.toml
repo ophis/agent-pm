@@ -17,7 +17,7 @@
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory
-#                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.json)
+#                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
 #   users           local, global only: GitHub logins whose PR comments are the user's; unset → the gh login
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); unset → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
