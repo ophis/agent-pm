@@ -1,5 +1,6 @@
 """drive.py's tui runner run as a process against a private tmux server, fake_claude.py as `claude`: the Stop hook's
-stop line, the nudge, the outcome; --detach from the manager, its driver session and outcome event."""
+stop line, the nudge, the outcome; --detach from the manager, with and without --events, its driver session and
+outcome event."""
 import functools
 import json
 import os
@@ -35,7 +36,8 @@ class TuiRun(unittest.TestCase):
     start, turn 2 (the nudge's) the outcome."""
 
     def setUp(self):
-        self.server = live_tmux.Server(self, os.path.dirname(hermetic.home(self)))
+        self.agent_pm = hermetic.home(self)
+        self.server = live_tmux.Server(self, os.path.dirname(self.agent_pm))
         self.server.start(MANAGER)
         self.server.attach(MANAGER)
         root = self.server.root
@@ -49,11 +51,13 @@ class TuiRun(unittest.TestCase):
         self.transcript = clients.claude.transcript(self.proj, SID,
                                                     projects=os.path.join(self.server.home, ".claude", "projects"))
 
-    def drive(self, *extra: str, inside: str | None = None) -> subprocess.CompletedProcess:
-        """drive.py --runner tui in proj, env Server.env() plus the scenario and, with `inside`, that session's pane."""
+    def drive(self, *extra: str, inside: str | None = None, events: bool = True) -> subprocess.CompletedProcess:
+        """drive.py --runner tui in proj, --events self.events unless not `events`, env Server.env() plus the scenario
+        and, with `inside`, that session's pane."""
         env = self.server.env(**(self.server.inside(inside) if inside else {}), **{fake_claude.ENV: self.scenario})
-        argv = [sys.executable, DRIVE, "--role", "dummy-tester", "--runner", "tui", "--events", self.events, "--input",
-                "Hello.", "--out", self.out, "--workdir", self.work, "--sid", SID, *extra]
+        argv = [sys.executable, DRIVE, "--role", "dummy-tester", "--runner", "tui",
+                *(["--events", self.events] if events else []), "--input", "Hello.", "--out", self.out, "--workdir",
+                self.work, "--sid", SID, *extra]
         return subprocess.run(argv, cwd=self.proj, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=TIMEOUT)
 
@@ -73,13 +77,15 @@ class TuiRun(unittest.TestCase):
         with open(path) as f:
             return [json.loads(line) for line in f if line.strip()]
 
-    def until(self, enough, what: str, timeout: float = live_tmux.TIMEOUT) -> list[str]:
-        """The events file's lines once enough(lines) holds."""
+    def until(self, enough, what: str, timeout: float = live_tmux.TIMEOUT, events: str | None = None) -> list[str]:
+        """The events file's (self.events, else `events`) lines once enough(lines) holds."""
+        path = events or self.events
+
         def check():
-            lines = live_tmux.events(self.events)
+            lines = live_tmux.events(path)
             return lines if enough(lines) else None
 
-        return live_tmux.wait(check, timeout, what=f"{what} in {self.events}")
+        return live_tmux.wait(check, timeout, what=f"{what} in {path}")
 
     def test_stop_hook_nudge_outcome(self):
         res = self.drive()
@@ -113,6 +119,16 @@ class TuiRun(unittest.TestCase):
         self.assertTrue(lines[:at] and all(TURN_END.fullmatch(line) for line in lines[:at]), lines)
         check = functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [[TUI]])
         live_tmux.wait(check, what=f"the grid [[{TUI!r}]]")
+        self.assertEqual(self.result()["outcome"]["status"], "done")
+
+    def test_detach_events_default(self):
+        managed = os.path.join(self.agent_pm, "managers", MANAGER, "events")
+        res = self.drive("--detach", inside=MANAGER, events=False)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        lines = self.until(lambda lines: any(OUTCOME.fullmatch(line) for line in lines), f"`{DRIVER} outcome done`",
+                           TIMEOUT, events=managed)
+        at = next(i for i, line in enumerate(lines) if OUTCOME.fullmatch(line))
+        self.assertTrue(lines[:at] and all(TURN_END.fullmatch(line) for line in lines[:at]), lines)
         self.assertEqual(self.result()["outcome"]["status"], "done")
 
 
