@@ -98,7 +98,20 @@ class Live(unittest.TestCase):
             lines = live_tmux.events(self.events)
             return lines if sum(is_event(line, name, kind) for line in lines) >= count else None
 
-        return live_tmux.wait(check, timeout, what=f"{count} `{name} {kind}` events in {self.events}")
+        try:
+            return live_tmux.wait(check, timeout, what=f"{count} `{name} {kind}` events in {self.events}")
+        except AssertionError as e:
+            raise AssertionError(f"{e}\n{self.diagnose(name)}") from None
+
+    def diagnose(self, name: str) -> str:
+        """`name`'s pane state and pane hooks, and the events file: what a failed event wait needs."""
+        pane = self.server.tmux("display-message", "-p", "-t", f"={name}:",
+                                "pid #{pane_pid} dead #{pane_dead} status #{pane_dead_status} "
+                                "signal #{pane_dead_signal} @state #{@state}")
+        hooks = self.server.tmux("show-hooks", "-p", "-t", f"={name}:")
+        return "\n".join([f"pane: {pane.stdout.strip()}{pane.stderr.strip()}",
+                          f"hooks: {hooks.stdout.strip()}{hooks.stderr.strip()}",
+                          "events:", *live_tmux.events(self.events)])
 
     def calls(self, name: str) -> list[dict]:
         """The fake's log entries for worker `name` (argv has `--name <name>`), oldest first."""
