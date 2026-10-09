@@ -70,7 +70,7 @@ def inner(a, *, layout, gql, popen, runs, root):
         with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane
             sinks = [drive.terminal(sys.stderr), drive.terminal(err), writeback.sink(ctx)]
             result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
-                                 sinks=sinks, begun=begun, popen=functools.partial(popen, stderr=err))
+                                 sinks=sinks, begun=begun, popen=popen)
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):

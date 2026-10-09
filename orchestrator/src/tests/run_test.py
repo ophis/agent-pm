@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import signal
+import subprocess
 import sys
 import unittest
 from contextlib import redirect_stderr
@@ -32,8 +33,8 @@ CLOSE = attended.close
 
 
 class Proc:
-    def __init__(self, lines, rc):
-        self.stdout, self.rc, self.killed = lines, rc, False
+    def __init__(self, lines, rc, stderr=()):
+        self.stdout, self.rc, self.stderr, self.killed = lines, rc, stderr, False
 
     def wait(self):
         return self.rc
@@ -61,13 +62,11 @@ class Base(RunBase):
     def setUp(self):
         super().setUp()
         self.popen_calls, self.proc = [], None
-        self.lines, self.rc, self.claude_stderr = [], 0, b""
+        self.lines, self.rc, self.claude_stderr = [], 0, []
 
     def popen(self, argv, **kw):
         self.popen_calls.append((argv, kw))
-        if self.claude_stderr:
-            os.write(kw["stderr"].fileno(), self.claude_stderr)
-        self.proc = Proc(self.lines, self.rc)
+        self.proc = Proc(self.lines, self.rc, self.claude_stderr)
         return self.proc
 
     def main(self, argv):
@@ -117,11 +116,13 @@ class Inner(Base):
             yield said("Working on it")
             reported(self.rd, outcome(DONE))
         self.lines = lines()
-        self.claude_stderr = b"claude: warning\n"
+        self.claude_stderr = ["claude: warning\n"]
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog(), [
+        plog = self.plog()
+        self.assertEqual(plog.count("claude: warning"), 1)   # on its own thread: its place among the rest is open
+        plog.remove("claude: warning")
+        self.assertEqual(plog, [
             "<ts> launch TASK-7 mode=new session=" + SID,
-            "claude: warning",
             f"Progress (start): {pick}",
             "<ts> writeback TASK-7: start",
             "Working on it",
@@ -145,9 +146,11 @@ class Inner(Base):
         self.assertEqual((argv[:2], argv[3:5], kw["cwd"]), (["claude", "-p"], ["--session-id", SID], self.rd))
         self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\n{self.rd}/input.md\n"), argv[2][-200:])
         self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2])
-        self.assertEqual([e["kind"] for e in self.events()],
+        events = self.events()
+        self.assertEqual([e["text"] for e in events if e["kind"] == "stderr"], ["claude: warning"])
+        self.assertEqual([e["kind"] for e in events if e["kind"] != "stderr"],
                          ["input", "session", "progress", "outcome", "result", "end"])
-        self.assertEqual((kw["stderr"].name, kw["stderr"].mode, kw["stderr"].closed), (self.plog_path(), "a", True))
+        self.assertEqual(kw["stderr"], subprocess.PIPE)
         self.assertIn("Working on it", self.err)
         self.assertEqual(os.environ["PATH"], config.PATH)
 

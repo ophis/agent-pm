@@ -666,8 +666,8 @@ class RoleRuns(Base):
 
 
 class FakeProc:
-    def __init__(self, lines, rc=0):
-        self.stdout, self.rc = lines, rc
+    def __init__(self, lines, rc=0, stderr=()):
+        self.stdout, self.rc, self.stderr = lines, rc, stderr
 
     def wait(self):
         return self.rc
@@ -1006,15 +1006,16 @@ class Start(Base):
         quiet.__enter__()
         self.addCleanup(quiet.__exit__, None, None, None)
 
-    def start(self, items, rc=0, output=None, sinks=None, **params):
-        """Runs `items` through drive.start: str lines on stdout, dicts (or callables) on the channel."""
+    def start(self, items, rc=0, output=None, sinks=None, stderr=(), **params):
+        """Runs `items` through drive.start: str lines on stdout, dicts (or callables) on the channel; `stderr`'s
+        lines on stderr."""
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
         calls, log = [], io.StringIO()
         p = self.params(**params)
 
         def popen(argv, **kw):
             calls.append((argv, kw))
-            self.proc = FakeProc(feed(p.channel, items), rc)
+            self.proc = FakeProc(feed(p.channel, items), rc, stderr)
             return self.proc
 
         r = drive.start(launch, run(output=output or {"type": "local"}), p, client=claude(), popen=popen,
@@ -1091,6 +1092,77 @@ class Start(Base):
             drive.start(launch, run(), self.params(), client=claude(), sinks=[sink],
                         popen=lambda argv, **kw: FakeProc(quiet()))
         self.assertEqual(seen, ["progress", "text"])
+
+    def test_stderr_lines_are_events_and_a_nonzero_exit_is_the_error(self):
+        seen = []
+
+        def popen(argv, **kw):
+            return FakeProc([], 1, stderr=["boom\n", "\n", "bang\n"])
+
+        launch = drive.Launch(["fake"], cwd=self.work)
+        r = drive.start(launch, run(), self.params(), client=claude(), popen=popen, sinks=[seen.append])
+        self.assertEqual((r.returncode, r.error), (1, "the client exited 1"))
+        self.assertEqual([(e.kind, e.text) for e in seen], [("stderr", "boom"), ("stderr", ""), ("stderr", "bang")])
+        errs = [e for e in self.events() if e["kind"] == "stderr"]
+        self.assertEqual([list(e) for e in errs], [["ts", "kind", "text"]] * 3)
+        self.assertEqual([e["text"] for e in errs], ["boom", "", "bang"])
+        self.assertEqual(self.last("result")["error"], "the client exited 1")
+
+    def test_stderr_is_recorded_between_the_reports_it_arrived_with(self):
+        r, _, log = self.start([progress("start", "go"), said("hi"), outcome(DONE)], stderr=["warn\n"])
+        self.assertEqual(r.returncode, 0)
+        kinds = [e["kind"] for e in self.events()]
+        self.assertEqual(sorted(kinds), sorted(["input", "session", "progress", "stderr", "outcome", "result", "end"]))
+        self.assertEqual(sorted(log.splitlines()), ["Progress (start): go", "hi", "warn"])
+
+    def test_the_run_ends_only_after_both_streams_do(self):
+        out_done = threading.Event()
+
+        def stdout():
+            yield said("hi")
+            out_done.set()
+
+        def stderr():
+            self.assertTrue(out_done.wait(5), "stdout never ended")
+            time.sleep(0.1)   # past the stdout sentinel
+            yield "late\n"
+
+        launch = drive.Launch(["fake"], cwd=self.work)
+        seen = []
+        drive.start(launch, run(), self.params(), client=claude(), sinks=[seen.append],
+                    popen=lambda argv, **kw: FakeProc(stdout(), 1, stderr()))
+        self.assertEqual([(e.kind, e.text) for e in seen], [("text", "hi"), ("stderr", "late")])
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"], ["late"])
+
+    def test_both_pipes_are_taken_as_text_with_bad_bytes_replaced(self):
+        _, ((_, kw),), _ = self.start([outcome(DONE)])
+        self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"], kw["text"], kw["errors"]),
+                         (subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE, True, "replace"))
+
+    def test_an_error_reading_stderr_stops_the_run(self):
+        def stderr():
+            yield "x\n"
+            raise KeyboardInterrupt
+
+        launch = drive.Launch(["fake"], cwd=self.work)
+        with self.assertRaises(KeyboardInterrupt):
+            drive.start(launch, run(), self.params(), client=claude(), sinks=[],
+                        popen=lambda argv, **kw: FakeProc(iter(()), 0, stderr()))
+
+    def test_the_stderr_record_failing_never_stops_the_run(self):
+        real = drive.append_line
+
+        def append_line(path, line):
+            if '"kind": "stderr"' in line:
+                raise OSError(errno.ENOSPC, "full")
+            real(path, line)
+
+        seen = []
+        with unittest.mock.patch.object(drive, "append_line", append_line):
+            r, _, _ = self.start([progress("start", "go"), outcome(DONE)], sinks=[seen.append], stderr=["warn\n"])
+        self.assertEqual((r.returncode, r.outcome.status, sorted(e.kind for e in seen)),
+                         (0, "done", ["outcome", "progress", "stderr"]))
+        self.assertFalse([e for e in self.events() if e["kind"] == "stderr"])
 
     def test_the_channel_exists_before_launch(self):
         def items():
@@ -2156,9 +2228,10 @@ class Sinks(unittest.TestCase):
         sink = drive.terminal(log)
         sink(clients.Event("text", "a\x1b]52;c;ZXZpbA==\x07b\tc"))
         sink(clients.Event("progress", "x\x1b[2J", name="round"))
+        sink(clients.Event("stderr", "w\x1b[2Jarn"))
         sink(clients.Event("outcome", outcome=DONE))
         sink(clients.Event("missing", name="start"))
-        self.assertEqual(log.getvalue(), "a]52;c;ZXZpbA==b\tc\nProgress (round): x[2J\n")
+        self.assertEqual(log.getvalue(), "a]52;c;ZXZpbA==b\tc\nProgress (round): x[2J\nw[2Jarn\n")
 
 
 class Stamp(unittest.TestCase):

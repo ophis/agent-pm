@@ -136,6 +136,21 @@ class Outcomes(Integration):
         self.assertFalse(os.path.exists(self.out))
 
 
+class Stderr(Integration):
+    def test_the_clients_stderr_lines_land_in_the_record(self):
+        res = self.drive([progress("start", "first")])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        os.unlink(self.transcript)
+        res = self.drive([outcome(DONE)], "--resume")
+        self.assertEqual(res.returncode, 3, res.stderr)
+        said = f"No conversation found with session ID: {SID}"
+        self.assertIn(said, res.stderr)
+        stderr = [e for e in self.events() if e["kind"] == "stderr"]
+        self.assertEqual([e["text"] for e in stderr], [said])
+        self.assertEqual([e["kind"] for e in self.events()][-3:], ["stderr", "result", "end"])
+        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
+
+
 class Resume(Integration):
     def test_resume_reuses_the_recorded_cwd_and_session(self):
         res = self.drive([progress("start", "first")])

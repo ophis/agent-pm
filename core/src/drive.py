@@ -7,8 +7,8 @@ drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--re
          [--events FILE] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
-under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text
-and progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
+under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text,
+its client's stderr and its progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
 --runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
@@ -320,9 +320,9 @@ Sink = Callable[[Event], None]
 
 
 def terminal(log=sys.stderr) -> Sink:
-    """Shows the agent run's text and progress."""
+    """Shows the agent run's text, the client's stderr lines and progress."""
     def sink(event: Event) -> None:
-        if event.kind == "text":
+        if event.kind in ("text", "stderr"):
             print(printable(event.text), file=log, flush=True)
         elif event.kind == "progress":
             print(printable(f"Progress ({event.name}): {event.text}"), file=log, flush=True)
@@ -456,7 +456,8 @@ class Runner(Protocol):
 
 
 class Headless:
-    """The client's command on a pipe, its stdout turned into events by the client; ended at EOF."""
+    """The client's command on pipes, its stdout turned into events by the client and each stderr line one `stderr`
+    event; ended at both pipes' EOF."""
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
@@ -464,27 +465,33 @@ class Headless:
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
-        self.proc = self.popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
-        self.stdout = queue.Queue()
-        threading.Thread(target=self.pump, daemon=True).start()
+        self.proc = self.popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, errors="replace")
+        self.items, self.open = queue.Queue(), 2
+        for events in (self.client.events(self.proc.stdout),
+                       (Event("stderr", line.rstrip("\n")) for line in self.proc.stderr)):
+            threading.Thread(target=self.pump, args=(events,), daemon=True).start()
 
-    def pump(self) -> None:
+    def pump(self, events: Iterator[Event]) -> None:
         try:
-            for event in self.client.events(self.proc.stdout):
-                self.stdout.put(event)
+            for event in events:
+                self.items.put(event)
         except BaseException as e:
-            self.stdout.put(e)
+            self.items.put(e)
         else:
-            self.stdout.put(None)
+            self.items.put(None)
 
     def poll(self, timeout: float) -> tuple[list[Event], bool]:
         try:
-            item = self.stdout.get(timeout=timeout)
+            item = self.items.get(timeout=timeout)
         except queue.Empty:
             return [], False
         if isinstance(item, BaseException):
             raise item
-        return ([], True) if item is None else ([item], False)
+        if item is None:
+            self.open -= 1
+            return [], self.open == 0
+        return [item], False
 
     def seen(self, event: Event) -> None:
         pass
@@ -659,17 +666,17 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
           layout: Layout | None = None, events: str | None = None,
           sinks: Sequence[Sink] | None = None, begun: Callable[[], None] | None = None,
           popen=subprocess.Popen) -> Result:
-    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its host's
-    text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
-    deliverable to params.out where the destination says so (unless the run wrote it there), and hands the outcome on
-    too. Only reports made after this call began count. The channel is the run's record: its `input` and `session`
-    events come before `begun` is called and the host starts; `result` (the outcome without its deliverable, else the
-    error) and `end` close it however the run ends, an exception (raised on) as `stopped: <type>: <message>`. A done
-    or failed new run that never reported `start` gets a stderr line and a `missing` event first. The tui runner names
-    its session tui_session(…, params.prefix) and appends its state events to the `events` file. Raises ConfigError,
-    before anything starts, when the client lacks the runner's command or the layout, params.prefix or events is one
-    the runner can't take (check_layout, check_naming); a RunnerError stops the runner and is the Result, with rc 1 and
-    `<runner>: <reason>`."""
+    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its
+    host's text and stderr lines (recorded as `stderr` events) and the progress it reports to the channel as they
+    come; then checks the last outcome it reported, saves the deliverable to params.out where the destination says
+    so (unless the run wrote it there), and hands the outcome on too. Only reports made after this call began count.
+    The channel is the run's record: its `input` and `session` events come before `begun` is called and the host
+    starts; `result` (the outcome without its deliverable, else the error) and `end` close it however the run ends,
+    an exception (raised on) as `stopped: <type>: <message>`. A done or failed new run that never reported `start`
+    gets a stderr line and a `missing` event first. The tui runner names its session tui_session(…, params.prefix)
+    and appends its state events to the `events` file. Raises ConfigError, before anything starts, when the client
+    lacks the runner's command or the layout, params.prefix or events is one the runner can't take (check_layout,
+    check_naming); a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
     check_naming(runner, params.prefix, events)
@@ -717,6 +724,8 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
             return
         if event.kind == "stop":   # only an interactive agent run's turn end; no sink takes it
             return
+        if event.kind == "stderr":   # a diagnostic: a failed write loses the line, never the run
+            note(params.channel, "stderr", best_effort=True, text=event.text)
         if event.kind == "progress":
             seen.add(event.name)
         for sink in sinks:
