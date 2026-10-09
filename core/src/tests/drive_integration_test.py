@@ -1,9 +1,11 @@
 """drive.py run as a process (the headless runner) against fake_claude.py on PATH as `claude`."""
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -151,6 +153,58 @@ class Resume(Integration):
         self.assertEqual(entry["started"], started)
         self.assertEqual([p["name"] for p in rec["progress"]], ["start", "round"])
         self.assertEqual(rec["outcome"]["status"], "done")
+
+
+class Interrupt(Integration):
+    def popen(self) -> subprocess.Popen:
+        """drive.py in its own session and process group, killed with its agents when the test ends."""
+        # A suite started in the background inherits SIGINT ignored; drive.py installs no handler of its own.
+        proc = subprocess.Popen(self.argv(), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        self.addCleanup(self.reap, proc)
+        return proc
+
+    def reap(self, proc: subprocess.Popen) -> None:
+        try:
+            pids = [call["pid"] for call in self.calls()]
+        except (OSError, ValueError):
+            pids = []
+        for kill, target in [(os.killpg, proc.pid)] + [(os.kill, pid) for pid in pids]:
+            try:
+                kill(target, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        proc.wait()
+        proc.stdout.close()
+        proc.stderr.close()
+
+    def started(self) -> bool:
+        try:
+            return "start" in [p["name"] for p in self.record()["progress"]]
+        except (OSError, ValueError):
+            return False
+
+    def test_interrupt_kills_a_hung_agent(self):
+        self.scene([progress("start", "waiting")], hang=True)
+        proc = self.popen()
+        deadline = time.monotonic() + 30
+        while not self.started():
+            if proc.poll() is not None or time.monotonic() > deadline:
+                if proc.returncode is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                out, err = proc.communicate()
+                self.fail(f"drive.py never reported the start (rc {proc.returncode}):\n{out}{err}")
+            time.sleep(0.05)
+        (call,) = self.calls()
+        os.kill(proc.pid, signal.SIGINT)
+        out, err = proc.communicate(timeout=30)
+        self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(call["pid"], 0)
+        rec = self.record()
+        self.assertIsInstance(rec["sessions"][0]["ended"], str)
+        self.assertIsNone(rec["outcome"])
 
 
 if __name__ == "__main__":
