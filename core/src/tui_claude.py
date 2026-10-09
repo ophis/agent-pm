@@ -43,7 +43,7 @@ DIED = "set-option @state dead"
 # tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
 DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
 BORDER = " #{session_name} #{@state} "
-CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
+CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -101,9 +101,10 @@ class TuiError(Exception):
 
 
 class Anchor(NamedTuple):
-    """The pane a show goes beside. iterm: the iTerm2 panes that may show it, ("tty", client ttys, most recently active
-    first) or ("id", [unique id]); None when it is a tmux pane showing a nested client. pane, socket: the tmux pane split
-    when no iTerm2 pane shows it, and its server (None for an "id" anchor). session: the tmux session it was found by."""
+    """The pane a show goes beside. iterm: the iTerm2 panes that may show it, ("tty", client ttys but control-mode
+    ones, most recently active first) or ("id", [unique id]); None when it is a tmux pane showing a nested client, or
+    one of a session a control-mode client shows. pane, socket: the tmux pane split when no iTerm2 pane shows it, and
+    its server (None for an "id" anchor). session: the tmux session it was found by."""
     iterm: tuple[str, list[str]] | None
     pane: str | None = None
     socket: str | None = None
@@ -609,20 +610,26 @@ def _opener_pane(opener: str, own: bool | None, proc) -> Anchor:
 
 def _shown(session: str, own: bool, proc) -> Anchor | None:
     """The pane a terminal shows the session in, by its most recently active client: a nested client's live host pane,
-    else the caller's own pane ($TMUX_PANE) when own, else the client's pane. None when no client shows it."""
+    else the caller's own pane ($TMUX_PANE) when own, else the client's pane. A control-mode client (iTerm2's tmux -CC)
+    gets only a tmux pane, which iTerm2 draws as a native split: its tty is the hidden gateway tab's. None when no
+    client shows it."""
     out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
-    clients = sorted((c for c in (line.split(" ", 3) for line in out.splitlines())
-                      if len(c) == 4 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3]),
+    clients = sorted((c for c in (line.split(" ", 4) for line in out.splitlines())
+                      if len(c) == 5 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3] in ("0", "1")
+                      and c[4]),
                      key=lambda c: int(c[0]), reverse=True)
     if not clients:
         return None
-    _, tty, pane, socket = clients[0]
+    _, tty, pane, control, socket = clients[0]
+    pane = os.environ["TMUX_PANE"] if own else pane
+    if control == "1":
+        return Anchor(None, pane, socket, session)
     hosts = {f[1]: f[2] for f in (line.split(" ", 2) for line in
                                   _tmux_ok(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines())
              if len(f) == 3 and f[0] != "1"}
     if PANE.fullmatch(hosts.get(tty, "")):
         return Anchor(None, hosts[tty], socket, session)
-    return Anchor(("tty", [c[1] for c in clients]), os.environ["TMUX_PANE"] if own else pane, socket, session)
+    return Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
 
 
 def _iterm_pane(why: str) -> Anchor:
