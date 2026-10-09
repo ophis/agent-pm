@@ -57,9 +57,12 @@ class TuiRun(unittest.TestCase):
         return subprocess.run(argv, cwd=self.proj, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=TIMEOUT)
 
-    def record(self) -> dict:
-        with open(os.path.join(self.work, drive.RECORD)) as f:
-            return json.load(f)
+    def record(self) -> list[dict]:
+        """The run's record, <workdir>/run.jsonl: its events."""
+        return self.jsonl(os.path.join(self.work, compose.CHANNEL))
+
+    def result(self) -> dict:
+        return [e for e in self.record() if e["kind"] == "result"][-1]
 
     def calls(self) -> list[dict]:
         with open(self.log) as f:
@@ -85,7 +88,7 @@ class TuiRun(unittest.TestCase):
             self.assertIn(text, res.stderr)
         shown = self.server.tmux("display-message", "-p", "-t", f"={TUI}:", "#{session_name} #{pane_dead}")
         self.assertEqual(shown.stdout, f"{TUI} 0\n", shown.stderr)
-        self.assertIn({"kind": "stop"}, self.jsonl(os.path.join(self.work, compose.CHANNEL)))
+        self.assertIn("stop", [e["kind"] for e in self.record()])
         (call,) = self.calls()
         users = [line["message"]["content"] for line in self.jsonl(self.transcript) if line["type"] == "user"]
         self.assertEqual(users, [call["argv"][0], drive.NUDGE])
@@ -93,7 +96,7 @@ class TuiRun(unittest.TestCase):
         lines = self.until(lambda lines: len(lines) >= 2, f"two `{TUI} done` lines")
         self.assertEqual(len(lines), 2, lines)
         self.assertTrue(all(TURN_END.fullmatch(line) for line in lines), lines)
-        self.assertEqual(self.record()["outcome"]["status"], "done")
+        self.assertEqual(self.result()["outcome"]["status"], "done")
         with open(self.out) as f:
             self.assertEqual(f.read(), DONE["deliverable"])
 
@@ -110,7 +113,7 @@ class TuiRun(unittest.TestCase):
         self.assertTrue(lines[:at] and all(TURN_END.fullmatch(line) for line in lines[:at]), lines)
         check = functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [[TUI]])
         live_tmux.wait(check, what=f"the grid [[{TUI!r}]]")
-        self.assertEqual(self.record()["outcome"]["status"], "done")
+        self.assertEqual(self.result()["outcome"]["status"], "done")
 
 
 if __name__ == "__main__":

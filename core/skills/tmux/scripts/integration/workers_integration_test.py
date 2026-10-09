@@ -109,8 +109,18 @@ class Live(unittest.TestCase):
                                 "pid #{pane_pid} dead #{pane_dead} status #{pane_dead_status} "
                                 "signal #{pane_dead_signal} @state #{@state}")
         hooks = self.server.tmux("show-hooks", "-p", "-t", f"={name}:")
+        server = self.server.tmux("display-message", "-p", "#{pid}").stdout.strip()
+        pids = [server, *(str(e["pid"]) for e in self.calls(name))]
+        ps = subprocess.run(["ps", "-o", "pid,ppid,stat,comm", "-p", ",".join(pids)], capture_output=True, text=True)
+        procs = []
+        for pid in pids:
+            with contextlib.suppress(OSError):
+                with open(f"/proc/{pid}/status") as f:
+                    procs.append(pid + " " + " ".join(line.strip() for line in f
+                                                      if line.startswith(("State", "PPid", "Sig"))))
         return "\n".join([f"pane: {pane.stdout.strip()}{pane.stderr.strip()}",
                           f"hooks: {hooks.stdout.strip()}{hooks.stderr.strip()}",
+                          f"server {server}, fakes {pids[1:]}:", ps.stdout.strip(), *procs,
                           "events:", *live_tmux.events(self.events)])
 
     def calls(self, name: str) -> list[dict]:
