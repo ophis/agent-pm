@@ -212,8 +212,8 @@ def holds(path: str | Path, text: str) -> bool:
 
 def append_line(path: str | Path, text: str) -> None:
     """Appends `text` to `path` (created 0600) in one write, refusing a symlink or anything but a regular file (a FIFO
-    would block)."""
-    data = memoryview(text.encode())
+    would block). A lone surrogate is written as `?`."""
+    data = memoryview(text.encode(errors="replace"))
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -634,8 +634,13 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
     argv unblocks them (main). Raises RunnerError."""
-    if any("\0" in arg for arg in argv):   # execve would fail after the handover is taken
-        raise RunnerError("an argv item holds a NUL character")
+    for arg in argv:   # execve would fail after the handover is taken
+        if "\0" in arg:
+            raise RunnerError("an argv item holds a NUL character")
+        try:
+            os.fsencode(arg)
+        except UnicodeEncodeError:
+            raise RunnerError("an argv item cannot be encoded") from None
     tmp = None
     try:
         tmp = tempfile.mkdtemp()

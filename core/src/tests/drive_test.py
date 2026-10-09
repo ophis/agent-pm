@@ -2164,6 +2164,14 @@ class Detach(Base):
         proc.assert_not_called()
         mkdtemp.assert_not_called()
 
+    def test_an_argv_item_with_a_lone_surrogate_raises_before_the_handover_or_tmux(self):
+        proc = unittest.mock.Mock()
+        with unittest.mock.patch.object(drive.tempfile, "mkdtemp") as mkdtemp, \
+                self.assertRaisesRegex(drive.RunnerError, "an argv item cannot be encoded"):
+            drive.detach("d", [sys.executable, "--input=a\ud800b"], cwd=self.tmp.name, env={}, iterm="", proc=proc)
+        proc.assert_not_called()
+        mkdtemp.assert_not_called()
+
     def test_the_driver_appends_one_outcome_line_when_it_ends(self):
         needs = {"status": "needs_input", "title": "T", "summary": "S", "questions": ["Which?"]}
         cases = (([outcome(DONE)], 0, "done"), ([outcome(needs)], 0, "needs_input"),
@@ -2300,10 +2308,10 @@ class AppendLine(unittest.TestCase):
             drive.append_line(self.path, "x\n")
         self.assertEqual(e.exception.errno, errno.EINVAL)
 
-    def test_an_unencodable_text_creates_nothing(self):
-        with self.assertRaises(UnicodeEncodeError):
-            drive.append_line(self.path, "a\udc80b")
-        self.assertFalse(os.path.exists(self.path))
+    def test_a_lone_surrogate_is_written_as_a_replacement_character(self):
+        drive.append_line(self.path, json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n")
+        self.assertEqual(self.content(), b'{"text": "a?b"}\n')
+        self.assertEqual(json.loads(self.content()), {"text": "a?b"})
 
 
 class Save(unittest.TestCase):

@@ -1703,6 +1703,11 @@ class Outer(OuterBase):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.input(), INPUT)
 
+    def test_a_lone_surrogate_is_replaced_in_the_input(self):
+        self.gql.issue = node(description="Add a session\ud800 registry.", comments=[USER_NOTE])
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.input(), INPUT.replace("Add a session registry.", "Add a session? registry."))
+
     def test_research_has_no_target(self):
         self.gql.issue = node(title="Compare queues", description="Which queue fits?")
         self.run.table = [(LISTING, res("[]"))]

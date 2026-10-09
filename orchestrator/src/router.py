@@ -522,6 +522,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     try:
         os.makedirs(rd, exist_ok=True)
         text = inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs).replace("\0", "")
+        text = text.encode("utf-8", "replace").decode()   # a lone surrogate would fail execve in the pane
     except Exception as e:
         print(f"router.py: input: {one_line(e)}", file=sys.stderr)
         return 1
