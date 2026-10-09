@@ -1,6 +1,6 @@
 # agent-pm
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role on a task and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
 
 ```mermaid
 flowchart LR
@@ -13,21 +13,21 @@ flowchart LR
 
 `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role/task in a pane or headless: `core/skills/tmux/SKILL.md`; manager guidelines, read before starting workers: `core/skills/tmux/manager.md`.
+- `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role in a pane or headless: `core/skills/tmux/SKILL.md`; manager guidelines, read before starting workers: `core/skills/tmux/manager.md`.
 - `ctmux <session>` in iTerm2: a manager `claude --permission-mode auto` in tmux session `<session>` (made in the current dir if missing), attached with `tmux -CC`, so worker panes are native iTerm2 splits in the same window. Install: add `alias ctmux=~/.claude/plugins/marketplaces/agent-pm/core/skills/tmux/scripts/ctmux` to `~/.zshrc` (or `~/.bashrc`); the marketplace clone, not the versioned cache, keeps the path across updates.
-- `/agent-pm:act-as <role> <task> <input>`: run a core role/task in this conversation: `core/skills/act-as/SKILL.md`.
+- `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `core/skills/act-as/SKILL.md`.
 
 ## Setup
 
 Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` logged in as you. The orchestrator runs this checkout's scripts, not the plugin.
 
-1. Create `~/.agent-pm/orchestrator.local.toml` and `~/.agent-pm/core.local.toml` as each `config.toml`'s header says, core's with the document tasks' `[output]` (its Destination comment). `<work_dir>` below is the `work_dir` key.
+1. Create `~/.agent-pm/orchestrator.local.toml` and `~/.agent-pm/core.local.toml` as each `config.toml`'s header says, core's with researcher's and pm's `[output]` (its Destination comment). `<work_dir>` below is the `work_dir` key.
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 3. Agent runs need no `linear` skill and get no Linear key: router and promote act in Linear as the harness account `frank.agent.w@gmail.com`, each role's write-back as its `[roles.<role>]` `account`, its API key in the Keychain under `key`. Per role:
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
    2. Open the invite in a private window, choosing **Continue with email** (Google signs in as the harness account).
    3. As the role account, create a personal API key in its settings.
-   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `router.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` line in `<work_dir>/logs/projects/<task>.log`.
+   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `router.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` line in `<work_dir>/logs/projects/<role>.log`.
 4. The harness account's key, the logs dir and the schedules:
    ```bash
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # the only item under orchestrator.local.toml's harness_key
@@ -61,7 +61,9 @@ flowchart LR
 
 ### Task labels
 
-The issue's label in the `Tasks` label group picks one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working; no such label → the role's default task, the first in the diagram at the top. What each task does and when to use it: the `description` atop `core/team/tasks/<task>.md`. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, remove the label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps the task in `<work_dir>/logs/runs.log` whatever the labels say; an interrupted agent run whose task is no longer the role's goes to In Review with a comment.
+The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`core/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.log` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
+
+**Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `core.local.toml`'s `[roles.<role>.tasks.<task>]` to `[roles.<role>]` and of its `[clients.<name>.roles.<role>.tasks.<task>]` to `[clients.<name>.roles.<role>]` (e.g. `[clients.skill.roles.<role>.output]`), of `orchestrator.local.toml`'s `[core.roles.<role>.tasks.<task>]` to `[core.roles.<role>]`. Deploy with no issue In Progress: an old `runs.log` line logs a task, not a role, so its issue goes to In Review on resume.
 
 ## Operating
 
@@ -88,8 +90,8 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 
 | Log | Contents |
 |---|---|
-| `<work_dir>/logs/router.log` | Each tick's decisions, with each claim's task |
-| `<work_dir>/logs/projects/<task>.log` | Each agent run's output, progress, errors and write-back steps |
+| `<work_dir>/logs/router.log` | Each tick's decisions, with each claim's role and, when labeled, task |
+| `<work_dir>/logs/projects/<role>.log` | Each agent run's output, progress, errors and write-back steps |
 | `<work_dir>/logs/promote.log` | Handoff and prune actions |
 | `<work_dir>/logs/runs.log` | Agent run start/resume/end; the router resumes from it: keep it |
 

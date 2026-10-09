@@ -1,7 +1,3 @@
----
-description: "Build a small, clearly specified change into a pull request on its target repo with autopilot:light-build: implementation, verification and a light review, no spec or plan docs. Use when the requirement text alone is enough to build from; for a PRD that needs a spec and plan, use engineer build."
----
-
 # Light Build
 
 Build the requirement with `autopilot:light-build`, then open a pull request.

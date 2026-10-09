@@ -199,8 +199,7 @@ class Check(unittest.TestCase):
                 shutil.rmtree(legacy)
 
     def test_read_only_task_branches_are_not_the_build_branch(self):
-        read_only = [f"TASK-26-{t}" for t, spec in config.TASKS.items() if spec.kind != "build"]
-        self.assertEqual(sorted(read_only), ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"])
+        read_only = ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"]
         self.git_dir()
         r = self.check(local=ok("\n".join(["TASK-26-session-registry", *read_only]) + "\n"))
         self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))

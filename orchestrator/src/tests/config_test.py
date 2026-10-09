@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -129,6 +130,11 @@ ENGINEER = config.Role("engineer@agents.test", "linear-api-key-engineer", ("buil
 GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
 
 
+def old_key(key):
+    return (f"orchestrator/config.toml [core]: [core.roles.researcher] has {key!r}: task-level config and default_task "
+            "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)")
+
+
 class Runnable(ConfigFile, unittest.TestCase):
     """runnable() over the repo's core config and orchestrator/config.toml's [core]."""
     def runs(self, text=PIPELINE):
@@ -139,12 +145,20 @@ class Runnable(ConfigFile, unittest.TestCase):
             self.runs(text)
         self.assertEqual(cm.exception.code, message)
 
-    def test_roles_in_pipeline_order_default_first(self):
+    def test_roles_in_pipeline_order_tasks_from_the_index(self):
         runs = self.runs()
         self.assertEqual(runs, {"researcher": RESEARCHER, "pm": PM, "engineer": ENGINEER})
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
-        self.assertEqual((RESEARCHER.default, PM.default), ("deep-research", "product-design"))
+        self.assertEqual({r: x.tasks for r, x in runs.items()}, {r: config.role_tasks(r) for r in runs})
+        self.assertEqual(config.role_tasks("researcher"), tuple(config.compose.index(config.CORE, "researcher")))
+        self.assertFalse(hasattr(RESEARCHER, "default"))
         self.assertEqual(list(self.runs(HEADER + role("engineer") + role("researcher"))), ["engineer", "researcher"])
+
+    def test_tasks_by_role(self):
+        self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
+        self.assertEqual({r: (x.kind, x.prefix, x.files) for r, x in config.TASKS.items()},
+                         {"researcher": ("research", "", False), "pm": ("design", "PRD", False),
+                          "engineer": ("build", "ENG", True)})
 
     def test_max_runs(self):
         self.assertEqual({r: x.max_runs for r, x in self.runs().items()}, {"researcher": 1, "pm": 1, "engineer": 1})
@@ -154,12 +168,12 @@ class Runnable(ConfigFile, unittest.TestCase):
     def test_role_not_in_core(self):
         self.fails("orchestrator/config.toml: role 'ghost' is not in core/config.toml", PIPELINE + role("ghost"))
 
-    def test_task_without_tasks_entry(self):
-        self.fails("orchestrator/config.toml: dummy-tester's task 'echo' has no entry in config.TASKS", PIPELINE + role("dummy-tester"))
+    def test_role_without_tasks_entry(self):
+        self.fails("orchestrator/config.toml: role 'dummy-tester' has no entry in config.TASKS", PIPELINE + role("dummy-tester"))
 
     def test_next(self):
         self.fails("orchestrator/config.toml: next of 'researcher' names undefined role 'pm'", HEADER + role("researcher", 'next = "pm"'))
-        self.fails("orchestrator/config.toml: next of 'pm' is role 'researcher', whose default task 'deep-research' has no prefix",
+        self.fails("orchestrator/config.toml: next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix",
                    HEADER + role("researcher") + role("pm", 'next = "researcher"'))
 
     def test_keys(self):
@@ -184,21 +198,24 @@ class Runnable(ConfigFile, unittest.TestCase):
             self.assertIsNone(config.role_for(runs, email))
 
     def test_run_config(self):
-        self.assertEqual(config.run_config("researcher", "deep-research").gate, GATE)
-        self.assertEqual(config.run_config("researcher", "light-research").gate, "")
-        self.assertEqual(config.overlay(), {"roles": {"researcher": {"tasks": {"deep-research": {"gate": GATE}}}}})
+        for task in (None, "deep-research", "light-research"):
+            with self.subTest(task):
+                run = config.run_config("researcher", task)
+                self.assertEqual((run.gate, run.task), (GATE, task or ""))
+        self.assertEqual(config.overlay(), {"roles": {"researcher": {"gate": GATE}}})
         self.assertEqual(config.layers(), [config.overlay()])
-        self.assertEqual(config.run_config("pm", "product-design").language, "Chinese")
+        self.assertEqual(config.run_config("pm").language, "Chinese")
 
     def test_run_config_layers(self):
         core = os.path.join(self.dir, "core")
-        with mock.patch.object(config, "overlay", return_value={"tier": 3}) as overlay, \
-                mock.patch.object(config.clients, "load_config", return_value={"flags": []}) as client, \
-                mock.patch.object(config.compose, "load_run", return_value="run") as load_run:
-            self.assertEqual(config.run_config("pm", "product-design", self.dir), "run")
-        overlay.assert_called_once_with(self.dir)
-        client.assert_called_once_with("claude", core)
-        load_run.assert_called_once_with(core, "pm", "product-design", layers=[{"flags": []}, {"tier": 3}])
+        for task in (None, "product-design"):
+            with self.subTest(task), mock.patch.object(config, "overlay", return_value={"tier": 3}) as overlay, \
+                    mock.patch.object(config.clients, "load_config", return_value={"flags": []}) as client, \
+                    mock.patch.object(config.compose, "load_run", return_value="run") as load_run:
+                self.assertEqual(config.run_config("pm", task, self.dir), "run")
+                overlay.assert_called_once_with(self.dir)
+                client.assert_called_once_with("claude", core)
+                load_run.assert_called_once_with(core, "pm", task, layers=[{"flags": []}, {"tier": 3}])
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
@@ -218,28 +235,16 @@ effort = "high"
 output = { type = "local" }
 
 [roles.researcher]
-default_task = "deep-research"
-
-[roles.researcher.tasks.deep-research]
-output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Research/" }
-
-[roles.researcher.tasks.light-research]
 output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Research/" }
 
 [roles.pm]
-default_task = "product-design"
-
-[roles.pm.tasks.product-design]
 output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }
 
 [roles.engineer]
-default_task = "build"
-
-[roles.engineer.tasks.build]
 output = { type = "pull-request" }
 """
 DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }'
-DIRS = {"deep-research": "Research/", "light-research": "Research/", "product-design": "Designs/"}
+DIRS = {"researcher": "Research/", "pm": "Designs/"}
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
@@ -261,6 +266,17 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         with open(os.path.join(self.root, "core", config.compose.CONFIG), "w") as f:
             f.write(text + real[real.index("\n[clients."):])
 
+    def deep_research_line(self, line):
+        """Replaces the deep-research line of researcher's index in a copy of core's team text."""
+        team = os.path.join(self.root, "core", "team")
+        os.remove(team)
+        shutil.copytree(os.path.join(config.CORE, "team"), team)
+        path = os.path.join(team, "roles", "researcher.md")
+        with open(path) as f:
+            text = f.read()
+        with open(path, "w") as f:
+            f.write(re.sub(r"^- `deep-research`: .*\n", line, text, count=1, flags=re.M))
+
     def runs(self, text=PIPELINE):
         return config.runnable(self.load(text), root=self.root)
 
@@ -269,22 +285,26 @@ class OtherRoot(ConfigFile, unittest.TestCase):
             self.runs(text)
         self.assertEqual(cm.exception.code, message)
 
-    def test_default_task_first_then_core_order(self):
-        self.core(CORE_TOML.replace('default_task = "deep-research"', 'default_task = "light-research"'))
-        researcher = self.runs()["researcher"]
-        self.assertEqual((researcher.tasks, researcher.default), (("light-research", "deep-research"), "light-research"))
+    def test_tasks_are_the_roots_index(self):
+        self.deep_research_line("")
+        self.assertEqual((self.runs()["researcher"].tasks, config.role_tasks("researcher", self.root)),
+                         (("light-research",), ("light-research",)))
+
+    def test_an_index_task_without_its_file_stops_the_caller(self):
+        self.deep_research_line("- `ghost`: a task; when; light.\n")
+        self.fails("core: roles/researcher.md lists 'ghost' without tasks/ghost.md")
 
     def test_overlay_fills_root(self):
         self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
-                  '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/x --y {{root}}"\n')
+                  '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n')
         q = shlex.quote(self.root)
         self.assertTrue(q.startswith("'"), q)
-        want = {"tier": 3, "commands": [f"ls {q}/a", "true"], "roles": {"researcher": {"tasks": {"deep-research": {"gate": f"python3 {q}/x --y {q}"}}}}}
+        want = {"tier": 3, "commands": [f"ls {q}/a", "true"], "roles": {"researcher": {"gate": f"python3 {q}/x --y {q}"}}}
         self.assertEqual(config.overlay(self.root), want)
         self.assertEqual(config.layers(self.root), [want])
-        run = config.run_config("researcher", "deep-research", self.root)
+        run = config.run_config("researcher", root=self.root)
         self.assertEqual((run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}"))
-        self.assertEqual(config.run_config("pm", "product-design", self.root).gate, "")
+        self.assertEqual(config.run_config("pm", root=self.root).gate, "")
 
     def test_a_bad_trusted_dirs_or_cwd_stops_the_caller(self):
         self.core('trusted_dirs = ["rel/dir"]\n' + CORE_TOML)
@@ -305,44 +325,46 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_overlay_language_reaches_run_config(self):
         self.load(PIPELINE + '[core.roles.pm]\nlanguage = "French"\n')
-        self.assertEqual(config.run_config("pm", "product-design", self.root).language, "French")
+        self.assertEqual(config.run_config("pm", root=self.root).language, "French")
 
     def test_no_core_table(self):
         self.load(PIPELINE)
         self.assertEqual((config.overlay(self.root), config.layers(self.root)), ({}, [{}]))
-        self.assertEqual(config.run_config("researcher", "deep-research", self.root).gate, "")
+        self.assertEqual(config.run_config("researcher", root=self.root).gate, "")
 
     def test_overlay_unknown_keys(self):
-        cases = [("[core]\nfoo = 1\n", "'foo' in the global table"),
-                 ('[core]\nusers = ["octocat"]\n', "'users' in the global table"),
-                 ('[core]\ntrusted_dirs = ["~/x"]\n', "'trusted_dirs' in the global table"),
-                 ("[core.clients.claude]\nflags = []\n", "'clients' in the global table"),
-                 ('[core.roles.researcher]\ndefault_task = "light-research"\n', "'default_task' in roles.researcher"),
-                 ('[core.roles.researcher.tasks.deep-research]\ntasks = 1\n', "'tasks' in roles.researcher.tasks.deep-research")]
+        unknown = "orchestrator/config.toml [core]: unknown key "
+        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in the global table"),
+                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in the global table"),
+                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in the global table"),
+                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in the global table"),
+                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in roles.researcher")]
+        cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),
+                  ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks"))]
         for text, message in cases:
             with self.subTest(message):
                 self.load(PIPELINE + text)
                 with self.assertRaises(SystemExit) as cm:
                     config.overlay(self.root)
-                self.assertEqual(cm.exception.code, "orchestrator/config.toml [core]: unknown key " + message)
+                self.assertEqual(cm.exception.code, message)
 
     def test_core_errors(self):
-        self.core(CORE_TOML.replace("[roles.engineer.tasks.build]\n", "[roles.engineer.tasks.build]\ntier = 9\n"))
+        self.core(CORE_TOML.replace("[roles.engineer]\n", "[roles.engineer]\ntier = 9\n"))
         self.fails("core: tier must be an integer 1–4, got 9")
         self.core(CORE_TOML)
         self.fails("core: gate must be one line of shell command without backticks",
-                   PIPELINE + '[core.roles.researcher.tasks.light-research]\ngate = "echo `id`"\n')
+                   PIPELINE + '[core.roles.researcher]\ngate = "echo `id`"\n')
 
     def test_docs(self):
         runs = self.runs()
         self.assertEqual(config.docs(runs, self.root), config.Docs("acme/notes", "trunk", DIRS))
         self.assertEqual(config.docs({"pm": runs["pm"], "engineer": runs["engineer"]}, self.root),
-                         config.Docs("acme/notes", "trunk", {"product-design": "Designs/"}))
+                         config.Docs("acme/notes", "trunk", {"pm": "Designs/"}))
         self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", ', host = "github.com" }')))
         self.assertEqual(config.docs(runs, self.root), config.Docs("acme/notes", "trunk", DIRS))
 
     def test_docs_mismatch(self):
-        message = "core: document tasks must publish to one github.com repo and branch (their [output] in ~/.agent-pm/core.local.toml)"
+        message = "core: document roles must publish to one github.com repo and branch (their [output] in ~/.agent-pm/core.local.toml)"
         for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
                        DESIGN.replace(" }", ', host = "ghe.example.com" }')):
             with self.subTest(design):
@@ -384,6 +406,12 @@ class Local(ConfigFile, unittest.TestCase):
         self.assertEqual(self.load("")["roles"], self.load(BASE)["roles"])
         os.remove(os.path.join(self.home, "orchestrator.local.toml"))
         self.assertEqual(self.load(BASE)["team"], TEAM)
+
+    def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
+        self.local('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n')
+        with self.assertRaises(SystemExit) as cm:
+            config.runnable(self.load(PIPELINE))
+        self.assertEqual(cm.exception.code, old_key("tasks"))
 
     def test_a_bad_local_value_is_rejected(self):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
@@ -428,18 +456,13 @@ class RealConfig(unittest.TestCase):
         self.assertEqual(list(runs), ["researcher", "pm", "engineer"])
         self.assertEqual({r: p["max_runs"] for r, p in cfg["roles"].items()}, {"researcher": 3, "pm": 3, "engineer": 3})
         self.assertEqual(config.docs(runs), config.Docs("ophis/private_docs", "main", {
-            "deep-research": "Research/", "light-research": "Research/", "product-design": "Product Design/"}))
+            "researcher": "Research/", "pm": "Product Design/"}))
         self.assertEqual(cfg["team"], TEAM)
         self.assertNotIn("docs", cfg)
-        self.assertEqual(cfg["core"], {"roles": {"researcher": {"tasks": {"deep-research": {
-            "gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}}}})
+        self.assertEqual(cfg["core"], {"roles": {"researcher": {"gate": "python3 {{root}}/orchestrator/src/router.py --brake"}}})
         self.assertEqual((cfg["task_labels"], cfg["project_repos"], cfg["local_clones"]), ({}, {}, {}))
         self.assertEqual(config.stage_order(cfg), {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertIs(cfg["roles"]["pm"]["require_instructions"], False)
-        self.assertEqual({t: (x.kind, x.prefix) for t, x in config.TASKS.items()},
-                         {"deep-research": ("research", ""), "light-research": ("research", ""),
-                          "product-design": ("design", "PRD"), "build": ("build", "ENG"),
-                          "light-build": ("build", "ENG")})
 
     def test_local_lines_uncommented_set_every_required_key(self):
         with open(config.CONFIG) as f:

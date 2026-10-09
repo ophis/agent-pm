@@ -128,11 +128,11 @@ class PrefixTest(unittest.TestCase):
 
 class SessionsTest(unittest.TestCase):
     OTHERS = ["engineer-TASK-1-aaaaaaaa", "Engineer-TASK-12-bbbbbbbb", "agent-pm-engineer-TASK-12",
-              "agent-pm-engineer-TASK-12345678", "engineer-build-0b6f2c1e", "engineer-TASK-12-0B6F2C1E",
+              "agent-pm-engineer-TASK-12345678", "engineer-0b6f2c1e", "engineer-TASK-12-0B6F2C1E",
               "engineer-TASK-12-0b6f2c1", "engineer-task-12-0b6f2c1e", "mine"]
 
     def test_the_name_drive_gets_round_trips(self):
-        name = drive.tui_session("engineer", "build", SID, prefix=attended.prefix("engineer", ID))
+        name = drive.tui_session("engineer", SID, prefix=attended.prefix("engineer", ID))
         tmux = Tmux(live=[name])
         self.assertEqual((attended.sessions(ID, proc=tmux), attended.issues(proc=tmux)), ([name], [ID]))
         self.assertEqual(tmux.calls, [["list-sessions", "-F", "#{session_name}"]] * 2)

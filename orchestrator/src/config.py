@@ -107,7 +107,7 @@ ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 
 @dataclass(frozen=True)
 class Task:
-    """Per-task data. Readers: kind → inputs/run; prefix → promote, writeback retitle; the rest → writeback."""
+    """Per-role data. Readers: kind → inputs/run; prefix → promote, writeback retitle; the rest → writeback."""
     kind: Literal["research", "design", "build"]
     prefix: str = ""                    # issue title prefix: promote child titles, retitle
     start: str = ""                     # start comment lead
@@ -123,13 +123,10 @@ class Task:
 
 REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
 TASKS = {
-    "deep-research":  Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
-    "light-research": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
-    "product-design": Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
-    "build":          Task("build", prefix="ENG", start="Build started:", done="Build ready:",
-                           question="Question:", failed="Build failed:", files=True),
-    "light-build":    Task("build", prefix="ENG", start="Build started:", done="Build ready:",
-                           question="Question:", failed="Build failed:"),
+    "researcher": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
+    "pm":         Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
+    "engineer":   Task("build", prefix="ENG", start="Build started:", done="Build ready:", question="Question:",
+                       failed="Build failed:", files=True),
 }
 
 
@@ -138,20 +135,16 @@ class Role:
     """An orchestrator/config.toml role checked by runnable()."""
     account: str        # Linear email
     key: str            # Keychain service of its API key
-    tasks: tuple        # core config tasks, default_task first, then core order
+    tasks: tuple        # role_tasks()
     max_runs: int = 1   # agent runs of the role at once
-
-    @property
-    def default(self):
-        return self.tasks[0]
 
 
 @dataclass(frozen=True)
 class Docs:
-    """Where core's document tasks publish: one github.com repo and branch, a dir per task."""
+    """Where core's document roles publish: one github.com repo and branch, a dir per role."""
     repo: str           # owner/name
     branch: str
-    dirs: dict          # task → output dir
+    dirs: dict          # role → output dir
 
 
 # Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
@@ -269,9 +262,11 @@ def overlay(root=ROOT):
     layer = _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
     _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
     for r, role in layer.get("roles", {}).items():
-        _check_overlay_keys(role, compose.RUN_KEYS | {"tasks"}, f"roles.{r}")
-        for t, task in role.get("tasks", {}).items():
-            _check_overlay_keys(task, compose.RUN_KEYS, f"roles.{r}.tasks.{t}")
+        try:
+            compose.check_old_keys(role, r, "core.")
+        except compose.ConfigError as e:
+            raise SystemExit(f"orchestrator/config.toml [core]: {e}") from None
+        _check_overlay_keys(role, compose.RUN_KEYS, f"roles.{r}")
     return layer
 
 
@@ -280,8 +275,14 @@ def layers(root=ROOT):
     return [overlay(root)]
 
 
-def run_config(role, task, root=ROOT):
-    """compose.RunConfig of role/task: core config, then its `[clients.claude]`, then layers(root)."""
+def role_tasks(role, root=ROOT):
+    """The role's tasks, its index in order (compose.index): the orchestrator's one path to them."""
+    return tuple(compose.index(os.path.join(root, "core"), role))
+
+
+def run_config(role, task=None, root=ROOT):
+    """compose.RunConfig of the role (task: None or one it names): core config, then its `[clients.claude]`, then
+    layers(root)."""
     core = os.path.join(root, "core")
     return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
 
@@ -324,16 +325,13 @@ def runnable(cfg, root=ROOT):
     for name, p in cfg["roles"].items():
         if name not in core_roles:
             raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config.toml")
-        default, tasks = core_roles[name].get("default_task"), list(core_roles[name].get("tasks", {}))
-        tasks = tuple(dict.fromkeys([default, *tasks] if default else tasks))
-        for t in tasks:
-            if t not in TASKS:
-                raise SystemExit(f"orchestrator/config.toml: {name}'s task {t!r} has no entry in config.TASKS")
-            try:
-                run_config(name, t, root)
-            except compose.ConfigError as e:
-                raise SystemExit(f"core: {e}") from None
-        out[name] = Role(p["account"], p["key"], tasks, p.get("max_runs", 1))
+        if name not in TASKS:
+            raise SystemExit(f"orchestrator/config.toml: role {name!r} has no entry in config.TASKS")
+        try:
+            run_config(name, root=root)
+            out[name] = Role(p["account"], p["key"], role_tasks(name, root), p.get("max_runs", 1))
+        except compose.ConfigError as e:
+            raise SystemExit(f"core: {e}") from None
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
@@ -347,8 +345,8 @@ def runnable(cfg, root=ROOT):
             continue
         if nxt not in out:
             raise SystemExit(f"orchestrator/config.toml: next of {name!r} names undefined role {nxt!r}")
-        if not TASKS[out[nxt].default].prefix:
-            raise SystemExit(f"orchestrator/config.toml: next of {name!r} is role {nxt!r}, whose default task {out[nxt].default!r} has no prefix")
+        if not TASKS[nxt].prefix:
+            raise SystemExit(f"orchestrator/config.toml: next of {name!r} is role {nxt!r}, whose config.TASKS entry has no prefix")
     tasks = {t for r in out.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
@@ -361,13 +359,13 @@ def runnable(cfg, root=ROOT):
 
 
 def docs(roles, root=ROOT):
-    """Docs of the github outputs among roles' tasks ({role: Role}); they must share one github.com repo and branch."""
-    outs = {t: o for r, role in roles.items() for t in role.tasks if (o := run_config(r, t, root).output)["type"] == "github"}
+    """Docs of the github outputs among roles ({role: Role}); they must share one github.com repo and branch."""
+    outs = {r: o for r in roles if (o := run_config(r, root=root).output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise SystemExit(f"core: document tasks must publish to one github.com repo and branch (their [output] in {repo.LOCAL})")
-    return Docs(name, branch, {t: o["dir"] for t, o in outs.items()})
+        raise SystemExit(f"core: document roles must publish to one github.com repo and branch (their [output] in {repo.LOCAL})")
+    return Docs(name, branch, {r: o["dir"] for r, o in outs.items()})
 
 
 def role_for(runs, email):

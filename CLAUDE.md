@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Agent pipeline on a Linear board (README). `core/` runs one role on one task (`core/CLAUDE.md`); `orchestrator/src/` turns a Linear issue into that agent run's input, and its outcome into Linear changes.
+Agent pipeline on a Linear board (README). `core/` runs one role, on a task given or picked from its index (`core/CLAUDE.md`); `orchestrator/src/` turns a Linear issue into that agent run's input, and its outcome into Linear changes.
 
 ## Commands
 
@@ -24,7 +24,7 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 ## Architecture
 
 - `router.py`, a tick: hours check → live tmux sessions vs `max_runs` → Recover dead In Progress agent runs → usage gate (5-hour usage ≥ 90% or a weekly limit full → skip) → resume, or claim a ready Todo issue → `outer`, in-process (an exception is logged; the tick goes on). At most one agent run per tick. `--issue ID`: README › Operating.
-- `router.outer`: validate → read the issue → `build`, `light-build`: `target.check` (Invalid on a new agent run → `writeback.bounce`, no agent run) → `inputs.gather` + `render` → `<work_dir>/work/<ID>/input.md` → tmux driver session `agent-pm-<role>-<ID>` running `run.py`, cwd `<work_dir>/work/<ID>/`. Any failure starts nothing. `--tui` passes the inner `--opener` and only the user's `--split`/`--split-from`/`--events`, never a derived `--split-from`.
+- `router.outer`: validate → read the issue → a role of `config.TASKS` kind `build` (engineer): `target.check` (Invalid on a new agent run → `writeback.bounce`, no agent run) → `inputs.gather` + `render` → `<work_dir>/work/<ID>/input.md` → tmux driver session `agent-pm-<role>-<ID>` running `run.py`, cwd `<work_dir>/work/<ID>/`. Any failure starts nothing. `--tui` passes the inner `--opener` and only the user's `--split`/`--split-from`/`--events`, never a derived `--split-from`.
 - `run.py`, the inner: `attended.close` → `drive.plan` (`config.layers`, the overlay) + `drive.start` (sinks: terminal, project log, `writeback.sink`; `begun` posts the session comment) → `end` lines in `runs.log` and the project log → `writeback.finish`. No valid outcome → stays In Progress; Recover resumes it. `config.run_config` mirrors those layers for validation (`runnable`, `docs`).
 - `attended.py` owns the TUI session name `<role>-<ID>-<sid[:8]>`: `prefix` its only builder, `ISSUE_TUI` with `drive.TUI_SESSION` its only matcher. An issue's TUI sessions are the live tmux sessions so named, nothing recorded; the inner and prune `close` them (no resume beside an old `claude`). The driver session is the issue's live agent run (`router.live_sessions`: no second one starts) and holds a `max_runs` slot while its driver runs; a TUI session is neither.
 - Write-back: `<work_dir>/work/<ID>/writeback.json` ledgers each step per session, so a resume repeats none; a failed step leaves the issue In Progress.
@@ -34,23 +34,23 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 - Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `repo`, `report` or `tui_claude`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` first.
 - Identity: write-back and bounce act as the role's `account`, the rest as the harness account (README › Setup). Only Keychain service names travel in env, argv, logs and prompts, never keys. As the same macOS user, an agent run could read Keychain items: no enforced boundary.
 - No move changes an assignee; every move to In Review (write-back, bounce or harness) also subscribes each `human_members` email.
-- State between ticks: only `<work_dir>/logs/runs.log` (resume and Recover take the task from its `task=`) and Linear history, never session comments. A resume also needs `writeback.json`, `run.json` and the transcript (`config.transcript`).
+- State between ticks: only `<work_dir>/logs/runs.log` (Recover resumes a session only while its `role=` is the assignee's; the session keeps its task) and Linear history, never session comments. A resume also needs `writeback.json`, `run.json` and the transcript (`config.transcript`).
 
 ## Roles, tasks, rules
 
 - Config: each `config.toml` documents every key and has a local file merged over it (its header); `repo.read_config` is the only loader, and validation runs on the merge. An invalid config stops router, run and promote (`config.runnable`). Tests never read a real local file: a test module reading the repo's config (every orchestrator one) imports `hermetic` first; a test writes its own local file under `hermetic.home`.
 - Core owns roles, tasks, methods, principles and templates (`core/team/`, `core/config.toml`); `orchestrator/config.toml` adds what core must not know, plus the overlay.
-- Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-task differences → `config.TASKS` data. Precedence: `core/team/guide.md`.
+- Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `core/team/guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
 - No em dashes (U+2014): use a colon, semicolon, comma or parentheses.
-- Every task has a `## Resume` section; shared text: `compose.RESUME`, then the charter's `## Resume`, if any, which must be the charter's last section (the skill client cuts each `## Resume` up to the next `# ` heading).
-- Add a task to a role: `core/team/tasks/<task>.md` (its frontmatter: `core/CLAUDE.md` › Rules), `[roles.<role>.tasks.<task>]` in `core/config.toml`, the task in `config.TASKS`, its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
+- Every task has a `## Resume` section; shared text: `compose.RESUME`, then the charter's `## Resume`, if any.
+- Add a task to a role: `core/team/tasks/<task>.md`, its line in the role's task index (`core/CLAUDE.md` › Rules), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
 
 ## Gotchas
 
 - This file never loads in an agent run outside a trusted cwd (README › Install; core/CLAUDE.md › An agent run's command). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `router_test.py` pins the tmux argv.
-- Each pipeline task (deep-research, light-research, product-design, build, light-build) has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`compose_test.py` checks): without the start line write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
+- Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`compose_test.py` checks): without the start report `drive.py` logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts or skills; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).

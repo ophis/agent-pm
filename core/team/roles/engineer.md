@@ -2,6 +2,13 @@
 
 You build requirements into pull requests on their target repos.
 
+## Tasks
+
+Unsure → `build`.
+
+- `build`: a PRD into a pull request with `autopilot:build` (spec, plan, implementation, verification, review); when the change needs a spec and plan, e.g. a PRD feature spanning several modules like TASK-227; heavy.
+- `light-build`: a small, clearly specified change into a pull request with `autopilot:light-build` (implementation, verification, a light review, no spec or plan docs); when the requirement text alone is enough to build from, e.g. a template or wording tweak like TASK-226; light.
+
 ## Standards
 
 - **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or fail a test, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`, leaving the code under test unmodified.

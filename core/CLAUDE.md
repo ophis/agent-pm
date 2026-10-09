@@ -5,15 +5,15 @@ The portable core pack: `src/compose.py` compiles `team/` text (`guide.md` opens
 ## Commands
 
 ```bash
-python3 core/src/drive.py --role R --task T --input X --out O --workdir W [--runner tui …] --dry-run   # the agent run's argv, cwd and env; starts nothing
-python3 core/src/drive.py --client skill --role R --task T   # the prompt /agent-pm:act-as follows
-python3 core/src/tui_claude.py --help                        # host claude in tmux: start, send, read, show
+python3 core/src/drive.py --role R [--task T] --input X --out O --workdir W [--runner tui …] --dry-run   # the agent run's argv, cwd and env; starts nothing
+python3 core/src/drive.py --client skill --role R [--task T]   # the prompt /agent-pm:act-as follows
+python3 core/src/tui_claude.py --help                          # host claude in tmux: start, send, read, show
 ```
 
 ## Rules
 
 - `team/` and `output/` say what an agent run does and reports, client-neutrally; how a client starts a run and gets its outcome and progress back lives in that client's class.
-- A task file may open with YAML frontmatter holding only `description: "<JSON string>"`: what the task does and when to use it, shown where role/tasks are listed (`skills/tmux/SKILL.md` › Role runs). `compose` strips it; no prompt sees it.
+- `## Tasks` in `team/roles/<role>.md`, right after its intro, is the only list of the role's tasks (its task index): a line `` Unsure → `<task>`. `` naming the default, then one line per task `` - `<task>`: what; when; light|heavy ``. `compose.index` parses the task lines and checks each has `team/tasks/<task>.md`; a run given no task picks from it (`team/guide.md`).
 - A task marks where an agent run reports progress with a line `[agent-pm-progress:<name>] what to report`, under its own **Report progress** item (a step, or a bullet under the parent it belongs to), never inside another item; the client's `handover()` says how the run reports it.
 - `src/repo.py` is stdlib-only and imports nothing from `src/`. `repo.checkout` is the one checkout path rule, for any caller. Symlinks in a `repo.py worktree` checkout follow `config.toml`'s `trusted_dirs` comment, set in the worktree's own config (which turns on the clone's `extensions.worktreeConfig`); an existing worktree whose setting disagrees is refused: remove it, run again.
 - Runners: `drive.RUNNERS` (`--runner`, default `headless`); `tui` hosts the client's `Launch.interactive` through `src/tui_claude.py`. A new runner is a `drive.Runner` naming its `Launch` field in `starts`.
@@ -32,19 +32,19 @@ claude -p '<prompt>' --session-id <sid> --model <tier's> --effort <effort's> <[c
   --add-dir <dir>… --allowedTools 'Bash(<command>)'…
 ```
 
-- A resume: `--resume` for `--session-id`, in the session's recorded cwd with its settings. `--add-dir`: the `read`/`write` dirs, and the workdir when the cwd is another. A trusted cwd: `--setting-sources user,project,local` and, with a `.mcp.json`, `--mcp-config <cwd>/.mcp.json`.
-- No deny list: `--allowedTools` pre-approves the task's `commands` and `report.py`; auto mode and the user's settings decide the rest.
-- tui: `claude '<prompt>' …` without `-p`, `--output-format` and `--verbose`, plus `--name <session>` (`<prefix>-<sid[:8]>`, `--prefix` default `<role>-<task>`) and a `Stop` hook in `--settings`; `--events FILE` gets its `done|blocked|dead` lines. `drive.py` prints `tmux attach -t '=<session>'` and shows the session (Rules: the built-in show); no pane to split → only the attach command, with the reason. In a container: `skills/tmux/SKILL.md` › In a container, or a `show` command asking a host-side watcher to attach.
+- A resume: `--resume` for `--session-id`, in the session's recorded cwd with its settings. `--add-dir`: `team/tasks/`, the `read`/`write` dirs, and the workdir when the cwd is another. A trusted cwd: `--setting-sources user,project,local` and, with a `.mcp.json`, `--mcp-config <cwd>/.mcp.json`.
+- No deny list: `--allowedTools` pre-approves the role's `commands` and `report.py`; auto mode and the user's settings decide the rest.
+- tui: `claude '<prompt>' …` without `-p`, `--output-format` and `--verbose`, plus `--name <session>` (`<prefix>-<sid[:8]>`, `--prefix` default `<role>`) and a `Stop` hook in `--settings`; `--events FILE` gets its `done|blocked|dead` lines. `drive.py` prints `tmux attach -t '=<session>'` and shows the session (Rules: the built-in show); no pane to split → only the attach command, with the reason. In a container: `skills/tmux/SKILL.md` › In a container, or a `show` command asking a host-side watcher to attach.
 - tui give-up: after the nudge, `STOP_LIMIT` more turn ends without an outcome (a progress report resets the count), or `WAIT_LIMIT` after the last progress report or the start without one → `drive.py` prints the attach command, leaves the session and exits 1. Until then an unanswered dialog waits in the pane: interactive `claude` asks there to trust a new folder (`-p` doesn't) and, without auto mode (Haiku, tier 4), for what isn't pre-approved; a dialog opened within about a second of a turn end gets the nudge's keys. After the outcome or a give-up the session is an unwatched agent with the run's pre-approvals and `drive.py`'s environment, nothing it does reported: end it with `tmux kill-session -t '=<session>'`.
 - `claude` needs (nothing checks; a missing one fails the run): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; for tui, interactive mode and `Stop` hooks in `--settings`; subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research).
 - Tests that run `drive.py` as a process put `src/tests/integration/fake_claude.py` on PATH as `claude` (its docstring: the scenario format). It rejects an option it doesn't know: a new option in this command goes into it too.
 
 ## Add a client
 
-1. **Class**: `src/clients/<name>.py`, a `Client` subclass (`src/clients/base.py` documents each member but `needs_config`: whether it reads `[clients.<name>]`); `keys` holds `"roles"` too for per-role/task entries.
+1. **Class**: `src/clients/<name>.py`, a `Client` subclass (`src/clients/base.py` documents each member but `needs_config`: whether it reads `[clients.<name>]`); `keys` holds `"roles"` too for per-role entries.
 2. **Launch** (`runs = True`): `launch()` maps `run.tier` and `run.effort` through its config (no mapping → `ConfigError`) and turns `access.dirs` and `access.commands` into its own permission flags (what it can't enforce stays a prompt request: `docs/adr/0003`). New session or resume from `params.sid` and `params.resume`; cwd `access.cwd`, its project settings only with `access.project` (both `drive.place`'s). Fill `transcript`, `resume` and, if it has an interactive command (the tui runner's), `interactive`.
 3. **Outcome and progress** (`docs/adr/0006`): `handover()`, the Output › Return text, tells the run to report with `{{report}}` (`compose.report_command`, pre-approved): `progress <name> <text>`, and `outcome …` as its last action; `drive.validate` is the only outcome check. Have `interactive` run the report command plus `stop` at each turn end (claude: a `Stop` hook), plus `--pending KEY` when the hook's stdin JSON lists in-flight background work at top-level `KEY` (claude: `background_tasks`): tui nudges a run that stopped without an outcome, never one with pending work. Without `stop` lines tui never nudges; it gives up only after `WAIT_LIMIT`.
 4. **Register** it in `REGISTRY` (`src/clients/__init__.py`); add `[clients.<name>]` to `config.toml` when `needs_config`.
-5. **Test** in `src/tests/drive_test.py`: its argv and `interactive` for a role/task, resume, an unmapped tier, its events from a sample of its output.
+5. **Test** in `src/tests/drive_test.py`: its argv and `interactive` for a role, resume, an unmapped tier, its events from a sample of its output.
 
-Done when `drive.py --client <name> --dry-run` (and `--runner tui`, when it has `interactive`) prints the expected command for every role/task in `config.toml` and the suite passes.
+Done when `drive.py --client <name> --dry-run` (and `--runner tui`, when it has `interactive`) prints the expected command for every role in `config.toml` and the suite passes.

@@ -28,13 +28,15 @@
 # local: done        = "00000000-0000-0000-0000-000000000000"
 # local: canceled    = "00000000-0000-0000-0000-000000000000"
 
-# Task labels; optional, a default task needs none.
+# Task labels; optional: an issue without one runs its role, which picks a task from its index.
 #   <task>  local: the task's Linear label id, a child of the Tasks group
 # local: [task_labels]
+# local: deep-research = "00000000-0000-0000-0000-000000000000"
 # local: light-research = "00000000-0000-0000-0000-000000000000"
+# local: build = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
-# A role to orchestrate. Its tasks are core/config.toml's roles.<role>.tasks, default_task first. A role added in
+# A role to orchestrate. Its tasks are its charter's index (core/team/roles/<role>.md › Tasks). A role added in
 # orchestrator.local.toml is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
 #   key                   local, required: Keychain service of that account's API key
@@ -79,8 +81,8 @@ max_runs = 3
 # The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
 # [core], the last of core/config.toml's layers. config.overlay() fills {{root}} with this repo's root.
 #   <run key>  as in core/config.toml, local keys included (e.g. a trusted cwd or a show command); users, trusted_dirs,
-#              status_line, clients and default_task are refused
-[core.roles.researcher.tasks.deep-research]
+#              status_line and clients are refused; a role table holding the old task-level keys is an error
+[core.roles.researcher]
 gate = "python3 {{root}}/orchestrator/src/router.py --brake"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"

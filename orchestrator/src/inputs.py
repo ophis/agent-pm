@@ -1,4 +1,4 @@
-"""The free-text input of a core agent run: the docs-repo files an issue links (read through `gh api`), laid out per task kind."""
+"""The free-text input of a core agent run: the docs-repo files an issue links (read through `gh api`), laid out per role kind."""
 import fnmatch
 import json
 import os
@@ -62,7 +62,7 @@ def doc_path(url, docs) -> str | None:
 
 
 def _design_dirs(docs):
-    return tuple(d.rstrip("/") + "/" for t, d in docs.dirs.items() if t in TASKS and TASKS[t].kind == "design")
+    return tuple(d.rstrip("/") + "/" for r, d in docs.dirs.items() if TASKS[r].kind == "design")
 
 
 def _links(issue, docs):
@@ -116,14 +116,14 @@ def _listed(run, docs, ident, dir_):
     return f"{d}/{hits[-1]}" if hits else None
 
 
-def gather(issue, task, docs, *, run=sh_run) -> Sources:
+def gather(issue, role, docs, *, run=sh_run) -> Sources:
     """Read the docs an issue links, and its earlier version (research, design). RuntimeError on a gh failure."""
-    kind = TASKS[task].kind
+    kind = TASKS[role].kind
     links = _links(issue, docs)
     path = None
     if kind != "build":
-        if docs.dirs.get(task):
-            path = _listed(run, docs, issue.identifier, docs.dirs[task])
+        if docs.dirs.get(role):
+            path = _listed(run, docs, issue.identifier, docs.dirs[role])
         if path is None and kind == "design":
             path = next((p for p in links if p.startswith(_design_dirs(docs))), None)
     earlier = Doc(links.get(path) or _url(docs, path), path, _read(run, docs, path)) if path else None
@@ -229,8 +229,8 @@ def _build(issue, sources, humans, target, docs):
     ])
 
 
-def render(issue, task, sources, *, humans, target, docs) -> str:
-    """The input text for the task's kind. `target`: research, design → research_repo() or None; build → the checked
+def render(issue, role, sources, *, humans, target, docs) -> str:
+    """The input text for the role's kind. `target`: research, design → research_repo() or None; build → the checked
     Target. `docs` names the branch in "not found" lines and the design dirs a PRD link is picked from."""
-    layout = {"research": _research, "design": _design, "build": _build}[TASKS[task].kind]
+    layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
     return layout(issue, sources, humans, target, docs)
