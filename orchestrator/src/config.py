@@ -16,6 +16,9 @@ CORE = os.path.join(ROOT, "core")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
+# AGENT_PM_PATH (tests only), when set and non-empty, goes in front: fake claude, gh and python3 beat /opt/homebrew/bin's.
+if os.environ.get("AGENT_PM_PATH"):
+    PATH = f"{os.environ['AGENT_PM_PATH']}:{PATH}"
 
 # Module names this reserves: CLAUDE.md › Architecture (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))

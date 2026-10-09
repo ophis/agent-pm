@@ -730,6 +730,29 @@ class Paths(unittest.TestCase):
         self.assertIsNone(config.transcript("TASK-9", "../x"))
 
 
+class PathSeam(unittest.TestCase):
+    """config.PATH is computed at import: each case reads it in a fresh process."""
+    def read(self, **env):
+        tests = os.path.dirname(os.path.abspath(hermetic.__file__))
+        env = {**{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}, **env,
+               "PYTHONPATH": os.path.dirname(tests)}
+        res = subprocess.run([sys.executable, "-c", "import hermetic, config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))"],
+                             cwd=tests, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+        home, path = json.loads(res.stdout)
+        return f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin", path
+
+    def test_agent_pm_path_goes_in_front(self):
+        default, path = self.read(AGENT_PM_PATH="/fakes/bin:/more")
+        self.assertEqual(path, "/fakes/bin:/more:" + default)
+
+    def test_empty_or_unset_is_the_default(self):
+        for env in ({}, {"AGENT_PM_PATH": ""}):
+            with self.subTest(env=env):
+                default, path = self.read(**env)
+                self.assertEqual(path, default)
+
+
 class Shell(unittest.TestCase):
     def test_sh_run(self):
         with mock.patch.object(config.subprocess, "run", return_value="res") as run, \

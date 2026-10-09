@@ -211,6 +211,12 @@ def probe(sh, max_5h=MAX_5H):
     return gate(out.stdout.splitlines(), max_5h)
 
 
+def q_issues(fields=""):
+    """Board.issues's query text, fields added to each issue's."""
+    return ("query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+            "updatedAt project { id name } assignee { id email } " + fields + " } } }")
+
+
 class Board:
     def __init__(self, gql, entries, tdir, now, dry, cfg, root=ROOT):
         self.gql, self.entries, self.tdir, self.now, self.dry = gql, entries, tdir, now, dry
@@ -229,9 +235,7 @@ class Board:
     def issues(self, state, fields=""):
         flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
                "assignee": {"id": {"in": list(self.roles)}}, "state": {"id": {"eq": self.states[state]}}}
-        return self.gql("""query($f: IssueFilter) { issues(filter: $f, first: 100) {
-                    nodes { id identifier url priority createdAt updatedAt project { id name } assignee { id email } """
-                        + fields + " } } }", f=flt)["issues"]["nodes"]
+        return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
 
     def todo(self):
         """The ready Todo issues (direct blockers all done), read once per run; logs each blocked one (once a day) on
@@ -387,12 +391,6 @@ class Board:
         else:
             self.say("pick-none", only, reason="not a Todo issue assigned to a role account" if only else "queue empty")
         return None
-
-
-def has_key(service):
-    """True when the Keychain has an item for service; the secret is never read (no -w)."""
-    return subprocess.run(["security", "find-generic-password", "-s", service],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
 def fail(issue, kind, reason, rc):
@@ -676,7 +674,7 @@ def options(argv):
 
 
 def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_LOG, sh=subprocess.run, hour=None,
-         root=ROOT, run=sh_run, keychain=has_key, start=None):
+         root=ROOT, run=sh_run, keychain=linear.has_key, start=None):
     """start(outer's arguments) starts an agent run; default: outer with these sh, gql, run, tdir, keychain and root."""
     if "--brake" in argv:
         if argv != ["--brake"]:

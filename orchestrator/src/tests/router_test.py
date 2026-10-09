@@ -931,8 +931,7 @@ class Blockers(Base):
         self.assertRegex(said[0], r"^todo-error error=SystemExit: linear api error: ")
         self.assertEqual(said[1:], ['blocked TASK-1 by=["(unreadable)"]', 'blocked TASK-2 by=["TASK-7"]', "pick TASK-3 queue=1",
                                     "claim TASK-3 role=researcher"])
-        todo = fake.reads()
-        self.assertEqual(["inverseRelations" in q for q in todo], [True, False])
+        self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
         self.assertEqual([v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q], ["TASK-1", "TASK-2", "TASK-3"])
 
     def test_one_todo_read_with_relations(self):
@@ -2281,14 +2280,6 @@ class AttendedEntry(OuterBase):
                 self.assertIn(said, self.said("router"))
                 self.assertEqual((self.todo["state"], self.sh_calls), (state, [(LIST, {"capture_output": True, "text": True})]))
         self.assertFalse(os.path.exists(self.runs))
-
-
-class HasKey(unittest.TestCase):
-    def test_has_key_never_reads_the_secret(self):
-        for code, want in ((0, True), (44, False)):
-            with mock.patch.object(router.subprocess, "run", return_value=subprocess.CompletedProcess([], code)) as m:
-                self.assertIs(router.has_key("svc"), want)
-            self.assertEqual(m.call_args.args[0], ["security", "find-generic-password", "-s", "svc"])
 
 
 if __name__ == "__main__":

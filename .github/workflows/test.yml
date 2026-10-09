@@ -56,3 +56,6 @@ jobs:
       - name: Tmux skill integration tests
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         run: python3 -m unittest discover -v -s core/skills/tmux/scripts/integration -p "*_integration_test.py"
+      - name: Orchestrator integration tests
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 -m unittest discover -v -s orchestrator/src/tests/integration -p "*_integration_test.py"
