@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Manager claude inside tmux, attached via iTerm2 tmux integration (-CC).
+s=${1:?usage: ctmux <session-name>}
+dir=$PWD
+tmux has -t "=$s" 2>/dev/null || {
+  # Start from ~ so the tmux server never sits in a directory that later gets deleted.
+  (cd ~ && tmux start-server \; set -g mouse on \; set -g history-limit 50000 \
+    \; set -s extended-keys on \; set -s 'terminal-features[99]' 'xterm*:extkeys' \
+    \; new -d -s "$s")
+  tmux send-keys -t "=$s:" "cd $(printf %q "$dir") && claude --permission-mode auto" Enter
+}
+exec tmux -CC attach -t "=$s"
