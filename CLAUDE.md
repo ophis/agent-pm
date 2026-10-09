@@ -12,6 +12,8 @@ claude --plugin-dir core                                  # this checkout's plug
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
 ```
 
+CI (`.github/workflows/test.yml`) runs the three suites on Ubuntu, Python 3.11, for each PR and push to `main`: a test must pass on Linux too.
+
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
 A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the unit tests fake tmux), its tmux isolated as core/CLAUDE.md › Rules says (a live check); say in the PR what ran and what it showed.
