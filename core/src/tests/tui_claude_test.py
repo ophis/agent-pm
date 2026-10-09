@@ -2103,6 +2103,18 @@ class Tile(unittest.TestCase):
         fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
         self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
 
+    def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
+        layout = dump("116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x3,52,4{32x3,52,4,4,"
+                      "31x3,85,4,5},64x3,52,8{32x3,52,8,6,31x3,85,8,2}]}")
+        rows = [("$2", "w1", "mgr", "%1"), ("$3", "w2", "old1", "%2"), ("$4", "w3", "mgr", "%3"),
+                ("$5", "w4", "w2", "%4"), ("$6", "w5", "old1", "%5"), ("$7", "w6", "mgr", "%6")]
+        fake = self.tile(layout, ["%0", "%3", "%1", "%4", "%5", "%6", "%2"], rows, n="4", size=(116, 11))
+        self.assertEqual(fake.calls[3:], [[
+            "tmux", "swap-pane", "-d", "-s", "%1", "-t", "%3", ";", "swap-pane", "-d", "-s", "%2", "-t", "%3", ";",
+            "swap-pane", "-d", "-s", "%3", "-t", "%5", ";", "swap-pane", "-d", "-s", "%5", "-t", "%6", ";",
+            "select-layout", "-t", "@3", "6fdc,116x11,0,0{51x11,0,0,0,64x11,52,0{32x11,52,0[32x2,52,0,1,32x2,52,3{"
+                                         "16x2,52,3,2,15x2,69,3,4},32x2,52,6,3,32x2,52,9,5],31x11,85,0,6}}"]])
+
     def test_duplicate_pane_claims_the_lower_session_id_owns(self):
         rows = [("$5", "x", "mgr", "%1"), ("$3", "y", "mgr", "%1"), ("$6", "z", "x", "%2"), ("$7", "w", "y", "%3")]
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], rows)
@@ -2164,12 +2176,6 @@ class FixedPoint(unittest.TestCase):
     def test_never_settling_the_last_after_settle_iterations_more_steps(self):
         self.assertEqual(tui_claude.SETTLE_ITERATIONS, 3)
         self.assertEqual(self.fixed_point(lambda n: n + 1), (4, [0, 1, 2, 3]))
-
-    def test_none_once_a_step_gives_none(self):
-        for last in (0, 2, 3):
-            with self.subTest(last=last):
-                self.assertEqual(self.fixed_point(lambda n: None if n == last else n + 1),
-                                 (None, list(range(last + 1))))
 
 
 @contextmanager

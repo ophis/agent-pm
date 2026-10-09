@@ -645,31 +645,27 @@ def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[st
     if per_column is None:
         per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
 
-    def step(state: tuple[list[str], Cell]) -> tuple[list[str], Cell] | None:
-        """(pane order, layout) after a pass: the target's panes and the target; the state itself when its cells are
-        the target's (the pass sends nothing)."""
+    def step(state: tuple[list[str], Cell]) -> tuple[list[str], Cell]:
+        """(pane order, layout) after a pass: the target's panes and the target; the state itself when the pass sends
+        nothing (the target too small, or its cells the state's)."""
         order, at = state
         want = _grid_layout(_grid_tree(manager, order, sessions, at), width=int(width), height=int(height),
                             manager=manager, manager_width=next(c.w for c in _leaves(at) if c.pane == manager),
                             per_column=per_column)
-        if want is None:
-            return None
-        return state if _leaves(want) == _leaves(at) else ([c.pane for c in _leaves(want)], want)
+        return state if want is None or _leaves(want) == _leaves(at) else ([c.pane for c in _leaves(want)], want)
 
     found = _fixed_point(step, (panes, current))
-    if found is None or _leaves(found[1]) == leaves:
+    if _leaves(found[1]) == leaves:
         return None
     return _swaps(panes, found[0]), found[1], tiles
 
 
 def _fixed_point(step, start):
     """The first of step(start), step(step(start)), ... that is its own step; still changing SETTLE_ITERATIONS steps
-    after the first: the last; None once a step gives None. Stands in for _grid_tree not being idempotent (it places
-    an orphan group by the current layout): a fix there can drop it."""
+    after the first: the last. Stands in for _grid_tree not being idempotent (it places an orphan group by the current
+    layout): a fix there can drop it."""
     value = step(start)
     for _ in range(SETTLE_ITERATIONS):
-        if value is None:
-            return None
         after = step(value)
         if after == value:
             return value
