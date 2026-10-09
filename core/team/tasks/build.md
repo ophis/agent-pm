@@ -24,4 +24,4 @@ Build the PRD with `/autopilot:build`, then open a pull request.
 
 ## Resume
 
-[Engineer › Resume](#resume).
+[Engineer › Repo › Resume](#repo).
