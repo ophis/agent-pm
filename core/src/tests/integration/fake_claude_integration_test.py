@@ -171,6 +171,28 @@ class Reports(Case):
         self.assertIn("report command", res.stderr)
 
 
+class Files(Case):
+    def test_write_replaces_and_read_says_the_text(self):
+        path = os.path.join(self.proj, "a.md")
+        with open(path, "w") as f:
+            f.write("old")
+        self.scene(steps=[{"kind": "write", "path": "a.md", "text": "x\ny"}, {"kind": "read", "path": path}])
+        res = self.run_fake("hi", *SESSION)
+        self.assertEqual((res.returncode, res.stdout), (0, "x\ny\n"), res.stderr)
+        with open(path) as f:
+            self.assertEqual(f.read(), "x\ny")
+        self.assertEqual(self.convo(), [("user", "hi"), ("assistant", "x\ny")])
+
+    def test_a_failing_write_or_read_goes_on(self):
+        missing = os.path.join(self.root, "none", "a.md")
+        self.scene(steps=[{"kind": "write", "path": missing, "text": "x"}, {"kind": "read", "path": missing}, "After."])
+        res = self.run_fake("hi", *SESSION)
+        self.assertEqual((res.returncode, res.stdout), (0, "After.\n"), res.stderr)
+        self.assertEqual([line.split(":")[:2] for line in res.stderr.splitlines()],
+                         [["fake_claude.py", " write"], ["fake_claude.py", " read"]])
+        self.assertEqual(self.convo(), [("user", "hi"), ("assistant", "After.")])
+
+
 class Hooks(Case):
     def test_payloads_and_order(self):
         self.scene(steps=[{"kind": "hook", "event": "Mark"}], turns=[["Next."]])
@@ -269,14 +291,28 @@ class PrintMode(Case):
         self.assertIsNone(proc.poll())
         self.assertEqual([h["hook_event_name"] for h in self.fired()], ["Mark"])
 
+    def test_a_read_is_an_assistant_line(self):
+        path = os.path.join(self.root, "a.md")
+        with open(path, "w") as f:
+            f.write("draft\n")
+        self.scene(steps=[{"kind": "read", "path": path}])
+        res = self.run_fake(*self.ARGS)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        lines = [json.loads(line) for line in res.stdout.splitlines()]
+        self.assertEqual([m["type"] for m in lines], ["system", "assistant", "result"])
+        self.assertEqual(lines[1]["message"]["content"], [{"type": "text", "text": "draft\n"}])
+
 
 class BadScenario(Case):
-    def test_bad_turns_and_hook_steps_exit_1(self):
+    def test_bad_turns_and_steps_exit_1(self):
         hook = {"kind": "hook", "event": "Stop"}
         for scenario in ({"turns": "x"}, {"turns": ["x"]}, {"turns": [[1]]}, {"turns": [["ok"], [{"kind": "nope"}]]},
                          {"turns": [[{"kind": "hook"}]]}, {"steps": [{**hook, "extra": 1}]},
                          {"steps": [{"kind": "hook", "event": ""}]}, {"steps": [{"kind": "hook", "event": 7}]},
-                         {"steps": [{"kind": ["hook"], "event": "Stop"}]}):
+                         {"steps": [{"kind": ["hook"], "event": "Stop"}]}, {"steps": [{"kind": "write", "path": "a"}]},
+                         {"steps": [{"kind": "write", "path": "", "text": "x"}]},
+                         {"steps": [{"kind": "write", "path": "a", "text": 5}]}, {"steps": [{"kind": "read", "path": 7}]},
+                         {"steps": [{"kind": "read", "path": "a", "text": "x"}]}):
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
                 res = self.run_fake("hi", *SESSION)
