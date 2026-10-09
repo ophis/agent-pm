@@ -58,9 +58,9 @@ class Server:
         return {"PATH": self.path, "HOME": self.home, "PYTHONUTF8": "1", "TMUX_TMPDIR": self.root, **extra}
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
-        """Starts the server, its global env env(), with session `manager` idle in a width x height window. The server
-        and its jobs are capped (RLIMIT_NPROC) at the user's process count (thread count on Linux, where RLIMIT_NPROC
-        counts threads) plus HEADROOM, so a fork loop cannot take the host."""
+        """Starts the server, its global env env(), with session `manager` idle in a width x height window; it and its
+        jobs capped (RLIMIT_NPROC) at the user's processes (threads on Linux, which RLIMIT_NPROC counts there) plus
+        HEADROOM, so a fork loop cannot take the host."""
         self.size = width, height
         _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
         uid = str(os.getuid())
@@ -68,8 +68,10 @@ class Server:
               else ["ps", "-U", uid, "-o", "pid="])
         cap = len(subprocess.run(ps, capture_output=True, text=True, check=True).stdout.split()) + HEADROOM
         cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
-        self._out("-f", "/dev/null", "new-session", "-d", "-s", manager, "-x", str(width), "-y", str(height), *IDLE,
-                  preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
+        subprocess.run([self.program, "-u", "-S", self.socket, "-f", "/dev/null", "new-session", "-d", "-s", manager,
+                        "-x", str(width), "-y", str(height), *IDLE], env=self.env(), stdin=subprocess.DEVNULL,
+                       timeout=TIMEOUT, check=True,
+                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
 
     def attach(self, session: str) -> None:
         """Shows `session` in a control-mode client in a pty (a tty tui_claude counts, no iTerm2 path), sized as
@@ -102,11 +104,11 @@ class Server:
         wait(lambda: self._out("display-message", "-p", "-t", f"={session}:", "#{window_width}x#{window_height}")
              == f"{width}x{height}\n", what=f"{session}'s window at {width}x{height}")
 
-    def tmux(self, *args: str, preexec_fn=None) -> subprocess.CompletedProcess:
+    def tmux(self, *args: str) -> subprocess.CompletedProcess:
         """`tmux -S <socket> args…` with env(), captured."""
         # -u: env() has no locale and no TMUX, so tmux would print each tab or non-ASCII character to us as "_"
         return subprocess.run([self.program, "-u", "-S", self.socket, *args], env=self.env(), capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT, preexec_fn=preexec_fn)
+                              text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT)
 
     def inside(self, session: str) -> dict[str, str]:
         """TMUX and TMUX_PANE for a process run in `session`'s pane."""
@@ -127,9 +129,9 @@ class Server:
         """`session`'s session option `key`; "" when unset."""
         return self._out("show-options", "-qv", "-t", f"={session}:", key).removesuffix("\n")
 
-    def _out(self, *args: str, **kw) -> str:
+    def _out(self, *args: str) -> str:
         """tmux's stdout; fails the case when tmux fails."""
-        res = self.tmux(*args, **kw)
+        res = self.tmux(*args)
         if res.returncode:
             self.case.fail(f"tmux {' '.join(args)}: exit {res.returncode}: {res.stderr.strip()}")
         return res.stdout

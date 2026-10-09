@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
-import hashlib
 import itertools
 import json
 import os
@@ -61,7 +60,7 @@ GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{wind
 GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
 GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
 HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
-TILE_WAIT = 5   # seconds _GridLock.lock waits for another holder, trying every TILE_POLL
+TILE_WAIT = 5   # seconds an explicit tile waits for the grid lock, trying every TILE_POLL
 TILE_POLL = 0.05
 TILE_LIMIT = 100   # re-tiles of a grid window within TILE_WINDOW seconds; one more stops its auto re-tiling (tile)
 TILE_WINDOW = 30
@@ -613,21 +612,16 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
 
 
 def tile(window: str, *, per_column: int | None = None, wait: bool = True, proc=subprocess.run) -> None:
-    """Lay out grid window `window` (@N) holding its _GridLock (wait: lock; else, as the grid's hooks do, return at once
-    while another tile holds it): _grid_pass's swaps and layout, sent in one tmux command that first sets @grid-busy to
-    the window, then a second command unsets it. tmux runs a command's hooks after it, so the grid's hooks start no tile
-    for this re-tile. The breaker: @grid-tiles keeps the re-tiles' times (monotonic ms) of the last TILE_WINDOW s; more
-    than TILE_LIMIT with this one: nothing applied, the grid torn down (_grid_down) and a notice shown and printed."""
+    """Lay out grid window `window` (@N) holding its _grid_lock (no wait, as the hooks: nothing while another tile holds
+    it): _grid_pass's swaps and layout in one tmux command that first sets @grid-busy, unset by a second (tmux runs a
+    command's hooks after it; @grid-busy mutes them). Over TILE_LIMIT re-tiles in TILE_WINDOW s (@grid-tiles): the grid
+    is torn down instead, with a notice."""
     if not WINDOW.fullmatch(window):
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     _per_column(per_column)
     socket = _tmux_ok(["display-message", "-p", "-t", window, "#{socket_path}"], proc).stdout.rstrip("\n")
-    with _GridLock(socket, window) as lock:
-        if wait:
-            lock.lock()
-        elif not lock.try_lock():
-            return
-        found = _grid_pass(window, per_column, proc)
+    with _grid_lock(socket, window, wait) as held:
+        found = _grid_pass(window, per_column, proc) if held else None
         if found is None:
             return
         swaps, layout, tiles = found
@@ -648,15 +642,17 @@ def tile(window: str, *, per_column: int | None = None, wait: bool = True, proc=
                       *(a for source, target in swaps for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")),
                       "select-layout", "-t", window, _render_layout(layout)], proc)
         finally:
-            _tmux_ok(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
+            with contextlib.suppress(TuiError):
+                _tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
 
 
 def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[str, str]], Cell, str] | None:
-    """A pass over grid window `window`: what to send (the swap-pane pairs, the layout) and its @grid-tiles as read;
-    None for nothing. The layout: the manager left at its current width, _grid_tree's cells in columns of per_column
-    (None: the window's @grid-per-column, else PER_COLUMN), as successive passes would leave it (_fixed_point).
-    Nothing when the window is zoomed, no grid window, already so laid out or too small for a first pass, or its layout
-    is unreadable or not its panes'; with its manager gone or alone, the grid is torn down (_grid_down)."""
+    """tile's pass: (swap-pane pairs, layout, @grid-tiles as read) to send, or None. The layout: the manager left at its
+    current width, _grid_tree's cells in columns of per_column (None: the window's @grid-per-column, else PER_COLUMN).
+    None when the window is zoomed, no grid window, already so laid out or too small, or its layout is unreadable or not
+    its panes'; with its manager gone or alone, the grid is torn down. Up to SETTLE_ITERATIONS more passes follow on the
+    result till it stops changing: with the hooks muted, a multi-pass state (an orphan group placed by the current
+    layout) would stop short."""
     fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t", 6)
     if len(fields) != 7 or fields[2] != "0" or not fields[4]:
         return None
@@ -676,116 +672,44 @@ def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[st
                              f[3] if PANE.fullmatch(f[3]) else ""))
     if per_column is None:
         per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
-
-    def step(state: tuple[list[str], Cell]) -> tuple[list[str], Cell]:
-        """(pane order, layout) after a pass: the target's panes and the target; the state itself when the pass sends
-        nothing (the target too small, or its cells the state's)."""
-        order, at = state
+    order, at = panes, current
+    for _ in range(1 + SETTLE_ITERATIONS):
         want = _grid_layout(_grid_tree(manager, order, sessions, at), width=int(width), height=int(height),
                             manager=manager, manager_width=next(c.w for c in _leaves(at) if c.pane == manager),
                             per_column=per_column)
-        return state if want is None or _leaves(want) == _leaves(at) else ([c.pane for c in _leaves(want)], want)
-
-    found = _fixed_point(step, (panes, current))
-    if _leaves(found[1]) == leaves:
-        return None
-    return _swaps(panes, found[0]), found[1], tiles
+        if want is None or _leaves(want) == _leaves(at):
+            break
+        order, at = [c.pane for c in _leaves(want)], want
+    return None if _leaves(at) == leaves else (_swaps(panes, order), at, tiles)
 
 
-def _fixed_point(step, start):
-    """The first of step(start), step(step(start)), ... that is its own step; still changing SETTLE_ITERATIONS steps
-    after the first: the last. Stands in for _grid_tree not being idempotent (it places an orphan group by the current
-    layout): a fix there can drop it."""
-    value = step(start)
-    for _ in range(SETTLE_ITERATIONS):
-        after = step(value)
-        if after == value:
-            return value
-        value = after
-    return value
-
-
-def _lock_name(socket: str, window: str) -> str:
-    """Grid window `window`'s lock file name, beside its tmux server's socket: .tui-grid-<h>-<n>.lock, <h> the first
-    12 hex digits of the socket path's SHA-256, <n> the window's number."""
-    return f".tui-grid-{hashlib.sha256(socket.encode()).hexdigest()[:12]}-{window[1:]}.lock"
-
-
-class _GridLock:
-    """Grid window `window`'s lock file (_lock_name) in its tmux server's socket dir, open till close (a context
-    manager). The socket path must be absolute; the dir and the file must pass _private_fd."""
-
-    def __init__(self, socket: str, window: str):
-        if not os.path.isabs(socket):
-            raise TuiError(f"grid lock {socket}: not an absolute path")
-        self._window = window
-        folder = os.path.dirname(socket)
-        self._path = os.path.join(folder, _lock_name(socket, window))
-        dir_fd = _private_fd(folder, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            self._fd = _private_fd(self._path, os.O_RDWR, dir_fd)
-        finally:
-            os.close(dir_fd)
-
-    def __enter__(self) -> _GridLock:
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
-
-    def close(self) -> None:
-        if self._fd >= 0:
-            os.close(self._fd)
-            self._fd = -1
-
-    def try_lock(self) -> bool:
-        """Whether it took the lock (flock), held till unlock or close; False while another open of it holds it."""
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return False
-        except OSError as e:
-            raise TuiError(f"grid lock {self._path}: {e.strerror}") from e
-        return True
-
-    def lock(self) -> None:
-        """try_lock every TILE_POLL s until it takes the lock; not within TILE_WAIT s: TuiError."""
-        end = time.monotonic() + TILE_WAIT
-        while not self.try_lock():
-            if time.monotonic() >= end:
-                raise TuiError(f"grid {self._window}: busy")
-            time.sleep(TILE_POLL)
-
-    def unlock(self) -> None:
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        except OSError as e:
-            raise TuiError(f"grid lock {self._path}: {e.strerror}") from e
-
-
-def _private_fd(path: str, flags: int, dir_fd: int | None = None) -> int:
-    """path opened with flags, never through a symlink: a dir (no dir_fd), which must be yours, writable by no one else;
-    else a file in dir_fd, created 0600 and opened without blocking (a FIFO reaches the check), which must be a regular
-    file of yours open to no one else. TuiError when not, or on an OSError."""
-    file = dir_fd is not None
-    flags |= os.O_NOFOLLOW | os.O_CLOEXEC | (os.O_CREAT | os.O_NONBLOCK if file else 0)
+@contextlib.contextmanager
+def _grid_lock(socket: str, window: str, wait: bool):
+    """Yields whether it holds grid window `window`'s lock, a flock on <socket>-<n>.lock (n: the window's number) till
+    the block ends. Held elsewhere: False; with wait, a retry every TILE_POLL s, then TuiError after TILE_WAIT s."""
+    path = f"{socket}-{window[1:]}.lock"
     try:
-        fd = os.open(os.path.basename(path) if file else path, flags, 0o600, dir_fd=dir_fd)
-        try:
-            st = os.fstat(fd)
-        except OSError:
-            os.close(fd)
-            raise
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
     except OSError as e:
         raise TuiError(f"grid lock {path}: {e.strerror}") from e
-    if not (stat.S_ISREG if file else stat.S_ISDIR)(st.st_mode) or st.st_uid != os.getuid():
-        why = f"not a {'regular file' if file else 'directory'} owned by you"
-    elif st.st_mode & (0o077 if file else 0o022):
-        why = f"not private (mode {stat.S_IMODE(st.st_mode):04o})"
-    else:
-        return fd
-    os.close(fd)
-    raise TuiError(f"grid lock {path}: {why}")
+    try:
+        end = time.monotonic() + TILE_WAIT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+            except BlockingIOError:
+                held = False
+            except OSError as e:
+                raise TuiError(f"grid lock {path}: {e.strerror}") from e
+            if held or not wait:
+                break
+            if time.monotonic() >= end:
+                raise TuiError(f"grid {window}: busy")
+            time.sleep(TILE_POLL)
+        yield held
+    finally:
+        os.close(fd)
 
 
 def _checksum(body: str) -> str:

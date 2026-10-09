@@ -1,5 +1,6 @@
 import ast
 import errno
+import fcntl
 import io
 import itertools
 import json
@@ -15,7 +16,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
-from contextlib import ExitStack, contextmanager, nullcontext, redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout, suppress
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tui_claude  # noqa: E402
@@ -110,6 +111,29 @@ def clock(test, on_sleep=lambda n: None):
     test.enterContext(unittest.mock.patch("time.monotonic", side_effect=lambda: now[0]))
     test.enterContext(unittest.mock.patch("time.sleep", side_effect=sleep))
     return slept
+
+
+def hold(test, path):
+    """Another holder of the flock on path till test ends (path created when missing). Returns its release."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    test.addCleanup(os.close, fd)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return lambda: fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def deadline(seconds=5):
+    """Fails a block still running after seconds (a blocked open is interrupted) instead of hanging."""
+    def expire(*_):
+        raise AssertionError(f"still running after {seconds} s")   # not an OSError, which _grid_lock makes a TuiError
+
+    old = signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def which(tmux=TMUX):
@@ -1989,7 +2013,7 @@ class LayoutString(unittest.TestCase):
 
 class Tile(unittest.TestCase):
     """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The server's socket is in a
-    private temp dir; the clock (clock()) at 1000 s, i.e. 1000000 ms."""
+    temp dir, @3's lock file beside it; the clock (clock()) at 1000 s, i.e. 1000000 ms."""
     SOCKET = ["tmux", "display-message", "-p", "-t", "@3", "#{socket_path}"]
     READ = ["tmux", "display-message", "-p", "-t", "@3",
             "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
@@ -2015,17 +2039,16 @@ class Tile(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-        os.chmod(self.root, 0o700)
-        self.sock = os.path.join(self.root, "default")
+        self.sock = os.path.join(tmp.name, "default")
+        self.lock = self.sock + "-3.lock"
         clock(self)
 
     def fake(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), tiles="",
-             sock=None, message=(0,), **results):
-        """A tmux printing these for @3, its socket self.sock unless sock, `message` the result of another
-        display-message; rows: (session id, name, @opener, @pane) besides mgr's."""
+             message=(0,), **results):
+        """A tmux printing these for @3, its socket self.sock, `message` the result of another display-message; rows:
+        (session id, name, @opener, @pane) besides mgr's."""
         rows = [("$1", "mgr", "", ""), *rows]
-        printed = {self.SOCKET[-1]: (0, f"{self.sock if sock is None else sock}\n"),
+        printed = {self.SOCKET[-1]: (0, f"{self.sock}\n"),
                    self.READ[-1]: (0, "\t".join((*map(str, size), zoomed, layout, manager, n, tiles)) + "\n")}
         return Tmux(fail=fail, results={
             "display-message": lambda argv: printed.get(argv[-1], message),
@@ -2061,25 +2084,23 @@ class Tile(unittest.TestCase):
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
 
     def test_a_hook_run_returns_at_once_while_another_tile_holds_the_lock(self):
-        holder = self.enterContext(tui_claude._GridLock(self.sock, "@3"))
-        holder.try_lock()
+        release = hold(self, self.lock)
         fake = self.tile(*self.WIDE, wait=False)
         self.assertEqual(fake.calls, [self.SOCKET])
-        holder.unlock()
+        release()
         fake = self.tile(*self.WIDE, wait=False)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)])
 
     def test_an_explicit_tile_waits_for_the_lock_then_tiles(self):
-        holder = self.enterContext(tui_claude._GridLock(self.sock, "@3"))
-        holder.try_lock()
+        release = hold(self, self.lock)
         fake, seen = self.fake(*self.WIDE), []
 
-        def release(sleeps):
+        def poll(sleeps):
             seen.append(list(fake.calls))
             if sleeps == 3:
-                holder.unlock()
+                release()
 
-        slept = clock(self, release)
+        slept = clock(self, poll)
         tui_claude.tile("@3", proc=fake)
         self.assertEqual(slept, [tui_claude.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
@@ -2087,32 +2108,34 @@ class Tile(unittest.TestCase):
                                       *self.applied(self.WIDE_SENT, str(int(time.monotonic() * 1000)))])
 
     def test_an_explicit_tile_gives_up_after_tile_wait(self):
-        self.enterContext(tui_claude._GridLock(self.sock, "@3")).try_lock()
+        self.assertEqual((tui_claude.TILE_POLL, tui_claude.TILE_WAIT), (0.05, 5))
+        hold(self, self.lock)
+        slept = clock(self)
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(tui_claude.TuiError, "^grid @3: busy$"):
             tui_claude.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
+        self.assertEqual(set(slept), {tui_claude.TILE_POLL})
+        self.assertTrue(5 <= sum(slept) < 5.1)   # float steps: one poll more
 
-    def test_a_refused_or_busy_lock_raises_before_the_pass_and_grid_up_returns_it(self):
-        shared = os.path.join(self.root, "shared")
-        os.mkdir(shared)
-        os.chmod(shared, 0o770)
-        for sock, want in ((os.path.join(shared, "default"), f"grid lock {shared}: not private (mode 0770)"),
-                           ("default", "grid lock default: not an absolute path"),
-                           ("", "grid lock : not an absolute path"),
-                           (None, "grid @3: busy")):
-            with self.subTest(sock=sock), ExitStack() as stack:
-                if sock is None:
-                    stack.enter_context(tui_claude._GridLock(self.sock, "@3")).try_lock()
-                fake = self.fake(*self.WIDE, sock=sock)
-                with self.assertRaisesRegex(tui_claude.TuiError, f"^{re.escape(want)}$"):
-                    tui_claude.tile("@3", proc=fake)
-                self.assertEqual(fake.calls, [self.SOCKET])
-                fake = self.fake(*self.WIDE, sock=sock)
-                with unittest.mock.patch.object(sys, "executable", PY), \
-                        unittest.mock.patch.object(tui_claude, "__file__", SCRIPT):
-                    self.assertEqual(tui_claude._grid_up("@3", "%0", 3, fake), want)
-                self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
+    def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
+        os.symlink(self.sock + "-target", self.lock)
+        want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.ELOOP)}$"
+        fake = self.fake(*self.WIDE)
+        with self.assertRaisesRegex(tui_claude.TuiError, want):
+            tui_claude.tile("@3", proc=fake)
+        self.assertEqual(fake.calls, [self.SOCKET])
+        fake = self.fake(*self.WIDE)
+        with unittest.mock.patch.object(sys, "executable", PY), \
+                unittest.mock.patch.object(tui_claude, "__file__", SCRIPT):
+            self.assertRegex(tui_claude._grid_up("@3", "%0", 3, fake), want)
+        self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
+        self.assertFalse(os.path.lexists(self.sock + "-target"))
+
+    def test_a_fifo_at_the_lock_path_does_not_hang(self):
+        os.mkfifo(self.lock, 0o600)
+        with deadline(), suppress(tui_claude.TuiError):   # flock on a FIFO: ENOTSUP on macOS
+            self.tile(*self.WIDE)
 
     def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
         # now 1000000 ms: the window is 970001..1000000; junk, stale and future times are dropped
@@ -2280,189 +2303,18 @@ class Tile(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
-        # a failed re-tile: @grid-busy unset all the same, the lock freed
-        fail = {"set-option": lambda argv: (1, "", "boom\n") if "@grid-tiles" in argv else (0,)}
+        # a failed re-tile: @grid-busy unset all the same, its failure not masking the re-tile's; the lock freed
+        fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
         fake = self.fake(*self.WIDE, **fail)
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
             tui_claude.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with tui_claude._GridLock(self.sock, "@3") as other:
-            self.assertTrue(other.try_lock())
+        with tui_claude._grid_lock(self.sock, "@3", False) as held:
+            self.assertTrue(held)
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
             tui_claude.tile("@3", proc=Tmux(fail=("display-message",)))
-
-
-class FixedPoint(unittest.TestCase):
-    def fixed_point(self, step, start=0):
-        """_fixed_point's result and the values it stepped."""
-        seen = []
-        return tui_claude._fixed_point(lambda v: seen.append(v) or step(v), start), seen
-
-    def test_the_first_value_its_own_step(self):
-        self.assertEqual(self.fixed_point(lambda n: min(n + 1, 2)), (2, [0, 1, 2]))
-        self.assertEqual(self.fixed_point(lambda n: n), (0, [0, 0]))
-
-    def test_never_settling_the_last_after_settle_iterations_more_steps(self):
-        self.assertEqual(tui_claude.SETTLE_ITERATIONS, 3)
-        self.assertEqual(self.fixed_point(lambda n: n + 1), (4, [0, 1, 2, 3]))
-
-
-@contextmanager
-def deadline(seconds=5):
-    """Fails a block still running after seconds (a blocked open is interrupted) instead of hanging."""
-    def expire(*_):
-        raise AssertionError(f"still running after {seconds} s")   # not an OSError, which could pass for a refusal
-
-    old = signal.signal(signal.SIGALRM, expire)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
-
-
-def foreign(fd, fstat=os.fstat):
-    """os.fstat, but a file other than a directory is another user's."""
-    st = fstat(fd)
-    return st if stat.S_ISDIR(st.st_mode) else unittest.mock.Mock(st_mode=st.st_mode, st_uid=st.st_uid + 1)
-
-
-class GridLock(unittest.TestCase):
-    """Window @3's lock beside socket <tmp>/default, tmp private."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-        os.chmod(self.root, 0o700)
-        self.sock = os.path.join(self.root, "default")
-        self.path = os.path.join(self.root, tui_claude._lock_name(self.sock, "@3"))
-
-    def open(self, window="@3"):
-        return self.enterContext(tui_claude._GridLock(self.sock, window))
-
-    def test_name(self):
-        self.assertEqual(tui_claude._lock_name("/tmp/tmux-501/default", "@12"), ".tui-grid-cad2a7b76af0-12.lock")
-
-    def test_created_0600_beside_the_socket_and_reopened(self):
-        for mode in (0o700, 0o755):
-            with self.subTest(dir_mode=oct(mode)):
-                os.chmod(self.root, mode)
-                self.open()
-                self.open()
-                self.assertEqual(os.listdir(self.root), [os.path.basename(self.path)])
-                self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
-
-    def test_refuses_a_relative_socket(self):
-        for sock in ("default", "tmux-501/default", ""):
-            with self.subTest(sock=sock), \
-                    self.assertRaisesRegex(tui_claude.TuiError, f"^grid lock {re.escape(sock)}: not an absolute path$"):
-                tui_claude._GridLock(sock, "@3")
-
-    def test_refuses_a_socket_dir_not_private_and_yours(self):
-        sub, link, file = (os.path.join(self.root, n) for n in ("d", "link", "file"))
-        os.mkdir(sub)
-        os.symlink(sub, link)
-        open(file, "w").close()
-        not_yours = unittest.mock.patch("os.getuid", return_value=os.getuid() + 1)
-        for folder, mode, patch, want in (
-                (sub, 0o720, nullcontext(), r"not private \(mode 0720\)$"),
-                (sub, 0o702, nullcontext(), r"not private \(mode 0702\)$"),
-                (sub, 0o700, not_yours, "not a directory owned by you$"),
-                (link, 0o700, nullcontext(), ""),   # to sub, private: not followed
-                (file, 0o700, nullcontext(), ""),
-                (os.path.join(self.root, "missing"), 0o700, nullcontext(), "")):
-            with self.subTest(folder=os.path.basename(folder), sub_mode=oct(mode)):
-                os.chmod(sub, mode)
-                with patch, self.assertRaisesRegex(tui_claude.TuiError, f"^grid lock {re.escape(folder)}: {want}"):
-                    tui_claude._GridLock(os.path.join(folder, "default"), "@3")
-                self.assertEqual(os.listdir(sub), [])
-
-    def test_refuses_a_lock_path_not_a_private_regular_file_of_yours(self):
-        def regular(mode):
-            def make(path):
-                open(path, "w").close()
-                os.chmod(path, mode)
-            return make
-
-        for name, make, patch, want in (
-                ("a symlink", lambda p: os.symlink(os.path.join(os.path.dirname(p), "target"), p), nullcontext(), ""),
-                ("a FIFO", lambda p: os.mkfifo(p, 0o600), nullcontext(), "not a regular file owned by you$"),
-                ("a directory", lambda p: os.mkdir(p, 0o700), nullcontext(), ""),
-                ("mode 0644", regular(0o644), nullcontext(), r"not private \(mode 0644\)$"),
-                ("another user's", regular(0o600), unittest.mock.patch("os.fstat", side_effect=foreign),
-                 "not a regular file owned by you$")):
-            with self.subTest(name):
-                folder = tempfile.mkdtemp(dir=self.root)
-                sock = os.path.join(folder, "default")
-                path = os.path.join(folder, tui_claude._lock_name(sock, "@3"))
-                make(path)
-                with deadline(), patch, \
-                        self.assertRaisesRegex(tui_claude.TuiError, f"^grid lock {re.escape(path)}: {want}"):
-                    tui_claude._GridLock(sock, "@3").close()
-                self.assertEqual(os.listdir(folder), [os.path.basename(path)])
-
-    def test_one_holder_at_a_time(self):
-        a, b = self.open(), self.open()
-        self.assertTrue(a.try_lock())
-        self.assertFalse(b.try_lock())
-        a.unlock()
-        self.assertTrue(b.try_lock())
-        self.assertFalse(a.try_lock())
-        self.assertTrue(self.open("@4").try_lock())
-
-    def test_close_releases_it(self):
-        with tui_claude._GridLock(self.sock, "@3") as a:
-            self.assertTrue(a.try_lock())
-        self.assertTrue(self.open().try_lock())
-
-    def test_a_second_close_closes_nothing(self):
-        a = tui_claude._GridLock(self.sock, "@3")
-        a.close()
-        b = self.open()   # takes a's fd number
-        a.close()
-        self.assertTrue(b.try_lock())
-
-    def test_unlock_failure_raises(self):
-        a = self.open()
-        a.try_lock()
-        with unittest.mock.patch("fcntl.flock", side_effect=OSError(errno.ENOLCK, "No locks available")), \
-                self.assertRaisesRegex(tui_claude.TuiError, f"^grid lock {re.escape(self.path)}: No locks available$"):
-            a.unlock()
-
-    def test_lock_takes_a_free_lock_at_once(self):
-        slept = clock(self)
-        a = self.open()
-        a.lock()
-        self.assertEqual(slept, [])
-        self.assertFalse(self.open().try_lock())
-
-    def test_lock_waits_for_the_holder(self):
-        holder = self.open()
-        holder.try_lock()
-
-        def release(sleeps):
-            if sleeps == 3:
-                holder.unlock()
-
-        slept = clock(self, on_sleep=release)
-        a = self.open()
-        a.lock()
-        self.assertEqual(slept, [tui_claude.TILE_POLL] * 3)
-        self.assertFalse(holder.try_lock())
-
-    def test_lock_gives_up_after_tile_wait(self):
-        self.open().try_lock()
-        slept = clock(self)
-        with self.assertRaisesRegex(tui_claude.TuiError, "^grid @3: busy$"):
-            self.open().lock()
-        self.assertEqual(set(slept), {tui_claude.TILE_POLL})
-        self.assertGreaterEqual(sum(slept), tui_claude.TILE_WAIT)
-        self.assertLess(sum(slept), tui_claude.TILE_WAIT + 2 * tui_claude.TILE_POLL)   # float steps: one poll more
-        self.assertEqual((tui_claude.TILE_POLL, tui_claude.TILE_WAIT), (0.05, 5))
 
 
 class Cli(unittest.TestCase):
