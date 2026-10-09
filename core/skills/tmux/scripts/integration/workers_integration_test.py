@@ -30,6 +30,8 @@ BORDER = " #{session_name} #{@state} "
 IGNORED = "tui: show: grid: --split/--split-from ignored"
 STEADY = 1   # seconds a settled layout must hold
 BREAKER_TIMEOUT = 60   # seconds a forced re-tile loop may run before the breaker must have stopped it
+RETILE_WAIT = 0.5   # seconds the loop waits for a re-tile of its hand layout
+PACE = 0.02   # seconds between the loop's looks
 
 
 class Live(unittest.TestCase):
@@ -292,8 +294,8 @@ class Grid(Live):
 
 
 class Settle(Live):
-    """mgr's window as an incident left it, built by hand before any grid exists: w1's and w2's panes (sessions of gone
-    openers old1, old2) and mgr's, in that order of ids, in pane order w2 w1 mgr under an old top-bottom layout. At
+    """mgr's window as an incident left it, built by hand before any grid exists: mgr's, w1's and w2's panes (ids in
+    that order; w1, w2 sessions of gone openers old1, old2) in pane order w2 w1 mgr under an old top-bottom layout. At
     per-column 1 it needs two tile passes, the second swapping. A layout by hand is even-vertical: even-horizontal of
     these three panes already is their grid."""
 
@@ -341,6 +343,18 @@ class Settle(Live):
             time.sleep(live_tmux.POLL)
         return layout
 
+    def hand_layout(self, tiles: str) -> tuple[str, str]:
+        """A hand even-vertical, then the window's @grid-manager and @grid-tiles once it is re-tiled (@grid-tiles no
+        longer `tiles`, @grid-busy clear), the grid is down or RETILE_WAIT s pass: one hand layout per re-tile."""
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        end = time.monotonic() + RETILE_WAIT
+        state = f"#{{{tui_claude.GRID_MANAGER}}}\t#{{{tui_claude.GRID_BUSY}}}\t#{{{tui_claude.GRID_TILES}}}"
+        while True:
+            manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split("\t")
+            if not manager or now != tiles and not busy or time.monotonic() > end:
+                return manager, now
+            time.sleep(PACE)
+
     def test_grid_up_settles(self):
         self.grid_up()
         self.settled()
@@ -352,6 +366,9 @@ class Settle(Live):
         tiles = [subprocess.Popen([sys.executable, TUI, "tile", *flag, self.window], env=env, cwd=self.cwd,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                  for flag in (["--no-wait"], []) for _ in range(8)]
+        for p in tiles:
+            self.addCleanup(p.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
+            self.addCleanup(p.kill)
         for p in tiles:
             _, err = p.communicate(timeout=TIMEOUT)
             self.assertEqual(p.returncode, 0, f"{p.args}: {err}")
@@ -370,17 +387,18 @@ class Settle(Live):
     def test_breaker_stops_a_loop(self):
         self.grid_up()
         self.settled()
-        most, end = 0, time.monotonic() + BREAKER_TIMEOUT
+        start, seen, most = time.monotonic(), 0, 0
+        tiles = self.window_option(MANAGER, tui_claude.GRID_TILES)
         while True:
-            self.tmux("select-layout", "-t", self.window, "even-vertical")
-            manager, tiles = self.tmux("display-message", "-p", "-t", self.window,
-                                       f"#{{{tui_claude.GRID_MANAGER}}}\t#{{{tui_claude.GRID_TILES}}}").split("\t")
+            manager, now = self.hand_layout(tiles)
             if not manager:
                 break
-            most = max(most, len(tiles.split()))
-            self.assertLess(time.monotonic(), end, f"still a grid after {BREAKER_TIMEOUT} s; at most {most} re-tiles")
-            time.sleep(live_tmux.POLL)
-        # the trip follows TILE_LIMIT re-tiles; the driver's last look may miss the last one
+            seen, most, tiles = seen + (now != tiles), max(most, len(now.split())), now
+            elapsed = time.monotonic() - start
+            self.assertLess(elapsed, BREAKER_TIMEOUT,
+                            f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
+                            f"trips past {tui_claude.TILE_LIMIT} in {tui_claude.TILE_WINDOW} s")
+        # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
         self.assertGreaterEqual(most, tui_claude.TILE_LIMIT - 1)
         options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN, tui_claude.GRID_TILES, tui_claude.GRID_BUSY)
         self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))

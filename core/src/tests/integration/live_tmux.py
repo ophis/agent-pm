@@ -6,6 +6,7 @@ import resource
 import select
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -58,12 +59,14 @@ class Server:
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
         """Starts the server, its global env env(), with session `manager` idle in a width x height window. The server
-        and its jobs are capped (RLIMIT_NPROC) at the user's process count plus HEADROOM, so a fork loop cannot take
-        the host."""
+        and its jobs are capped (RLIMIT_NPROC) at the user's process count (thread count on Linux, where RLIMIT_NPROC
+        counts threads) plus HEADROOM, so a fork loop cannot take the host."""
         self.size = width, height
         _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
-        ps = subprocess.run(["ps", "-U", str(os.getuid()), "-o", "pid="], capture_output=True, text=True, check=True)
-        cap = len(ps.stdout.split()) + HEADROOM
+        uid = str(os.getuid())
+        ps = (["ps", "-L", "-U", uid, "-o", "lwp="] if sys.platform.startswith("linux")
+              else ["ps", "-U", uid, "-o", "pid="])
+        cap = len(subprocess.run(ps, capture_output=True, text=True, check=True).stdout.split()) + HEADROOM
         cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
         self._out("-f", "/dev/null", "new-session", "-d", "-s", manager, "-x", str(width), "-y", str(height), *IDLE,
                   preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
