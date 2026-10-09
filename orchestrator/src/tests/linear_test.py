@@ -106,30 +106,63 @@ class TaskGroupCheck(unittest.TestCase):
                 self.assertEqual(len(gql.calls), 1)
 
 
+SEAM = "AGENT_PM_LINEAR"
+SECRET = "lin_api_SECRET"
+VIEWER = "query { viewer { id } }"
+
+
+def respond(body=b'{"data": {}}'):
+    """urlopen's return value: a response reading body."""
+    resp = mock.MagicMock()
+    resp.__enter__.return_value = io.BytesIO(body)
+    return resp
+
+
+def refused(case, call):
+    """The str code of the SystemExit call() raises, no request sent."""
+    with mock.patch.object(linear.urllib.request, "urlopen", side_effect=AssertionError("request sent")), \
+            case.assertRaises(SystemExit) as cm:
+        call()
+    case.assertIsInstance(cm.exception.code, str)
+    return cm.exception.code
+
+
+def no_seam(case):
+    """SEAM unset for case's test."""
+    env = mock.patch.dict(os.environ)
+    env.start()
+    case.addCleanup(env.stop)
+    os.environ.pop(SEAM, None)
+
+
 class LinearGql(unittest.TestCase):
+    """Without the seam: the Keychain's key, api.linear.app."""
+    def setUp(self):
+        no_seam(self)
+
     def test_harness_key_by_service_only(self):
-        calls = []
-        def run(cmd, **kw):
-            calls.append(cmd)
-            return SimpleNamespace(stdout="secret\n")
-        resp = mock.MagicMock()
-        resp.__enter__.return_value = io.BytesIO(b'{"data": {"viewer": {"id": "v"}}}')
-        with mock.patch.object(linear, "harness_service", return_value="svc-h"), \
-                mock.patch.object(linear.subprocess, "run", run), \
-                mock.patch.object(linear.urllib.request, "urlopen", return_value=resp) as urlopen:
-            self.assertEqual(linear.linear_gql("query { viewer { id } }"), {"viewer": {"id": "v"}})
-        self.assertEqual(calls, [["security", "find-generic-password", "-s", "svc-h", "-w"]])
-        self.assertEqual(urlopen.call_args[0][0].get_header("Authorization"), "secret")
+        for env in ({}, {SEAM: ""}):
+            with self.subTest(env=env):
+                calls = []
+                def run(cmd, **kw):
+                    calls.append(cmd)
+                    return SimpleNamespace(stdout="secret\n")
+                with mock.patch.dict(os.environ, env), mock.patch.object(linear, "harness_service", return_value="svc-h"), \
+                        mock.patch.object(linear.subprocess, "run", run), \
+                        mock.patch.object(linear.urllib.request, "urlopen",
+                                          return_value=respond(b'{"data": {"viewer": {"id": "v"}}}')) as urlopen:
+                    self.assertEqual(linear.linear_gql(VIEWER), {"viewer": {"id": "v"}})
+                self.assertEqual(calls, [["/usr/bin/security", "find-generic-password", "-s", "svc-h", "-w"]])
+                req = urlopen.call_args[0][0]
+                self.assertEqual((req.full_url, req.get_header("Authorization")), ("https://api.linear.app/graphql", "secret"))
 
     def test_timeout_bounds_keychain_and_request(self):
         for kw, want in (({}, 30), ({"timeout": 5}, 5)):
             with self.subTest(timeout=want):
                 run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
-                resp = mock.MagicMock()
-                resp.__enter__.return_value = io.BytesIO(b'{"data": {}}')
                 with mock.patch.object(linear, "harness_service", return_value="svc-h"), \
                         mock.patch.object(linear.subprocess, "run", run), \
-                        mock.patch.object(linear.urllib.request, "urlopen", return_value=resp) as urlopen:
+                        mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
                     linear.linear_gql("query($i: String!) { issue(id: $i) { id } }", i="TASK-1", **kw)
                 self.assertEqual(run.call_args.kwargs["timeout"], want)
                 self.assertEqual(urlopen.call_args.kwargs["timeout"], want)
@@ -144,14 +177,120 @@ class LinearGql(unittest.TestCase):
 
     def test_service_names_the_keychain_item(self):
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
-        resp = mock.MagicMock()
-        resp.__enter__.return_value = io.BytesIO(b'{"data": {}}')
         with mock.patch.object(linear, "harness_service", side_effect=AssertionError("harness key read")), \
                 mock.patch.object(linear.subprocess, "run", run), \
-                mock.patch.object(linear.urllib.request, "urlopen", return_value=resp) as urlopen:
-            linear.linear_gql("query { viewer { id } }", service="linear-api-key-pm")
-        self.assertEqual(run.call_args[0][0], ["security", "find-generic-password", "-s", "linear-api-key-pm", "-w"])
+                mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
+            linear.linear_gql(VIEWER, service="linear-api-key-pm")
+        self.assertEqual(run.call_args[0][0], ["/usr/bin/security", "find-generic-password", "-s", "linear-api-key-pm", "-w"])
         self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {})
+
+    def test_a_bad_keychain_key_raises_naming_only_the_service(self):
+        for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
+            with self.subTest(key=key), \
+                    mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(stdout=out)):
+                code = refused(self, lambda: linear.linear_gql(VIEWER, service="svc"))
+                self.assertIn("svc", code)
+                if key:
+                    self.assertNotIn(key, code)
+
+
+class HasKey(unittest.TestCase):
+    def test_without_the_seam_the_secret_is_never_read(self):
+        no_seam(self)
+        for code, want in ((0, True), (44, False)):
+            with mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(returncode=code)) as m:
+                self.assertIs(linear.has_key("svc"), want)
+            self.assertEqual(m.call_args.args[0], ["/usr/bin/security", "find-generic-password", "-s", "svc"])
+
+
+class Seam(unittest.TestCase):
+    """With the seam: linear's module docstring."""
+    URL = "http://127.0.0.1:8123/graphql"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        for p in (mock.patch.dict(os.environ), mock.patch.object(linear, "harness_service", return_value="svc-h"),
+                  mock.patch.object(linear.subprocess, "run", side_effect=AssertionError("Keychain read"))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def seam(self, data):
+        """Points SEAM at a new file holding data (JSON; a str as is); None: at a missing file."""
+        self.path = os.path.join(self.tmp, "missing.json")
+        if data is not None:
+            fd, self.path = tempfile.mkstemp(dir=self.tmp)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data if isinstance(data, str) else json.dumps(data))
+        os.environ[SEAM] = self.path
+
+    def request(self, **kw):
+        """linear_gql's request."""
+        with mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
+            linear.linear_gql(VIEWER, **kw)
+        return urlopen.call_args[0][0]
+
+    def assert_refused(self, *hidden):
+        """linear_gql, key and has_key each raise SystemExit naming SEAM and the path, holding none of hidden."""
+        for call in (lambda: linear.linear_gql(VIEWER), lambda: linear.key("svc-h", 30), lambda: linear.has_key("svc-h")):
+            code = refused(self, call)
+            self.assertIn(SEAM, code)
+            self.assertIn(self.path, code)
+            for h in hidden:
+                self.assertNotIn(h, code)
+
+    def test_url_and_keys_from_the_file_read_per_call(self):
+        self.assertEqual(linear.SEAM, SEAM)
+        self.seam({"url": self.URL, "keys": {"svc-h": "key-h", "svc-a": "key-a"}})
+        for kw, key in (({}, "key-h"), ({"service": "svc-a"}, "key-a")):
+            req = self.request(**kw)
+            self.assertEqual((req.full_url, req.get_header("Authorization")), (self.URL, key))
+        self.assertEqual(linear.key("svc-a", 30), "key-a")
+        self.seam({"url": "http://127.0.0.1:9/graphql", "keys": {"svc-h": "key-2"}})
+        req = self.request()
+        self.assertEqual((req.full_url, req.get_header("Authorization")), ("http://127.0.0.1:9/graphql", "key-2"))
+
+    def test_has_key_is_service_in_keys(self):
+        self.seam({"url": self.URL, "keys": {"svc": SECRET}})
+        self.assertEqual((linear.has_key("svc"), linear.has_key("other")), (True, False))
+
+    def test_a_bad_file_raises_without_its_text(self):
+        cases = {"unreadable": None, "not JSON": SECRET + " {", "not an object": json.dumps([self.URL, {"svc-h": SECRET}]),
+                 "no url": {"keys": {"svc-h": SECRET}}, "url not a str": {"url": [self.URL], "keys": {"svc-h": SECRET}},
+                 "no keys": {"url": self.URL, "key": SECRET}, "keys not an object": {"url": self.URL, "keys": [SECRET]},
+                 "a key not a str": {"url": self.URL, "keys": {"svc-h": [SECRET]}}}
+        for case, data in cases.items():
+            with self.subTest(case):
+                self.seam(data)
+                self.assert_refused(SECRET)
+
+    def test_url_guard(self):
+        for url in ("http://127.0.0.1:1/graphql", "http://[::1]:1/graphql"):
+            with self.subTest(url=url):
+                self.seam({"url": url, "keys": {"svc-h": "k"}})
+                self.assertEqual(self.request().full_url, url)
+        for url in ("https://127.0.0.1:1/", "http://localhost:1/", "http://127.0.0.1/", "http://127.0.0.1:1@evil/",
+                    "http://127.0.0.1.evil:1/", "http://[::1]:1@x/", "http://u:p@127.0.0.1:1/", "http://127.0.0.1:1/graphql "):
+            with self.subTest(url=url):
+                self.seam({"url": url, "keys": {"svc-h": SECRET}})
+                self.assert_refused(url, SECRET)
+
+    def test_a_missing_service_raises_naming_it(self):
+        self.seam({"url": self.URL, "keys": {"svc-a": SECRET}})
+        for call in (lambda: linear.key("svc-b", 30), lambda: linear.linear_gql(VIEWER, service="svc-b")):
+            code = refused(self, call)
+            self.assertIn("svc-b", code)
+            self.assertNotIn(SECRET, code)
+
+    def test_a_bad_key_raises_naming_only_the_service(self):
+        for key in ("", "lin api", " lin_api", "lin_api\n", "lin\tapi", "lin\x00api", "lin\u00a0api"):
+            with self.subTest(key=key):
+                self.seam({"url": self.URL, "keys": {"svc-h": key}})
+                code = refused(self, lambda: linear.linear_gql(VIEWER))
+                self.assertIn("svc-h", code)
+                if key:
+                    self.assertNotIn(key, code)
 
 
 class Helpers(unittest.TestCase):
@@ -202,9 +341,9 @@ class Log(unittest.TestCase):
             linear.log(*args, **kw)
         return err.getvalue()
 
-    def text(self):
+    def text(self, path=None):
         try:
-            with open(self.path, encoding="utf-8") as f:
+            with open(path or self.path, encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return ""
@@ -307,9 +446,9 @@ class Log(unittest.TestCase):
         for logs, written in ((self.logs, 1), (other, 1), (self.logs, 0), (other, 0)):
             with mock.patch.object(config, "LOGS_DIR", logs):
                 path = os.path.join(logs, "orchestrator.jsonl")
-                before = len(open(path).read().splitlines()) if os.path.exists(path) else 0
+                before = len(self.text(path).splitlines())
                 self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
-                self.assertEqual(len(open(path).read().splitlines()) - before, written, logs)
+                self.assertEqual(len(self.text(path).splitlines()) - before, written, logs)
 
     def test_the_plists_send_launchd_output_to_the_log(self):
         for job in ("router", "promote"):

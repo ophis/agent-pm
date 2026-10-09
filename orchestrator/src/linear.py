@@ -1,17 +1,27 @@
 """Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
 and history, and small shared helpers, among them log, the one writer of orchestrator.jsonl.
+
+AGENT_PM_LINEAR (tests only), when set and non-empty, names a JSON file {"url": str, "keys": {service: key}} standing in
+for both api.linear.app and the Keychain. The URL guard admits only http://127.0.0.1:<port>/... or
+http://[::1]:<port>/..., no user or password, no whitespace: a test key never leaves the machine. Like any env, it
+reaches the agent run: the path, never a key.
 """
 import functools
 import json
 import os
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import config  # noqa: E402
 import drive  # noqa: E402
+
+SEAM = "AGENT_PM_LINEAR"
+URL = "https://api.linear.app/graphql"
+SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keychain
 
 
 @functools.cache
@@ -21,17 +31,78 @@ def harness_service():
 
 
 def linear_gql(query, *, timeout=30, service=None, **variables):
-    """Linear as the account whose key is Keychain item `service`, default the harness account's."""
-    key = subprocess.run(["security", "find-generic-password", "-s", service or harness_service(), "-w"],
-                         capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
-    req = urllib.request.Request("https://api.linear.app/graphql",
+    """Linear, at the seam's url or else URL, as the account whose key is service's (key), default the harness
+    account's."""
+    auth = key(service or harness_service(), timeout)
+    seam = _seam()
+    req = urllib.request.Request(seam[0] if seam else URL,
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": key})
+                                 headers={"Content-Type": "application/json", "Authorization": auth})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.load(resp)
     if body.get("errors"):
         raise SystemExit(f"linear api error: {body['errors']}")
     return body["data"]
+
+
+def key(service, timeout):
+    """service's Linear key: the seam's, else its Keychain item's secret. SystemExit, naming only service, when the seam
+    lacks it or it is empty, not printable or holds whitespace (urllib's header error would echo it)."""
+    seam = _seam()
+    if seam is None:
+        found = subprocess.run([SECURITY, "find-generic-password", "-s", service, "-w"],
+                               capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
+    elif service in seam[1]:
+        found = seam[1][service]
+    else:
+        raise SystemExit(f"{SEAM}: no key for {service}")
+    if not _clean(found):
+        raise SystemExit(f"Linear key of {service}: empty, not printable or holds whitespace")
+    return found
+
+
+def has_key(service):
+    """True when service has a key: in the seam's keys, else a Keychain item (its secret never read: no -w)."""
+    seam = _seam()
+    if seam is not None:
+        return service in seam[1]
+    return subprocess.run([SECURITY, "find-generic-password", "-s", service],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def _seam():
+    """None when $AGENT_PM_LINEAR is unset or empty, else (url, keys) from the file it names. SystemExit, naming the
+    variable and the path, never the file's text, when it is unreadable, of another shape or its url fails the guard."""
+    path = os.environ.get(SEAM)
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            seam = json.load(f)
+    except (OSError, ValueError):
+        raise SystemExit(f"{SEAM} {path}: unreadable or not JSON") from None
+    url, keys = (seam.get("url"), seam.get("keys")) if isinstance(seam, dict) else (None, None)
+    if not isinstance(url, str) or not isinstance(keys, dict) or not all(isinstance(k, str) for k in keys.values()):
+        raise SystemExit(f"{SEAM} {path}: not an object with a url string and a keys object of strings")
+    if not _local(url):
+        raise SystemExit(f"{SEAM} {path}: url not http://127.0.0.1:<port>/... or http://[::1]:<port>/...")
+    return url, keys
+
+
+def _local(url):
+    """url passes the URL guard (the module docstring), parsed, never a prefix test."""
+    try:
+        u = urllib.parse.urlsplit(url)
+        port = u.port
+    except ValueError:
+        return False
+    return (_clean(url) and u.scheme == "http" and u.hostname in ("127.0.0.1", "::1") and port is not None
+            and u.username is None and u.password is None)
+
+
+def _clean(s):
+    """s is non-empty, printable and holds no whitespace."""
+    return bool(s) and s.isprintable() and not any(c.isspace() for c in s)
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
