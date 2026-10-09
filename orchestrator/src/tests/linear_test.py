@@ -121,6 +121,7 @@ def respond(body=b'{"data": {}}'):
 def refused(case, call):
     """The str code of the SystemExit call() raises, no request sent."""
     with mock.patch.object(linear.urllib.request, "urlopen", side_effect=AssertionError("request sent")), \
+            mock.patch.object(linear.urllib.request, "build_opener", side_effect=AssertionError("request sent")), \
             case.assertRaises(SystemExit) as cm:
         call()
     case.assertIsInstance(cm.exception.code, str)
@@ -175,6 +176,14 @@ class LinearGql(unittest.TestCase):
             self.assertEqual((linear.harness_service(), linear.harness_service()), ("linear-harness", "linear-harness"))
         load.assert_called_once_with()
 
+    def test_urlopen_sends_it_with_the_proxies_as_configured(self):
+        with mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(stdout="secret\n")), \
+                mock.patch.object(linear, "harness_service", return_value="svc-h"), \
+                mock.patch.object(linear.urllib.request, "build_opener", side_effect=AssertionError("opener built")), \
+                mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
+            linear.linear_gql(VIEWER)
+        urlopen.assert_called_once()
+
     def test_service_names_the_keychain_item(self):
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
         with mock.patch.object(linear, "harness_service", side_effect=AssertionError("harness key read")), \
@@ -227,9 +236,10 @@ class Seam(unittest.TestCase):
 
     def request(self, **kw):
         """linear_gql's request."""
-        with mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
+        with mock.patch.object(linear.urllib.request, "build_opener") as build:
+            build.return_value.open.return_value = respond()
             linear.linear_gql(VIEWER, **kw)
-        return urlopen.call_args[0][0]
+        return build.return_value.open.call_args[0][0]
 
     def assert_refused(self, *hidden):
         """linear_gql, key and has_key each raise SystemExit naming SEAM and the path, holding none of hidden."""
@@ -250,6 +260,29 @@ class Seam(unittest.TestCase):
         self.seam({"url": "http://127.0.0.1:9/graphql", "keys": {"svc-h": "key-2"}})
         req = self.request()
         self.assertEqual((req.full_url, req.get_header("Authorization")), ("http://127.0.0.1:9/graphql", "key-2"))
+
+    def test_each_call_reads_the_file_once(self):
+        self.seam({"url": self.URL, "keys": {"svc-h": "key-h", "svc-a": "key-a"}})
+        for kw in ({}, {"service": "svc-a"}):
+            with self.subTest(kw=kw), mock.patch.object(linear, "open", create=True, wraps=open) as opened:
+                self.request(**kw)
+            self.assertEqual([c.args[0] for c in opened.call_args_list], [self.path])
+
+    def test_the_request_skips_proxies(self):
+        self.seam({"url": self.URL, "keys": {"svc-h": "key-h"}})
+        for name in ("HTTP_PROXY", "ALL_PROXY", "all_proxy", "no_proxy", "NO_PROXY"):
+            os.environ.pop(name, None)
+        os.environ["http_proxy"] = "http://proxy.invalid:3128"
+        sent = []
+
+        def do_open(handler, http_class, req, **kw):
+            sent.append((req.host, req.timeout))
+            resp = respond(b'{"data": {"viewer": {"id": "v"}}}')
+            resp.code = 200
+            return resp
+        with mock.patch.object(linear.urllib.request.AbstractHTTPHandler, "do_open", do_open):
+            self.assertEqual(linear.linear_gql(VIEWER, timeout=5), {"viewer": {"id": "v"}})
+        self.assertEqual(sent, [("127.0.0.1:8123", 5)])
 
     def test_has_key_is_service_in_keys(self):
         self.seam({"url": self.URL, "keys": {"svc": SECRET}})

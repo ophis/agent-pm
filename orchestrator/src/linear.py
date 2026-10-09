@@ -2,9 +2,9 @@
 and history, and small shared helpers, among them log, the one writer of orchestrator.jsonl.
 
 AGENT_PM_LINEAR (tests only), when set and non-empty, names a JSON file {"url": str, "keys": {service: key}} standing in
-for both api.linear.app and the Keychain. The URL guard admits only http://127.0.0.1:<port>/... or
-http://[::1]:<port>/..., no user or password, no whitespace: a test key never leaves the machine. Like any env, it
-reaches the agent run: the path, never a key.
+for both api.linear.app and the Keychain, its request skipping proxies. The URL guard admits only
+http://127.0.0.1:<port>/... or http://[::1]:<port>/..., no user or password, no whitespace: a test key never leaves
+the machine. Like any env, it reaches the agent run: the path, never a key.
 """
 import functools
 import json
@@ -32,13 +32,14 @@ def harness_service():
 
 def linear_gql(query, *, timeout=30, service=None, **variables):
     """Linear, at the seam's url or else URL, as the account whose key is service's (key), default the harness
-    account's."""
-    auth = key(service or harness_service(), timeout)
+    account's. The seam is read once, so its url and key pair."""
     seam = _seam()
+    auth = _secret(service or harness_service(), timeout, seam)
     req = urllib.request.Request(seam[0] if seam else URL,
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": auth})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    send = urllib.request.build_opener(urllib.request.ProxyHandler({})).open if seam else urllib.request.urlopen
+    with send(req, timeout=timeout) as resp:
         body = json.load(resp)
     if body.get("errors"):
         raise SystemExit(f"linear api error: {body['errors']}")
@@ -48,7 +49,11 @@ def linear_gql(query, *, timeout=30, service=None, **variables):
 def key(service, timeout):
     """service's Linear key: the seam's, else its Keychain item's secret. SystemExit, naming only service, when the seam
     lacks it or it is empty, not printable or holds whitespace (urllib's header error would echo it)."""
-    seam = _seam()
+    return _secret(service, timeout, _seam())
+
+
+def _secret(service, timeout, seam):
+    """key, given the seam as _seam() returned it."""
     if seam is None:
         found = subprocess.run([SECURITY, "find-generic-password", "-s", service, "-w"],
                                capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
