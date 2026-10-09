@@ -37,9 +37,11 @@ PACE = 0.02   # seconds between the loop's looks
 
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
-    started and attached, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
-    mgr's manager directory (core/src/manager.py). Commands run as processes in mgr's pane unless `inside` names
-    another session (None: no pane, Server.env() alone)."""
+    started and shown in a client, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
+    mgr's manager directory (core/src/manager.py), which mgr attaches to (`workers.py attach`) unless ATTACH is False.
+    Commands run as processes in mgr's pane unless `inside` names another session (None: no pane, Server.env()
+    alone)."""
+    ATTACH = True
 
     def setUp(self):
         self.agent_pm = hermetic.home(self)
@@ -50,6 +52,8 @@ class Live(unittest.TestCase):
         self.events = self.events_of(MANAGER)
         self.log, self.cwd = (os.path.join(root, n) for n in ("log.jsonl", "work"))
         os.mkdir(self.cwd)
+        if self.ATTACH:
+            self.attach()
 
     def events_of(self, manager: str) -> str:
         return os.path.join(self.agent_pm, "managers", manager, "events")
@@ -66,6 +70,10 @@ class Live(unittest.TestCase):
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call(sys.executable, WORKERS, *args, **kw)
+
+    def attach(self, *args: str, **kw) -> subprocess.CompletedProcess:
+        """`workers.py attach args…`, which start and next-event need first; fails unless it exits 0."""
+        return self.ok(self.workers("attach", *args, **kw))
 
     def tui(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call(sys.executable, TUI, *args, **kw)
@@ -286,6 +294,7 @@ class Grid(Live):
         for i, name in enumerate(("m1", "m2", "m3"), 1):
             self.started(name)
             self.grid([[f"m{k}" for k in range(1, i + 1)]])
+        self.attach(inside="m2")
         self.started("z1", inside="m2")
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
@@ -417,7 +426,9 @@ class Settle(Live):
 
 
 class Managers(Live):
-    """Where a worker's events go: core/skills/tmux/SKILL.md › Start 1."""
+    """Where a worker's events go: core/skills/tmux/SKILL.md › Start 1. Each test attaches only the directories it
+    uses."""
+    ATTACH = False
 
     def done_lines(self, path: str, name: str) -> list[str]:
         """`path`'s lines once one is `HH:MM:SS <name> done`."""
@@ -428,9 +439,11 @@ class Managers(Live):
         return live_tmux.wait(check, what=f"`{name} done` in {path}")
 
     def test_own_session_and_worker_in_worker(self):
+        self.attach()
         self.started("w1")
         self.assertEqual(self.server.option("w1", "@events"), self.events)
         self.done_lines(self.events, "w1")
+        self.attach(inside="w1")
         self.started("w2", inside="w1")
         inner = self.events_of("w1")
         self.assertEqual(self.server.option("w2", "@events"), inner)
@@ -438,6 +451,7 @@ class Managers(Live):
         self.assertEqual([x.split(" ")[1:] for x in live_tmux.events(self.events)], [["w1", "done"]])
 
     def test_manager_flag(self):
+        self.attach("--manager", "other")
         self.started("w1", "--manager", "other")
         other = self.events_of("other")
         self.assertEqual(self.server.option("w1", "@events"), other)
@@ -454,8 +468,11 @@ class Managers(Live):
 
 
 class Splits(Live):
+    ATTACH = False
+
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
+        self.attach("--manager", MANAGER, inside=None)   # outside tmux: no lease, so start from there may run
         self.started("w1", "--manager", MANAGER, "--split-from", MANAGER, "--split", "below", inside=None)
         pane = self.server.pane_of("w1")
         panes = self.server.panes(f"={MANAGER}:")

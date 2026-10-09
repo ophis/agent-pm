@@ -863,6 +863,7 @@ class MainTest(WorkerCase):
         super().setUp()
         self.agent_pm = hermetic.home(self)
         self.default = os.path.join(self.agent_pm, "managers", "m1", "events")
+        attached("--manager", "m1")
 
     def run_main(self, argv, fake=None):
         out, err = io.StringIO(), io.StringIO()
@@ -984,8 +985,8 @@ class MainTest(WorkerCase):
 
 
 class ManagerDirTest(WorkerCase):
-    """main's events file is the manager directory's (core/skills/tmux/SKILL.md › Start 1); start and next_event are
-    fakes, the tmux session of the caller's pane `session` (none: outside tmux)."""
+    """main's events file is the manager directory's (core/skills/tmux/SKILL.md › Start 1), attached first; start and
+    next_event are fakes, the tmux session of the caller's pane `session` (none: outside tmux)."""
     CMDS = (["start", "w1"], ["next-event", "--after", "0"])
 
     def setUp(self):
@@ -1009,15 +1010,14 @@ class ManagerDirTest(WorkerCase):
         called, at = (start, 1) if argv[0] == "start" else (nxt, 0)
         return rc, err.getvalue(), called.call_args.args[at] if called.called else None
 
-    def test_default_is_the_own_sessions_events_made_on_first_use(self):
+    def test_default_is_the_own_sessions_events(self):
         for cmd, session in zip(self.CMDS, ("m1", "m2")):
             with self.subTest(cmd=cmd[0]):
-                self.assertFalse(os.path.exists(self.events_of(session)))
+                attached(own=session)
                 self.assertEqual(self.run_main(cmd, session), (0, "", self.events_of(session)))
-                self.assertEqual(stat.S_IMODE(os.stat(self.events_of(session)).st_mode), 0o600)
-                self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(self.events_of(session))).st_mode), 0o700)
 
     def test_manager_overrides_the_own_session(self):
+        attached("--manager", "other", own="mgr")
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
                 self.assertEqual(self.run_main([cmd[0], "--manager", "other", *cmd[1:]], "mgr"),
@@ -1025,6 +1025,7 @@ class ManagerDirTest(WorkerCase):
         self.assertEqual(os.listdir(self.managers), ["other"])
 
     def test_a_worker_that_starts_workers_uses_its_own_directory(self):
+        attached(own="w1")
         self.assertEqual(self.run_main(["start", "w2"], "w1"), (0, "", self.events_of("w1")))
 
     def test_outside_tmux_without_manager_exit_1(self):
@@ -1055,8 +1056,9 @@ class ManagerDirTest(WorkerCase):
                          (1, "workers: own tmux session 'a.b': want [A-Za-z0-9_-]+; give --manager <name>\n", None))
 
     def test_a_bad_directory_exit_1(self):
-        with open(self.managers, "w"):
-            pass
+        real = os.path.join(self.dir, "managers")
+        os.makedirs(os.path.join(real, "m1"), 0o700)
+        os.symlink(real, self.managers)
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
                 self.assertEqual(self.run_main([cmd[0], "--manager", "m1", *cmd[1:]]),
@@ -1072,6 +1074,7 @@ class NextEventTest(unittest.TestCase):
     A, B, C = "10:00:01 w1 done", "10:00:02 w2 blocked", "10:00:03 w1 outcome needs_input"
 
     def setUp(self):
+        isolate(self)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = os.path.join(os.path.realpath(self.tmp.name), "events")
@@ -1202,7 +1205,8 @@ class NextEventTest(unittest.TestCase):
             self.error(os.strerror(errno.EISDIR), path=self.tmp.name)
 
     def test_main_prints_line_and_event(self):
-        path = manager.events(manager.directory("m1"))
+        attached("--manager", "m1")
+        path = manager.events(manager.directory("m1"), create=False)
         self.append(nl(self.A, self.B), path)
         with self.sleeping():
             self.assertEqual(self.run_main("--after", "1"), (0, f"2 {self.B}\n", ""))
@@ -1210,6 +1214,7 @@ class NextEventTest(unittest.TestCase):
             self.assertEqual(self.run_main("--after", "end"), (0, f"3 {self.C}\n", ""))
 
     def test_main_error_exit(self):
+        attached("--manager", "m1")
         err = workers.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
         with mock.patch.object(workers, "next_event", side_effect=err):
             self.assertEqual(self.run_main("--after", "0"), (1, "", f"workers: {err}\n"))
@@ -1239,6 +1244,7 @@ class NextEventContentTest(WorkerCase):
     def setUp(self):
         super().setUp()
         hermetic.home(self)
+        attached("--manager", "m1")
 
     def run_event(self, event, fake, *transcript):
         """main's (exit code, stdout, stderr) for next-event on an events file holding only `event`; transcript: the
@@ -1248,7 +1254,7 @@ class NextEventContentTest(WorkerCase):
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, SID + ".jsonl"), "w") as f:
                 f.write("".join(transcript))
-        with open(manager.events(manager.directory("m1")), "w") as f:
+        with open(manager.events(manager.directory("m1"), create=False), "w") as f:
             f.write(event + "\n")
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(workers.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
@@ -1383,9 +1389,26 @@ class Server:
         return [c for c in self.calls if c[1] == cmd]
 
 
-class AttachTest(WorkerCase):
-    """workers.py attach on a fake tmux server, the caller in tmux session mgr unless a test says otherwise; show is
-    self.show."""
+def attached(*argv, own=None):
+    """Runs `workers.py attach argv…` on a fake tmux server (Server), the caller in tmux session `own` (None: outside
+    tmux); fails unless it exits 0. What start and next-event need first."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
+    if own:
+        env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
+    err = io.StringIO()
+    with mock.patch.object(workers.subprocess, "run", Server(own)), mock.patch.dict(os.environ, env, clear=True), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        rc = workers.main(["attach", *argv])
+    if rc:
+        raise AssertionError(f"attach exited {rc}: {err.getvalue()}")
+
+
+MGR = {"session": "mgr", "since": WHEN}
+OTHER = {"session": "other", "since": WHEN}
+
+
+class RosterCase(WorkerCase):
+    """mgr's manager directory, its roster seeded by a test, on a fake tmux server (Server)."""
 
     def setUp(self):
         super().setUp()
@@ -1393,6 +1416,46 @@ class AttachTest(WorkerCase):
         self.mdir = os.path.join(self.agent_pm, "managers", "mgr")
         self.path = os.path.join(self.mdir, "roster.json")
         self.lock = os.path.join(self.mdir, "roster.lock")
+
+    def seed(self, holder=None, cursor=0, **entries):
+        """roster.json holding these entries; returns its bytes."""
+        manager.ensure(self.mdir)
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": 0, "entries": entries}, f)
+        return self.bytes()
+
+    def bytes(self):
+        with open(self.path, "rb") as f:
+            return f.read()
+
+    def entries(self):
+        return json.loads(self.bytes())["entries"]
+
+    def held(self):
+        """The FR-13 refusal for OTHER, as main prints it."""
+        return (f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
+                "run workers.py release, or end that session\n")
+
+    def not_attached(self):
+        return f"workers: manager directory {self.mdir} not attached: run workers.py attach first\n"
+
+    def run_main(self, server, *argv):
+        """main's (exit code, stdout, stderr) for argv, the caller in tmux session server.own."""
+        env = dict(self.env)
+        if server.own:
+            env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(workers.subprocess, "run", server), mock.patch.dict(os.environ, env), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = workers.main(list(argv))
+        return rc, out.getvalue(), err.getvalue()
+
+
+class AttachTest(RosterCase):
+    """workers.py attach, the caller in tmux session mgr unless a test says otherwise; show is self.show."""
+
+    def setUp(self):
+        super().setUp()
         self.shows, self.then = [], None
         p = mock.patch.object(tui_claude, "show", self.show)
         p.start()
@@ -1419,30 +1482,9 @@ class AttachTest(WorkerCase):
         with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
             f.write(text)
 
-    def seed(self, holder=None, **entries):
-        """roster.json holding these entries; returns its bytes."""
-        manager.ensure(self.mdir)
-        with open(self.path, "w") as f:
-            json.dump({"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": entries}, f)
-        return self.bytes()
-
-    def bytes(self):
-        with open(self.path, "rb") as f:
-            return f.read()
-
-    def entries(self):
-        return json.loads(self.bytes())["entries"]
-
     def attach(self, server, *argv):
         """main's (exit code, stdout, stderr) for `attach *argv`."""
-        env = dict(self.env)
-        if server.own:
-            env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
-        out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(workers.subprocess, "run", server), mock.patch.dict(os.environ, env), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["attach", *argv])
-        return rc, out.getvalue(), err.getvalue()
+        return self.run_main(server, "attach", *argv)
 
     def synced(self, server, *argv):
         """attach's stdout; asserts exit 0 and nothing on stderr."""
@@ -1470,11 +1512,9 @@ class AttachTest(WorkerCase):
     def test_refused_by_a_live_other_holder_writing_nothing(self):
         for own in ("mgr", None):
             with self.subTest(own=own):
-                before = self.seed(holder={"session": "other", "since": WHEN}, w1=entry())
+                before = self.seed(holder=OTHER, w1=entry())
                 server = Server(own, sessions={"other": opts()})
-                self.assertEqual(self.attach(server, "--manager", "mgr"), (
-                    1, "", f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that "
-                           "manager to run workers.py release, or end that session\n"))
+                self.assertEqual(self.attach(server, "--manager", "mgr"), (1, "", self.held()))
                 self.assertEqual(self.bytes(), before)
                 self.assertEqual(server.ran("list-sessions"), [])
 
@@ -1766,6 +1806,165 @@ class AttachTest(WorkerCase):
         self.assertEqual(err, f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
                               f"tui: session w1: {cmd}\n"
                               f"tui: show: {tui_claude.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
+
+
+class LeaseTest(RosterCase):
+    """start and next-event check the lease (manager.check) before anything else and make nothing; start and
+    next_event are fakes."""
+    CMDS = (["start", "w1"], ["next-event", "--after", "0"])
+
+    def setUp(self):
+        super().setUp()
+        self.fakes = []
+        for name, value in (("start", SID), ("next_event", (1, "10:00:01 w1 outcome done"))):
+            p = mock.patch.object(workers, name, return_value=value)
+            self.fakes.append(p.start())
+            self.addCleanup(p.stop)
+
+    def ran(self, server, cmd):
+        """(exit code, stderr, whether start or next_event ran) for `cmd --manager mgr`."""
+        for fake in self.fakes:
+            fake.reset_mock()
+        rc, _, err = self.run_main(server, *cmd, "--manager", "mgr")
+        return rc, err, any(fake.called for fake in self.fakes)
+
+    def test_refused_while_another_live_session_holds(self):
+        before = self.seed(OTHER)
+        for own in ("mgr", None):
+            for cmd in self.CMDS:
+                with self.subTest(own=own, cmd=cmd[0]):
+                    self.assertEqual(self.ran(Server(own, sessions={"other": opts()}), cmd), (1, self.held(), False))
+                    self.assertEqual(self.bytes(), before)
+
+    def test_refused_in_tmux_when_not_the_holder(self):
+        for holder in (None, OTHER):
+            before = self.seed(holder)
+            for cmd in self.CMDS:
+                with self.subTest(holder=holder, cmd=cmd[0]):
+                    self.assertEqual(self.ran(Server(), cmd), (1, self.not_attached(), False))
+                    self.assertEqual(self.bytes(), before)
+
+    def test_refused_when_the_directory_is_missing_which_stays_missing(self):
+        for own in ("mgr", None):
+            for cmd in self.CMDS:
+                with self.subTest(own=own, cmd=cmd[0]):
+                    self.assertEqual(self.ran(Server(own), cmd), (1, self.not_attached(), False))
+                    self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_allowed_for_the_holder(self):
+        before = self.seed(MGR)
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.ran(Server(), cmd), (0, "", True))
+                self.assertEqual(self.bytes(), before)
+
+    def test_allowed_outside_tmux_without_a_live_holder_writing_no_roster(self):
+        manager.events(self.mdir)   # as drive.py and router.py --tui still make it
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.ran(Server(None), cmd), (0, "", True))
+                self.assertFalse(os.path.exists(self.path))
+        before = self.seed(OTHER)
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0], holder="dead"):
+                self.assertEqual(self.ran(Server(None), cmd), (0, "", True))
+                self.assertEqual(self.bytes(), before)
+
+
+class RosterCommandsTest(RosterCase):
+    """release, note and forget, the caller in tmux session mgr unless a test says otherwise."""
+    CMDS = (["release"], ["note", "w1", "x"], ["forget", "w1"])
+
+    def test_refused_without_the_lease_writing_nothing(self):
+        cases = {"another live holder": (OTHER, {"other": opts()}, self.held()),
+                 "no holder": (None, {}, self.not_attached()),
+                 "a dead other holder": (OTHER, {}, self.not_attached())}
+        for why, (holder, sessions, msg) in cases.items():
+            for cmd in self.CMDS:
+                with self.subTest(why, cmd=cmd[0]):
+                    before = self.seed(holder, w1=entry(state="gone"))
+                    self.assertEqual(self.run_main(Server(sessions=sessions), *cmd), (1, "", msg))
+                    self.assertEqual(self.bytes(), before)
+
+    def test_refused_when_the_directory_is_missing_which_stays_missing(self):
+        for own in ("mgr", None):
+            for cmd in self.CMDS:
+                with self.subTest(own=own, cmd=cmd[0]):
+                    self.assertEqual(self.run_main(Server(own), *cmd, "--manager", "mgr"), (1, "", self.not_attached()))
+                    self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_release_by_the_holder_keeps_the_cursor(self):
+        self.seed(MGR, cursor=7, w1=entry())
+        self.assertEqual(self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", ""))
+        self.assertEqual(json.loads(self.bytes()),
+                         {"version": 1, "holder": None, "cursor": 7, "gen": 0, "entries": {"w1": entry()}})
+
+    def test_release_outside_tmux_without_a_live_holder(self):
+        self.seed(OTHER, cursor=7)
+        self.assertEqual(self.run_main(Server(None), "release", "--manager", "mgr"),
+                         (0, f"workers: released {self.mdir}\n", ""))
+        r = json.loads(self.bytes())
+        self.assertEqual((r["holder"], r["cursor"]), (None, 7))
+
+    def test_note_sets_and_an_empty_one_clears(self):
+        self.seed(MGR, w1=entry(), w2=entry(note="old"))
+        for argv in (["w1", "check the logs"], ["w2", ""]):
+            self.assertEqual(self.run_main(Server(), "note", *argv), (0, "", ""))
+        self.assertEqual(self.entries(), {"w1": entry(note="check the logs"), "w2": entry()})
+
+    def test_note_of_500_characters(self):
+        self.seed(MGR, w1=entry())
+        self.assertEqual(self.run_main(Server(), "note", "w1", "x" * 500), (0, "", ""))
+        self.assertEqual(self.entries()["w1"]["note"], "x" * 500)
+
+    def test_a_long_or_unprintable_note_is_refused_writing_nothing(self):
+        unprintable = "want printable text (no control character, U+2028 or U+2029)"
+        cases = {"x" * 501: "note: 501 characters: want at most 500",
+                 **{text: f"note: {text!r}: {unprintable}" for text in ("a\nb", "a\x9fb", "a b", "\x7f", "a\tb")}}
+        for text, msg in cases.items():
+            with self.subTest(msg):
+                before = self.seed(MGR, w1=entry())
+                self.assertEqual(self.run_main(Server(), "note", "w1", text), (1, "", f"workers: {msg}\n"))
+                self.assertEqual(self.bytes(), before)
+
+    def test_note_and_forget_need_an_entry(self):
+        for cmd in (["note", "w9", "x"], ["forget", "w9"]):
+            with self.subTest(cmd=cmd[0]):
+                before = self.seed(MGR, w1=entry())
+                self.assertEqual(self.run_main(Server(), *cmd), (1, "", "workers: w9 not in roster\n"))
+                self.assertEqual(self.bytes(), before)
+
+    def test_note_and_forget_check_the_name(self):
+        for cmd in (["note", "a b", "x"], ["forget", "a b"]):
+            with self.subTest(cmd=cmd[0]):
+                before = self.seed(MGR, w1=entry())
+                self.assertEqual(self.run_main(Server(), *cmd),
+                                 (1, "", "workers: bad name 'a b': use [A-Za-z0-9_-]+\n"))
+                self.assertEqual(self.bytes(), before)
+
+    def test_forget_removes_an_entry_no_session_keeps(self):
+        self.seed(MGR, w1=entry(state="gone"), r1=entry("role", tui="r1-tui"), w2=entry())
+        self.assertEqual(self.run_main(Server(sessions={"w2": opts()}), "forget", "w1"), (0, "", ""))
+        self.assertEqual(self.run_main(Server(sessions={"w2": opts()}), "forget", "r1"), (0, "", ""))
+        self.assertEqual(self.entries(), {"w2": entry()})
+
+    def test_forget_refuses_a_live_entry_writing_nothing(self):
+        """A worker by its session; a role or pipeline by its driver (its name) or its tui."""
+        entries = {"w1": entry(), "r1": entry("role", tui="r1-tui"), "r2": entry("role", tui="r2-tui"),
+                   "p1": entry("pipeline", tui="p1-tui")}
+        server = Server(sessions={"w1": opts(), "r1": opts(), "r2-tui": opts(), "p1-tui": opts()})
+        for name, session in (("w1", "w1"), ("r1", "r1"), ("r2", "r2-tui"), ("p1", "p1-tui")):
+            with self.subTest(name):
+                before = self.seed(MGR, **entries)
+                self.assertEqual(self.run_main(server, "forget", name),
+                                 (1, "", f"workers: {name}: session {session} is live\n"))
+                self.assertEqual(self.bytes(), before)
+
+    def test_forget_after_a_failed_list_sessions_writes_nothing(self):
+        before = self.seed(MGR, w1=entry(state="gone"))
+        self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "forget", "w1"),
+                         (1, "", "workers: tmux list-sessions: boom\n"))
+        self.assertEqual(self.bytes(), before)
 
 
 if __name__ == "__main__":

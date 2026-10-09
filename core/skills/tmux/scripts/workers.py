@@ -369,10 +369,17 @@ def _place(r: dict, name: str, options: dict) -> None:
             manager.set_entry(r, name, {**r["entries"][name], key: options[key]})
 
 
+def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
+    """Entry `name`'s live sessions, None where not live: its pane session (a worker's own, a role's or pipeline's tui)
+    and a role's or pipeline's driver (the session of its name). Either live: the entry is."""
+    pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
+    return (pane if pane in live else None), (driver if driver in live else None)
+
+
 def _sync(r: dict, live: dict) -> dict[str, str]:
-    """Syncs roster r's entries with the live sessions; returns each live entry's pane session (a worker's own, a role's
-    or pipeline's tui) by entry name. A worker whose session is gone takes the name of the one live session with its
-    sid, when no entry has that name."""
+    """Syncs roster r's entries with the live sessions; returns each live entry's pane session (_sessions) by entry
+    name. A worker whose session is gone takes the name of the one live session with its sid, when no entry has that
+    name."""
     entries = r["entries"]
     for name in sorted(entries):
         sid = entries[name]["sid"]
@@ -383,17 +390,15 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
     panes = {}
     for name in sorted(entries):
         e = entries[name]
-        worker = e["kind"] == "worker"
-        session = name if worker else e["tui"]
-        session = session if session in live else None
-        if session is None and (worker or name not in live):
-            e["state"] = "gone" if worker or not _finished(e["cwd"]) else "finished"
+        pane, driver = _sessions(name, e, live)
+        if pane is None and driver is None:
+            e["state"] = "gone" if e["kind"] == "worker" or not _finished(e["cwd"]) else "finished"
             continue
-        state = live[session]["state"] if session else "working"
+        state = live[pane]["state"] if pane else "working"
         e["state"] = state if state in LIVE_STATES else "working"
-        if session:
-            _place(r, name, live[session])
-            panes[name] = session
+        if pane:
+            _place(r, name, live[pane])
+            panes[name] = pane
     return panes
 
 
@@ -476,6 +481,45 @@ def attach(directory: str, own: str | None, *, proc=subprocess.run) -> str:
     return _table(r["entries"], shown)
 
 
+@contextlib.contextmanager
+def _leased(directory: str, own: str | None, proc, *, write: bool = True):
+    """directory's roster() block, its lease checked first (manager.check); a ManagerError as a WorkersError."""
+    try:
+        with manager.roster(directory, write=write) as r:
+            manager.check(r, directory, own, proc=proc)
+            yield r
+    except manager.ManagerError as e:
+        raise WorkersError(str(e)) from e
+
+
+def release(directory: str, own: str | None, *, proc=subprocess.run) -> None:
+    """Gives up the lease on directory: no holder, the cursor kept."""
+    with _leased(directory, own, proc) as r:
+        r["holder"] = None
+
+
+def note(directory: str, own: str | None, name: str, text: str, *, proc=subprocess.run) -> None:
+    """Sets entry `name`'s note to text; "" clears it."""
+    _check(name)
+    with _leased(directory, own, proc) as r:
+        if name not in r["entries"]:
+            raise WorkersError(f"{name} not in roster")
+        if len(text) > manager.NOTE_MAX:
+            raise WorkersError(f"note: {len(text)} characters: want at most {manager.NOTE_MAX}")
+        if not manager.printable(text):
+            raise WorkersError(f"note: {text!r}: want printable text (no control character, U+2028 or U+2029)")
+        r["entries"][name]["note"] = text or None
+
+
+def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
+    """Removes entry `name`; refused, nothing written, while a session keeps it live (_sessions)."""
+    _check(name)
+    with _leased(directory, own, proc) as r:
+        pane, driver = _sessions(name, manager.remove(r, name), _live(proc))
+        if pane or driver:
+            raise WorkersError(f"{name}: session {pane or driver} is live")
+
+
 def _directory(name: str | None) -> str:
     """Manager `name`'s directory, the filesystem untouched; `name` None: the caller's tmux session's
     (manager.directory). Raises outside tmux without a name."""
@@ -489,11 +533,11 @@ def _directory(name: str | None) -> str:
 
 
 def _events(name: str | None) -> str:
-    """The events file of _directory(name), made on first use."""
-    try:
-        return manager.events(_directory(name))
-    except manager.ManagerError as e:
-        raise WorkersError(str(e)) from e
+    """The events file of _directory(name), once its lease check passes (_leased); makes nothing but roster.lock."""
+    directory = _directory(name)
+    with _leased(directory, _own(), subprocess.run, write=False):
+        pass
+    return manager.events(directory, create=False)
 
 
 def _own() -> str | None:
@@ -535,10 +579,27 @@ def main(argv=None) -> int:
     p.add_argument("--after", type=_after, required=True)
     p = sub.add_parser("attach")
     p.add_argument("--manager", help="manager directory to attach to (default: your tmux session's)")
+    p = sub.add_parser("release")
+    p.add_argument("--manager", help="manager directory to release (default: your tmux session's)")
+    p = sub.add_parser("note")
+    p.add_argument("name")
+    p.add_argument("text", help="'' clears it")
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
+    p = sub.add_parser("forget")
+    p.add_argument("name")
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "attach":
             print(attach(_directory(a.manager), _own(), proc=subprocess.run), end="")
+        elif a.cmd == "release":
+            directory = _directory(a.manager)
+            release(directory, _own(), proc=subprocess.run)
+            print(f"workers: released {directory}")
+        elif a.cmd == "note":
+            note(_directory(a.manager), _own(), a.name, a.text, proc=subprocess.run)
+        elif a.cmd == "forget":
+            forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "start":
             sid = start(a.name, _events(a.manager), cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
                         env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
