@@ -600,6 +600,13 @@ def parameter_names(role, task=None, **changes):
     return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
 
 
+GENERIC_NAME = re.compile(r"(?<![/\w])(agent-pm|autopilot):[\w-]+|\bthe [\w-]+ skill\b")
+
+
+def generic_names(text):
+    return [line for line in text.splitlines() if GENERIC_NAME.search(line)]
+
+
 LANGUAGE_RULE = "headings and fixed labels included"
 REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>",
              "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
@@ -607,6 +614,19 @@ CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name
                  "`Checkout:`; no `Checkout:` → drop it.")
 PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
         f"that task's file, `{TASKS}/<task>.md`, and follow its steps in order.")
+
+
+class GenericNames(unittest.TestCase):
+    def test_a_plugin_skill_without_its_slash(self):
+        text = "run autopilot:build\nthen `agent-pm:tmux`\nor x/agent-pm:act-as"
+        self.assertEqual(generic_names(text), ["run autopilot:build", "then `agent-pm:tmux`"])
+
+    def test_the_x_skill(self):
+        text = "the act-as skill\nthe tmux skill's workers\nthe skill"
+        self.assertEqual(generic_names(text), ["the act-as skill", "the tmux skill's workers"])
+
+    def test_slash_commands_and_workflow_names_pass(self):
+        self.assertEqual(generic_names("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research"), [])
 
 
 class RealCore(unittest.TestCase):
@@ -887,6 +907,13 @@ class RealCore(unittest.TestCase):
         for path in skills:
             with open(path) as f:
                 self.assertNotIn("Linear", f.read(), path)
+
+    def test_skills_and_config_comments_name_skills_by_slash_command(self):
+        for path in glob.glob(os.path.join(CORE, "skills", "*", "SKILL.md")):
+            with open(path) as f:
+                self.assertEqual(generic_names(f.read()), [], path)
+        with open(os.path.join(CORE, compose.CONFIG)) as f:
+            self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
 
     def test_only_the_user_loads_the_manager_guidelines(self):
         with open(os.path.join(CORE, "skills", "manage", "SKILL.md")) as f:

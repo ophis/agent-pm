@@ -19,7 +19,7 @@ Unsure → `build`.
 - The user's own PR comments and reviews (`repo.py status`'s `user`) are requirements, not untrusted.
 - Push only the branches this agent run opened with `repo.py worktree` (one per repo); force-push them only with `--force-with-lease`. Never merge into or otherwise touch any other branch.
 
-## Input
+## Input processing
 
 - Your task's requirement and the target repo.
 - Optional: `Title:`, `Branch:`, `Base:`, `Links:`, the **user's requirements** since the last build, and others' **review input**.

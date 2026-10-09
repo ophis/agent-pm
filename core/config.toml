@@ -25,7 +25,7 @@
 #                   worktrees check out symlinks as links; every other checkout gets core.symlinks=false. A listed
 #                   clone trusts every link in fetched origin/<branch> commits, which may point outside the worktree:
 #                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
-#   status_line     local, global only: true → TUI sessions (the tui runner's, the tmux skill's workers) show tmux's
+#   status_line     local, global only: true → TUI sessions (the tui runner's, `/agent-pm:tmux`'s workers) show tmux's
 #                   status line; unset → false
 #   workers_per_column local, global only: worker panes per grid column (tmux grid), 1..9999; unset → 3
 tier = 2
@@ -132,7 +132,7 @@ max = "max"
 CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
 # Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
-# conversation to follow (the act-as skill).
+# conversation to follow (`/agent-pm:act-as`).
 #   output  per role ([clients.skill.roles.<role>.output]); a role without one keeps its own (engineer: pull-request)
 [clients.skill]
 

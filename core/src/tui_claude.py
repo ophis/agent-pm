@@ -686,7 +686,10 @@ def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[st
 @contextlib.contextmanager
 def _grid_lock(socket: str, window: str, wait: bool):
     """Yields whether it holds grid window `window`'s lock, a flock on <socket>-<n>.lock (n: the window's number) till
-    the block ends. Held elsewhere: False; with wait, a retry every TILE_POLL s, then TuiError after TILE_WAIT s."""
+    the block ends. Held elsewhere: False; with wait, a retry every TILE_POLL s, then TuiError after TILE_WAIT s. A
+    socket path not absolute: TuiError, nothing created."""
+    if not os.path.isabs(socket):
+        raise TuiError(f"grid {window}: socket path {socket!r}: want an absolute path")
     path = f"{socket}-{window[1:]}.lock"
     try:
         fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
