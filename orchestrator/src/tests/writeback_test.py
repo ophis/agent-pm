@@ -213,7 +213,7 @@ class FinishGolden(Base):
             ("design", "needs_input"): expect(body=f"1. Who uses it?\n2. Web or CLI?\n\n{FOOTER}", state="in_review"),
             ("design", "failed"): expect(body="Could not publish.", state="in_review"),
             ("build", "done"): expect(files=files, state="in_review",
-                                      body=f"Build ready:\nAdds the registry.\nVerify: python3 -m unittest\n\n{PR}",
+                                      body="Build ready:\nAdds the registry.\nVerify: python3 -m unittest",
                                       attach=PR, attach_title="ENG-7: Session registry"),
             ("build", "needs_input"): expect(body=f"Question:\n1. Keep the old API?\n\n{FOOTER}", state="in_review"),
             ("build", "failed"): expect(files=files, state="in_review",
@@ -271,11 +271,11 @@ class FinishLedger(Base):
         spec, plan = self.files(ctx)
         done = outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan])
         self.assertFalse(writeback.finish(ctx, done))
-        self.assertEqual(broken.calls[-1], comment(f"Build ready: Ready.\n\n{PR}"))
+        self.assertEqual(broken.calls[-1], comment("Build ready: Ready."))
         self.assertEqual(self.lines()[-1], f"writeback-error {ID}: comment: RuntimeError: commentCreate: success: false")
         again = Gql()
         self.assertTrue(writeback.finish(replace(ctx, gql=again), done))
-        self.assertEqual(again.calls, expect(body=f"Build ready: Ready.\n\n{PR}", state="in_review", attach=PR,
+        self.assertEqual(again.calls, expect(body="Build ready: Ready.", state="in_review", attach=PR,
                                              attach_title="ENG-7: x"))
 
     def test_read_error_stops(self):
@@ -331,11 +331,17 @@ class FinishLedger(Base):
 
 
 class FinishSteps(Base):
+    def test_failed_build_names_its_pr_in_the_comment_unattached(self):
+        gql = Gql()
+        ctx = self.ctx(gql=gql)
+        self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "check test failing", url=PR)))
+        self.assertEqual(gql.calls, expect(body=f"Build failed: check test failing\n\n{PR}", state="in_review"))
+
     def test_attach_skipped_when_already_attached(self):
         gql = Gql(attachments=[PR])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
-        self.assertEqual(gql.calls, expect(body=f"Build ready: Ready.\n\n{PR}", state="in_review"))
+        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
         self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
@@ -389,7 +395,7 @@ class FinishSteps(Base):
         ctx = self.ctx(gql=gql)
         spec, plan = self.files(ctx)
         self.assertTrue(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan])))
-        body = f"Build ready: Ready.\n\n{PR}\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
+        body = f"Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
         self.assertEqual(gql.calls, expect(files=[spec_comment(), plan_comment()], body=body, state="in_review",
                                            attach=PR, attach_title="ENG-7: x"))
         self.assertIn(f"writeback-error {ID}: file:ENG-7-spec.md:{sha(SPEC_TEXT)}: SystemExit: linear api error: body too long",
@@ -489,7 +495,7 @@ class UrlCheck(Base):
         gql = Gql()
         ctx = self.ctx(gql=gql, target=("Ophis", "Agent-PM"))
         writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
-        self.assertEqual(gql.calls, expect(body=f"Build ready: Ready.\n\n{PR}", state="in_review", attach=PR,
+        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review", attach=PR,
                                            attach_title="ENG-7: x"))
 
     def test_no_target_drops_every_url(self):
