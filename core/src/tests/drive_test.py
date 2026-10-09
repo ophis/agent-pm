@@ -587,7 +587,7 @@ class Skill(Base):
 
     def test_main_names_a_given_task_else_the_run_picks_one(self):
         for extra, want in (((), "**Your task**: pick it from your charter's Tasks section"),
-                            (("--task", "light-build"), "**Your task**: `light-build`.")):
+                            (("--task", "light-build"), "**Your task**: `light-build` (`<tasks>/light-build.md`).")):
             out = io.StringIO()
             with redirect_stderr(io.StringIO()), redirect_stdout(out):
                 self.assertEqual(drive.main(["--client", "skill", "--role", "engineer", *extra], root=CORE), 0)
@@ -640,7 +640,8 @@ class RoleRuns(Base):
     def test_a_given_task_is_named_in_the_prompt(self):
         code, shown, _ = self.main("--role", "researcher", "--task", "light-research")
         self.assertEqual(code, 0)
-        self.assertIn("**Your task**: `light-research`.", shown["argv"][2].split("\n# Principles\n")[0])
+        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`).",
+                      shown["argv"][2].split("\n# Principles\n")[0])
 
     def test_the_tui_session_is_named_after_the_role(self):
         code, shown, _ = self.main("--role", "engineer", "--runner", "tui")
