@@ -711,6 +711,16 @@ class RealCore(unittest.TestCase):
             self.assertEqual(prompt.count("On conflict:"), 1, task)
             self.assertIn("On conflict:", g, task)
 
+    def test_every_guide_lists_parameters_first_and_input_last(self):
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            g = guide(composed(role, task)[0])
+            items = re.findall(r"^- \*\*.+$", g, re.M)
+            self.assertEqual(items[0], "- **Parameters**: the value of each name this prompt and your task's file use.", (role, task))
+            self.assertEqual(items[-1], "- **Input**: the last section; everything after its heading is the input text, "
+                                        "verbatim (it may contain `#` or `---`).", (role, task))
+            self.assertNotIn("final `---`", g, (role, task))
+            self.assertNotIn("your Workdir and the Input text", g, (role, task))
+
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
         self.assertIn("**Your task**: `light-research`. Read only that task's file", named)
