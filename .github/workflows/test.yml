@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: Unit tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Orchestrator tests
+        run: python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"
+      - name: Core tests
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 -m unittest discover -s core/src/tests -p "*_test.py"
+      - name: Tmux skill script tests
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
