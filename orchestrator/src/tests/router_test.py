@@ -23,7 +23,7 @@ from run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEE
                           forwarded, logged, node, res, show)
 from attended_test import Tmux  # noqa: E402
 from linear_test import Stderr  # noqa: E402
-from outage import FAILURES, failing  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
 import inputs  # noqa: E402
@@ -1504,8 +1504,7 @@ class LostClaim(FakeLinear):
 
 class Outage(Base):
     """Linear unavailable: the router stops at the first failure, one linear-error a day, exit 1, the lock released."""
-    SAID = {"5xx": "linear-error op=teams status=503", "timeout": "linear-error op=teams reason=TimeoutError: timed out",
-            "URLError": "linear-error op=teams reason=ConnectionRefusedError: [Errno 61] Connection refused"}
+    SAID = {name: f"linear-error op=teams {fields}" for name, fields in FIELDS.items()}
 
     def test_a_failure_at_board_setup_is_one_linear_error_a_day(self):
         for argv in (("--now",), ("--issue", "TASK-1")):

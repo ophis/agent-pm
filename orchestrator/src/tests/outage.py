@@ -15,6 +15,10 @@ FAILURES = {  # factories: a fresh exception per use
     "timeout": lambda: TimeoutError("timed out"),
     "URLError": lambda: urllib.error.URLError(ConnectionRefusedError(61, "Connection refused")),
 }
+FIELDS = {  # each FAILURES kind's linear-error status or reason, as run_fixtures.show prints it
+    "5xx": "status=503", "timeout": "reason=TimeoutError: timed out",
+    "URLError": "reason=ConnectionRefusedError: [Errno 61] Connection refused",
+}
 
 
 def failing(error, gql=None, ops=None):

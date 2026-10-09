@@ -11,7 +11,7 @@ import config, linear, promote, prune, repo  # noqa: E402
 import promote_test as tp  # noqa: E402
 from attended_test import Tmux  # noqa: E402
 from run_fixtures import logged, show  # noqa: E402
-from outage import FAILURES, failing  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
@@ -596,7 +596,7 @@ class PruneTest(unittest.TestCase):
         DR-1 promoted, one linear-error (src prune) the first time, none the second; failed: the calls that failed."""
         for name, error in FAILURES.items():
             with self.subTest(failure=name):
-                for said in ([("prune", f"linear-error op={op} {tp.OUTAGE_FIELDS[name]}")], []):
+                for said in ([("prune", f"linear-error op={op} {FIELDS[name]}")], []):
                     gql = failing(error, gql=issues, ops={op})
                     self.assertEqual(self.tick(gql)[:2], (0, "Done"))
                     self.assertEqual(([(e["src"], show(e)) for e in self.events], self.err),

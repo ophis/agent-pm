@@ -16,7 +16,7 @@ import linear  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
 from run_fixtures import logged, show  # noqa: E402
-from outage import FAILURES, failing  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
@@ -28,8 +28,6 @@ AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
 OTHER = {"email": "other@x.com", "name": "Other"}
 CONFIG = HEADER + 'human_members = ["me@x.com"]\n' + role_table("researcher", 'next = "pm"') + role_table("pm") + role_table("engineer")
 PM_NEXT = CONFIG.replace(role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false"))
-OUTAGE_FIELDS = {"5xx": "status=503", "timeout": "reason=TimeoutError: timed out",
-                 "URLError": "reason=ConnectionRefusedError: [Errno 61] Connection refused"}
 
 
 def ago(minutes):
@@ -573,7 +571,7 @@ class Outage(Base):
         src = self.ready()
         for name, error in FAILURES.items():
             with self.subTest(failure=name):
-                for said in (f"linear-error op=teams {OUTAGE_FIELDS[name]}", ""):
+                for said in (f"linear-error op=teams {FIELDS[name]}", ""):
                     gql = failing(error)
                     self.assertEqual(self.run_main(gql=gql), 1)
                     self.assertEqual((self.out, self.err, FakePruner.calls), (said, "", []))
@@ -586,7 +584,7 @@ class Outage(Base):
             with self.subTest(failure=name):
                 self.assertEqual(self.run_main("--dry-run", gql=failing(error)), 1)
                 self.assertEqual((self.out, len(self.err.splitlines()), FakePruner.calls),
-                                 (f"linear-error op=teams {OUTAGE_FIELDS[name]}", 1, []))
+                                 (f"linear-error op=teams {FIELDS[name]}", 1, []))
         self.assertFalse(os.path.exists(self.logs))
 
     def test_a_failure_on_a_later_issue_stops_the_run(self):
@@ -596,7 +594,8 @@ class Outage(Base):
                 first, later = self.ready("DR-1", handoff=90), self.ready("DR-2", handoff=90)
                 down = failing(error, gql=fake, ops={"issue"})
                 self.assertEqual(self.run_main(gql=lambda q, **v: (down if v.get("i") == "DR-2" else fake)(q, **v)), 1)
-                self.assertEqual((self.out, self.err, FakePruner.calls), (f"linear-error op=issue {OUTAGE_FIELDS[name]}", "", []))
+                self.assertEqual((self.out, self.err, FakePruner.calls), (f"linear-error op=issue {FIELDS[name]}", "", []))
+                self.assertIn((promote.Q_DETAIL, {"i": "DR-1"}), fake.calls)
                 self.assertEqual(down.failed, [(promote.Q_DETAIL, {"i": "DR-2"})])
                 self.assertEqual((first["state"], later["state"], fake.mutations), ("Handoff", "Handoff", []))
 
@@ -608,7 +607,7 @@ class Outage(Base):
                 gql = failing(error, gql=self.fake, ops={"issueRelationCreate"})
                 self.assertEqual(self.run_main(gql=gql), 1)
                 self.assertEqual((self.out, self.err, FakePruner.calls),
-                                 (f"linear-error op=issueRelationCreate {OUTAGE_FIELDS[name]}", "", []))
+                                 (f"linear-error op=issueRelationCreate {FIELDS[name]}", "", []))
                 self.assertEqual((src["state"], src["relations"], "posted" in src), ("Handoff", [], False))
                 self.assertEqual((self.run_main(), self.out), (0, "promote DR-1 to=C-1"))
                 (child,) = self.fake.children.values()
@@ -624,7 +623,7 @@ class Outage(Base):
                 self.fake.fail[promote.M_CREATE] = "create failed"
                 self.assertEqual(self.run_main(gql=failing(error, gql=self.fake, ops={"issueUpdate"})), 1)
                 self.assertEqual(self.out.splitlines(), ["handoff-error DR-1 error=SystemExit: linear api error: create failed",
-                                                         f"linear-error op=issueUpdate {OUTAGE_FIELDS[name]}"])
+                                                         f"linear-error op=issueUpdate {FIELDS[name]}"])
                 self.assertEqual((src["state"], "posted" in src, self.err, FakePruner.calls), ("Handoff", False, "", []))
 
 
