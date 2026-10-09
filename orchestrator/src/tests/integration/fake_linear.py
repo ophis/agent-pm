@@ -12,9 +12,10 @@ carries (Authorization, no "Bearer"); a missing or unknown key gets HTTP 401 wit
 and history actors are the caller.
 
 Semantics, as Linear's for what the orchestrator reads: the team board_ids.TEAM (key TASK, board_ids.STATES named as
-config.STATES, typed as TYPES); issue(id:) by uuid or identifier, archived too, a missing one a GraphQL error; lists skip
-archived issues unless includeArchived, in creation order, paged by position cursors; history and comments newest first;
-times in Linear's form (stamp()), now from the real clock.
+config.STATES, typed as TYPES, plus BACKLOG, a team state the config's [states] lacks: named Backlog, type backlog);
+issue(id:) by uuid or identifier, archived too, a missing one a GraphQL error; lists skip archived issues unless
+includeArchived, in creation order, paged by position cursors; history and comments newest first; times in Linear's form
+(stamp()), now from the real clock.
 """
 import functools
 import hashlib
@@ -44,9 +45,12 @@ import sessions
 import writeback
 
 KEY = "TASK"
+BACKLOG = "00000000-0000-4000-8000-000000000017"   # a team state the config's [states] lacks
+IDS = {**STATES, "backlog": BACKLOG}
 TYPES = {"todo": "unstarted", "in_progress": "started", "in_review": "started", "handoff": "started",
-         "done": "completed", "canceled": "canceled"}
-NAMES = {i: k for k, i in STATES.items()}
+         "done": "completed", "canceled": "canceled", "backlog": "backlog"}
+NAMES = {i: k for k, i in IDS.items()}
+TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
 MODULES = {m.__name__: m for m in (linear, router, issues, sessions, writeback, promote, prune)}
 BUILT = {"router.issues": router.q_issues(), "router.issues+relations": router.q_issues(router.RELATIONS)}
@@ -200,8 +204,8 @@ class FakeLinear:
     def issue(self, title="Issue", *, identifier=None, id=None, state="todo", assignee=None, project=None,
               description="", priority=0, labels=(), created=None, updated=None):
         """Adds an issue of the team; returns its record. identifier TASK-<n> (default the next number); id a uuid
-        (default a new one); state a board_ids.STATES key; assignee a user id; project {id, name}; labels label ids;
-        updated defaults to created."""
+        (default a new one); state a board_ids.STATES key or "backlog"; assignee a user id; project {id, name}; labels
+        label ids; updated defaults to created."""
         with self.lock:
             if (assignee is not None and assignee not in self.users) or any(i not in self.labels for i in labels):
                 raise ValueError("assignee or a label not seeded")
@@ -210,7 +214,7 @@ class FakeLinear:
             at = stamp(created)
             try:
                 return self._add(id or str(uuid.uuid4()), identifier, title=title, description=description,
-                                 priority=priority, state=STATES[state], assignee=assignee,
+                                 priority=priority, state=IDS[state], assignee=assignee,
                                  project=project and dict(project), labels=list(labels), createdAt=at,
                                  updatedAt=stamp(updated) if updated else at)
             except Problem as e:
@@ -224,9 +228,17 @@ class FakeLinear:
             return self._comment(self._get(issue), user, body, stamp(at))
 
     def move(self, issue, to, *, actor, at=None):
-        """Moves the issue to state `to` (a board_ids.STATES key) as actor (a user id): a history node."""
+        """Moves the issue to state `to` (a board_ids.STATES key or "backlog") as actor (a user id): a history node."""
         with self.lock:
-            self._move(self._get(issue), STATES[to], actor, stamp(at))
+            self._move(self._get(issue), IDS[to], actor, stamp(at))
+
+    def relate(self, type, issue, related):
+        """Adds a relation of `type` from issue to related (refs as find() takes); ValueError for an unknown issue."""
+        with self.lock:
+            a, b = self.find(issue), self.find(related)
+            if a is None or b is None:
+                raise ValueError(f"issue {issue if a is None else related} not seeded")
+            self.relations.append((type, a["id"], b["id"]))
 
     def find(self, ref):
         """The issue record of a uuid or identifier, else None."""
@@ -339,10 +351,10 @@ class FakeLinear:
     # Views: Linear's objects, every field the orchestrator selects.
 
     def _state(self, sid):
-        return {"id": sid, "name": config.STATES[NAMES[sid]], "type": TYPES[NAMES[sid]]}
+        return {"id": sid, "name": TITLES[NAMES[sid]], "type": TYPES[NAMES[sid]]}
 
     def _team(self):
-        return {"id": TEAM, "name": "Team", "key": KEY, "states": {"nodes": [self._state(i) for i in STATES.values()]}}
+        return {"id": TEAM, "name": "Team", "key": KEY, "states": {"nodes": [self._state(i) for i in IDS.values()]}}
 
     def _person(self, uid, caller):
         u = self.users.get(uid) if uid else None
