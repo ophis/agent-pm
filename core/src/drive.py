@@ -9,7 +9,7 @@ drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
 under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text,
 its client's stderr and its progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
---runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
+--runner, --split, --split-from, --prefix, --events, --manager and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
