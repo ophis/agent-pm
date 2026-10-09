@@ -13,7 +13,7 @@
 #   effort          required: low | medium | high | xhigh | max; [clients.<name>] maps it to the client's effort
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
 #   show            local: tui runner only: how the agent run's TUI window opens.
-#                   unset        → open a pane, stacked by caller (core/CLAUDE.md › Rules: the built-in show)
+#                   unset        → open a pane: a tmux grid, else stacked (core/CLAUDE.md › Rules: the built-in show)
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory
@@ -27,6 +27,7 @@
 #                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
 #   status_line     local, global only: true → TUI sessions (the tui runner's, the tmux skill's workers) show tmux's
 #                   status line; unset → false
+#   workers_per_column local, global only: worker panes per grid column (tmux grid), 1..9999; unset → 3
 tier = 2
 effort = "high"
 language = "English"
@@ -36,6 +37,7 @@ language = "English"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
 # local: status_line = true
+# local: workers_per_column = 2
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on

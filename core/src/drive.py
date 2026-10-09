@@ -128,6 +128,14 @@ def status_line(root: str) -> bool:
         raise ConfigError(str(e)) from None
 
 
+def workers_per_column(root: str) -> int | None:
+    """The global `workers_per_column` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
+    try:
+        return repos.workers_per_column(repos.read_config(os.path.join(root, CONFIG)))
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+
+
 def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
     """(the agent run's cwd, whether its client loads the cwd's project settings and instructions), as config.toml's
     `cwd` and `trusted_dirs` comments say. A new run's cwd is the `cwd` run key, else `cwd`, else the caller's current
@@ -164,7 +172,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
                  tasks=client.tasks_path(root), cwd=here, project=project)
     launch = client.launch(prompt, run, params=params, access=acc)
-    return replace(launch, project=project, status_line=status_line(root)), run
+    return replace(launch, project=project, status_line=status_line(root), per_column=workers_per_column(root)), run
 
 
 def inline(root: str, client: Client, role: str, task: str | None = None) -> str:
@@ -437,9 +445,9 @@ def driver_session(role: str, sid: str, prefix: str | None = None) -> str:
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits, and
-    the opener whose panes it stacks with (tui_claude.OPENER; None: the caller's own). With split and split_from both None
-    the pane goes by the stacking rule (tui_claude.py)."""
+    """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits (both
+    ignored in a tmux grid), and the opener whose panes it is placed with (tui_claude.OPENER; None: the caller's own).
+    With split and split_from both None the pane goes by the grid or stacking rule (tui_claude.open_pane)."""
     split: str | None = None
     split_from: str | None = None
     opener: str | None = None
@@ -464,7 +472,7 @@ class Headless:
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 events: str | None = None, status_line: bool = False):
+                 events: str | None = None, status_line: bool = False, per_column: int | None = None):
         self.client, self.popen, self.proc = client, popen, None
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
@@ -512,8 +520,9 @@ class Tui:
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
-                 events: str | None = None, status_line: bool = False):
+                 events: str | None = None, status_line: bool = False, per_column: int | None = None):
         self.run, self.layout, self.events, self.status_line = run, layout or Layout(), events, status_line
+        self.per_column = per_column
         self.name = tui_session(run.role, params.sid, params.prefix)
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started, self.since = False, 0.0
@@ -522,7 +531,7 @@ class Tui:
         try:
             tui_claude.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
                              split=self.layout.split, split_from=self.layout.split_from, opener=self.layout.opener,
-                             status_line=self.status_line)
+                             per_column=self.per_column, status_line=self.status_line)
         except tui_claude.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started, self.since = True, time.monotonic()
@@ -675,7 +684,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     check_layout(runner, layout)
     check_naming(runner, params.prefix, events)
     host = RUNNERS[runner](run=run, params=params, client=client, popen=popen, layout=layout, events=events,
-                           status_line=launch.status_line)
+                           status_line=launch.status_line, per_column=launch.per_column)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
     sinks = [terminal()] if sinks is None else sinks
@@ -771,8 +780,10 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
     ap.add_argument("--split", choices=tui_claude.SPLITS,
-                    help="the tui runner's split (default: stacked with the panes of the same opener)")
-    ap.add_argument("--split-from", metavar="SESSION", help="split the pane showing this tmux session")
+                    help="the tui runner's split, ignored in a tmux grid (default: stacked with the panes of the same "
+                         "opener)")
+    ap.add_argument("--split-from", metavar="SESSION",
+                    help="split the pane showing this tmux session; ignored in a tmux grid")
     ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>)")
     ap.add_argument("--events", metavar="FILE", help="the tui runner appends the session's state events to FILE; with "
                                                      "--detach, the driver its outcome")

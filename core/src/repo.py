@@ -146,6 +146,14 @@ def status_line(cfg: dict) -> bool:
     return v
 
 
+def workers_per_column(cfg: dict) -> int | None:
+    """The global `workers_per_column`: worker panes per tmux grid column; unset → None (tui_claude's default)."""
+    v = cfg.get("workers_per_column")
+    if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 9999):
+        raise ValueError("workers_per_column: want an integer from 1 to 9999")
+    return v
+
+
 def temp_dirs() -> tuple[str, ...]:
     """Realpaths of the dirs any process, an agent run included, may write: TMPDIR, Python's temp dir, /tmp, /var/tmp
     and macOS's per-user one."""

@@ -202,6 +202,18 @@ class TrustedDirs(unittest.TestCase):
         self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
 
 
+class WorkersPerColumn(unittest.TestCase):
+    def test_unset_is_none_and_one_to_9999_pass(self):
+        self.assertIsNone(repo.workers_per_column({}))
+        for n in (1, 2, 9999):
+            self.assertEqual(repo.workers_per_column({"workers_per_column": n}), n)
+
+    def test_anything_else_is_refused(self):
+        for v in (0, -1, 10000, True, "3", 2.5):
+            with self.subTest(v=v), self.assertRaisesRegex(ValueError, "^workers_per_column: want an integer from 1 to 9999$"):
+                repo.workers_per_column({"workers_per_column": v})
+
+
 class Worktree(Base):
     def worktree(self, *answers, branch="TASK-1-x", spec="o/n", config=None):
         run = Fake([*answers, HEAD])

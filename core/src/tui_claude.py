@@ -1,7 +1,8 @@
 """Hosts Claude Code TUIs: runs claude in a detached tmux session another agent or a person can watch and drive.
 
 One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui_claude.py --help.
-Session names are [A-Za-z0-9_-]+. Errors raise TuiError.
+Session names are [A-Za-z0-9_-]+. Errors raise TuiError. Where a session's pane opens: open_pane; tile lays out a tmux
+grid window.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from typing import NamedTuple
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 PANE = re.compile(r"%[0-9]+")
 ITERM_ID = re.compile(r"[A-Za-z0-9-]+")   # an iTerm2 session's unique id
-# whose panes stack together: a tmux session, or an iTerm2 pane by its full $ITERM_SESSION_ID (w0t0p0:<unique id>)
+# whose panes are placed together: a tmux session, or an iTerm2 pane by its full $ITERM_SESSION_ID (w0t0p0:<unique id>)
 OPENER = re.compile(rf"{NAME.pattern}|[A-Za-z0-9]+:{ITERM_ID.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
 RUNNING = "running"
@@ -46,6 +47,18 @@ BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
+WINDOW = re.compile(r"@[0-9]+")
+PER_COLUMN = 3
+GRID_MANAGER = "@grid-manager"
+GRID_PER_COLUMN = "@grid-per-column"
+GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
+GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t"
+               f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}")
+GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
+GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
+HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
+LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
+LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
 # before osascript, whose script needs iTerm2 installed; -a includes ancestors (the caller usually runs inside iTerm2)
 PGREP = ["pgrep", "-a", "-x", "iTerm2"]
@@ -111,9 +124,28 @@ class Anchor(NamedTuple):
     session: str | None = None
 
 
+class Cell(NamedTuple):
+    """A window layout cell as tmux dumps it: w x h at x, y; a LEAF shows pane (%N), a LEFT_RIGHT or TOP_BOTTOM
+    container holds children."""
+    w: int
+    h: int
+    x: int
+    y: int
+    pane: str | None = None
+    kind: str = LEAF
+    children: tuple[Cell, ...] = ()
+
+
+class Slot(NamedTuple):
+    """A grid cell's content: a pane and the slots stacked right of it, or (pane None) an orphan group's members,
+    stacked."""
+    pane: str | None
+    children: tuple[Slot, ...] = ()
+
+
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           template: str | None = None, split: str | None = None, split_from: str | None = None, opener: str | None = None,
-          status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
+          per_column: int | None = None, status_line: bool = False, proc=subprocess.run, sleep=time.sleep) -> None:
     """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
     PARENT_KEYS, its PWD set to cwd, plus the pane's terminal keys; once it runs, decorate the session (status_line
     too), then show it. events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover
@@ -121,6 +153,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     _name(session)
     if template is None:
         _layout(split, split_from, opener)
+        _per_column(per_column)
     argv = _command(argv, env)
     if events is not None:
         events = events_file(events)
@@ -148,7 +181,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
         if not _taken(path, sleep):
             raise TuiError("the session did not start")
         decorate(session, events, status_line=status_line, proc=proc)
-        show(session, template, split=split, split_from=split_from, opener=opener, proc=proc)
+        show(session, template, split=split, split_from=split_from, opener=opener, per_column=per_column, proc=proc)
         may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
@@ -347,13 +380,13 @@ def attach_command(session: str) -> str:
 
 
 def show(session: str, template: str | None = None, *, split: str | None = None, split_from: str | None = None,
-         opener: str | None = None, proc=subprocess.run) -> str | None:
+         opener: str | None = None, per_column: int | None = None, proc=subprocess.run) -> str | None:
     """Print how to attach, then run the show: template, else open_pane; "" runs nothing.
-    A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split, split_from or
-    opener."""
+    A failure is printed and returned, never raised; only open_pane raises TuiError, for a bad split, split_from,
+    opener or per_column."""
     print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
     if template is None:
-        why = open_pane(session, split=split, split_from=split_from, opener=opener, proc=proc)
+        why = open_pane(session, split=split, split_from=split_from, opener=opener, per_column=per_column, proc=proc)
     else:
         why = _run(session, template, proc) if template else None
     if why:
@@ -362,18 +395,21 @@ def show(session: str, template: str | None = None, *, split: str | None = None,
 
 
 def open_pane(session: str, *, split: str | None = None, split_from: str | None = None, opener: str | None = None,
-              proc=subprocess.run) -> str | None:
-    """Open a pane attached to the session. Automatic (split and split_from None): below the newest pane still open among
-    the @pane of the opener's other sessions (@opener), else right of the opener's pane. Else beside `split_from`'s pane
-    (anchor()), default the opener's, on side split (default right). The opener defaults to opener(). An iTerm2 pane
-    splits in iTerm2, else its tmux pane with tmux; then the session records @opener (when known) and @pane.
+              per_column: int | None = None, proc=subprocess.run) -> str | None:
+    """Open a pane attached to the session; the session then records @opener (when known) and @pane. The opener
+    defaults to opener(). Grid mode (_grid, a tmux opener's): split the pane _grid picks, set the grid window's options
+    and hooks, then tile it in columns of per_column (default PER_COLUMN); split and split_from are ignored, with a
+    notice. Else automatic (split and split_from None): below the newest pane still open among the @pane of the
+    opener's other sessions (@opener), else right of the opener's pane; or beside `split_from`'s pane (anchor()),
+    default the opener's, on side split (default right): an iTerm2 pane splits in iTerm2, else its tmux pane with tmux.
     None or the failure; with no pane to split, the failure names the attach command."""
     _layout(split, split_from, opener)
+    _per_column(per_column)
     tmux = shutil.which("tmux")
     if tmux is None:
         return "tmux not found"
     tmux = os.path.abspath(tmux)
-    own = None
+    own = grid = None
     try:
         if opener is None:
             try:
@@ -381,29 +417,105 @@ def open_pane(session: str, *, split: str | None = None, split_from: str | None 
             except TuiError:
                 if split_from is None:
                     raise
-        if split_from is not None:
+        in_tmux = opener is not None and ":" not in opener
+        sessions = _sessions(proc) if in_tmux or (split is None and split_from is None) else []
+        grid = _grid(opener, own, sessions, proc) if in_tmux else None
+        if grid is not None:
+            window, manager, at, side = grid
+            if split is not None or split_from is not None:
+                print("tui: show: grid: --split/--split-from ignored", file=sys.stderr)
+            new, why = _split(session, side, at, tmux, proc)
+        elif split_from is not None:
             new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
             new, why = _split(session, split, _opener_pane(opener, own, proc), tmux, proc)
         else:
-            new, why = (_stack(session, opener, tmux, proc)
+            new, why = (_stack(session, opener, sessions, tmux, proc)
                         or _split(session, "right", _opener_pane(opener, own, proc), tmux, proc))
     except TuiError as e:
         return f"{e}; watch it with {attach_command(session)}"
     if new is None:
         return why
     _record(session, opener, new, proc)
+    if grid is None:
+        return None
+    return _grid_up(window, manager, PER_COLUMN if per_column is None else per_column, proc)
+
+
+def _sessions(proc) -> list[list[str]]:
+    """Each session's SESSIONS fields, its id valid; none when list-sessions fails."""
+    res = _tmux(["list-sessions", "-F", SESSIONS], proc)
+    lines = res.stdout.split("\n") if res.returncode == 0 else []
+    return [f for f in (line.split("\t") for line in lines) if len(f) == 5 and SESSION_ID.fullmatch(f[0])]
+
+
+def _grid(opener: str, own: bool | None, sessions: list[list[str]], proc) -> tuple[str, str, Anchor, str] | None:
+    """Grid mode for a pane tmux session opener opens: (grid window, its manager, the pane to split, side); None
+    (iTerm2 mode) when not in a grid or tmux fails. The grid window: the opener's @pane's when that is one; else, for a
+    root (no @opener) a client shows, its anchor's ($TMUX_PANE when own, else the most recently active client's pane),
+    a new grid managed by the anchor when it is none. The pane to split: the largest but the manager, below; else the
+    manager, right."""
+    row = next((f for f in sessions if f[1] == opener), None)
+    if row is None:
+        return None
+    try:
+        found = _window(row[3], None, proc) if PANE.fullmatch(row[3]) else None
+        if found is None or found[1] is None:
+            clients = [] if OPENER.fullmatch(row[2]) else _clients(opener, proc)
+            if not clients:
+                return None
+            if own is None:
+                own = own_session(proc=proc) == opener
+            pane = os.environ["TMUX_PANE"] if own else clients[0][2]
+            found = _window(pane, pane, proc)
+    except TuiError:
+        return None
+    if found is None:
+        return None
+    window, manager, areas, socket = found
+    workers = [p for p in areas if p != manager]
+    if not workers:
+        return window, manager, Anchor(None, manager, socket), "right"
+    return window, manager, Anchor(None, max(workers, key=lambda p: (areas[p], int(p[1:]))), socket), "below"
+
+
+def _window(pane: str, manager: str | None, proc) -> tuple[str, str | None, dict[str, int], str] | None:
+    """pane's window: its id, its manager (@grid-manager when a pane of it, else `manager`), each pane's area, the
+    server's socket; None when tmux fails or prints junk."""
+    res = _tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
+    rows = [GRID_ROW.fullmatch(line) for line in res.stdout.splitlines()] if res.returncode == 0 else []
+    if not rows or not all(rows):
+        return None
+    areas = {m[3]: int(m[4]) * int(m[5]) for m in rows}
+    window, stored = rows[0].group(1, 2)
+    return window, stored if stored in areas else manager, areas, rows[0][6]
+
+
+def _grid_up(window: str, manager: str, per_column: int, proc) -> str | None:
+    """Set window's grid options and hooks (none, with a notice, when tmux would misread a path in them), then tile
+    it. None or the failure."""
+    args = ["set-option", "-w", "-t", window, GRID_MANAGER, manager, ";",
+            "set-option", "-w", "-t", window, GRID_PER_COLUMN, str(per_column)]
+    paths = (sys.executable or "", os.path.abspath(__file__))
+    bad = [p for p in paths if not HOOK_PATH.fullmatch(p)]
+    if bad:
+        print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
+    else:
+        hook = f"run-shell -b '{paths[0]} -I {paths[1]} tile {window} >/dev/null 2>&1 || true'"
+        args += [a for name in GRID_HOOKS for a in (";", "set-hook", "-w", "-t", window, name, hook)]
+    try:
+        _tmux_ok(args, proc)
+        tile(window, per_column=per_column, proc=proc)
+    except TuiError as e:
+        return str(e)
     return None
 
 
-def _stack(session: str, opener: str, tmux: str, proc) -> tuple[str | None, str | None] | None:
+def _stack(session: str, opener: str, sessions: list[list[str]], tmux: str,
+           proc) -> tuple[str | None, str | None] | None:
     """_split below the newest still open @pane of the opener's other sessions; None when none is open."""
-    res = _tmux(["list-sessions", "-F", SESSIONS], proc)
-    rows = []
-    for f in (line.split("\t") for line in (res.stdout.split("\n") if res.returncode == 0 else [])):
-        if (len(f) == 5 and SESSION_ID.fullmatch(f[0]) and f[1] != session and f[2] == opener
-                and (PANE.fullmatch(f[3]) or ITERM_ID.fullmatch(f[3]))):
-            rows.append((int(f[0][1:]), f[3], f[4]))
+    rows = [(int(f[0][1:]), f[3], f[4]) for f in sessions
+            if f[1] != session and f[2] == opener and (PANE.fullmatch(f[3]) or ITERM_ID.fullmatch(f[3]))]
     live = None
     for is_tmux, group in itertools.groupby(sorted(rows, reverse=True), key=lambda r: bool(PANE.fullmatch(r[1]))):
         group = list(group)
@@ -480,10 +592,248 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
             return
 
 
+def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> None:
+    """Lay out grid window `window` (@N): the manager left at its current width, _grid_tree's cells in columns of
+    per_column (default: the window's @grid-per-column, else PER_COLUMN). Nothing changes when the window is zoomed,
+    no grid window, already so laid out or too small, or its layout is unreadable or not its panes'; with its manager
+    gone or alone, the grid is torn down (hooks, options)."""
+    if not WINDOW.fullmatch(window):
+        raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
+    _per_column(per_column)
+    fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t")
+    if len(fields) != 6 or fields[2] != "0" or not fields[4]:
+        return
+    width, height, _, layout, manager, n = fields
+    panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
+    current = _parse_layout(layout)
+    leaves = [] if current is None else _leaves(current)
+    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
+        return
+    if manager not in panes or len(panes) == 1:
+        args = ["-u", "-w", "-t", window]
+        _tmux_ok([*(a for hook in GRID_HOOKS for a in ("set-hook", *args, hook, ";")),
+                  "set-option", *args, GRID_MANAGER, ";", "set-option", *args, GRID_PER_COLUMN], proc)
+        return
+    sessions = []
+    for f in (line.split("\t") for line in _tmux_ok(["list-sessions", "-F", SESSIONS], proc).stdout.split("\n")):
+        if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
+            sessions.append((int(f[0][1:]), f[1], f[2] if OPENER.fullmatch(f[2]) else "",
+                             f[3] if PANE.fullmatch(f[3]) else ""))
+    if per_column is None:
+        per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
+    want = _grid_layout(_grid_tree(manager, panes, sessions, current), width=int(width), height=int(height),
+                        manager=manager, manager_width=next(c.w for c in leaves if c.pane == manager),
+                        per_column=per_column)
+    if want is None or _leaves(want) == leaves:
+        return
+    swaps = [a for source, target in _swaps(panes, [c.pane for c in _leaves(want)])
+             for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")]
+    _tmux_ok([*swaps, "select-layout", "-t", window, _render_layout(want)], proc)
+
+
+def _checksum(body: str) -> str:
+    csum = 0
+    for byte in body.encode():
+        csum = ((csum >> 1) + ((csum & 1) << 15) + byte) & 0xFFFF
+    return f"{csum:04x}"
+
+
+def _parse_layout(text: str) -> Cell | None:
+    """The cell tree of a layout string, `<checksum>,<body>` (a checksum that must match) or a body; None when
+    malformed."""
+    csum, sep, body = text.partition(",")
+    if sep and re.fullmatch(r"[0-9a-f]{4}", csum):
+        if _checksum(body) != csum:
+            return None
+        text = body
+    try:
+        cell, end = _parse_cell(text, 0)
+    except ValueError:
+        return None
+    return cell if end == len(text) else None
+
+
+def _parse_cell(text: str, at: int) -> tuple[Cell, int]:
+    m = LAYOUT_CELL.match(text, at)
+    if m is None:
+        raise ValueError(at)
+    w, h, x, y = (int(v) for v in m.group(1, 2, 3, 4))
+    if m.group(5) is not None:
+        return Cell(w, h, x, y, f"%{m.group(5)}"), m.end()
+    kind = LEFT_RIGHT if m.group(6) == "{" else TOP_BOTTOM
+    at, children = m.end(), []
+    while True:
+        child, at = _parse_cell(text, at)
+        children.append(child)
+        if text.startswith(kind[1], at):
+            return Cell(w, h, x, y, kind=kind, children=tuple(children)), at + 1
+        if not text.startswith(",", at):
+            raise ValueError(at)
+        at += 1
+
+
+def _render_layout(cell: Cell) -> str:
+    """`<checksum>,<body>`, as select-layout takes it."""
+    body = _body(cell)
+    return f"{_checksum(body)},{body}"
+
+
+def _body(c: Cell) -> str:
+    head = f"{c.w}x{c.h},{c.x},{c.y}"
+    if c.kind == LEAF:
+        return f"{head},{c.pane[1:]}"
+    return head + c.kind[0] + ",".join(_body(child) for child in c.children) + c.kind[1]
+
+
+def _leaves(cell: Cell) -> list[Cell]:
+    """Depth first: the order select-layout gives them to the panes, by pane index."""
+    return [cell] if cell.kind == LEAF else [leaf for child in cell.children for leaf in _leaves(child)]
+
+
+def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
+    """Each leaf's pane: the cells from the root down to the leaf, depth first."""
+    if cell.kind == LEAF:
+        return {cell.pane: [*above, cell]}
+    return {pane: path for child in cell.children for pane, path in _paths(child, (*above, cell)).items()}
+
+
+def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, str, str]],
+               layout: Cell) -> list[Slot]:
+    """The main grid's cells, in order. A node (a session whose @pane is a window pane but the manager; two claiming
+    one: the lower session id) sits in its @opener's node; nodes whose @opener is gone form an orphan group, in the
+    cell the current layout shows them in; the rest, and what main does not reach (a group whole), sit in main.
+    Siblings by pane id, an orphan group where the layout has it; manual panes last. sessions: each live session's
+    (id, name, @opener, @pane), fullmatched, "" when unset; layout's leaves: panes."""
+    owner = {}
+    for _, name, opener, pane in sorted(sessions):
+        if pane in panes and pane != manager and pane not in owner:
+            owner[pane] = name, opener
+    node = {name: pane for pane, (name, _) in owner.items()}
+    names = {row[1] for row in sessions}
+    parent = {}   # a node's pane, or an orphan group's name -> its parent's; None: main
+    for pane, (_, opener) in owner.items():
+        if opener in node:
+            parent[pane] = node[opener]
+        else:
+            parent[pane] = opener if opener and opener not in names else None
+
+    def under(key) -> list[str]:
+        return [*([key] if key in owner else []), *(p for k, up in parent.items() if up == key for p in under(k))]
+
+    paths = _paths(layout)
+    rank = {pane: i for i, pane in enumerate(paths)}
+    columns = (layout.children[1] if layout.kind == LEFT_RIGHT and len(layout.children) == 2
+               and layout.children[0].pane == manager else layout)
+    groups = sorted({up for up in parent.values() if up is not None and up not in owner})
+    spans = {q: set(under(q)) for q in groups}
+    mains = [p for p in panes if p != manager and parent.get(p) is None]
+    for q in groups:
+        path = paths[min(spans[q])]
+        for pane in spans[q]:
+            path = [a for a, b in zip(path, paths[pane]) if a is b]
+        if path[-1] is layout or path[-1] is columns:
+            parent.update((k, None) for k, up in list(parent.items()) if up == q)
+            continue
+        parent[q] = None
+        for cell in reversed(path):
+            head = cell.children[0] if cell.kind == LEFT_RIGHT else None
+            if head is None or head.kind != LEAF or head.pane in spans[q]:
+                continue
+            # R is a pane's own cell ({pane, its children}) only with two children and that pane the one main pane
+            if head.pane == manager or cell is columns and (len(cell.children) != 2 or mains != [head.pane]):
+                break
+            if head.pane in owner:
+                parent[q] = head.pane
+                break
+    reached, todo = set(), [None]
+    while todo:
+        key = todo.pop()
+        found = [k for k, up in parent.items() if up == key and k not in reached]
+        reached.update(found)
+        todo += found
+    parent.update((k, None) for k in list(parent) if k not in reached and parent[k] not in spans)
+
+    def first(key) -> int:
+        return min(rank[p] for p in under(key))
+
+    def slots(key) -> list[Slot]:
+        live = sorted((k for k, up in parent.items() if up == key and k in owner), key=lambda p: int(p[1:]))
+        order = list(live)
+        for q in sorted((k for k, up in parent.items() if up == key and k not in owner), key=first):
+            later = next((k for k in live if first(k) > first(q)), None)
+            order.insert(len(order) if later is None else order.index(later), q)
+        return [Slot(k if k in owner else None, tuple(slots(k))) for k in order]
+
+    manual = sorted((p for p in panes if p != manager and p not in owner), key=lambda p: int(p[1:]))
+    return [*slots(None), *(Slot(p) for p in manual)]
+
+
+def _grid_layout(cells: list[Slot], *, width: int, height: int, manager: str, manager_width: int,
+                 per_column: int) -> Cell | None:
+    """The grid window's layout: the manager left, full height, manager_width wide (half when that is the window's)
+    but narrowed till the columns fit; cells (at least one) in columns of per_column, top down, then right. None when
+    it does not fit."""
+    columns = tuple(Slot(None, tuple(cells[i:i + per_column])) for i in range(0, len(cells), per_column))
+    c = len(columns)
+    mw = min(manager_width if manager_width != width else (width - 1) // 2,
+             width - 1 - (c * max(_min_width(s) for s in cells) + c - 1))
+    if mw < 1:
+        return None
+    root = Cell(width, height, 0, 0, kind=LEFT_RIGHT, children=(
+        Cell(mw, height, 0, 0, manager), _line(columns, LEFT_RIGHT, width - mw - 1, height, mw + 1, 0)))
+    return root if all(leaf.h >= 1 for leaf in _leaves(root)) else None
+
+
+def _min_width(s: Slot) -> int:
+    if not s.children:
+        return 1
+    least = max(_min_width(child) for child in s.children)
+    return least if s.pane is None else 2 * least + 1
+
+
+def _place(s: Slot, w: int, h: int, x: int, y: int) -> Cell:
+    """A pane with children: it takes the left half, they stack in the right; an orphan group's members stack."""
+    if not s.children:
+        return Cell(w, h, x, y, s.pane)
+    if s.pane is None:
+        return _line(s.children, TOP_BOTTOM, w, h, x, y)
+    left = w // 2
+    return Cell(w, h, x, y, kind=LEFT_RIGHT, children=(
+        Cell(left, h, x, y, s.pane), _line(s.children, TOP_BOTTOM, w - left - 1, h, x + left + 1, y)))
+
+
+def _line(slots: tuple[Slot, ...], kind: str, w: int, h: int, x: int, y: int) -> Cell:
+    """slots side by side (LEFT_RIGHT) or stacked, equal sizes, the remainder to the first; one: its own cell."""
+    if len(slots) == 1:
+        return _place(slots[0], w, h, x, y)
+    across = kind == LEFT_RIGHT
+    size, extra = divmod((w if across else h) - len(slots) + 1, len(slots))
+    children, at = [], x if across else y
+    for i, s in enumerate(slots):
+        n = size + (i < extra)
+        children.append(_place(s, n, h, at, y) if across else _place(s, w, n, x, at))
+        at += n + 1
+    return Cell(w, h, x, y, kind=kind, children=tuple(children))
+
+
+def _swaps(have: list[str], want: list[str]) -> list[tuple[str, str]]:
+    """The fewest (source, target) swap-pane pairs turning pane index order have into want: each puts want's next
+    pane in place."""
+    have, swaps = list(have), []
+    for i, pane in enumerate(want):
+        if have[i] != pane:
+            j = have.index(pane)
+            swaps.append((pane, have[i]))
+            have[i], have[j] = pane, have[i]
+    return swaps
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host claude in a detached tmux session: start it, "
-                                 "type into it, read it, show it. The show: --show T, else an iTerm2 split, else a tmux "
-                                 "split; T may use {{session}}; '' prints only the attach command. "
+                                 "type into it, read it, show it. The show: --show T; else, opened from tmux, a grid "
+                                 "in the manager's window (it stays left, the panes it opens fill columns of "
+                                 "--per-column, top down, then right); else an iTerm2 split, else a tmux split. T may "
+                                 "use {{session}}; '' prints only the attach command. "
                                  "$TUI_ATTACH_PREFIX (e.g. 'docker exec -it C') prefixes printed attach commands.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     start_p = sub.add_parser("start", help="run claude in a new detached session, then show it",
@@ -503,6 +853,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("show", help="show a running session")
     _show_options(p)
     p.add_argument("session", type=_session_arg)
+    p = sub.add_parser("tile", help="lay out a grid window's panes (its hooks run this)")
+    p.add_argument("window", help="its id, @N")
     argv = sys.argv[1:] if argv is None else list(argv)
     command = None
     if argv[:1] == ["start"] and "--" in argv:   # argparse < 3.13 drops a later -- from a nargs list
@@ -516,15 +868,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "start":
             start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), events=a.events, template=a.show,
-                  split=a.split, split_from=a.split_from)
+                  split=a.split, split_from=a.split_from, per_column=a.per_column)
         elif a.cmd == "send":
             send(a.session, a.text)
         elif a.cmd == "read":
             print(read(a.session, a.lines))
+        elif a.cmd == "tile":
+            tile(a.window)
         else:
             if status(a.session) is None:
                 raise TuiError(f"no session {a.session}")
-            return 1 if show(a.session, a.show, split=a.split, split_from=a.split_from) else 0
+            return 1 if show(a.session, a.show, split=a.split, split_from=a.split_from, per_column=a.per_column) else 0
     except TuiError as e:
         print(f"tui: {e}", file=sys.stderr)
         return 1
@@ -538,6 +892,12 @@ def _layout(split: str | None, split_from: str | None, opener: str | None = None
         _name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value")
+
+
+def _per_column(per_column: int | None) -> None:
+    if per_column is not None and (isinstance(per_column, bool) or not isinstance(per_column, int)
+                                   or not 1 <= per_column <= 9999):
+        raise TuiError(f"per_column must be an int from 1 to 9999, not {per_column!r}")
 
 
 def _run(session: str, template: str, proc) -> str | None:
@@ -613,11 +973,7 @@ def _shown(session: str, own: bool, proc) -> Anchor | None:
     else the caller's own pane ($TMUX_PANE) when own, else the client's pane. A control-mode client (iTerm2's tmux -CC)
     gets only a tmux pane, which iTerm2 draws as a native split: its tty is the hidden gateway tab's. None when no
     client shows it."""
-    out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
-    clients = sorted((c for c in (line.split(" ", 4) for line in out.splitlines())
-                      if len(c) == 5 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3] in ("0", "1")
-                      and c[4]),
-                     key=lambda c: int(c[0]), reverse=True)
+    clients = _clients(session, proc)
     if not clients:
         return None
     _, tty, pane, control, socket = clients[0]
@@ -632,6 +988,14 @@ def _shown(session: str, own: bool, proc) -> Anchor | None:
     return Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
 
 
+def _clients(session: str, proc) -> list[list[str]]:
+    """The clients showing the session, most recently active first: CLIENTS' fields."""
+    out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
+    return sorted((c for c in (line.split(" ", 4) for line in out.splitlines())
+                   if len(c) == 5 and c[0].isdigit() and c[1] and PANE.fullmatch(c[2]) and c[3] in ("0", "1") and c[4]),
+                  key=lambda c: int(c[0]), reverse=True)
+
+
 def _iterm_pane(why: str) -> Anchor:
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
@@ -641,10 +1005,13 @@ def _iterm_pane(why: str) -> Anchor:
 
 def _show_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--show", metavar="T", help="the show command, instead of the split")
-    p.add_argument("--split", choices=SPLITS, help="the split's side (default: below the newest pane you opened that "
-                                                    "still shows, else right of yours; with --split-from, right)")
+    p.add_argument("--split", choices=SPLITS, help="the split's side outside the grid (default: below the newest pane "
+                                                    "you opened that still shows, else right of yours; with "
+                                                    "--split-from, right)")
     p.add_argument("--split-from", metavar="S", type=_session_arg,
-                   help="split the pane showing tmux session S (default: yours)")
+                   help="split the pane showing tmux session S (default: yours), outside the grid")
+    p.add_argument("--per-column", metavar="N", type=_per_column_arg, default=PER_COLUMN,
+                   help=f"panes per grid column, 1 to 9999 (default {PER_COLUMN})")
 
 
 def _session_arg(value: str) -> str:
@@ -652,6 +1019,12 @@ def _session_arg(value: str) -> str:
         return _name(value)
     except TuiError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
+
+
+def _per_column_arg(value: str) -> int:
+    if not re.fullmatch(r"[0-9]{1,4}", value) or int(value) < 1:
+        raise argparse.ArgumentTypeError(f"want an int from 1 to 9999, not {value!r}")
+    return int(value)
 
 
 def _lines_arg(value: str) -> int:

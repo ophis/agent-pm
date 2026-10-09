@@ -62,6 +62,14 @@ def _status_line() -> bool:
         raise WorkersError(f"core config: {e}") from e
 
 
+def _per_column() -> int | None:
+    """Core config's workers_per_column (repo.read_config)."""
+    try:
+        return repo.workers_per_column(repo.read_config(os.path.join(CORE, "config.toml")))
+    except (OSError, ValueError) as e:
+        raise WorkersError(f"core config: {e}") from e
+
+
 def _tmux(argv: list, proc) -> None:
     res = _run(proc, argv)
     if res.returncode != 0:
@@ -100,15 +108,16 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
           proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
     `resume` (a session id) resumes that session instead of starting a new one. `split_from` or `split` replaces
-    tui_claude's automatic placement; it defaults the other. Its status line: core config's status_line. A claude that
-    exits within EARLY seconds raises, the session kept (see _early)."""
+    tui_claude's automatic placement outside a tmux grid, which ignores them; it defaults the other. Its status line
+    and grid column size: core config's status_line and workers_per_column. A claude that exits within EARLY seconds
+    raises, the session kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
     if resume is not None and not SESSION_ID.fullmatch(resume):
         raise WorkersError(f"--resume {resume}: not a session id")
     _refuse(flags)
-    status_line = _status_line()
+    status_line, per_column = _status_line(), _per_column()
     events, cwd = os.path.abspath(events), os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
@@ -121,8 +130,8 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
     try:
         tui_claude.start(name, [claude, pick, sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
-                         cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, status_line=status_line,
-                         proc=proc)
+                         cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, per_column=per_column,
+                         status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
     options = {"@sid": sid, "@cwd": cwd, "@claude": claude, "@flags": json.dumps(list(flags))}
