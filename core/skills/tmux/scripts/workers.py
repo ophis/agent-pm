@@ -344,8 +344,9 @@ def _finished(cwd: str) -> bool:
             return False
         with os.fdopen(fd, "rb", closefd=False) as f:
             at = max(0, st.st_size - RUN_TAIL)
-            f.seek(at)
-            lines = f.read(RUN_TAIL).split(b"\n")[1 if at else 0:]   # the line the tail cuts is not one
+            f.seek(max(0, at - 1))
+            # from the byte before the tail: its first piece is the line the tail cuts, or empty
+            lines = f.read(RUN_TAIL + 1).split(b"\n")[1 if at else 0:]
     except OSError:
         return False
     finally:
@@ -399,11 +400,15 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
 def _reopen(panes: dict, entries: dict, per_column: int | None, proc) -> tuple[dict, list]:
     """Reopens each pane session no client shows (tui_claude.show, beside the caller). Returns, by entry name, where
     each other one is shown: the session of the tmux pane its most recently active client runs in, when a NAME, else
-    `a terminal`; and the reopened entries' (name, kind, sid, session)."""
+    (list-panes failing too) `a terminal`; and the reopened entries' (name, kind, sid, session). A session whose
+    list-clients fails is skipped."""
     shown, opened, hosts = {}, [], None
     for name in sorted(panes):
         session, e = panes[name], entries[name]
-        out = _query(["tmux", "list-clients", "-t", f"={session}", "-F", CLIENTS], proc)
+        try:
+            out = _query(["tmux", "list-clients", "-t", f"={session}", "-F", CLIENTS], proc)
+        except WorkersError:
+            continue
         clients = [line.partition(" ") for line in out.split("\n") if line]
         if not clients:
             try:
@@ -413,7 +418,10 @@ def _reopen(panes: dict, entries: dict, per_column: int | None, proc) -> tuple[d
             opened.append((name, e["kind"], e["sid"], session))
             continue
         if hosts is None:
-            rows = _query(["tmux", "list-panes", "-a", "-F", HOSTS], proc).split("\n")
+            try:
+                rows = _query(["tmux", "list-panes", "-a", "-F", HOSTS], proc).split("\n")
+            except WorkersError:
+                rows = []
             hosts = dict(row.split("\t", 1) for row in rows if "\t" in row)
         tty = max(clients, key=lambda c: int(c[0]) if c[0].isascii() and c[0].isdigit() else -1)[2]
         host = hosts.get(tty, "") if tty else ""

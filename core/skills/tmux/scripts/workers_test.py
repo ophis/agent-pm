@@ -1349,9 +1349,10 @@ def within(seconds=10):
 
 
 class Server:
-    """A fake tmux server for attach. `sessions` maps a session to its opts(); `extra` is appended to list-sessions'
-    rows; `clients` maps a session to its list-clients output; `panes` is list-panes -a's; `fail` maps a command to the
-    stderr it fails with (an OSError: raised). The caller's pane is in session `own` (None: outside tmux)."""
+    """A fake tmux server for the roster commands. `sessions` maps a session to its opts(); `extra` is appended to
+    list-sessions' rows; `clients` maps a session to its list-clients output; `panes` is list-panes -a's; `fail` maps a
+    command, or a command with its target (`list-clients -t =w1`), to the stderr it fails with (an OSError: raised).
+    The caller's pane is in session `own` (None: outside tmux)."""
 
     def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra=""):
         self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
@@ -1361,10 +1362,11 @@ class Server:
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         cmd, out, rc = argv[1], "", 0
-        if isinstance(self.fail.get(cmd), OSError):
-            raise self.fail[cmd]
-        if cmd in self.fail:
-            return subprocess.CompletedProcess(argv, 1, "", self.fail[cmd])
+        fail = self.fail.get(cmd, self.fail.get(" ".join(argv[1:4])))
+        if isinstance(fail, OSError):
+            raise fail
+        if fail is not None:
+            return subprocess.CompletedProcess(argv, 1, "", fail)
         if cmd == "display-message":
             out = f"{self.own}\n"
         elif cmd == "has-session":
@@ -1582,6 +1584,7 @@ class AttachTest(WorkerCase):
             "beyond-the-tail": (done + pad, "gone"),
             "within-the-tail": (pad + done, "finished"),
             "cut-by-the-tail": ("x" + done + "p\n" * (cut // 2) + "p" * (cut % 2), "gone"),
+            "starts-the-tail": ("x\n" + done + "p\n" * (cut // 2) + "p" * (cut % 2), "finished"),
         }
         entries, want = {}, {}
         for i, (name, (text, state)) in enumerate(records.items()):
@@ -1730,11 +1733,28 @@ class AttachTest(WorkerCase):
         self.assertEqual(self.attach(Server(fail={"list-sessions": "boom\n"}))[0], 1)
         self.assertFalse(os.path.exists(self.path))
 
-    def test_a_failed_list_clients_is_an_error(self):
-        self.seed(w1=entry())
-        server = Server(sessions={"w1": opts(SID)}, fail={"list-clients": "can't find session: w1\n"})
-        self.assertEqual(self.attach(server), (1, "", "workers: tmux list-clients: can't find session: w1\n"))
-        self.assertEqual(self.shows, [])
+    def test_a_failed_list_clients_skips_that_entry(self):
+        """No reopen and no `shown in` for it; the rest as usual, the second block included."""
+        for fail in ("can't find session: w1\n", OSError(errno.ENOENT, "No such file or directory")):
+            with self.subTest(fail=fail):
+                self.shows = []
+                self.seed(w1=entry(), w2=entry(sid=SID2), w3=entry(sid=None))
+                server = Server(sessions={"w1": opts(), "w2": opts()}, fail={"list-clients -t =w1": fail})
+                self.assertEqual(self.synced(server), HEADER + nl(f"w1\tworker\t{SID}\tworking\t-\t/w\t-",
+                                                                  f"w2\tworker\t{SID2}\tworking\t-\t/w\t%9",
+                                                                  "w3\tworker\t-\tgone\t-\t/w\t-",
+                                                                  f"resume w3: {PY} /x/workers.py --go"))
+                self.assertEqual([s for s, _, _ in self.shows], ["w2"])
+                self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+                                 {"w1": (None, None), "w2": ("%9", "mgr"), "w3": (None, None)})
+
+    def test_a_failed_list_panes_is_shown_in_a_terminal(self):
+        for fail in ("boom\n", OSError(errno.ENOENT, "No such file or directory")):
+            with self.subTest(fail=fail):
+                self.seed(w1=entry())
+                server = Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}, fail={"list-panes": fail})
+                self.assertEqual(self.synced(server),
+                                 HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n")
 
     def test_a_reopen_outside_tmux_prints_shows_messages_on_stderr(self):
         executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\n")
