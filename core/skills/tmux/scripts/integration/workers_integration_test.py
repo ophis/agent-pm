@@ -29,7 +29,7 @@ TIMEOUT = 60   # seconds, per process
 BORDER = " #{session_name} #{@state} "
 IGNORED = "tui: show: grid: --split/--split-from ignored"
 STEADY = 1   # seconds a settled layout must hold
-BREAKER_TIMEOUT = 60   # seconds a forced re-tile loop may run before the breaker must have stopped it
+BREAKER_TIMEOUT = 30   # seconds a forced re-tile loop may run before the breaker must have stopped it
 RETILE_WAIT = 0.5   # seconds the loop waits for a re-tile of its hand layout
 PACE = 0.02   # seconds between the loop's looks
 

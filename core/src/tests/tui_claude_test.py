@@ -2138,19 +2138,19 @@ class Tile(unittest.TestCase):
             self.tile(*self.WIDE)
 
     def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
-        # now 1000000 ms: the window is 970001..1000000; junk, stale and future times are dropped
+        # now 1000000 ms: the window is 990001..1000000; junk, stale and future times are dropped
         junk = ["x", "-999999", "+999999", "999999.0", "1e6", "\uff19\uff19\uff19", "0000000000999999", ""]
-        tiles = " ".join([*["970000", "5", "0"] * 50, *junk, "970001", "1000001", "999999999999999",
+        tiles = " ".join([*["990000", "5", "0"] * 50, *junk, "990001", "1000001", "999999999999999",
                           "000000000999998", "999999\t1000000"])
         fake = self.tile(*self.WIDE, tiles=tiles)
-        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT, "970001 999998 999999 1000000 1000000"))
+        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT, "990001 999998 999999 1000000 1000000"))
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3, tiles=tiles)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
-        self.assertEqual((tui_claude.TILE_LIMIT, tui_claude.TILE_WINDOW), (100, 30))
-        line = "tui: grid @3: auto re-tiling stopped: 101 re-tiles in 30 s; the next worker that opens rebuilds it"
-        recent = [str(970001 + i * 299) for i in range(100)]
+        self.assertEqual((tui_claude.TILE_LIMIT, tui_claude.TILE_WINDOW), (50, 10))
+        line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
+        recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
             with self.subTest(message=message):
                 err = io.StringIO()
