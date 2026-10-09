@@ -48,14 +48,14 @@ CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
 WINDOW = re.compile(r"@[0-9]+")
-PER_COLUMN = 3   # worker panes per grid column
-GRID_MANAGER = "@grid-manager"   # a grid window's options: its manager pane, and N
+PER_COLUMN = 3
+GRID_MANAGER = "@grid-manager"
 GRID_PER_COLUMN = "@grid-per-column"
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
 GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t"
                f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}")
 GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
-GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")   # a GRID_PANES line
+GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
 HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
 LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
 LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
@@ -601,12 +601,13 @@ def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> 
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     _per_column(per_column)
     fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t")
-    if len(fields) != 6 or fields[2] != "0" or not fields[4]:   # unreadable, zoomed, or no grid window
+    if len(fields) != 6 or fields[2] != "0" or not fields[4]:
         return
     width, height, _, layout, manager, n = fields
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
-    if current is None or sorted(leaf.pane for leaf in _leaves(current)) != sorted(panes):
+    leaves = [] if current is None else _leaves(current)
+    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
         return
     if manager not in panes or len(panes) == 1:
         args = ["-u", "-w", "-t", window]
@@ -620,7 +621,6 @@ def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> 
                              f[3] if PANE.fullmatch(f[3]) else ""))
     if per_column is None:
         per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
-    leaves = _leaves(current)
     want = _grid_layout(_grid_tree(manager, panes, sessions, current), width=int(width), height=int(height),
                         manager=manager, manager_width=next(c.w for c in leaves if c.pane == manager),
                         per_column=per_column)
@@ -714,7 +714,7 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
     for pane, (_, opener) in owner.items():
         if opener in node:
             parent[pane] = node[opener]
-        else:   # a gone opener: its orphan group
+        else:
             parent[pane] = opener if opener and opener not in names else None
 
     def under(key) -> list[str]:
@@ -726,6 +726,7 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
                and layout.children[0].pane == manager else layout)
     groups = sorted({up for up in parent.values() if up is not None and up not in owner})
     spans = {q: set(under(q)) for q in groups}
+    mains = [p for p in panes if p != manager and parent.get(p) is None]
     for q in groups:
         path = paths[min(spans[q])]
         for pane in spans[q]:
@@ -738,7 +739,8 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
             head = cell.children[0] if cell.kind == LEFT_RIGHT else None
             if head is None or head.kind != LEAF or head.pane in spans[q]:
                 continue
-            if head.pane == manager:
+            # R holds the columns, unless one main pane is left: then R is that pane's own cell
+            if head.pane == manager or cell is columns and mains != [head.pane]:
                 break
             if head.pane in owner:
                 parent[q] = head.pane

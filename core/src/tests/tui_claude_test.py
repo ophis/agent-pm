@@ -1844,6 +1844,17 @@ class GridTree(unittest.TestCase):
         self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
                          [slot("%1", slot(None, slot("%4"), slot("%5")), slot("%3"))])
 
+    def test_orphans_beside_a_one_pane_first_column_stay_main(self):
+        # P (%2; c1 %3, c2 %4) killed. N=1: main [a, P, b]; N=2: main [a, x, P, b], x and P killed together
+        rows = [(2, "a", "mgr", "%1"), (4, "c1", "P", "%3"), (5, "c2", "P", "%4"), (6, "b", "mgr", "%5")]
+        orphans = slot(None, slot("%3"), slot("%4"))
+        for layout in (tui_claude._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+                       "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
+                       "39x11,121,13,4],39x23,121,25,5]}}"):
+            with self.subTest(layout=layout):
+                self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
+                                 [slot("%1"), orphans, slot("%5")])
+
     def test_orphans_skip_a_manual_panes_cell(self):
         layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
                   "39x7,121,25,5]},80x15,80,33,3]}")
@@ -1978,6 +1989,14 @@ class Tile(unittest.TestCase):
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
         self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+
+    def test_a_dead_worker_keeps_its_cell(self):
+        # FR-12: w2's claude exited (its session and dead pane stay), its host pane %2 attaches on; w1 (%1) closed
+        layout = dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x32,80,0,2,80x15,80,33,3]}")
+        fake = self.tile(layout, ["%0", "%2", "%3"], self.W3[1:])
+        self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3",
+                                           tui_claude._render_layout(grid([slot("%2"), slot("%3")]))]])
+        self.assertNotIn("pane_dead", repr(fake.calls))
 
     def test_zoomed_or_no_grid_window_only_reads_it(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
