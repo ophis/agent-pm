@@ -333,18 +333,22 @@ class Board:
         """The available ready Todo issues, highest priority first, then later role, then oldest."""
         return sorted((i for i in self.todo() if self.available(i, full)), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
 
-    def next_run(self, cands, full=(), live=None):
-        """("resume", issue, sid) for the first available of Recover's cands; else ("new",) while the queue holds an
-        issue; else None (nothing logged). Logs the plan with live, the live session counts per role."""
+    def next_run(self, cands, full=()):
+        """("resume", issue, sid) for the first available of Recover's cands; else ("new", queue length) while the queue
+        holds an issue; else None."""
         cand = next((c for c in cands if self.available(c[0], full)), None)
         if cand:
-            issue, sid = cand
-            self.say("plan", issue["identifier"], mode="resume", sid=sid, live=live)
-            return ("resume", issue, sid)
+            return ("resume", *cand)
         if queue := self.queue(full):
-            self.say("plan", mode="new", queue=len(queue), live=live)
-            return ("new",)
+            return ("new", len(queue))
         return None
+
+    def plan(self, run, live=None):
+        """Logs next_run's run, with live: the live session counts per role."""
+        if run[0] == "resume":
+            self.say("plan", run[1]["identifier"], mode="resume", sid=run[2], live=live)
+        else:
+            self.say("plan", mode="new", queue=run[1], live=live)
 
     def take(self, only=None, full=()):
         """(claimed Todo issue, its label's task or None) from the queue, or None. Dry: (pick, None), unclaimed."""
@@ -421,7 +425,7 @@ def load(root):
         cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         return cfg, runnable(cfg, root)
     except SystemExit as e:
-        raise Setup(str(e.code), 1)
+        raise Setup(one_line(e.code), 1)
 
 
 def setup(a, root):
@@ -439,8 +443,8 @@ def setup(a, root):
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """Checks, bounces or prepares the agent run (a: SHARED and the tui runner's options), then starts the inner in tmux.
     Exits 0 started or bounced, 1 config, input or tmux failure, 2 a bad id, not a role account, config error or a failed
-    tui check, 3 transient; a config error, transient failure, bounce or tmux failure is logged (src router). The tui
-    runner's attach commands go to stderr."""
+    tui check, 3 transient; a config error, transient failure, bounce, input or tmux failure is logged (src router).
+    The tui runner's attach commands go to stderr."""
     os.environ["PATH"] = PATH
     if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
@@ -502,7 +506,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         text = inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs).replace("\0", "")
         text = text.encode("utf-8", "replace").decode()   # a lone surrogate would fail execve in the pane
     except Exception as e:
-        print(f"router.py: input: {one_line(e)}", file=sys.stderr)
+        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     attended_argv, iterm = [], ""
     if layout:
@@ -518,7 +522,6 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
             *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
             cwd=rd, env=os.environ, iterm=iterm, proc=sh)
     except drive.RunnerError as e:
-        print(f"router.py: {e}", file=sys.stderr)
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     return 0
@@ -536,7 +539,8 @@ def begin(mode, issue, sid, role, task, opts, runs):
 
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
     """One launchd tick; start(outer's arguments) starts the agent run. Returns the exit code. An idle tick (outside
-    hours, every role full, nothing to do) logs nothing; a dry run still prints the first two."""
+    hours, every role full, nothing to do) logs nothing, a dry run still prints the first two; the plan is logged
+    once the usage gate passes (a dry run: before the usage)."""
     dry = opts["dry"]
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -558,11 +562,13 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
         except Exception as e:
             say("skip", reason="prune failed", error=one_line(e))
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
-    run = board.next_run(board.recover(live_ids), full, counts)
+    run = board.next_run(board.recover(live_ids), full)
     kind = run[0] if run else None
     if not kind and not dry:
         return 0
     if dry:
+        if kind:
+            board.plan(run, counts)
         planned = kind == "resume" or kind == "new" and board.take(full=full) is not None
         ok, usage = probe(sh)
         say("usage", usage=usage, planned=planned, allowed=ok)
@@ -571,6 +577,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
     if not ok:
         say("usage-skip", once=True, mode=kind, reason="blocked by usage", usage=usage)
         return 0
+    board.plan(run, counts)
     if kind == "resume":
         (_, issue, sid), task = run, None
     else:
@@ -603,7 +610,7 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
         sid = board.current_sid(issue)
         if not board.settle(issue, sid, wait=False):
             return stop
-        board.say("plan", ident, mode="resume", sid=sid)
+        board.plan(("resume", issue, sid))
         mode, task = "resume", None
     elif board.is_blocked(ident) or not (taken := board.take(ident)):
         return stop
@@ -661,7 +668,8 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
         cfg = load_config(config) if config else load_config()
     except SystemExit as e:
         log("router", "config-error", once=True, dry=opts["dry"], reason=one_line(e.code))
-        print(f"router.py: {e.code}", file=sys.stderr)
+        if sys.stderr.isatty():  # elsewhere (launchd) stderr is the log
+            print(f"router.py: {e.code}", file=sys.stderr)
         return 1
     if opts["tui"]:
         try:

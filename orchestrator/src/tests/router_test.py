@@ -20,6 +20,7 @@ from run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEE
                           LS_REMOTE, PM, PROJECT, RESEARCHER, SID, USER_NOTE, UUID, Base as RunBase, Gql,
                           forwarded, logged, node, res, show)
 from attended_test import Tmux  # noqa: E402
+from linear_test import Stderr  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
 import inputs  # noqa: E402
@@ -944,12 +945,12 @@ class Blockers(Base):
             self.assertFalse(any("issue(id:" in q and "inverseRelations" in q for q, _ in fake.queries), argv)
 
     def test_dry_run_logs_blocked(self):
-        for argv, out, last in (("claim", f"TASK-2 https://linear.app/x/TASK-2 {PD}", "pick TASK-2 queue=1"),
-                                ("plan", "new", "plan mode=new queue=1")):
+        for argv, out, last in (("claim", f"TASK-2 https://linear.app/x/TASK-2 {PD}", ["pick TASK-2 queue=1"]),
+                                ("plan", "new", [])):  # next_run logs no plan: the tick does
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")]),
                                issue("TASK-2", "Todo", "pm", project=PD)])
             self.assertEqual(self.plan(fake, dry=True) if argv == "plan" else self.claim(fake, dry=True), out, argv)
-            self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7", "TASK-8"]', last], argv)
+            self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7", "TASK-8"]', *last], argv)
             self.assertEqual(fake.mutations, [], argv)
 
 
@@ -1237,13 +1238,12 @@ class Tick(Base):
     def test_usage_blocked(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, shell=FakeShell(probe_five=0.95))
-        self.assertEqual(self.said()[0], "plan mode=new queue=1")
-        self.assertRegex(self.said()[1], r"^usage-skip mode=new reason=blocked by usage usage=status=allowed five_hour=0.95 ")
-        self.assertEqual(len(self.said()), 2)
+        (said,) = self.said()
+        self.assertRegex(said, r"^usage-skip mode=new reason=blocked by usage usage=status=allowed five_hour=0.95 ")
         self.assertEqual(self.sh.launches(), [])
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
         self.tick(fake, shell=FakeShell(probe_five=0.97), again=True)
-        self.assertEqual(self.said(), ["plan mode=new queue=1"])
+        self.assertEqual(self.said(), [])
 
     def test_resume(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
@@ -1854,6 +1854,11 @@ class Outer(OuterBase):
                 self.assertEqual((self.said()[-1], self.err), (f"router config-error TASK-7 reason={reason}", ""))
         self.assertEqual((self.sh_calls, self.gql.calls), ([], []))
 
+    def test_a_config_load_error_is_one_line(self):
+        with mock.patch.object(router, "load_config", side_effect=SystemExit("orchestrator/config.toml:\n  bad")):
+            self.assertEqual(self.outer(), 1)
+        self.assertEqual(self.said(), ["router config-error TASK-7 reason=orchestrator/config.toml: bad"])
+
     def test_resume_without_transcript(self):
         self.assertEqual(self.outer(mode="resume"), 3)
         path = config.transcript(ID, SID, self.projects)
@@ -1928,7 +1933,8 @@ class Outer(OuterBase):
         self.write(self.rd, "")
         self.assertEqual(self.outer(), 1)
         self.assertEqual(self.sh_calls, [])
-        self.assertEqual(self.err, f"router.py: input: FileExistsError: [Errno 17] File exists: '{self.rd}'\n")
+        self.assertEqual((self.said(), self.err),
+                         ([f"router launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"], ""))
 
     def test_a_driver_session_that_cannot_start_exits_1(self):
         self.tmux_error = "duplicate session: agent-pm-engineer-TASK-7\n"
@@ -1936,7 +1942,7 @@ class Outer(OuterBase):
         self.assertEqual(len(self.sh_calls), 1)
         self.assertEqual(self.handovers, {})
         self.assertFalse(os.path.exists(self.sh_calls[0][0][-1]))
-        self.assertEqual(self.err, "router.py: tmux: duplicate session: agent-pm-engineer-TASK-7\n")
+        self.assertEqual(self.err, "")
         self.assertEqual(self.said(), ["router launch-error TASK-7 error=RunnerError: tmux: duplicate session: "
                                        "agent-pm-engineer-TASK-7"])
 
@@ -2086,16 +2092,16 @@ class AttendedEntry(OuterBase):
             self.at_launch.append(self.read(self.runs))
         return super().sh(argv, **kw)
 
-    def main(self, argv):
-        err = io.StringIO()
+    def main(self, argv, tty=False):
+        err = Stderr(tty)
         with redirect_stderr(err):
             rc = router.main(argv, gql=self.gql, tdir=self.projects, config=self.config, runs=self.runs, sh=self.sh,
                              root=self.root, run=self.run, keychain=self.keychain)
         self.err = err.getvalue()
         return rc
 
-    def entry(self, *extra):
-        return self.main(["--issue", ID, "--tui", *extra])
+    def entry(self, *extra, tty=False):
+        return self.main(["--issue", ID, "--tui", *extra], tty)
 
     def started(self):
         """The sid of runs.jsonl's one line, the start of ID as engineer; no runs.log beside it."""
@@ -2156,11 +2162,11 @@ class AttendedEntry(OuterBase):
         self.assertEqual(self.err, "router.py: bad issue id: task-7\n")
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
-    def test_config_error_exits_1_printed_and_logged_once_a_day(self):
+    def test_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         self.write(self.config, RUN_CONFIG.replace("human_members", "bogus = 1\nhuman_members"))
-        for _ in range(2):
-            self.assertEqual(self.entry(), 1)
-            self.assertEqual(self.err, "router.py: orchestrator/config.toml: unknown keys: bogus\n")
+        for tty, err in ((False, ""), (True, "router.py: orchestrator/config.toml: unknown keys: bogus\n")):
+            self.assertEqual(self.entry(tty=tty), 1)
+            self.assertEqual(self.err, err)
             self.assertEqual(self.said(), ["router config-error reason=orchestrator/config.toml: unknown keys: bogus"])
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 

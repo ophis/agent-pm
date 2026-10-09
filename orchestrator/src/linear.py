@@ -42,12 +42,12 @@ _recent = {}
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
     """Appends {"ts", "src", "kind", "issue", **fields} (None values left out) to <LOGS_DIR>/orchestrator.jsonl, unless
-    dry; copies it to stderr when dry or a terminal (launchd's stderr is the file). once: skipped when a line with the
-    same ONCE values was written within WINDOW. Never raises OSError."""
+    dry; copies it to stderr when dry or a terminal (launchd's stderr is the file). once, unless dry: skipped when a
+    line with the same ONCE values was written within WINDOW. Never raises OSError."""
     line = {k: v for k, v in {"ts": drive.stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
             if v is not None}
     path, key = os.path.join(config.LOGS_DIR, "orchestrator.jsonl"), _key(line)
-    if once and key in _recent_keys(path):
+    if once and not dry and key in _recent_keys(path):
         return
     text = json.dumps(line, ensure_ascii=False)
     try:

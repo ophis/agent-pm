@@ -295,13 +295,21 @@ class Log(unittest.TestCase):
         self.assertEqual([json.loads(line)["issue"] for line in self.text().splitlines()[len(lines) + len(junk):]],
                          ["TASK-2", "TASK-4", "TASK-5", "TASK-7"])
 
-    def test_dry_once_reads_the_file_but_never_adds(self):
+    def test_a_dry_run_ignores_once(self):
         self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
-        self.assertEqual(self.log("router", "blocked", "TASK-1", once=True, dry=True, by=["TASK-7"]), "")
-        self.assertEqual(self.log("router", "blocked", "TASK-2", once=True, dry=True, by=["TASK-7"]),
-                         self.json("router", "blocked", "TASK-2", by=["TASK-7"]))
-        self.log("router", "blocked", "TASK-2", once=True, by=["TASK-7"])
-        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1", "TASK-2"])
+        for _ in range(2):
+            self.assertEqual(self.log("router", "blocked", "TASK-1", once=True, dry=True, by=["TASK-7"]),
+                             self.json("router", "blocked", "TASK-1", by=["TASK-7"]))
+        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
+
+    def test_once_keeps_a_cache_per_log_path(self):
+        other = os.path.join(self.tmp, "other")
+        for logs, written in ((self.logs, 1), (other, 1), (self.logs, 0), (other, 0)):
+            with mock.patch.object(config, "LOGS_DIR", logs):
+                path = os.path.join(logs, "orchestrator.jsonl")
+                before = len(open(path).read().splitlines()) if os.path.exists(path) else 0
+                self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
+                self.assertEqual(len(open(path).read().splitlines()) - before, written, logs)
 
     def test_the_plists_send_launchd_output_to_the_log(self):
         for job in ("router", "promote"):
