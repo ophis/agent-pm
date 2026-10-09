@@ -72,6 +72,10 @@ class ManagerError(Exception):
     pass
 
 
+class Held(ManagerError):
+    """Another live tmux session holds the directory."""
+
+
 def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
     """The absolute path of the manager's directory, the filesystem untouched; None outside tmux without `manager`."""
     if manager is None:
@@ -84,6 +88,10 @@ def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
     elif not tui_claude.NAME.fullmatch(manager):
         raise ManagerError(f"manager {manager!r}: want {tui_claude.NAME.pattern}")
     return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
+
+
+def _not_attached(directory: str) -> ManagerError:
+    return ManagerError(f"manager directory {directory} not attached: run workers.py attach first")
 
 
 def _checked(path: str, *, private: bool = False) -> None:
@@ -357,7 +365,7 @@ def roster(directory: str, *, write: bool = True) -> Iterator[dict]:
     nothing. Not reentrant: never call roster() or put() inside a block (a second flock waits for the first)."""
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
-        raise ManagerError(f"manager directory {directory} not attached: run workers.py attach first")
+        raise _not_attached(directory)
     _checked(os.path.dirname(directory))
     _checked(directory, private=True)
     path = os.path.join(directory, "roster.json")
@@ -373,6 +381,45 @@ def roster(directory: str, *, write: bool = True) -> Iterator[dict]:
             text = _dump(r)
             if missing or text != before:
                 _write(directory, path, text)
+
+
+def _live(session: str, proc) -> bool:
+    """Whether tmux has the session; no tmux (OSError) counts as not live."""
+    try:
+        res = proc(["tmux", "has-session", "-t", f"={session}"], capture_output=True, text=True,
+                   stdin=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return res.returncode == 0
+
+
+def _holds(r: dict, directory: str, own: str | None, proc) -> bool:
+    """Whether own is the holder; Held when another, live session is (own None included)."""
+    holder = r["holder"]
+    if holder is None:
+        return False
+    if holder["session"] == own:
+        return True
+    if _live(holder["session"], proc):
+        raise Held(f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
+                   "ask that manager to run workers.py release, or end that session")
+    return False
+
+
+def take(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> None:
+    """attach's lease, inside a roster() block. Free: no holder, own, or a holder whose tmux session is gone; then own
+    becomes the holder (`since` kept when it already was). Held by another live session: Held. own None (outside tmux)
+    never changes the holder."""
+    if not _holds(r, directory, own, proc) and own is not None:
+        r["holder"] = {"session": own, "since": now()}
+
+
+def check(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> None:
+    """Every other command's lease, inside a roster() block: Held by another live session; not attached when own (not
+    None) is not the holder; own None passes. It holds only for that block: a take-over can follow, so a later write
+    must not assume it."""
+    if not _holds(r, directory, own, proc) and own is not None:
+        raise _not_attached(directory)
 
 
 def entry(kind: str, *, sid: str | None, cwd: str, resume: list[str], note: str | None = None,

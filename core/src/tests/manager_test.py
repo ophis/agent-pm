@@ -204,6 +204,22 @@ for i in range(15):
     manager.put(sys.argv[2], sys.argv[3] + str(i), manager.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/workers.py"]))
 """
 
+LEASE_CHILD = """
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import manager
+d, own = sys.argv[2], sys.argv[3]
+def proc(argv, **kw):
+    return subprocess.CompletedProcess(argv, 0, "", "")
+sys.stdin.readline()
+try:
+    with manager.roster(d) as r:
+        manager.take(r, d, own, proc=proc)
+except manager.Held as e:
+    print(e)
+    sys.exit(3)
+"""
+
 
 def good(**over):
     """A valid entry value."""
@@ -723,6 +739,166 @@ class RosterTest(unittest.TestCase):
                          (1, 500, 30, 1 << 20))
         self.assertEqual(manager.KINDS, ("worker", "role", "pipeline"))
         self.assertEqual(manager.STATES, ("working", "done", "blocked", "dead", "gone", "finished"))
+
+
+NOW = "2026-02-02T02:02:02+00:00"
+ATTACH = "manager directory {} not attached: run workers.py attach first"
+
+
+def sessions(*live):
+    """A proc answering tmux has-session with 0 for the sessions in `live`, else 1; its argv are recorded."""
+    def proc(argv, **kw):
+        proc.calls.append(argv)
+        if argv[:3] != ["tmux", "has-session", "-t"]:
+            raise AssertionError(argv)
+        return subprocess.CompletedProcess(argv, 0 if argv[3] in [f"={s}" for s in live] else 1, "", "")
+
+    proc.calls = []
+    return proc
+
+
+def no_tmux(argv, **kw):
+    raise FileNotFoundError(2, "No such file or directory", "tmux")
+
+
+class LeaseTest(unittest.TestCase):
+    def setUp(self):
+        self.agent_pm = hermetic.home(self)
+        self.dir = os.path.join(self.agent_pm, "managers", "m1")
+        self.path = os.path.join(self.dir, "roster.json")
+        manager.ensure(self.dir)
+
+    def doc(self, holder=None):
+        return {"version": 1, "holder": holder, "cursor": 3, "gen": 1, "entries": {}}
+
+    def held(self, session="other", since=WHEN):
+        return {"session": session, "since": since}
+
+    def message(self, session="other", since=WHEN):
+        return (f"manager directory {self.dir}: held by tmux session {session} since {since}; "
+                "ask that manager to run workers.py release, or end that session")
+
+    def refused(self, call, r, message, kind=manager.ManagerError):
+        before = json.dumps(r)
+        with self.assertRaises(kind) as cm:
+            call()
+        self.assertIs(type(cm.exception), kind)
+        self.assertEqual(str(cm.exception), message)
+        self.assertEqual(json.dumps(r), before)
+
+    def take(self, r, own, proc):
+        with unittest.mock.patch.object(manager, "now", return_value=NOW):
+            manager.take(r, self.dir, own, proc=proc)
+
+    def test_held_is_a_manager_error(self):
+        self.assertTrue(issubclass(manager.Held, manager.ManagerError))
+
+    def test_take_without_a_holder_makes_own_the_holder(self):
+        proc, r = sessions(), self.doc()
+        self.take(r, "me", proc)
+        self.assertEqual(r, self.doc(self.held("me", NOW)))
+        self.assertEqual(proc.calls, [])
+
+    def test_take_by_the_holder_keeps_since_and_asks_tmux_nothing(self):
+        proc, r = sessions("me"), self.doc(self.held("me"))
+        self.take(r, "me", proc)
+        self.assertEqual(r, self.doc(self.held("me")))
+        self.assertEqual(proc.calls, [])
+
+    def test_take_from_a_live_other_is_held_with_the_fr13_text_and_changes_nothing(self):
+        since = "2026-01-02T03:04:05+00:00"
+        proc, r = sessions("other"), self.doc(self.held("other", since))
+        self.refused(lambda: self.take(r, "me", proc), r, self.message("other", since), manager.Held)
+        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
+
+    def test_take_from_a_dead_other_takes_over_with_a_new_since(self):
+        proc, r = sessions("me"), self.doc(self.held("other"))
+        self.take(r, "me", proc)
+        self.assertEqual(r, self.doc(self.held("me", NOW)))
+        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
+
+    def test_no_tmux_counts_as_not_live(self):
+        r = self.doc(self.held("other"))
+        self.take(r, "me", no_tmux)
+        self.assertEqual(r["holder"], self.held("me", NOW))
+
+    def test_take_outside_tmux_leaves_the_holder_untouched(self):
+        for holder in (None, self.held("other")):
+            with self.subTest(holder=holder):
+                r = self.doc(holder)
+                self.take(r, None, sessions())
+                self.assertEqual(r, self.doc(holder))
+
+    def test_take_outside_tmux_is_held_by_a_live_other(self):
+        r = self.doc(self.held("other"))
+        self.refused(lambda: self.take(r, None, sessions("other")), r, self.message(), manager.Held)
+
+    def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
+        with manager.roster(self.dir) as r:
+            manager.take(r, self.dir, "me", proc=sessions())
+        with open(self.path, "rb") as f:
+            raw = f.read()
+        holder = json.loads(raw)["holder"]
+        self.assertEqual(holder["session"], "me")
+        self.assertIsNotNone(datetime.datetime.fromisoformat(holder["since"]).utcoffset())
+        with self.assertRaises(manager.Held), manager.roster(self.dir) as r:
+            manager.take(r, self.dir, "you", proc=sessions("me"))
+        with open(self.path, "rb") as f:
+            self.assertEqual(f.read(), raw)
+
+    def test_check_passes_for_the_holder_and_asks_tmux_nothing(self):
+        proc, r = sessions("me"), self.doc(self.held("me"))
+        manager.check(r, self.dir, "me", proc=proc)
+        self.assertEqual(r, self.doc(self.held("me")))
+        self.assertEqual(proc.calls, [])
+
+    def test_check_against_a_live_other_is_held_with_the_same_text_as_take(self):
+        proc, r = sessions("other"), self.doc(self.held("other"))
+        self.refused(lambda: manager.check(r, self.dir, "me", proc=proc), r, self.message(), manager.Held)
+        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
+
+    def test_check_by_a_non_holder_is_not_attached_and_takes_nothing(self):
+        for holder, proc in ((None, sessions()), (self.held("other"), sessions()), (self.held("other"), no_tmux)):
+            with self.subTest(holder=holder):
+                r = self.doc(holder)
+                self.refused(lambda: manager.check(r, self.dir, "me", proc=proc), r, ATTACH.format(self.dir))
+
+    def test_check_outside_tmux_passes_without_a_live_holder(self):
+        for holder in (None, self.held("other")):
+            with self.subTest(holder=holder):
+                r = self.doc(holder)
+                manager.check(r, self.dir, None, proc=sessions())
+                self.assertEqual(r, self.doc(holder))
+        manager.check(self.doc(self.held("other")), self.dir, None, proc=no_tmux)
+
+    def test_check_outside_tmux_is_held_by_a_live_other(self):
+        r = self.doc(self.held("other"))
+        self.refused(lambda: manager.check(r, self.dir, None, proc=sessions("other")), r, self.message(), manager.Held)
+
+    def test_check_in_a_read_only_block_creates_no_roster_json(self):
+        with manager.roster(self.dir, write=False) as r:
+            manager.check(r, self.dir, None, proc=sessions())
+            with self.assertRaises(manager.ManagerError):
+                manager.check(r, self.dir, "me", proc=sessions())
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_two_processes_take_concurrently_and_exactly_one_holds(self):
+        procs = [subprocess.Popen([sys.executable, "-I", "-c", LEASE_CHILD, SRC, self.dir, own], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for own in ("a", "b")]
+        for p in procs:
+            p.stdin.write("\n")
+            p.stdin.close()
+        out = {}
+        for own, p in zip("ab", procs):
+            out[own] = p.communicate(timeout=60)
+            self.assertIn(p.returncode, (0, 3), out[own][1])
+        winners = [own for own, p in zip("ab", procs) if p.returncode == 0]
+        self.assertEqual(len(winners), 1)
+        loser = "b" if winners == ["a"] else "a"
+        with open(self.path) as f:
+            holder = json.load(f)["holder"]
+        self.assertEqual(holder["session"], winners[0])
+        self.assertEqual(out[loser][0].strip(), self.message(winners[0], holder["since"]))
 
 
 if __name__ == "__main__":
