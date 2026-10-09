@@ -4,7 +4,7 @@ Run one round of parallel agents, then write a short report.
 
 ## Steps
 
-1. **Input** (Researcher › Input).
+1. **Input** (Researcher › Input processing).
 2. **Prepare** (local, mixed): Researcher › Type and target.
 3. **Report progress:**
    [agent-pm-progress:start] the type, plus each target repo and its commit for local or mixed

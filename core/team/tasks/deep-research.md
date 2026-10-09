@@ -4,7 +4,7 @@ Run research workflows, then write the report yourself.
 
 ## Steps
 
-1. **Input** (Researcher › Input).
+1. **Input** (Researcher › Input processing).
 2. **Report progress:**
    [agent-pm-progress:start] the type and the rounds in order
 3. **Research** from one **brief**, one run per round, ≤ 120 agents each:

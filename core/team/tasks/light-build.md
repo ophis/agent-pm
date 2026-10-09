@@ -2,9 +2,9 @@
 
 Build the requirement with `autopilot:light-build`, then open a pull request.
 
-## Input
+## Input processing
 
-Engineer › Input, the requirement being the input's text; a PRD, if given, is context for it.
+Engineer › Input processing, the requirement being the input's text; a PRD, if given, is context for it.
 
 ## Steps
 
