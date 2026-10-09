@@ -46,5 +46,13 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
       - name: Core integration tests
-        run: python3 -m unittest discover -s core/src/tests/integration -p "*_integration_test.py"
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 -m unittest discover -v -s core/src/tests/integration -p "*_integration_test.py"
+      - name: Tmux skill integration tests
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: python3 -m unittest discover -v -s core/skills/tmux/scripts/integration -p "*_integration_test.py"
