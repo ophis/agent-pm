@@ -8,7 +8,7 @@ Build the PRD with `autopilot:build`, then open a pull request.
 
 ## Input
 
-Engineer › Input, the requirement being the PRD (a path or its text); optional `Phase:`.
+Engineer › Input, the requirement being the PRD (a path or its text).
 
 ## Steps
 
@@ -18,10 +18,10 @@ Engineer › Input, the requirement being the PRD (a path or its text); optional
    - A plan doc before S9 → continue it, first updating its spec and plan to the user's requirements.
    - Else a plan doc at S9 (a **finished build**) and a user requirement → a new build, new plan doc. Review input alone never starts one.
    - Else a finished build → `needs_input` asking what next; stop.
-   - Else → build the PRD's first phase, or the one `Phase:` or the user's words name.
+   - Else → a first build of the PRD.
 4. **Report progress:**
-   [agent-pm-progress:start] the build (continue `<plan doc>`, new or first) and its phase
-5. **Build**: `autopilot:build` (Engineer › Autopilot), the requirements being the PRD, `Phase:` and the user's requirements; docs line "Spec and plan go where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`."; push points: each task and review round.
+   [agent-pm-progress:start] the build (continue `<plan doc>`, new or first)
+5. **Build**: `autopilot:build` (Engineer › Autopilot), the requirements being the PRD and the user's requirements; docs line "Spec and plan go where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`."; push points: each task and review round.
    - **Report progress** at the end of each build step (`S<n>`) you run:
      [agent-pm-progress:step] the step and its result
 6. **Finish** (Engineer › Finish), adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc, whichever exist on failure; the PR description names the PRD (path or title).

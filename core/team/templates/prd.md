@@ -2,9 +2,7 @@
 
 ## Problem and goals
 What problem, for whom, and its evidence (a report finding, a source or the user's words); the goals.
-
-## Non-goals
-What it explicitly won't do.
+One line: what it explicitly won't do.
 
 ## Users and scenarios
 Target users and where they use it.
@@ -24,17 +22,11 @@ Unknowns, and the low-confidence or single-source findings the PRD relies on.
 Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs, which one is chosen and why.
 
 ## Requirements
-Ids (`FR-<n>`, `NFR-<n>`, `P<n>`) stay ASCII and are never renumbered on revision.
+Ids (`FR-<n>`, `NFR-<n>`) stay ASCII and are never renumbered on revision.
 ### Functional requirements
 One per line: `FR-<n>`: the requirement. `Check:` an observable pass condition (an input → an output or state).
 ### Non-functional requirements
 Optional; omit when none. One per line: `NFR-<n>`: a constraint this product actually has, with its threshold or check.
-
-## Success metrics
-How and when each goal is measured.
-
-## Scope and phased delivery
-One `### P<n>: <name>` per phase, in delivery order, each shippable alone: the requirement ids it delivers and its exit check. One phase → `P1` only.
 
 ## Done
 Optional; omit when the product has nothing built yet. Under `###` copies of the original headings, by id, naming where each is implemented (file or commit).
