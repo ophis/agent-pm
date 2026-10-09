@@ -1971,28 +1971,34 @@ class Tile(unittest.TestCase):
     """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>."""
     READ = ["tmux", "display-message", "-p", "-t", "@3",
             "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
-            "#{@grid-per-column}"]
+            "#{@grid-per-column}\t#{@grid-tiles}"]
     PANES = ["tmux", "list-panes", "-t", "@3", "-F", "#{pane_id}"]
     TEARDOWN = ["tmux",
                 "set-hook", "-u", "-w", "-t", "@3", "pane-exited", ";",
                 "set-hook", "-u", "-w", "-t", "@3", "window-resized", ";",
                 "set-hook", "-u", "-w", "-t", "@3", "window-layout-changed", ";",
                 "set-option", "-u", "-w", "-t", "@3", "@grid-manager", ";",
-                "set-option", "-u", "-w", "-t", "@3", "@grid-per-column"]
+                "set-option", "-u", "-w", "-t", "@3", "@grid-per-column", ";",
+                "set-option", "-u", "-w", "-t", "@3", "@grid-tiles", ";",
+                "set-option", "-u", "-w", "-t", "@3", "@grid-busy"]
     THREE = "0a6c,160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,2,80x15,80,33,3]}"
     W3 = [("$2", "w1", "mgr", "%1"), ("$3", "w2", "mgr", "%2"), ("$4", "w3", "mgr", "%3")]
     # the manager 100 wide; a sub-worker of w1 below it: tile puts it right of w1
     WIDE = ("8b77,160x48,0,0{100x48,0,0,0,59x48,101,0[59x24,101,0,1,59x23,101,25,2]}", ["%0", "%1", "%2"],
             [("$2", "w1", "mgr", "%1"), ("$3", "a", "w1", "%2")])
 
-    def tile(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), **kw):
-        """tile @3 given what tmux prints; rows: (session id, name, @opener, @pane) besides mgr's. Returns the fake."""
+    def fake(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), tiles=""):
+        """A tmux printing these for @3; rows: (session id, name, @opener, @pane) besides mgr's."""
         rows = [("$1", "mgr", "", ""), *rows]
-        fake = Tmux(fail=fail, results={
-            "display-message": (0, "\t".join((*map(str, size), zoomed, layout, manager, n)) + "\n", ""),
+        return Tmux(fail=fail, results={
+            "display-message": (0, "\t".join((*map(str, size), zoomed, layout, manager, n, tiles)) + "\n", ""),
             "list-panes": (0, "".join(f"{p}\n" for p in panes), ""),
             "list-sessions": (0, "".join("\t".join((*row, SOCK)) + "\n" for row in rows), "")})
-        tui_claude.tile("@3", proc=fake, **kw)
+
+    def tile(self, *args, per_column=None, **kw):
+        """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
+        fake = self.fake(*args, **kw)
+        tui_claude.tile("@3", per_column=per_column, proc=fake)
         return fake
 
     def test_swaps_then_select_layout_in_one_tmux_command(self):
@@ -2021,6 +2027,42 @@ class Tile(unittest.TestCase):
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
         self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+        # the target's cells in another tree: a pass over the target would move them, but none follows a no-op
+        layout = dump("200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}")
+        rows = [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")]
+        fake = self.tile(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
+        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+
+    def test_a_state_needing_several_passes_gets_its_fixed_point_at_once(self):
+        # 200x50, orphans of gone openers in an old layout: 2 and 3 passes each, a pass over the result sends nothing
+        for n, layout, panes, rows, swap, want in (
+                ("1", "200x50,0,0[200x25,0,0{100x25,0,0,2,99x25,101,0,1},200x24,0,26,0]", ["%2", "%1", "%0"],
+                 [("$2", "w1", "old1", "%1"), ("$3", "w2", "old2", "%2")], ("%0", "%2"),
+                 "200x50,0,0{99x50,0,0,0,100x50,100,0{50x50,100,0,1,49x50,151,0,2}}"),
+                ("2", "200x50,0,0[200x16,0,0,0,200x16,0,17,3,200x16,0,34{100x16,0,34,2,99x16,101,34,1}]",
+                 ["%0", "%3", "%2", "%1"], [("$2", "w1", "old2", "%1"), ("$3", "w2", "old1", "%2"),
+                                            ("$4", "w3", "w2", "%3")], ("%2", "%3"),
+                 "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151,0,3},100x24,100,26,1]}")):
+            with self.subTest(n=n):
+                fake = self.tile(dump(layout), panes, rows, n=n, size=(200, 50))
+                self.assertEqual(fake.calls[3:], [["tmux", "swap-pane", "-d", "-s", swap[0], "-t", swap[1], ";",
+                                                   "select-layout", "-t", "@3", dump(want)]])
+                after = [leaf.pane for leaf in tui_claude._leaves(tui_claude._parse_layout(want))]
+                fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
+                self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+
+    def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
+        split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
+        for layout, panes, zoomed, want, reads in (
+                (split, ["%0", "%1", "%4", "%2", "%3"], "0",
+                 ([("%2", "%4"), ("%3", "%4")], tui_claude._parse_layout(tui_claude._render_layout(grid(4))), "1 x 2"),
+                 [self.READ, self.PANES, SESSIONS]),
+                (self.THREE, ["%0", "%1", "%2", "%3"], "0", None, [self.READ, self.PANES, SESSIONS]),
+                (self.THREE, ["%0", "%1", "%2", "%3"], "1", None, [self.READ])):
+            with self.subTest(layout=layout, zoomed=zoomed):
+                fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
+                self.assertEqual(tui_claude._grid_pass("@3", None, fake), want)
+                self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
         # FR-12: w2's claude exited (its session and dead pane stay), its host pane %2 attaches on; w1 (%1) closed
@@ -2107,6 +2149,27 @@ class Tile(unittest.TestCase):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
             tui_claude.tile("@3", proc=Tmux(fail=("display-message",)))
+
+
+class FixedPoint(unittest.TestCase):
+    def fixed_point(self, step, start=0):
+        """_fixed_point's result and the values it stepped."""
+        seen = []
+        return tui_claude._fixed_point(lambda v: seen.append(v) or step(v), start), seen
+
+    def test_the_first_value_its_own_step(self):
+        self.assertEqual(self.fixed_point(lambda n: min(n + 1, 2)), (2, [0, 1, 2]))
+        self.assertEqual(self.fixed_point(lambda n: n), (0, [0, 0]))
+
+    def test_never_settling_the_last_after_settle_iterations_more_steps(self):
+        self.assertEqual(tui_claude.SETTLE_ITERATIONS, 3)
+        self.assertEqual(self.fixed_point(lambda n: n + 1), (4, [0, 1, 2, 3]))
+
+    def test_none_once_a_step_gives_none(self):
+        for last in (0, 2, 3):
+            with self.subTest(last=last):
+                self.assertEqual(self.fixed_point(lambda n: None if n == last else n + 1),
+                                 (None, list(range(last + 1))))
 
 
 @contextmanager

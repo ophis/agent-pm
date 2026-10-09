@@ -53,14 +53,17 @@ WINDOW = re.compile(r"@[0-9]+")
 PER_COLUMN = 3
 GRID_MANAGER = "@grid-manager"
 GRID_PER_COLUMN = "@grid-per-column"
+GRID_TILES = "@grid-tiles"
+GRID_BUSY = "@grid-busy"
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
 GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t"
-               f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}")
+               f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}\t#{{{GRID_TILES}}}")
 GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
 GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
 HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
 TILE_WAIT = 5   # seconds _GridLock.lock waits for another holder, trying every TILE_POLL
 TILE_POLL = 0.05
+SETTLE_ITERATIONS = 3
 LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
 LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -515,6 +518,14 @@ def _grid_up(window: str, manager: str, per_column: int, proc) -> str | None:
     return None
 
 
+def _grid_down(window: str, proc) -> None:
+    """Unset grid window `window`'s hooks and options, in one tmux command."""
+    options = (GRID_MANAGER, GRID_PER_COLUMN, GRID_TILES, GRID_BUSY)
+    args = [a for command, names in (("set-hook", GRID_HOOKS), ("set-option", options)) for name in names
+            for a in (";", command, "-u", "-w", "-t", window, name)]
+    _tmux_ok(args[1:], proc)
+
+
 def _stack(session: str, opener: str, sessions: list[list[str]], tmux: str,
            proc) -> tuple[str | None, str | None] | None:
     """_split below the newest still open @pane of the opener's other sessions; None when none is open."""
@@ -597,27 +608,35 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
 
 
 def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> None:
-    """Lay out grid window `window` (@N): the manager left at its current width, _grid_tree's cells in columns of
-    per_column (default: the window's @grid-per-column, else PER_COLUMN). Nothing changes when the window is zoomed,
-    no grid window, already so laid out or too small, or its layout is unreadable or not its panes'; with its manager
-    gone or alone, the grid is torn down (hooks, options)."""
+    """Lay out grid window `window` (@N): _grid_pass's swaps and layout, sent in one tmux command."""
     if not WINDOW.fullmatch(window):
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     _per_column(per_column)
+    found = _grid_pass(window, per_column, proc)
+    if found is not None:
+        swaps, layout, _ = found
+        _tmux_ok([*(a for source, target in swaps for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")),
+                  "select-layout", "-t", window, _render_layout(layout)], proc)
+
+
+def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[str, str]], Cell, str] | None:
+    """A pass over grid window `window`: what to send (the swap-pane pairs, the layout) and its @grid-tiles as read;
+    None for nothing. The layout: the manager left at its current width, _grid_tree's cells in columns of per_column
+    (None: the window's @grid-per-column, else PER_COLUMN), as successive passes would leave it (_fixed_point).
+    Nothing when the window is zoomed, no grid window, already so laid out or too small, or its layout is unreadable
+    or not its panes'; with its manager gone or alone, the grid is torn down (_grid_down)."""
     fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t")
-    if len(fields) != 6 or fields[2] != "0" or not fields[4]:
-        return
-    width, height, _, layout, manager, n = fields
+    if len(fields) != 7 or fields[2] != "0" or not fields[4]:
+        return None
+    width, height, _, layout, manager, n, tiles = fields
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
     leaves = [] if current is None else _leaves(current)
     if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
-        return
+        return None
     if manager not in panes or len(panes) == 1:
-        args = ["-u", "-w", "-t", window]
-        _tmux_ok([*(a for hook in GRID_HOOKS for a in ("set-hook", *args, hook, ";")),
-                  "set-option", *args, GRID_MANAGER, ";", "set-option", *args, GRID_PER_COLUMN], proc)
-        return
+        _grid_down(window, proc)
+        return None
     sessions = []
     for f in (line.split("\t") for line in _tmux_ok(["list-sessions", "-F", SESSIONS], proc).stdout.split("\n")):
         if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
@@ -625,14 +644,37 @@ def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> 
                              f[3] if PANE.fullmatch(f[3]) else ""))
     if per_column is None:
         per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
-    want = _grid_layout(_grid_tree(manager, panes, sessions, current), width=int(width), height=int(height),
-                        manager=manager, manager_width=next(c.w for c in leaves if c.pane == manager),
-                        per_column=per_column)
-    if want is None or _leaves(want) == leaves:
-        return
-    swaps = [a for source, target in _swaps(panes, [c.pane for c in _leaves(want)])
-             for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")]
-    _tmux_ok([*swaps, "select-layout", "-t", window, _render_layout(want)], proc)
+
+    def step(state: tuple[list[str], Cell]) -> tuple[list[str], Cell] | None:
+        """(pane order, layout) after a pass: the target's panes and the target; the state itself when its cells are
+        the target's (the pass sends nothing)."""
+        order, at = state
+        want = _grid_layout(_grid_tree(manager, order, sessions, at), width=int(width), height=int(height),
+                            manager=manager, manager_width=next(c.w for c in _leaves(at) if c.pane == manager),
+                            per_column=per_column)
+        if want is None:
+            return None
+        return state if _leaves(want) == _leaves(at) else ([c.pane for c in _leaves(want)], want)
+
+    found = _fixed_point(step, (panes, current))
+    if found is None or _leaves(found[1]) == leaves:
+        return None
+    return _swaps(panes, found[0]), found[1], tiles
+
+
+def _fixed_point(step, start):
+    """The first of step(start), step(step(start)), ... that is its own step; still changing SETTLE_ITERATIONS steps
+    after the first: the last; None once a step gives None. Stands in for _grid_tree not being idempotent (it places
+    an orphan group by the current layout): a fix there can drop it."""
+    value = step(start)
+    for _ in range(SETTLE_ITERATIONS):
+        if value is None:
+            return None
+        after = step(value)
+        if after == value:
+            return value
+        value = after
+    return value
 
 
 def _lock_name(socket: str, window: str) -> str:
