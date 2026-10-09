@@ -200,7 +200,7 @@ class Resume(Integration):
         self.assertTrue(prompt(second).startswith("Resumed agent run"))
         users = [line for line in self.transcribed() if line["type"] == "user"]
         self.assertEqual([u["message"]["content"] for u in users], [prompt(first), prompt(second)])
-        self.assertTrue(prompt(second).endswith("\nInput:\n\nUse B.\n"))
+        self.assertTrue(prompt(second).endswith("\n# Input\n\nUse B.\n"))
         events = self.events()
         self.assertEqual([e["kind"] for e in events], ["input", "session", "progress", "result", "end",
                                                        "input", "session", "progress", "outcome", "result", "end"])

@@ -135,7 +135,8 @@ class Inner(Base):
             *posts[2:]])
         (argv, kw), = self.popen_calls
         self.assertEqual((argv[:2], argv[3:5], kw["cwd"]), (["claude", "-p"], ["--session-id", SID], self.rd))
-        self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\nDo it.\n"), argv[2][-200:])
+        self.assertIn(f"\n- `<Workdir>`: `{self.rd}`\n", argv[2])
+        self.assertTrue(argv[2].endswith("\n# Input\n\nDo it.\n"), argv[2][-200:])
         self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2])
         events = self.events()
         self.assertEqual([e["text"] for e in events if e["kind"] == "stderr"], ["claude: warning"])
@@ -296,7 +297,8 @@ class Inner(Base):
             (argv, kw), = self.popen_calls
             self.assertEqual((kw["cwd"], argv[argv.index("--add-dir") + 1]), (there, self.rd))
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "user")
-            self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\nDo it.\n"))
+            self.assertIn(f"\n- `<Workdir>`: `{self.rd}`\n", argv[2])
+            self.assertTrue(argv[2].endswith("\n# Input\n\nDo it.\n"))
             self.assertIn(f"drive.py: cwd {there} is not in trusted_dirs", self.err)
             entry = drive.session(self.rd, SID)
             self.assertEqual((entry["cwd"], entry["project"]), (there, False))

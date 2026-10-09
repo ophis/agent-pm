@@ -514,9 +514,9 @@ class Cwd(Base):
         for cwd in (self.trusted, self.other):
             with self.subTest(cwd=cwd):
                 launch, _ = self.launch(self.trusted, cwd=cwd, input="work/input.md", workdir="work")
-                tail = launch.argv[2].rsplit("\n---\n", 1)[1]
                 work = os.path.join(os.getcwd(), "work")
-                self.assertEqual(tail, f"\nWorkdir: {work}\nInput:\n\nwork/input.md\n")
+                self.assertIn(f"\n- `<Workdir>`: `{work}`\n", launch.argv[2])
+                self.assertTrue(launch.argv[2].endswith("\n# Input\n\nwork/input.md\n"))
                 self.assertIn(f"--to {work}/run.jsonl", launch.argv[2])
 
 
@@ -2123,7 +2123,7 @@ class Detach(Base):
             code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
         stdin.read.assert_not_called()
         (_, _, argv, _), = [c for c in calls if c[0] == "start"]
-        self.assertTrue(argv[1].endswith("Input:\n\n-\n"), argv[1][-40:])
+        self.assertTrue(argv[1].endswith("\n# Input\n\n-\n"), argv[1][-40:])
         self.assertEqual((code, self.lines()), (0, [f"{self.DRIVER} outcome done\n"]))
 
     def test_without_an_opener_the_driver_gets_no_iterm_pane_and_headless_no_tui_line(self):
@@ -2427,7 +2427,7 @@ class Main(Base):
             with open(os.path.join(self.work, "run.jsonl")) as f:
                 inputs = [e["text"] for e in map(json.loads, f) if e["kind"] == "input"]
             self.assertEqual((code, inputs[-1]), (0, want))
-            self.assertTrue(cmd[2].endswith(f"\nInput:\n\n{want.strip()}\n"), cmd[2][-100:])
+            self.assertTrue(cmd[2].endswith(f"\n# Input\n\n{want.strip()}\n"), cmd[2][-100:])
             self.assertNotIn("SECRET", cmd[2])
 
     def test_no_outcome_exits_1(self):

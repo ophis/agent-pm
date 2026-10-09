@@ -62,7 +62,7 @@ class NeedsInput(Integration):
             self.assertEqual((option(first, "--session-id"), option(second, "--resume"),
                               option(second, "--session-id")), (SID, SID, None))
             self.assertTrue(prompt(second).startswith(compose.RESUME), "the resume prompt")
-            self.assertTrue(prompt(second).endswith(f"\nInput:\n\n{ANSWER}\n"), "the answer as the input")
+            self.assertTrue(prompt(second).endswith(f"\n# Input\n\n{ANSWER}\n"), "the answer as the input")
             users = [line["message"]["content"] for line in self.transcribed() if line["type"] == "user"]
             self.assertEqual(users, [prompt(first), prompt(second)], "one session's transcript")
             self.assertEqual(bare(events[-2:]), [
