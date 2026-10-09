@@ -6,6 +6,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -61,6 +62,32 @@ class Table(unittest.TestCase):
         for kw in ({"identifier": "TASK-7"}, {"id": uid}, {"identifier": "OTHER-1"}):
             with self.subTest(**kw), self.assertRaises(ValueError):
                 fake.issue(**kw)
+
+    def test_backlog_is_a_state_outside_the_config(self):
+        self.assertNotIn(fake_linear.BACKLOG, STATES.values())
+        self.assertEqual((fake_linear.NAMES[fake_linear.BACKLOG], fake_linear.TYPES["backlog"]), ("backlog", "backlog"))
+
+    def test_a_backlog_issue_moves_to_todo_and_back(self):
+        fake = fake_linear.FakeLinear()
+        actor = fake.user("me@x.com", "Me")
+        self.assertEqual(fake.issue("Later", identifier="TASK-1", state="backlog")["state"], fake_linear.BACKLOG)
+        fake.move("TASK-1", "todo", actor=actor)
+        self.assertEqual(fake.find("TASK-1")["state"], STATES["todo"])
+        fake.move("TASK-1", "backlog", actor=actor)
+        task = fake.find("TASK-1")
+        self.assertEqual(task["state"], fake_linear.BACKLOG)
+        self.assertEqual([(fake_linear.NAMES[h["fromStateId"]], fake_linear.NAMES[h["toStateId"]])
+                          for h in task["history"]], [("backlog", "todo"), ("todo", "backlog")])
+
+    def test_relate_records_the_issues_ids_and_refuses_an_unknown_one(self):
+        fake = fake_linear.FakeLinear()
+        a, b = fake.issue("A", identifier="TASK-1"), fake.issue("B", identifier="TASK-2")
+        fake.relate("blocks", "TASK-1", b["id"])
+        self.assertEqual(fake.relations, [("blocks", a["id"], b["id"])])
+        for refs in (("TASK-1", "TASK-9"), ("TASK-9", "TASK-2"), (a["id"], "no-such-id")):
+            with self.subTest(refs), self.assertRaises(ValueError):
+                fake.relate("blocks", *refs)
+        self.assertEqual(len(fake.relations), 1)
 
     def test_a_time_without_an_offset_is_utc(self):
         tz = mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"})
@@ -274,6 +301,53 @@ class Served(unittest.TestCase):
                                                                                  "parent": {"id": TASK_GROUP}}]}})
         self.fake.move(blocker["id"], "done", actor=self.harness)
         self.assertEqual(router.blockers(self.gql(router.Q_RELATIONS, i=ready["id"])["issue"]), [])
+
+    def test_the_team_lists_backlog_beside_the_config_states(self):
+        query = linear.Q_TEAM.replace("states(first: 100) { nodes { id } }", "states(first: 100) { nodes { id name type } }")
+        self.fake.ops[query] = "linear.Q_TEAM"
+        nodes = self.gql(query, t=TEAM)["teams"]["nodes"][0]["states"]["nodes"]
+        self.assertEqual({n["id"]: (n["name"], n["type"]) for n in nodes}, {
+            STATES["todo"]: ("Todo", "unstarted"), STATES["in_progress"]: ("In Progress", "started"),
+            STATES["in_review"]: ("In Review", "started"), STATES["handoff"]: ("Handoff", "started"),
+            STATES["done"]: ("Done", "completed"), STATES["canceled"]: ("Canceled", "canceled"),
+            fake_linear.BACKLOG: ("Backlog", "backlog")})
+        self.assertEqual(len(nodes), 7)
+        self.assertEqual(linear.team(self.gql, {"team": TEAM, "states": STATES}).states, STATES)
+
+    def test_a_backlog_issue_is_not_in_a_todo_list(self):
+        later = self.fake.issue("Later", state="backlog", assignee=self.engineer, project=PROJECT)
+        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT)
+
+        def listed(state):
+            flt = {"team": {"id": {"eq": TEAM}}, "project": {"null": False},
+                   "assignee": {"id": {"in": [self.engineer]}}, "state": {"id": {"eq": state}}}
+            return [n["identifier"] for n in self.gql(router.q_issues(), f=flt)["issues"]["nodes"]]
+
+        backlog = fake_linear.BACKLOG
+        self.assertEqual(listed(STATES["todo"]), [ready["identifier"]])
+        self.assertEqual(listed(backlog), [later["identifier"]])
+        self.assertIsNone(linear.move(self.gql, later["id"], STATES["todo"], backlog))
+        self.assertEqual(listed(STATES["todo"]), [later["identifier"], ready["identifier"]])
+        self.assertIsNone(linear.move(self.gql, ready["id"], backlog, STATES["todo"]))
+        self.assertEqual((listed(STATES["todo"]), listed(backlog)), ([later["identifier"]], [ready["identifier"]]))
+        self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i=ready["id"]), {"issue": {"state": {"id": backlog}}})
+
+    def test_issue_create_takes_the_backlog_state(self):
+        new = {"id": str(uuid.uuid4()), "teamId": TEAM, "stateId": fake_linear.BACKLOG, "title": "Later"}
+        linear.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
+        self.assertEqual(self.fake.find(new["id"])["state"], fake_linear.BACKLOG)
+
+    def test_relate_shows_in_relations_and_inverse_relations(self):
+        later = self.fake.issue("Later", identifier="TASK-8", state="backlog")
+        ready = self.fake.issue("Ready", identifier="TASK-9")
+        self.fake.relate("blocks", "TASK-8", ready["id"])
+        self.assertEqual(self.gql(issues.Q_ISSUE, i="TASK-8")["issue"]["relations"]["nodes"],
+                         [{"relatedIssue": {"identifier": "TASK-9", "title": "Ready", "state": {"name": "Todo"}}}])
+        self.assertEqual(self.gql(issues.Q_ISSUE, i="TASK-9")["issue"]["inverseRelations"]["nodes"],
+                         [{"issue": {"identifier": "TASK-8", "title": "Later", "state": {"name": "Backlog"}}}])
+        self.assertEqual(self.gql(router.Q_RELATIONS, i="TASK-9")["issue"]["inverseRelations"]["nodes"],
+                         [{"type": "blocks", "issue": {"identifier": "TASK-8", "state": {"type": "backlog"}}}])
+        self.assertEqual(router.blockers(self.gql(router.Q_RELATIONS, i=ready["id"])["issue"]), [later["identifier"]])
 
     def test_the_write_back_ops(self):
         prd = self.fake.issue("PRD: Widgets", state="done")

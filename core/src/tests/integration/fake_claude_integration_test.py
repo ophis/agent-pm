@@ -303,6 +303,88 @@ class PrintMode(Case):
         self.assertEqual(lines[1]["message"]["content"], [{"type": "text", "text": "draft\n"}])
 
 
+class Gate(Case):
+    def setUp(self):
+        super().setUp()
+        self.gate = os.path.join(self.root, "gate")
+
+    def parked(self, *args) -> subprocess.Popen:
+        """A fake started with the scenario, once it has logged and had time to run a turn."""
+        proc = self.popen(*args)
+        wait(lambda: os.path.isfile(self.log))
+        time.sleep(0.5)
+        self.assertIsNone(proc.poll())
+        self.assertEqual(self.transcripts(), [])
+        return proc
+
+    def open_gate(self) -> None:
+        open(self.gate, "w").close()
+
+    def test_interactive_parks_until_the_file_appears(self):
+        self.scene(steps=["Hi."], gate=self.gate)
+        proc = self.parked("hello", *SESSION)
+        self.open_gate()
+        out, err = proc.communicate("", timeout=30)
+        self.assertEqual((proc.returncode, out), (0, "Hi.\n"), err)
+        self.assertEqual(self.convo(), [("user", "hello"), ("assistant", "Hi.")])
+
+    def test_print_mode_parks_before_anything_is_said(self):
+        self.scene(steps=["Hi."], gate=self.gate)
+        proc = self.parked("-p", "hello", *SESSION, "--output-format", "stream-json", "--verbose")
+        self.open_gate()
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual([json.loads(line)["type"] for line in out.splitlines()], ["system", "assistant", "result"])
+
+    def test_no_hook_or_report_before_the_gate(self):
+        stub, calls = os.path.join(self.root, "report.py"), os.path.join(self.root, "calls.jsonl")
+        with open(stub, "w") as f:
+            f.write(f"open({calls!r}, 'a').close()\n")
+        self.scene(steps=[{"kind": "progress", "name": "n", "text": "t"}], gate=self.gate)
+        proc = self.parked(f"`python3 {stub} --to x`", *SESSION, "--settings", self.settings(UserPromptSubmit=[]))
+        self.assertEqual((self.fired(), os.path.exists(calls)), ([], False))
+        self.open_gate()
+        proc.communicate("", timeout=30)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(len(self.fired()), 1)
+        self.assertTrue(os.path.exists(calls))
+
+    def test_an_existing_file_does_not_hold(self):
+        self.open_gate()
+        self.scene(gate=self.gate)
+        self.assertEqual(self.run_fake("hello", *SESSION).returncode, 0)
+        self.assertEqual(self.users(), ["hello"])
+
+    def test_no_gate_or_a_null_one_does_not_hold(self):
+        for extra in ({}, {"gate": None}):
+            with self.subTest(extra=extra):
+                self.scene(**extra)
+                self.assertEqual(self.run_fake("hello", *SESSION).returncode, 0)
+
+    def test_a_resume_without_its_transcript_fails_without_waiting(self):
+        self.scene(gate=self.gate)
+        res = self.run_fake("--resume", SID)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("No conversation found", res.stderr)
+
+    def test_orphaned_at_the_gate_exits_1(self):
+        err = os.path.join(self.root, "err.txt")
+        self.scene(gate=self.gate)
+        q = shlex.quote
+        parent = subprocess.Popen(["sh", "-c", f"{q(sys.executable)} {q(FAKE)} hello --session-id {SID} "
+                                               f"</dev/null >/dev/null 2>{q(err)} & wait"], cwd=self.proj, env=self.env)
+        self.addCleanup(lambda: (parent.kill(), parent.wait()))
+        wait(lambda: os.path.isfile(self.log))
+        parent.kill()
+
+        def said():
+            with open(err) as f:
+                return f.read()
+
+        self.assertIn("fake_claude.py: gate", wait(said))
+        self.assertEqual(self.transcripts(), [])
+
+
 class BadScenario(Case):
     def test_bad_turns_and_steps_exit_1(self):
         hook = {"kind": "hook", "event": "Stop"}
@@ -319,6 +401,15 @@ class BadScenario(Case):
                 self.assertEqual(res.returncode, 1, res.stderr)
                 self.assertIn("fake_claude.py:", res.stderr)
                 self.assertNotIn("unknown scenario key", res.stderr)
+                self.assertEqual(self.transcripts(), [])
+
+    def test_a_gate_that_is_no_string_exits_1(self):
+        for gate in (5, True, ["x"], {}):
+            with self.subTest(gate=gate):
+                self.scene(gate=gate)
+                res = self.run_fake("hi", *SESSION)
+                self.assertEqual(res.returncode, 1, res.stderr)
+                self.assertIn("fake_claude.py: gate", res.stderr)
                 self.assertEqual(self.transcripts(), [])
 
     def test_valid_hook_steps(self):

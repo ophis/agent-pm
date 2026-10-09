@@ -1,13 +1,16 @@
 """Flow, the base of the orchestrator's integration flows: router.py and promote.py run as processes against the fake
 Linear (fake_linear), the fake gh and a bare repo (fake_gh) and a private tmux server whose bin dir holds the fake
 claude (core's live_tmux and fake_claude). The constants name what setUp seeds; a test seeds its own issues."""
+import copy
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 import unittest
+from urllib.parse import quote
 
 import hermetic  # first: config reads HOME at import
 import board_ids
@@ -27,14 +30,20 @@ ROLES = ("researcher", "pm", "engineer")
 HUMAN = "me@humans.test"
 PROJECT = {"id": "121166b1-191a-4461-bec4-42f1c2dc0ddd", "name": "Widgets"}
 REPO = "acme/widgets"
+LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 LOCAL = (board_ids.HEADER + f'human_members = ["{HUMAN}"]\n' + "".join(map(board_ids.role, ROLES))
-         + f'[project_repos]\n"{PROJECT["id"]}" = "{REPO}"\n')
+         + f'[project_repos]\n"{PROJECT["id"]}" = "{REPO}"\n[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n')
 _CFG = tomllib.loads(LOCAL)
+with open(hermetic.FIXTURE, "rb") as _f:
+    _OUTPUTS = {r: o["output"] for r, o in tomllib.load(_f)["roles"].items() if r in ("researcher", "pm")}
+[(DOCS, BRANCH)] = {(o["repo"], o["branch"]) for o in _OUTPUTS.values()}   # raises unless both roles share them
+RESEARCH_DIR, PRD_DIR = _OUTPUTS["researcher"]["dir"], _OUTPUTS["pm"]["dir"]
 HARNESS, HARNESS_EMAIL = _CFG["harness_key"], "harness@agents.test"
 ACCOUNTS = {r: _CFG["roles"][r]["account"] for r in ROLES}
 KEYS = {r: _CFG["roles"][r]["key"] for r in ROLES}
 ENGINEER = ACCOUNTS["engineer"]
-GH = {"repos": {REPO: {"full_name": REPO, "default_branch": "main", "permissions": {"push": True}}}}
+GH = {"repos": {REPO: {"full_name": REPO, "default_branch": "main", "permissions": {"push": True}}},
+      "contents": {}}
 MANAGER = "manager"
 SHIMS = ("claude", "gh", "python3")
 TIMEOUT = 60   # seconds: a router.py or promote.py process; an agent run to its end
@@ -63,9 +72,10 @@ def _tail(path):
 
 class Flow(unittest.TestCase):
     """A HOME of the test's own, LOCAL and core's fixture its local configs; the fake Linear seeded with the team, the
-    task label group, the harness, role (HARNESS, KEYS) and human users, served and named by AGENT_PM_LINEAR; a private
-    tmux server, session MANAGER started, its bin dir (AGENT_PM_PATH) holding the fake claude, python3 and gh; REPO a
-    bare repo that ~/.gitconfig maps github.com to. Fails unless the guard holds."""
+    task label group (holding LIGHT_RESEARCH), the harness, role (HARNESS, KEYS) and human users, served and named by
+    AGENT_PM_LINEAR; a private tmux server, session MANAGER started, its bin dir (AGENT_PM_PATH) holding the fake
+    claude, python3 and gh (scenario GH, its docs repo DOCS empty until publish()); REPO a bare repo that ~/.gitconfig
+    maps github.com to. Fails unless the guard holds."""
 
     def setUp(self):
         self.apm = hermetic.home(self)
@@ -78,7 +88,7 @@ class Flow(unittest.TestCase):
         for r in ROLES:
             self.ids[ACCOUNTS[r]] = self.fake.user(ACCOUNTS[r], r.title(), KEYS[r])
         self.ids[HUMAN] = self.fake.user(HUMAN, "Me")
-        self.fake.label_group(board_ids.TASK_GROUP, "Tasks", {})
+        self.fake.label_group(board_ids.TASK_GROUP, "Tasks", {LIGHT_RESEARCH: "Light Research"})
         self.seam = fake_linear.seam(self, self.fake, fake_linear.serve(self, self.fake))
         self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
@@ -88,9 +98,27 @@ class Flow(unittest.TestCase):
         fake_gh.gitconfig(self.home, repos)
         self.claude_scenario, self.claude_log, self.gh_scenario = (
             os.path.join(self.server.root, n) for n in ("claude.json", "claude.jsonl", "gh.json"))
-        with open(self.gh_scenario, "w") as f:
-            json.dump(GH, f)
+        self.gh = copy.deepcopy(GH)
+        self.write_gh()
         self.guard()
+
+    def write_gh(self):
+        """Writes self.gh to the fake gh's scenario file, atomically: the fake reads it on each call."""
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.gh_scenario), suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            json.dump(self.gh, f)
+        os.replace(tmp, self.gh_scenario)
+
+    def publish(self, path, text):
+        """Adds the file `path` (as the docs repo spells it) to the docs repo's branch: the fake gh serves it from its
+        next call."""
+        self.gh["contents"].setdefault(DOCS, {}).setdefault(BRANCH, {})[path] = text
+        self.write_gh()
+
+    @staticmethod
+    def doc_url(path):
+        """The docs link of `path`, as inputs and the agents spell it."""
+        return f"https://github.com/{DOCS}/blob/{BRANCH}/{quote(path)}"
 
     def guard(self):
         """Fails unless config.PATH, in a process with env(), finds this test's claude, gh and python3 first."""
@@ -178,10 +206,13 @@ class Flow(unittest.TestCase):
         """The fake claude's invocations from its log, {pid, argv, cwd} each."""
         return _jsonl(self.claude_log)
 
+    def transcript_path(self, ident, sid):
+        """sid's transcript file, the fake claude's in the issue's workdir."""
+        return clients.claude.transcript(self.workdir(ident), sid, os.path.join(self.home, ".claude", "projects"))
+
     def transcript(self, ident, sid):
-        """The lines of sid's transcript, the fake claude's in the issue's workdir."""
-        projects = os.path.join(self.home, ".claude", "projects")
-        return _jsonl(clients.claude.transcript(self.workdir(ident), sid, projects))
+        """The lines of sid's transcript (transcript_path)."""
+        return _jsonl(self.transcript_path(ident, sid))
 
     def requests(self):
         """The fake Linear's request log (fake_linear.Request)."""
@@ -215,12 +246,13 @@ class Flow(unittest.TestCase):
             return [(self.email(c["user"]), c["body"]) for c in self.fake.find(ident)["comments"]]
 
     def history(self, ident):
-        """(from, to, actor email) of each move of the issue, oldest first; states as board_ids.STATES keys."""
+        """(from, to, actor email) of each move of the issue, oldest first; states as board_ids.STATES keys, or
+        "backlog"."""
         with self.fake.lock:
             return [(fake_linear.NAMES[h["fromStateId"]], fake_linear.NAMES[h["toStateId"]], self.email(h["actorId"]))
                     for h in self.fake.find(ident)["history"]]
 
     def state(self, ident):
-        """The issue's state as a board_ids.STATES key."""
+        """The issue's state as a board_ids.STATES key or "backlog"."""
         with self.fake.lock:
             return fake_linear.NAMES[self.fake.find(ident)["state"]]
