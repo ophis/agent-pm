@@ -7,10 +7,13 @@ http://127.0.0.1:<port>/... or http://[::1]:<port>/..., no user or password, no 
 the machine. Like any env, it reaches the agent run: the path, never a key.
 """
 import functools
+import http.client
 import json
 import os
+import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -30,20 +33,60 @@ def harness_service():
     return config.load_config()["harness_key"]
 
 
+class Unavailable(Exception):
+    """Linear failed where a later try can succeed: op (operation), status (HTTP) or reason, or both. Its text never
+    holds the request, headers or key."""
+    def __init__(self, op, *, status=None, reason=None):
+        super().__init__(f"{op}: {reason}" if reason is not None else f"{op}: HTTP {status}")
+        self.op, self.status, self.reason = op, status, reason
+
+
+def operation(query):
+    """The first field of query's top-level selection set: the first name inside its first `{`, else "?"."""
+    m = re.match(r"[^{]*\{\s*([_A-Za-z]\w*)", query)
+    return m[1] if m else "?"
+
+
 def linear_gql(query, *, timeout=30, service=None, **variables):
     """Linear, at the seam's url or else URL, as the account whose key is service's (key), default the harness
-    account's. The seam is read once, so its url and key pair."""
+    account's. The seam is read once, so its url and key pair. Sending and reading raise Unavailable for a 5xx, a
+    rate limit, a transport error or a body not JSON; any other HTTPError as is."""
     seam = _seam()
     auth = _secret(service or harness_service(), timeout, seam)
     req = urllib.request.Request(seam[0] if seam else URL,
                                  data=json.dumps({"query": query, "variables": variables}).encode(),
                                  headers={"Content-Type": "application/json", "Authorization": auth})
     send = urllib.request.build_opener(urllib.request.ProxyHandler({})).open if seam else urllib.request.urlopen
-    with send(req, timeout=timeout) as resp:
-        body = json.load(resp)
+    try:
+        with send(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:  # a URLError: before it
+        if e.code >= 500:
+            reason = None
+        elif e.code == 400 and _rate_limited(e):
+            reason = "RATELIMITED"
+        else:
+            raise
+        e.close()
+        raise Unavailable(operation(query), status=e.code, reason=reason) from None
+    except (OSError, http.client.HTTPException) as e:
+        cause = e.reason if isinstance(e, urllib.error.URLError) else e
+        raise Unavailable(operation(query), reason=one_line(cause)) from None
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise Unavailable(operation(query), reason="response not JSON") from None
     if body.get("errors"):
         raise SystemExit(f"linear api error: {body['errors']}")
     return body["data"]
+
+
+def _rate_limited(e):
+    """e's body has an error whose extensions.code is RATELIMITED (Linear's rate limit)."""
+    try:
+        return any((x.get("extensions") or {}).get("code") == "RATELIMITED" for x in json.loads(e.read())["errors"])
+    except Exception:  # unreadable, not JSON or of another shape
+        return False
 
 
 def key(service, timeout):
@@ -144,12 +187,23 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
 
 def config_error(src, e, dry=False):
     """A config that does not load (load_config's or runnable's SystemExit, a TOML or file error; CONFIG_ERRORS):
-    logged once a day, printed too on a terminal unless dry (the dry copy shows it). Returns the exit code, 1."""
+    _stop's config-error, printed as its reason."""
     reason = one_line(e.code if isinstance(e, SystemExit) else e)
-    log(src, "config-error", once=True, dry=dry, reason=reason)
+    return _stop(src, "config-error", reason, dry, reason=reason)
+
+
+def linear_error(src, e, dry=False):
+    """Linear unavailable (e, Unavailable): _stop's linear-error with e's op, status and reason, once a day per reason."""
+    return _stop(src, "linear-error", f"Linear unavailable: {e}", dry, op=e.op, status=e.status, reason=e.reason)
+
+
+def _stop(src, kind, message, dry, **fields):
+    """Logs kind with fields once a day; on a terminal, unless dry (the dry copy shows it), also prints
+    `<src>.py: <message>`. Returns the exit code, 1."""
+    log(src, kind, once=True, dry=dry, **fields)
     try:
         if sys.stderr.isatty() and not dry:  # elsewhere (launchd) stderr is the log
-            print(f"{src}.py: {reason}", file=sys.stderr, flush=True)
+            print(f"{src}.py: {message}", file=sys.stderr, flush=True)
     except OSError:
         pass
     return 1

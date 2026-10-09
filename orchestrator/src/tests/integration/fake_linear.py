@@ -236,8 +236,8 @@ class FakeLinear:
     def fail(self, op, kind, *, account=None, times=1, seconds=3):
         """The next `times` calls of op (with account's key only, an email, when given) fail as kind: error (GraphQL
         errors: linear_gql raises SystemExit), unsuccessful (a mutation's success: false: linear.call raises
-        RuntimeError), 503 (urllib.error.HTTPError), all three changing nothing; hang (applied, answered after seconds:
-        a shorter client timeout raises TimeoutError). ValueError for an unknown op or kind, unsuccessful on a query,
+        RuntimeError), 503 (linear.Unavailable), all three changing nothing; hang (applied, answered after seconds: a
+        shorter client timeout raises linear.Unavailable). ValueError for an unknown op or kind, unsuccessful on a query,
         times under 1, or an account of no seeded user with a key."""
         with self.lock:
             if (op not in OPS or kind not in KINDS or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
@@ -287,7 +287,9 @@ class FakeLinear:
         if delay:
             time.sleep(min(delay, timeout))
             if delay >= timeout:
-                raise TimeoutError("timed out")
+                raise linear.Unavailable(linear.operation(query), reason="TimeoutError: timed out")
+        if status >= 500:
+            raise linear.Unavailable(linear.operation(query), status=status)
         if status != 200:
             raise urllib.error.HTTPError("fake_linear", status, HTTPStatus(status).phrase, None,
                                          io.BytesIO(json.dumps(body).encode()))
