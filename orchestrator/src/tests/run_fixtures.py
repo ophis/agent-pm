@@ -149,7 +149,8 @@ class Base(unittest.TestCase):
         self.projects = os.path.join(self.tmp, "projects")
         self.gql = Gql(node(comments=[USER_NOTE]))
         self.run = Run(ENG_RUN)
-        self.sh_calls, self.sh_error, self.missing, self.keychain_calls = [], None, set(), []
+        self.sh_calls, self.tmux_error, self.missing, self.keychain_calls = [], None, set(), []
+        self.handovers = {}
         self.tmux_sessions = []
 
     def write(self, path, text):
@@ -162,12 +163,18 @@ class Base(unittest.TestCase):
             return f.read()
 
     def sh(self, argv, **kw):
+        """Fake tmux: list-sessions prints tmux_sessions; new-session (drive.detach's) fails with tmux_error, else takes
+        the handover file as tui_claude.EXEC does, keeping it in handovers by path."""
         self.sh_calls.append((argv, kw))
-        if self.sh_error:
-            raise self.sh_error
         if argv == LIST:
             return subprocess.CompletedProcess(argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), "")
-        return subprocess.CompletedProcess(argv, 0)
+        if argv[:2] == ["tmux", "new-session"]:
+            if self.tmux_error:
+                return subprocess.CompletedProcess(argv, 1, "", self.tmux_error)
+            with open(argv[-1]) as f:
+                self.handovers[argv[-1]] = json.load(f)
+            os.unlink(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
     def keychain(self, service):
         self.keychain_calls.append(service)

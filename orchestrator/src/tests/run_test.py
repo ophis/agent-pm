@@ -80,7 +80,6 @@ class Base(RunBase):
 class Inner(Base):
     def setUp(self):
         super().setUp()
-        self.write(os.path.join(self.rd, "input.md"), "Do it.\n")
         self.handlers, self.tmux = {}, Tmux()
         for p in (mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
                   mock.patch.object(sessions, "now", return_value=NOW),
@@ -89,7 +88,8 @@ class Inner(Base):
             self.addCleanup(p.stop)
 
     def inner(self, assignee=ENGINEER, task=None, mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
-        return self.main(["--uuid", uuid, *(["--target", target] if target else []), *forwarded(assignee, task, mode), *extra])
+        return self.main(["--uuid", uuid, *(["--target", target] if target else []), *forwarded(assignee, task, mode),
+                          *extra, "--input=Do it.\n"])
 
     def rec(self):
         return sessions.base(sid=SID, workdir=self.rd, started_at=NOW)
@@ -144,7 +144,7 @@ class Inner(Base):
             *posts[2:]])
         (argv, kw), = self.popen_calls
         self.assertEqual((argv[:2], argv[3:5], kw["cwd"]), (["claude", "-p"], ["--session-id", SID], self.rd))
-        self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\n{self.rd}/input.md\n"), argv[2][-200:])
+        self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\nDo it.\n"), argv[2][-200:])
         self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2])
         events = self.events()
         self.assertEqual([e["text"] for e in events if e["kind"] == "stderr"], ["claude: warning"])
@@ -210,6 +210,23 @@ class Inner(Base):
         self.assertEqual(tui, headless)
         self.assertIn(("state", KEY, {"i": UUID, "s": STATES["in_review"]}), headless[-1])
         self.assertFalse(os.path.exists(os.path.join(self.root, "logs", "tui")))
+
+    def test_the_input_text_reaches_drive_and_the_deliverable_goes_to_out_md(self):
+        with mock.patch.object(drive, "start", return_value=drive.Result(0, None)) as start:
+            self.assertEqual(self.inner(), 0)
+        ((_, _, params), _), = start.call_args_list
+        self.assertEqual((params.input, params.out, params.workdir),
+                         ("Do it.\n", os.path.join(self.rd, "out.md"), self.rd))
+
+    def test_signals_are_unblocked_once_their_handlers_are_in(self):
+        seen = []
+
+        def sigmask(how, sigs):
+            seen.append((how, sigs, set(self.handlers)))
+        with mock.patch.object(signal, "pthread_sigmask", sigmask), \
+                mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
+            self.assertEqual(self.inner(), 0)
+        self.assertEqual(seen, [(signal.SIG_UNBLOCK, drive.SIGNALS, {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})])
 
     def test_close_runs_before_every_run(self):
         mine = ["engineer-TASK-7-aaaaaaaa", "pm-TASK-7-bbbbbbbb"]
@@ -290,7 +307,7 @@ class Inner(Base):
             (argv, kw), = self.popen_calls
             self.assertEqual((kw["cwd"], argv[argv.index("--add-dir") + 1]), (there, self.rd))
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "user")
-            self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\n{self.rd}/input.md\n"))
+            self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\nDo it.\n"))
             self.assertIn(f"drive.py: cwd {there} is not in trusted_dirs", self.err)
             entry = drive.session(self.rd, SID)
             self.assertEqual((entry["cwd"], entry["project"]), (there, False))
@@ -342,7 +359,7 @@ class Inner(Base):
 class Cli(Base):
     """run.py's arguments, checked before the inner starts."""
     def argv(self):
-        return ["--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded()]
+        return ["--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), "--input", "Do it."]
 
     def test_runner_headless_is_the_default(self):
         seen = []
@@ -366,7 +383,7 @@ class Cli(Base):
 
     def test_argparse_errors(self):
         argv = self.argv()
-        for bad in (argv[:-1], argv[2:], argv + ["--k", "1"], argv + ["--inner"], argv + ["--tui"]):
+        for bad in (argv[:-1], argv[:-2], argv[2:], argv + ["--k", "1"], argv + ["--inner"], argv + ["--tui"]):
             with self.subTest(argv=bad), self.assertRaises(SystemExit) as cm, redirect_stderr(io.StringIO()):
                 run.main(bad)
             self.assertEqual(cm.exception.code, 2)
@@ -375,7 +392,7 @@ class Cli(Base):
         for bad in (["--issue", "task-7"], ["--sid", "not-a-sid"], ["--sid", "z" * 36]):
             with self.subTest(bad=bad):
                 argv = ["--uuid", UUID, "--issue", ID, "--project", "p", "--assignee", ENGINEER, "--sid", SID,
-                        "--task", "build", "--mode", "new"]
+                        "--task", "build", "--mode", "new", "--input", "Do it."]
                 argv[argv.index(bad[0]) + 1] = bad[1]
                 self.assertEqual(self.main(argv), 2)
                 issue, sid = ("task-7", SID) if bad[0] == "--issue" else (ID, bad[1])

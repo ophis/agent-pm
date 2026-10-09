@@ -2156,6 +2156,14 @@ class Detach(Base):
         self.assertEqual([c[1:] for c in calls[1:]], [["kill-session", "-t", "=d"]])
         self.assertFalse(os.path.exists(os.path.dirname(calls[0][-1])))
 
+    def test_an_argv_item_holding_nul_raises_before_the_handover_or_tmux(self):
+        proc = unittest.mock.Mock()
+        with unittest.mock.patch.object(drive.tempfile, "mkdtemp") as mkdtemp, \
+                self.assertRaisesRegex(drive.RunnerError, "an argv item holds a NUL character"):
+            drive.detach("d", [sys.executable, "--input=a\0b"], cwd=self.tmp.name, env={}, iterm="", proc=proc)
+        proc.assert_not_called()
+        mkdtemp.assert_not_called()
+
     def test_the_driver_appends_one_outcome_line_when_it_ends(self):
         needs = {"status": "needs_input", "title": "T", "summary": "S", "questions": ["Which?"]}
         cases = (([outcome(DONE)], 0, "done"), ([outcome(needs)], 0, "needs_input"),

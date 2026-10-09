@@ -634,6 +634,8 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
     argv unblocks them (main). Raises RunnerError."""
+    if any("\0" in arg for arg in argv):   # execve would fail after the handover is taken
+        raise RunnerError("an argv item holds a NUL character")
     tmp = None
     try:
         tmp = tempfile.mkdtemp()

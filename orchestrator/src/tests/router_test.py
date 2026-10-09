@@ -1652,15 +1652,33 @@ class OuterBase(RunBase):
         self.err = err.getvalue()
         return rc
 
+    def handover(self, role="engineer", iterm=""):
+        """The inner's argv from the last tmux call, drive.detach's: its handover file, cwd the run dir."""
+        argv, kw = self.sh_calls[-1]
+        self.assertEqual((argv, kw), (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
+                                       f"agent-pm-{role}-TASK-7", sys.executable, "-I", "-c", drive.tui_claude.EXEC,
+                                       argv[-1]], {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}))
+        h = self.handovers[argv[-1]]
+        self.assertEqual((h["cwd"], h["env"]["PATH"]), (self.rd, config.PATH))
+        return h["argv"]
+
+    def input(self, **kw):
+        """The input text the inner gets."""
+        *_, last = self.handover(**kw)
+        self.assertTrue(last.startswith("--input="), last[:40])
+        return last.removeprefix("--input=")
+
+
+def inner(*args, text=INPUT):
+    return [sys.executable, router.RUN, "--uuid", UUID, *args, f"--input={text}"]
+
 
 class Outer(OuterBase):
     def test_build_starts_the_inner_in_tmux(self):
         self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
-                                           sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM",
-                                           *forwarded()], {"check": True})])
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
-        self.assertEqual(os.listdir(self.rd), ["input.md"])
+        self.assertEqual(len(self.sh_calls), 1)
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded()))
+        self.assertEqual(os.listdir(self.rd), [])
         self.assertEqual(self.gql.calls, [("issue", None, {"i": ID})])
         self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
         self.assertEqual(os.environ["PATH"], config.PATH)
@@ -1668,32 +1686,40 @@ class Outer(OuterBase):
 
     def test_a_given_task_reaches_the_inner(self):
         self.assertEqual(self.outer(task="light-build"), 0)
-        self.assertEqual(self.sh_calls, [(["tmux", "new-session", "-d", "-s", "agent-pm-engineer-TASK-7", "-c", self.rd,
-                                           sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM",
-                                           *forwarded(task="light-build")], {"check": True})])
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
+
+    def test_a_long_input_reaches_the_inner_through_the_handover_never_tmux(self):
+        big = "".join(f"Requirement {i}: keep the session registry small.\n" for i in range(500)).strip()
+        self.gql.issue = node(description=big, comments=[USER_NOTE])
+        self.assertEqual(self.outer(), 0)
+        text = INPUT.replace("Add a session registry.", big)
+        self.assertGreater(len(text.encode()), 24_000)
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(), text=text))
+        self.assertFalse(any(big in arg for arg in self.sh_calls[-1][0]))
+        self.assertEqual(os.listdir(self.rd), [])
+
+    def test_nul_is_removed_from_the_input(self):
+        self.gql.issue = node(description="Add a session\0 registry.\0", comments=[USER_NOTE])
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.input(), INPUT)
 
     def test_research_has_no_target(self):
         self.gql.issue = node(title="Compare queues", description="Which queue fits?")
         self.run.table = [(LISTING, res("[]"))]
         self.assertEqual(self.outer(RESEARCHER), 0)
-        (argv, _), = self.sh_calls
-        self.assertEqual(argv[-7:], ["--uuid", UUID, *forwarded(RESEARCHER)])
-        self.assertNotIn("--target", argv)
+        self.assertEqual(self.handover("researcher"), inner(*forwarded(RESEARCHER), text=(
+            f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['research']}\n\n"
+            "## Question\n\nCompare queues\n\nWhich queue fits?")))
         self.assertEqual(self.run.calls, [(LISTING, 60)])
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
-                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['research']}\n\n"
-                         "## Question\n\nCompare queues\n\nWhich queue fits?")
 
     def test_design_gets_the_research_target(self):
         self.gql.issue = node(title="Queues PRD", description="Build a PRD for X.")
         self.run.table = [(DESIGN_LISTING, res("[]"))]
         self.assertEqual(self.outer(PM), 0)
-        (argv, _), = self.sh_calls
-        self.assertNotIn("--target", argv)
+        self.assertEqual(self.handover("pm"), inner(*forwarded(PM), text=(
+            f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['design']}\n\n"
+            "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")))
         self.assertEqual(self.run.calls, [(DESIGN_LISTING, 60)])
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")),
-                         f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['design']}\n\n"
-                         "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")
 
     def local_clone(self):
         """A real clone (no network) of the target in the temp root, configured under [local_clones]; its realpath."""
@@ -1706,19 +1732,20 @@ class Outer(OuterBase):
     def test_a_configured_local_clone_is_the_inputs_repo(self):
         clone = self.local_clone()
         self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}"))
-        self.assertEqual(self.sh_calls[0][0][self.sh_calls[0][0].index("--target") + 1], "Ophis/Agent-PM")
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(),
+                                                text=INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}")))
         self.assertEqual(self.run.calls, [(("gh", "api", "repos/ophis/agent-pm"), 60), (LS_REMOTE, 60)])
         self.assertEqual(self.err, "")
 
     def test_research_and_design_name_the_local_clone(self):
         clone = self.local_clone()
-        for who_, listing in ((RESEARCHER, LISTING), (PM, DESIGN_LISTING)):
+        for who_, role, listing in ((RESEARCHER, "researcher", LISTING), (PM, "pm", DESIGN_LISTING)):
             with self.subTest(who=who_):
                 self.run.table = [(listing, res("[]"))]
                 self.assertEqual(self.outer(who_), 0)
-                self.assertEqual(self.read(os.path.join(self.rd, "input.md")).splitlines()[1], f"Repo: {clone}")
-                self.assertNotIn("--target", self.sh_calls[-1][0])
+                argv = self.handover(role)
+                self.assertNotIn("--target", argv)
+                self.assertEqual(argv[-1].splitlines()[1], f"Repo: {clone}")
 
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
@@ -1728,15 +1755,13 @@ class Outer(OuterBase):
         os.makedirs(os.path.join(repo.checkout(os.path.join(self.rd, "src"), "Ophis", "Agent-PM", name), ".git"))
         self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
         self.assertEqual(self.outer(mode="resume"), 0)
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+        self.assertEqual(self.input(), INPUT)
         self.assertEqual([argv[0] for argv, _ in self.run.calls], ["gh", "git", "git"])
 
     def test_resume_rebuilds_the_input(self):
         self.transcript()
-        self.write(os.path.join(self.rd, "input.md"), "stale")
         self.assertEqual(self.outer(mode="resume"), 0)
-        self.assertEqual(self.sh_calls[0][0][-5:], forwarded(mode="resume"))
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume")))
 
     def test_bad_issue_or_session_id(self):
         for ident, sid in (("task-7", SID), (ID, "not-a-sid"), (ID, "z" * 36)):
@@ -1831,17 +1856,19 @@ class Outer(OuterBase):
                 self.assertEqual(self.plog("researcher")[-1], f"<ts> transient TASK-7: docs: {reason}")
         self.assertEqual(self.sh_calls, [])
 
-    def test_input_write_failure_leaves_no_temp(self):
-        with mock.patch.object(drive.os, "replace", side_effect=OSError("disk full")):
-            self.assertEqual(self.outer(), 1)
-        self.assertEqual((os.listdir(self.rd), self.sh_calls), ([], []))
-        self.assertEqual(self.err, "router.py: input.md: OSError: disk full\n")
+    def test_a_run_dir_that_cannot_be_made_starts_nothing(self):
+        self.write(self.rd, "")
+        self.assertEqual(self.outer(), 1)
+        self.assertEqual(self.sh_calls, [])
+        self.assertEqual(self.err, f"router.py: input: FileExistsError: [Errno 17] File exists: '{self.rd}'\n")
 
-    def test_tmux_failure_exits_1(self):
-        self.sh_error = subprocess.CalledProcessError(1, ["tmux"])
+    def test_a_driver_session_that_cannot_start_exits_1(self):
+        self.tmux_error = "duplicate session: agent-pm-engineer-TASK-7\n"
         self.assertEqual(self.outer(), 1)
         self.assertEqual(len(self.sh_calls), 1)
-        self.assertIn("router.py: tmux: CalledProcessError", self.err)
+        self.assertEqual(self.handovers, {})
+        self.assertFalse(os.path.exists(self.sh_calls[0][0][-1]))
+        self.assertEqual(self.err, "router.py: tmux: duplicate session: agent-pm-engineer-TASK-7\n")
 
 
 class Attended(OuterBase):
@@ -1860,10 +1887,9 @@ class Attended(OuterBase):
             return self.outer(assignee, runner="tui", **opts)
 
     def driver(self, *tail, iterm=""):
-        return [(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
-                  "agent-pm-engineer-TASK-7", "-c", self.rd,
-                  sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), *tail],
-                 {"check": True})]
+        """The one tmux call; the inner's argv."""
+        self.assertEqual(len(self.sh_calls), 1)
+        self.assertEqual(self.handover(iterm=iterm), inner("--target", "Ophis/Agent-PM", *forwarded(), *tail))
 
     def rename_engineer(self, name):
         """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
@@ -1884,28 +1910,26 @@ class Attended(OuterBase):
 
     def test_split_from_a_session(self):
         self.assertEqual(self.tui(split="below", split_from="dev", live=["dev"]), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=below", "--split-from=dev"))
+        self.driver("--runner=tui", "--split=below", "--split-from=dev")
         self.assertEqual(self.err, ATTACH)
-        self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
     def test_an_iterm2_pane_gets_the_tui_and_a_detached_driver(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
         self.assertEqual(self.tui(), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=w0t0p0:ABC", iterm="w0t0p0:ABC"))
+        self.driver("--runner=tui", "--opener=w0t0p0:ABC", iterm="w0t0p0:ABC")
         self.assertEqual(self.err, ATTACH)
 
     def test_the_callers_tmux_session_is_the_opener_never_split_from(self):
         os.environ.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
         self.assertEqual(self.tui(live=["mine"]), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--opener=mine"))
+        self.driver("--runner=tui", "--opener=mine")
         self.assertEqual(self.err, ATTACH)
 
     def test_events_reach_the_inner_as_an_absolute_path(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
         events = os.path.join(self.tmp, "events.log")
         self.assertEqual(self.tui(split="below", events=os.path.join(self.tmp, ".", "events.log")), 0)
-        self.assertEqual(self.sh_calls, self.driver("--runner=tui", "--split=below", "--opener=w0t0p0:ABC",
-                                                    f"--events={events}", iterm="w0t0p0:ABC"))
+        self.driver("--runner=tui", "--split=below", "--opener=w0t0p0:ABC", f"--events={events}", iterm="w0t0p0:ABC")
         self.assertEqual(os.stat(events).st_mode & 0o777, 0o600)
 
     def test_a_bad_events_file_starts_nothing(self):
@@ -1929,8 +1953,8 @@ class Attended(OuterBase):
         self.assertEqual(self.outer("eng_x@agents.test"), 0)  # headless: no TUI session to name
 
     def test_attach_lines_come_before_the_driver_session(self):
-        printed = []
-        self.sh = lambda argv, **kw: printed.append(sys.stderr.getvalue())
+        printed, sh = [], self.sh
+        self.sh = lambda argv, **kw: printed.append(sys.stderr.getvalue()) or sh(argv, **kw)
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
         self.assertEqual(self.tui(), 0)
         self.assertEqual(printed, [ATTACH])
@@ -2024,17 +2048,13 @@ class AttendedEntry(OuterBase):
                 self.assertRegex(sid, config.UUID_RE)
                 self.assertEqual(line, router.start_line(ID, sid, "engineer"))
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
-                self.assertEqual(self.sh_calls, [
-                    (LIST, {"capture_output": True, "text": True}),
-                    (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
-                      "agent-pm-engineer-TASK-7", "-c", self.rd,
-                      sys.executable, router.RUN, "--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(sid=sid),
-                      *tail], {"check": True})])
+                self.assertEqual(self.sh_calls[:-1], [(LIST, {"capture_output": True, "text": True})])
+                self.assertEqual(self.handover(iterm=iterm),
+                                 inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid), *tail))
                 self.assertEqual(self.said(), ["pick: TASK-7 (1 in queue)", "claim: TASK-7 role=engineer",
                                                "router.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'",
                                                f"router.py: tui: tmux attach -t '=engineer-TASK-7-{sid[:8]}'"])
                 self.assertEqual(self.gql.mutations, [(linear.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})])
-                self.assertEqual(self.read(os.path.join(self.rd, "input.md")), INPUT)
 
     def test_a_task_label_reaches_the_inner_as_task(self):
         self.write(self.config, RUN_CONFIG + f'[task_labels]\nlight-build = "{LIGHT}"\n')
@@ -2043,11 +2063,8 @@ class AttendedEntry(OuterBase):
         (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
         sid = line.split(" ")[2].removeprefix("session=")
         self.assertEqual(line, router.start_line(ID, sid, "engineer"))
-        self.assertEqual(self.sh_calls[-1], (["tmux", "new-session", "-d", "-e", "ITERM_SESSION_ID=", "-s",
-                                              "agent-pm-engineer-TASK-7", "-c", self.rd, sys.executable, router.RUN,
-                                              "--uuid", UUID, "--target", "Ophis/Agent-PM",
-                                              *forwarded(task="light-build", sid=sid), "--runner=tui", "--split-from=dev"],
-                                             {"check": True}))
+        self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build", sid=sid),
+                                                "--runner=tui", "--split-from=dev"))
         self.assertIn("claim: TASK-7 role=engineer task=light-build", self.said())
 
     def test_only_issue_split_split_from_and_events(self):

@@ -4,7 +4,7 @@ outer starts (CLAUDE.md › Architecture); nobody runs it by hand.
 
 run.py --uuid ISSUE_UUID [--target OWNER/NAME] --issue ID --project PROJECT_ID --assignee EMAIL --sid SID [--task TASK]
        --mode new|resume [--runner headless|tui] [--split right|below] [--split-from SESSION] [--opener OPENER]
-       [--events FILE]
+       [--events FILE] --input TEXT
   Exits 2 bad arguments, 1 a config, role or task failure, else 0; the agent run's own code goes to the end lines.
 """
 import argparse
@@ -37,6 +37,7 @@ def inner(a, *, layout, gql, popen, runs, root):
         raise SystemExit(128 + signum)  # drive's `except BaseException` then kills claude
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, stop)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, drive.SIGNALS)   # blocked by drive.detach until now
     plog = None
     try:
         cfg, roles, name, role, plog = router.setup(a, root)
@@ -63,7 +64,7 @@ def inner(a, *, layout, gql, popen, runs, root):
     try:
         core = os.path.join(root, "core")
         client = clients.get("claude", core)
-        params = compose.RunParams(input=os.path.join(rd, "input.md"), out=os.path.join(rd, "deliverable.md"),
+        params = compose.RunParams(input=a.input, out=os.path.join(rd, "out.md"),
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume",
                                    prefix=attended.prefix(name, a.issue) if layout else None)
         launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
@@ -92,7 +93,7 @@ def inner(a, *, layout, gql, popen, runs, root):
 
 def main(argv, *, gql=linear_gql, popen=subprocess.Popen, runs=RUNS_LOG, root=ROOT):
     ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid"):
+    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--input"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
     ap.add_argument("--task")

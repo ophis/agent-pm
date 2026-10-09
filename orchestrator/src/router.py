@@ -521,24 +521,25 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         return fail(plog, a.issue, "transient", f"docs: {e}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
-        drive.save(os.path.join(rd, "input.md"),
-                   inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs))
+        text = inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs).replace("\0", "")
     except Exception as e:
-        print(f"router.py: input.md: {one_line(e)}", file=sys.stderr)
+        print(f"router.py: input: {one_line(e)}", file=sys.stderr)
         return 1
-    attended_argv, iterm = [], []
+    attended_argv, iterm = [], ""
     if layout:
-        iterm = ["-e", f"ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID', '')}"]  # tmux's own may be stale
+        iterm = os.environ.get("ITERM_SESSION_ID", "")  # tmux's own may be stale
         given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
         print(f"router.py: driver: {tui_claude.attach_command(session(name, a.issue))}", file=sys.stderr)
         print(f"router.py: tui: {tui_claude.attach_command(tui)}", file=sys.stderr)
-    try:
-        sh(["tmux", "new-session", "-d", *iterm, "-s", session(name, a.issue), "-c", rd, sys.executable, RUN,
-            "--uuid", issue.id, *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
-            *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"router.py: tmux: {one_line(e)}", file=sys.stderr)
+    try:  # the input goes through the handover file: tmux rejects a command over about 16 KB
+        drive.detach(session(name, a.issue), [
+            sys.executable, RUN, "--uuid", issue.id,
+            *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
+            *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
+            cwd=rd, env=os.environ, iterm=iterm, proc=sh)
+    except drive.RunnerError as e:
+        print(f"router.py: {e}", file=sys.stderr)
         return 1
     return 0
 
