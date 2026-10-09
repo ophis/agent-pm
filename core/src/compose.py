@@ -27,7 +27,7 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
                       "cwd"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line"}
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column"}
 ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)

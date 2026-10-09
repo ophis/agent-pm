@@ -171,7 +171,7 @@ class StartTest(unittest.TestCase):
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
         env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         split_from=None, status_line=False, proc=fake)
+                                         split_from=None, per_column=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
     def test_resume(self):
@@ -350,6 +350,18 @@ class StartTest(unittest.TestCase):
         local(self, 'status_line = "yes"\n')
         fake = Fake()
         with self.assertRaisesRegex(workers.WorkersError, "core config: status_line: want true or false"):
+            self.start(fake)
+        self.assertEqual(fake.calls, [])
+
+    def test_per_column_from_core_config(self):
+        local(self, "workers_per_column = 2\n")
+        self.start(Fake())
+        self.assertEqual(self.tui.call_args.kwargs["per_column"], 2)
+
+    def test_a_bad_workers_per_column_starts_nothing(self):
+        local(self, "workers_per_column = 0\n")
+        fake = Fake()
+        with self.assertRaisesRegex(workers.WorkersError, "core config: workers_per_column: want an integer from 1 to 9999"):
             self.start(fake)
         self.assertEqual(fake.calls, [])
 

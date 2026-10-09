@@ -27,6 +27,7 @@
 #                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
 #   status_line     local, global only: true → TUI sessions (the tui runner's, the tmux skill's workers) show tmux's
 #                   status line; unset → false
+#   workers_per_column local, global only: worker panes per grid column (tmux grid), 1..9999; unset → 3
 tier = 2
 effort = "high"
 language = "English"
@@ -36,6 +37,7 @@ language = "English"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
 # local: status_line = true
+# local: workers_per_column = 2
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on

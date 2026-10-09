@@ -333,6 +333,17 @@ class Generic(Base):
         with self.assertRaisesRegex(compose.ConfigError, "status_line: want true or false"):
             self.plan()
 
+    def test_plan_sets_the_configs_workers_per_column(self):
+        self.assertIsNone(self.plan().per_column)
+        path = os.path.join(hermetic.home(self), "core.local.toml")
+        with open(path, "w") as f:
+            f.write("workers_per_column = 2\n")
+        self.assertEqual(self.plan().per_column, 2)
+        with open(path, "w") as f:
+            f.write("workers_per_column = 0\n")
+        with self.assertRaisesRegex(compose.ConfigError, "workers_per_column: want an integer from 1 to 9999"):
+            self.plan()
+
     def test_plan_and_inline_each_need_their_kind_of_client(self):
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
@@ -1298,11 +1309,12 @@ class TuiRunner(Base):
         for name in ("r-t-xyz", "r-t-1111111", "r-t-111111111", "-11111111", "11111111", "r t-11111111", "r-t-11111111\n"):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
-    def launched(self, layout=None, status_line=False, prefix=None, **kw):
+    def launched(self, layout=None, status_line=False, prefix=None, per_column=None, **kw):
         """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
         p = self.params(prefix=prefix)
         fake = FakeTui(p.channel, [[outcome(DONE)]])
-        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line)
+        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line,
+                              per_column=per_column)
         with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0):
             drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[], **kw)
         (_, name, _, kw), = [c for c in fake.calls if c[0] == "start"]
@@ -1320,6 +1332,10 @@ class TuiRunner(Base):
     def test_the_launchs_status_line_reaches_tui_start(self):
         for status_line in (False, True):
             self.assertIs(self.launched(status_line=status_line)[1]["status_line"], status_line)
+
+    def test_the_launchs_per_column_reaches_tui_start(self):
+        for per_column in (None, 2):
+            self.assertEqual(self.launched(per_column=per_column)[1]["per_column"], per_column)
 
     def test_prefix_names_the_session_and_events_reach_tui_start(self):
         name, kw = self.launched(prefix="engineer-TASK-1", events="/tmp/ev.log")
@@ -1931,6 +1947,14 @@ class Main(Base):
         code, _, err, calls = self.run_main("--task", "essay")
         self.assertEqual((code, calls), (2, []))
         self.assertIn("drive.py:", err)
+
+    def test_a_bad_workers_per_column_exits_2_before_anything_starts(self):
+        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
+            f.write("workers_per_column = 0\n")
+        for extra in ((), ("--dry-run",)):
+            code, out, err, calls = self.run_main(*extra)
+            self.assertEqual((code, out, calls), (2, "", []))
+            self.assertIn("drive.py: workers_per_column: want an integer from 1 to 9999", err)
 
     def test_resume_end_to_end(self):
         code, _, _, ((argv, _),) = self.run_main("--sid", SID, "--resume", lines=[outcome(DONE)])

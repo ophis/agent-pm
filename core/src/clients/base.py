@@ -27,6 +27,7 @@ class Launch:
     resume: str = ""       # the shell command a human resumes the session with; "": none
     project: bool = False  # Access.project, set by drive.plan
     status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
+    per_column: int | None = None   # the config's workers_per_column, set by drive.plan, for the tui runner
 
 
 @dataclass(frozen=True)
