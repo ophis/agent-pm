@@ -2044,11 +2044,11 @@ class Tile(unittest.TestCase):
         clock(self)
 
     def fake(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), tiles="",
-             message=(0,), **results):
-        """A tmux printing these for @3, its socket self.sock, `message` the result of another display-message; rows:
-        (session id, name, @opener, @pane) besides mgr's."""
+             message=(0,), sock=None, **results):
+        """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the result of another
+        display-message; rows: (session id, name, @opener, @pane) besides mgr's."""
         rows = [("$1", "mgr", "", ""), *rows]
-        printed = {self.SOCKET[-1]: (0, f"{self.sock}\n"),
+        printed = {self.SOCKET[-1]: (0, f"{self.sock if sock is None else sock}\n"),
                    self.READ[-1]: (0, "\t".join((*map(str, size), zoomed, layout, manager, n, tiles)) + "\n")}
         return Tmux(fail=fail, results={
             "display-message": lambda argv: printed.get(argv[-1], message),
@@ -2131,6 +2131,21 @@ class Tile(unittest.TestCase):
             self.assertRegex(tui_claude._grid_up("@3", "%0", 3, fake), want)
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
         self.assertFalse(os.path.lexists(self.sock + "-target"))
+
+    def test_an_empty_or_relative_socket_path_raises_before_the_lock(self):
+        # the lock would land in the cwd, here an empty temp dir
+        cwd = tempfile.TemporaryDirectory()
+        self.addCleanup(cwd.cleanup)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(cwd.name)
+        for sock in ("", "default"):
+            with self.subTest(sock=sock):
+                fake = self.fake(*self.WIDE, sock=sock)
+                with self.assertRaisesRegex(tui_claude.TuiError,
+                                            f"^grid @3: socket path {re.escape(repr(sock))}: want an absolute path$"):
+                    tui_claude.tile("@3", proc=fake)
+                self.assertEqual(fake.calls, [self.SOCKET])
+                self.assertEqual(os.listdir(cwd.name), [])
 
     def test_a_fifo_at_the_lock_path_does_not_hang(self):
         os.mkfifo(self.lock, 0o600)
