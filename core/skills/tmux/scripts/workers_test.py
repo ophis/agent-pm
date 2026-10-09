@@ -1,9 +1,11 @@
 import contextlib
 import errno
+import fcntl
 import io
 import json
 import os
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -1305,6 +1307,445 @@ class NextEventContentTest(WorkerCase):
                                                                     "[A-Za-z0-9_-]+")):
             with self.subTest(event=event, msg=msg):
                 self.assertEqual(self.run_event(event, fake), (0, nl(f"1 {event}", msg), ""))
+
+
+WHEN = "2026-10-09T12:00:00+00:00"
+SID2 = "1" + SID[1:]
+PY = "/usr/bin/python3"
+SCRIPT = {"worker": "/x/workers.py", "role": "/x/drive.py", "pipeline": "/x/router.py"}
+HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane\n"
+SHOWN = "1 /dev/ttys001\n"
+SHOW = tui_claude.show
+
+
+def entry(kind="worker", **over):
+    """A valid roster entry."""
+    return {"kind": kind, "sid": SID, "cwd": "/w", "resume": [PY, SCRIPT[kind], "--go"], "note": None, "opener": None,
+            "pane": None, "split": None, "split_from": None, "tui": None, "state": "working", "started": WHEN, **over}
+
+
+def opts(sid="", state="", pane="", opener=""):
+    """A live session's @sid, @state, @pane and @opener."""
+    return (sid, state, pane, opener)
+
+
+def result(**fields):
+    """A run.jsonl line of kind result."""
+    return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
+
+
+@contextlib.contextmanager
+def within(seconds=10):
+    def fire(*_):
+        raise AssertionError("blocked")
+
+    old = signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+class Server:
+    """A fake tmux server for attach. `sessions` maps a session to its opts(); `extra` is appended to list-sessions'
+    rows; `clients` maps a session to its list-clients output; `panes` is list-panes -a's; `fail` maps a command to the
+    stderr it fails with (an OSError: raised). The caller's pane is in session `own` (None: outside tmux)."""
+
+    def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra=""):
+        self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
+        self.sessions = {**({own: opts()} if own else {}), **(sessions or {})}
+        self.calls = []
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        cmd, out, rc = argv[1], "", 0
+        if isinstance(self.fail.get(cmd), OSError):
+            raise self.fail[cmd]
+        if cmd in self.fail:
+            return subprocess.CompletedProcess(argv, 1, "", self.fail[cmd])
+        if cmd == "display-message":
+            out = f"{self.own}\n"
+        elif cmd == "has-session":
+            rc = 0 if argv[3][1:] in self.sessions else 1
+        elif cmd == "list-sessions":
+            out = "".join("\t".join((name, *o)) + "\n" for name, o in self.sessions.items()) + self.extra
+        elif cmd == "list-clients":
+            out = self.clients.get(argv[3][1:], "")
+        elif cmd == "list-panes":
+            out = self.panes
+        return subprocess.CompletedProcess(argv, rc, out, "")
+
+    def ran(self, cmd):
+        return [c for c in self.calls if c[1] == cmd]
+
+
+class AttachTest(WorkerCase):
+    """workers.py attach on a fake tmux server, the caller in tmux session mgr unless a test says otherwise; show is
+    self.show."""
+
+    def setUp(self):
+        super().setUp()
+        self.agent_pm = hermetic.home(self)
+        self.mdir = os.path.join(self.agent_pm, "managers", "mgr")
+        self.path = os.path.join(self.mdir, "roster.json")
+        self.lock = os.path.join(self.mdir, "roster.lock")
+        self.shows, self.then = [], None
+        p = mock.patch.object(tui_claude, "show", self.show)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def show(self, session, **kw):
+        """tui_claude.show as a recorder: (session, its keywords, whether roster.lock was free) in self.shows; it
+        records @pane %9 and @opener mgr on the session as tui_claude's does, then runs self.then."""
+        fd = os.open(self.lock, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            free = True
+        except BlockingIOError:
+            free = False
+        finally:
+            os.close(fd)
+        self.shows.append((session, kw, free))
+        sessions = kw["proc"].sessions
+        sessions[session] = (*sessions[session][:2], "%9", "mgr")
+        if self.then:
+            self.then()
+
+    def config(self, text):
+        with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
+            f.write(text)
+
+    def seed(self, holder=None, **entries):
+        """roster.json holding these entries; returns its bytes."""
+        manager.ensure(self.mdir)
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": entries}, f)
+        return self.bytes()
+
+    def bytes(self):
+        with open(self.path, "rb") as f:
+            return f.read()
+
+    def entries(self):
+        return json.loads(self.bytes())["entries"]
+
+    def attach(self, server, *argv):
+        """main's (exit code, stdout, stderr) for `attach *argv`."""
+        env = dict(self.env)
+        if server.own:
+            env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(workers.subprocess, "run", server), mock.patch.dict(os.environ, env), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = workers.main(["attach", *argv])
+        return rc, out.getvalue(), err.getvalue()
+
+    def synced(self, server, *argv):
+        """attach's stdout; asserts exit 0 and nothing on stderr."""
+        rc, out, err = self.attach(server, *argv)
+        self.assertEqual((rc, err), (0, ""))
+        return out
+
+    def test_first_attach_makes_the_directory_and_files_and_takes_the_lease(self):
+        with mock.patch.object(manager, "now", return_value=WHEN):
+            self.assertEqual(self.synced(Server()), HEADER)
+        self.assertEqual(stat.S_IMODE(os.stat(self.mdir).st_mode), 0o700)
+        for name in ("events", "roster.json", "roster.lock"):
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.mdir, name)).st_mode), 0o600, name)
+        holder = {"session": "mgr", "since": WHEN}
+        self.assertEqual(json.loads(self.bytes()),
+                         {"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": {}})
+        with mock.patch.object(manager, "now", return_value="2026-10-10T00:00:00+00:00"):
+            self.synced(Server())
+        self.assertEqual(json.loads(self.bytes())["holder"], holder)
+
+    def test_manager_option_names_the_directory_the_own_session_holds(self):
+        self.synced(Server("m2"), "--manager", "mgr")
+        self.assertEqual(json.loads(self.bytes())["holder"]["session"], "m2")
+
+    def test_refused_by_a_live_other_holder_writing_nothing(self):
+        for own in ("mgr", None):
+            with self.subTest(own=own):
+                before = self.seed(holder={"session": "other", "since": WHEN}, w1=entry())
+                server = Server(own, sessions={"other": opts()})
+                self.assertEqual(self.attach(server, "--manager", "mgr"), (
+                    1, "", f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that "
+                           "manager to run workers.py release, or end that session\n"))
+                self.assertEqual(self.bytes(), before)
+                self.assertEqual(server.ran("list-sessions"), [])
+
+    def test_outside_tmux_prints_the_notice_and_leaves_the_holder(self):
+        notice = f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
+        for holder in (None, {"session": "old", "since": WHEN}):
+            with self.subTest(holder=holder):
+                self.seed(holder=holder)
+                self.assertEqual(self.attach(Server(None), "--manager", "mgr"), (0, HEADER, notice))
+                self.assertEqual(json.loads(self.bytes())["holder"], holder)
+
+    def test_outside_tmux_without_manager_exits_1_and_makes_nothing(self):
+        self.assertEqual(self.attach(Server(None)),
+                         (1, "", "workers: no manager directory: run inside tmux or give --manager <name>\n"))
+        self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_a_bad_core_config_exits_1_before_anything_is_made(self):
+        self.config("workers_per_column = 0\n")
+        self.assertEqual(self.attach(Server()),
+                         (1, "", "workers: core config: workers_per_column: want an integer from 1 to 9999\n"))
+        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "managers")))
+
+    def test_a_worker_renamed_in_tmux_is_rekeyed_by_its_sid(self):
+        old = entry(resume=[PY, SCRIPT["worker"], "start", "w1"], state="gone")
+        self.seed(w1=old)
+        self.synced(Server(sessions={"w9": opts(SID, "done", "%4", "mgr")}, clients={"w9": SHOWN}))
+        self.assertEqual(self.entries(), {"w9": {**old, "state": "done", "pane": "%4", "opener": "mgr"}})
+
+    def test_no_rename_without_exactly_one_match_free_to_take(self):
+        cases = {"two sessions have its sid": ({"w8": opts(SID), "w9": opts(SID)}, {}),
+                 "the match is an entry": ({"w9": opts(SID)}, {"w9": entry("role", sid=SID2)}),
+                 "the match is not a NAME": ({"a.b": opts(SID)}, {}),
+                 "no session has its sid": ({"w9": opts(SID2)}, {})}
+        for why, (sessions, others) in cases.items():
+            with self.subTest(why):
+                self.seed(w1=entry(), **others)
+                self.synced(Server(sessions=sessions, clients=dict.fromkeys(sessions, SHOWN)))
+                self.assertEqual(set(self.entries()), {"w1", *others})
+                self.assertEqual(self.entries()["w1"]["state"], "gone")
+
+    def test_only_a_worker_with_a_sid_is_renamed(self):
+        self.seed(r1=entry("role", cwd=self.dir), p1=entry("pipeline", sid=SID2, cwd=self.dir), w1=entry(sid=None))
+        self.synced(Server(sessions={"x1": opts(SID), "x2": opts(SID2), "x3": opts()},
+                           clients=dict.fromkeys(("x1", "x2", "x3"), SHOWN)))
+        self.assertEqual({n: e["state"] for n, e in self.entries().items()}, {"r1": "gone", "p1": "gone", "w1": "gone"})
+
+    def test_a_short_row_is_not_live(self):
+        self.seed(w1=entry())
+        self.synced(Server(extra=f"w1\t{SID}\n"))
+        self.assertEqual(self.entries()["w1"]["state"], "gone")
+
+    def test_a_live_workers_state_is_its_sessions_when_known_else_working(self):
+        states = {"working": "working", "done": "done", "blocked": "blocked", "dead": "dead", "": "working",
+                  "gone": "working", "finished": "working", "idle": "working", "Done": "working"}
+        names = {f"w{i}": pair for i, pair in enumerate(states.items())}
+        self.seed(**{name: entry(state="gone") for name in names})
+        self.synced(Server(sessions={name: opts(SID, have) for name, (have, _) in names.items()},
+                           clients=dict.fromkeys(names, SHOWN)))
+        self.assertEqual({n: e["state"] for n, e in self.entries().items()},
+                         {n: want for n, (_, want) in names.items()})
+
+    def test_a_worker_without_a_session_is_gone(self):
+        self.seed(w1=entry(state="blocked", pane="%4"))
+        self.assertEqual(self.synced(Server()), HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
+                                                         f"resume w1: {PY} /x/workers.py --go\n")
+        self.assertEqual(self.entries()["w1"]["state"], "gone")
+        self.assertEqual(self.shows, [])
+
+    def test_a_role_or_pipeline_is_live_by_its_driver_or_tui_session(self):
+        """Driver only: working, placement kept; tui: its state and placement, the driver live or not."""
+        for kind in ("role", "pipeline"):
+            with self.subTest(kind=kind):
+                self.seed(d1=entry(kind, cwd=self.dir, state="gone", tui="t1", pane="%1"),
+                          d2=entry(kind, cwd=self.dir, state="done"),
+                          t3=entry(kind, cwd=self.dir, state="gone", tui="t3t"),
+                          b4=entry(kind, cwd=self.dir, state="gone", tui="t4"))
+                server = Server(sessions={"d1": opts(state="dead", pane="%7", opener="x"), "d2": opts(state="blocked"),
+                                          "t3t": opts(SID, "blocked", "%8", "mgr"), "b4": opts(state="dead"),
+                                          "t4": opts(state="done", pane="%6")},
+                                clients={"t3t": SHOWN, "t4": SHOWN})
+                self.synced(server)
+                self.assertEqual({n: (e["state"], e["pane"], e["opener"]) for n, e in self.entries().items()},
+                                 {"d1": ("working", "%1", None), "d2": ("working", None, None),
+                                  "t3": ("blocked", "%8", "mgr"), "b4": ("done", "%6", None)})
+                self.assertEqual([c[3] for c in server.ran("list-clients")], ["=t4", "=t3t"])
+
+    def test_a_role_or_pipeline_without_a_session_is_finished_or_gone_by_its_run_record(self):
+        done, failed, tail = result(outcome={"status": "done"}), result(outcome={"status": "failed"}), workers.RUN_TAIL
+        pad = ("x" * 99 + "\n") * (tail // 100 + 1)
+        cut = tail - len(done)
+        records = {
+            "done": (done, "finished"), "failed": (failed, "finished"),
+            "later-lines-skipped": (done + '{"kind": "end"}\nnot json\n' + "[" * 200000 + '\n{"kind": "res',
+                                    "finished"),
+            "last-result-wins": (done + result(error="stopped: KeyboardInterrupt"), "gone"),
+            "failed-after-an-error": (result(error="boom") + failed, "finished"),
+            "needs-input": (result(outcome={"status": "needs_input"}), "gone"),
+            "error": (result(error="boom"), "gone"),
+            "malformed": ("{\nnot json\n\udcff\n", "gone"),
+            "empty": ("", "gone"),
+            "outcome-a-string": (result(outcome="done"), "gone"),
+            "outcome-a-list": (result(outcome=[{"status": "done"}]), "gone"),
+            "status-a-list": (result(outcome={"status": ["done"]}), "gone"),
+            "no-status": (result(outcome={}), "gone"),
+            "kind-outcome": (json.dumps({"kind": "outcome", "outcome": {"status": "done"}}) + "\n", "gone"),
+            "a-list-line": (json.dumps([{"kind": "result", "outcome": {"status": "done"}}]) + "\n", "gone"),
+            "beyond-the-tail": (done + pad, "gone"),
+            "within-the-tail": (pad + done, "finished"),
+            "cut-by-the-tail": ("x" + done + "p\n" * (cut // 2) + "p" * (cut % 2), "gone"),
+        }
+        entries, want = {}, {}
+        for i, (name, (text, state)) in enumerate(records.items()):
+            cwd = os.path.join(self.dir, name)
+            os.mkdir(cwd)
+            with open(os.path.join(cwd, "run.jsonl"), "w", encoding="utf-8", errors="surrogateescape") as f:
+                f.write(text)
+            entries[name], want[name] = entry(("role", "pipeline")[i % 2], cwd=cwd), state
+        done_cwd = os.path.join(self.dir, "done", "run.jsonl")
+        for name, make in (("missing", lambda path: None), ("symlink", lambda path: os.symlink(done_cwd, path)),
+                           ("fifo", os.mkfifo), ("directory", os.mkdir)):
+            cwd = os.path.join(self.dir, name)
+            os.mkdir(cwd)
+            make(os.path.join(cwd, "run.jsonl"))
+            entries[name], want[name] = entry("role", cwd=cwd), "gone"
+        self.seed(**entries)
+        with within():
+            self.synced(Server())
+        self.assertEqual({n: e["state"] for n, e in self.entries().items()}, want)
+
+    def test_a_live_sessions_pane_and_opener_are_synced_when_valid(self):
+        cases = {"w1": ("%7", "mgr", "%7", "mgr"),
+                 "w2": ("5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE", "5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE"),
+                 "w3": ("", "", "%1", "old"), "w4": ("%x", "a b", "%1", "old"), "w5": ("%8", "a.b", "%8", "old"),
+                 "w6": ("a b", "new", "%1", "new")}
+        self.seed(**{name: entry(pane="%1", opener="old") for name in cases})
+        self.synced(Server(sessions={n: opts(SID, "working", p, o) for n, (p, o, _, _) in cases.items()},
+                           clients=dict.fromkeys(cases, SHOWN)))
+        self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+                         {n: (p, o) for n, (_, _, p, o) in cases.items()})
+
+    def test_a_live_session_no_client_shows_is_reopened_with_the_lock_free(self):
+        self.config("workers_per_column = 2\n")
+        self.seed(w1=entry(split="below", split_from="mgr"), r1=entry("role", tui="r1-tui", split="right"),
+                  w2=entry(), w3=entry(sid=SID2), r2=entry("role", sid=SID2, cwd=self.dir, tui="r2-tui"))
+        server = Server(sessions={"w1": opts(SID), "r1-tui": opts(state="done"), "w2": opts(SID), "r2": opts()},
+                        clients={"w2": SHOWN})
+        with mock.patch.object(manager, "roster", wraps=manager.roster) as roster:
+            out = self.synced(server)
+        self.assertEqual(self.shows, [
+            ("r1-tui", {"split": "right", "split_from": None, "per_column": 2, "proc": server}, True),
+            ("w1", {"split": "below", "split_from": "mgr", "per_column": 2, "proc": server}, True)])
+        self.assertEqual(roster.call_count, 2)
+        self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+                         {"w1": ("%9", "mgr"), "r1": ("%9", "mgr"), "w2": (None, None), "w3": (None, None),
+                          "r2": (None, None)})
+        self.assertIn(f"w1\tworker\t{SID}\tworking\t-\t/w\t%9\n", out)
+
+    def test_no_reopen_no_second_roster_block(self):
+        self.seed(w1=entry())
+        with mock.patch.object(manager, "roster", wraps=manager.roster) as roster:
+            self.synced(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
+        self.assertEqual((roster.call_count, self.shows), (1, []))
+
+    def test_the_default_per_column(self):
+        self.seed(w1=entry())
+        self.synced(Server(sessions={"w1": opts(SID)}))
+        self.assertEqual([kw["per_column"] for _, kw, _ in self.shows], [None])
+
+    def test_placement_is_recorded_only_for_an_entry_still_the_same(self):
+        def drop():
+            with manager.roster(self.mdir) as r:
+                manager.remove(r, "w1")
+        cases = {"same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
+                 "sid changed": (lambda: manager.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
+                 "kind changed": (lambda: manager.put(self.mdir, "w1", entry("pipeline")), entry("pipeline")),
+                 "removed": (drop, None)}
+        for why, (then, want) in cases.items():
+            with self.subTest(why):
+                self.seed(w1=entry())
+                self.then = then
+                self.synced(Server(sessions={"w1": opts(SID)}))
+                self.assertEqual(self.entries().get("w1"), want)
+
+    def test_a_shown_session_is_marked_by_its_most_recently_active_client(self):
+        panes = "/dev/ttys001\tmgr\n/dev/ttys002\tother\n/dev/ttys003\ta.b\n\n"
+        cases = {"w1": ("100 /dev/ttys002\n300 /dev/ttys001\n200 /dev/ttys003\n", "mgr"),
+                 "w2": ("20 /dev/ttys001\n100 /dev/ttys002\n", "other"),
+                 "w3": ("300 /dev/ttys003\n100 /dev/ttys001\n", "a terminal"),
+                 "w4": ("9 /dev/ttys009\n", "a terminal")}
+        self.seed(**{name: entry() for name in cases})
+        server = Server(sessions={name: opts(SID) for name in cases}, clients={n: c for n, (c, _) in cases.items()},
+                        panes=panes)
+        self.assertEqual(self.synced(server), HEADER + "".join(
+            f"{n}\tworker\t{SID}\tworking\t-\t/w\t-\tshown in {where}\n" for n, (_, where) in cases.items()))
+        self.assertEqual(server.ran("list-clients")[0], ["tmux", "list-clients", "-t", "=w1", "-F",
+                                                         "#{client_activity} #{client_tty}"])
+        self.assertEqual(server.ran("list-panes"), [["tmux", "list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]])
+        self.assertEqual(self.shows, [])
+
+    def test_table_and_recovery_commands(self):
+        cwd = os.path.join(self.dir, "it's a role")
+        finished = os.path.join(self.dir, "finished")
+        for d in (cwd, finished):
+            os.mkdir(d)
+        with open(os.path.join(finished, "run.jsonl"), "w") as f:
+            f.write(result(outcome={"status": "done"}))
+        self.seed(b=entry(note="check the logs", pane="%4"),
+                  a=entry(sid=None, resume=[PY, "/x/workers.py", "; rm -rf ~"]),
+                  B=entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
+                  C=entry("role", sid=None, cwd=cwd),
+                  p1=entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--plan", "/p q"]),
+                  f1=entry("pipeline", cwd=finished))
+        out = self.synced(Server(sessions={"b": opts(SID, "working", "%4")}, clients={"b": SHOWN},
+                                 panes="/dev/ttys001\tmgr\n"))
+        role = (f"cd {shlex.quote(cwd)} && {PY} /x/drive.py --role pm --sid {SID} --resume "
+                "--input 'Continue the unfinished task.'")
+        self.assertEqual(out, HEADER + nl(f"B\trole\t{SID}\tgone\t-\t{cwd}\t-",
+                                          f"C\trole\t-\tgone\t-\t{cwd}\t-",
+                                          "a\tworker\t-\tgone\t-\t/w\t-",
+                                          f"b\tworker\t{SID}\tworking\tcheck the logs\t/w\t%4\tshown in mgr",
+                                          f"f1\tpipeline\t{SID}\tfinished\t-\t{finished}\t-",
+                                          f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
+                                          f"resume B: {role}",
+                                          "resume C: none (no sid)",
+                                          f"resume a: {PY} /x/workers.py '; rm -rf ~'",
+                                          f"resume p1: {PY} /x/router.py --plan '/p q'"))
+        self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
+        self.assertEqual(shlex.split(out.splitlines()[-2].split(": ", 1)[1]), [PY, "/x/workers.py", "; rm -rf ~"])
+
+    def test_an_invalid_entry_is_skipped_with_one_stderr_line(self):
+        self.seed(w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/workers.py"]))
+        rc, out, err = self.attach(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
+        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"))
+        self.assertEqual(err, "manager: roster.json: entry 'bad': sid: '; rm -rf ~': want a session id or null\n"
+                              "manager: roster.json: entry 'rel': resume[0]: 'python3': want an absolute path\n")
+        self.assertEqual(set(self.entries()), {"w1"})
+
+    def test_no_tmux_server_means_no_live_session(self):
+        for err in ("no server running on /tmp/tmux-501/default\n",
+                    "error connecting to /tmp/tmux-501/default (No such file or directory)\n"):
+            with self.subTest(err=err):
+                self.seed(w1=entry())
+                rc, out, _ = self.attach(Server(None, fail={"list-sessions": err}), "--manager", "mgr")
+                self.assertEqual((rc, out.splitlines()[1]), (0, f"w1\tworker\t{SID}\tgone\t-\t/w\t-"))
+                self.assertEqual(self.entries()["w1"]["state"], "gone")
+
+    def test_any_other_list_sessions_failure_writes_nothing(self):
+        for fail, msg in (("boom\n", "tmux list-sessions: boom"),
+                          (OSError(errno.ENOENT, "No such file or directory"), "tmux: No such file or directory")):
+            with self.subTest(msg):
+                before = self.seed(w1=entry())
+                self.assertEqual(self.attach(Server(fail={"list-sessions": fail})), (1, "", f"workers: {msg}\n"))
+                self.assertEqual(self.bytes(), before)
+        os.unlink(self.path)
+        self.assertEqual(self.attach(Server(fail={"list-sessions": "boom\n"}))[0], 1)
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_a_failed_list_clients_is_an_error(self):
+        self.seed(w1=entry())
+        server = Server(sessions={"w1": opts(SID)}, fail={"list-clients": "can't find session: w1\n"})
+        self.assertEqual(self.attach(server), (1, "", "workers: tmux list-clients: can't find session: w1\n"))
+        self.assertEqual(self.shows, [])
+
+    def test_a_reopen_outside_tmux_prints_shows_messages_on_stderr(self):
+        executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\n")
+        self.seed(w1=entry())
+        with mock.patch.object(tui_claude, "show", SHOW):
+            rc, out, err = self.attach(Server(None, sessions={"w1": opts(SID)}), "--manager", "mgr")
+        cmd = tui_claude.attach_command("w1")
+        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n"))
+        self.assertEqual(err, f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
+                              f"tui: session w1: {cmd}\n"
+                              f"tui: show: {tui_claude.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
 
 
 if __name__ == "__main__":
