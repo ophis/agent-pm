@@ -1,6 +1,7 @@
 """workers.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
-state, events, blocked, dead, restart, early death; the grid (columns, re-tile, name order, sub-workers, a state
-needing two passes settling, concurrent tiles, the mute, the breaker) and a split outside it."""
+state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
+(columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
+breaker) and a split outside it."""
 import contextlib
 import functools
 import json
@@ -36,8 +37,9 @@ PACE = 0.02   # seconds between the loop's looks
 
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
-    started and attached, one events file and one fake log for all workers, the workers' cwd. Commands run as
-    processes in mgr's pane unless `inside` names another session (None: no pane, Server.env() alone)."""
+    started and attached, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
+    mgr's manager directory (core/src/manager.py). Commands run as processes in mgr's pane unless `inside` names
+    another session (None: no pane, Server.env() alone)."""
 
     def setUp(self):
         self.agent_pm = hermetic.home(self)
@@ -45,8 +47,12 @@ class Live(unittest.TestCase):
         self.server.start(MANAGER)
         self.server.attach(MANAGER)
         root = self.server.root
-        self.events, self.log, self.cwd = (os.path.join(root, n) for n in ("events", "log.jsonl", "work"))
+        self.events = self.events_of(MANAGER)
+        self.log, self.cwd = (os.path.join(root, n) for n in ("log.jsonl", "work"))
         os.mkdir(self.cwd)
+
+    def events_of(self, manager: str) -> str:
+        return os.path.join(self.agent_pm, "managers", manager, "events")
 
     def ok(self, res: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
         self.assertEqual(res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}")
@@ -73,13 +79,13 @@ class Live(unittest.TestCase):
 
     def start(self, name: str, *args: str, steps: list | None = None, turns: list | tuple = (),
               inside: str | None = MANAGER) -> subprocess.CompletedProcess:
-        """`workers.py start <name> --events … --cwd … --prompt hi args…`, its fake's scenario `steps` (default one
+        """`workers.py start <name> --cwd … --prompt hi args…`, its fake's scenario `steps` (default one
         text, `Hi from <name>.`) and `turns`, logging to self.log."""
         with open(self.scenario(name), "w") as f:
             json.dump({"steps": [f"Hi from {name}."] if steps is None else steps, "turns": list(turns),
                        "log": self.log}, f)
-        return self.workers("start", name, "--events", self.events, "--cwd", self.cwd, "--prompt", "hi", *args,
-                            inside=inside, **{fake_claude.ENV: self.scenario(name)})
+        return self.workers("start", name, "--cwd", self.cwd, "--prompt", "hi", *args, inside=inside,
+                            **{fake_claude.ENV: self.scenario(name)})
 
     def started(self, name: str, *args: str, **kw) -> str:
         """start's session id; fails unless it exits 0 printing `<name> <sid>`."""
@@ -91,9 +97,9 @@ class Live(unittest.TestCase):
     def restart(self, name: str, **kw) -> subprocess.CompletedProcess:
         return self.workers("restart", name, **kw, **{fake_claude.ENV: self.scenario(name)})
 
-    def next_event(self, after: int) -> tuple[int, str, str]:
-        """`next-event --after <after>`'s line number, event and content."""
-        out = self.ok(self.workers("next-event", "--events", self.events, "--after", str(after))).stdout
+    def next_event(self, after: int, *args: str) -> tuple[int, str, str]:
+        """`next-event args… --after <after>`'s line number, event and content."""
+        out = self.ok(self.workers("next-event", *args, "--after", str(after))).stdout
         head, _, content = out.partition("\n")
         n, _, event = head.partition(" ")
         return int(n), event, content.removesuffix("\n")
@@ -410,10 +416,47 @@ class Settle(Live):
         self.grid([[["w1"], ["w2"], "w3"]])
 
 
+class Managers(Live):
+    """Where a worker's events go: core/skills/tmux/SKILL.md › Start 1."""
+
+    def done_lines(self, path: str, name: str) -> list[str]:
+        """`path`'s lines once one is `HH:MM:SS <name> done`."""
+        def check():
+            lines = live_tmux.events(path)
+            return lines if any(is_event(line, name, "done") for line in lines) else None
+
+        return live_tmux.wait(check, what=f"`{name} done` in {path}")
+
+    def test_own_session_and_worker_in_worker(self):
+        self.started("w1")
+        self.assertEqual(self.server.option("w1", "@events"), self.events)
+        self.done_lines(self.events, "w1")
+        self.started("w2", inside="w1")
+        inner = self.events_of("w1")
+        self.assertEqual(self.server.option("w2", "@events"), inner)
+        self.assertEqual([x.split(" ")[1:] for x in self.done_lines(inner, "w2")], [["w2", "done"]])
+        self.assertEqual([x.split(" ")[1:] for x in live_tmux.events(self.events)], [["w1", "done"]])
+
+    def test_manager_flag(self):
+        self.started("w1", "--manager", "other")
+        other = self.events_of("other")
+        self.assertEqual(self.server.option("w1", "@events"), other)
+        (done,) = self.done_lines(other, "w1")
+        self.assertEqual(self.next_event(0, "--manager", "other"), (1, done, "Hi from w1."))
+        self.assertFalse(os.path.exists(os.path.dirname(self.events)))
+
+    def test_no_pane_needs_a_manager(self):
+        res = self.start("w1", inside=None)
+        self.assertEqual((res.returncode, res.stderr),
+                         (1, "workers: no manager directory: run inside tmux or give --manager <name>\n"))
+        self.assertFalse(os.path.exists(os.path.dirname(os.path.dirname(self.events))))
+        self.assertEqual(self.server.tmux("has-session", "-t", "=w1").returncode, 1)
+
+
 class Splits(Live):
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
-        self.started("w1", "--split-from", MANAGER, "--split", "below", inside=None)
+        self.started("w1", "--manager", MANAGER, "--split-from", MANAGER, "--split", "below", inside=None)
         pane = self.server.pane_of("w1")
         panes = self.server.panes(f"={MANAGER}:")
         self.assertIn(pane, panes)

@@ -17,6 +17,8 @@ import workers  # noqa: E402
 sys.path.insert(0, os.path.join(workers.CORE, "src", "tests"))
 import hermetic  # noqa: E402
 
+manager = workers.manager
+
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 tui_claude = workers.tui_claude
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
@@ -855,6 +857,11 @@ class ReplyTest(WorkerCase):
 
 
 class MainTest(WorkerCase):
+    def setUp(self):
+        super().setUp()
+        self.agent_pm = hermetic.home(self)
+        self.default = os.path.join(self.agent_pm, "managers", "m1", "events")
+
     def run_main(self, argv, fake=None):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(workers.subprocess, "run", fake or Fake()), \
@@ -865,7 +872,7 @@ class MainTest(WorkerCase):
 
     def test_start(self):
         fake = Fake()
-        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir,
+        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir,
                                       "--prompt", "go", "--", "--model", "sonnet", "--permission-mode", "default"],
                                      fake)
         self.assertEqual(rc, 0, err)
@@ -873,20 +880,21 @@ class MainTest(WorkerCase):
         self.assertEqual(out, f"w1 {sid}\n")
         self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
         self.assertEqual(fake.handover["argv"][-1], "go")
+        self.assertEqual(fake.store["@events"], self.default)
 
     def test_start_resume(self):
         fake = Fake()
-        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--resume", SID,
+        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--resume", SID,
                                       "--", "--model", "m"], fake)
         self.assertEqual((rc, out), (0, f"w1 {SID}\n"), err)
         self.assertEqual(fake.store["@sid"], SID)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
-            [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.events))
+            [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.default))
 
     def test_start_early_death_exit_1(self):
         fake = Fake()
         fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
-        rc, out, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir], fake)
+        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir], fake)
         self.assertEqual((rc, out), (1, ""))
         self.assertTrue(err.endswith(f"workers: {DEAD_MSG}\n"), err)
         self.assertEqual(err.count("workers:"), 1)
@@ -907,7 +915,7 @@ class MainTest(WorkerCase):
                            "--session-id: workers.py picks the session; use start --resume <sid>")):
             with self.subTest(argv=argv):
                 fake = Fake()
-                self.assertEqual(self.run_main(["start", "w1", "--events", self.events, *argv], fake),
+                self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
                                  (1, "", f"workers: {msg}\n"))
                 self.assertEqual(fake.calls, [])
 
@@ -925,7 +933,7 @@ class MainTest(WorkerCase):
         fake = Fake(results={"list-clients": lambda argv: f"100 /dev/ttys009 %9 0 {sock}\n" if argv[3] == "=x" else "",
                              "split-window": lambda argv: "%10\n"})
         fake.oserror = lambda argv: argv[0] == "pgrep"
-        rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--split-from", "x",
+        rc, _, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--split-from", "x",
                                     "--split", "below", "--", "--model", "m"], fake)
         self.assertEqual(rc, 0, err)
         self.assertEqual([c for c in fake.calls if c[1] == "split-window"],
@@ -936,7 +944,7 @@ class MainTest(WorkerCase):
 
     def test_start_defaults_cwd(self):
         fake = Fake()
-        rc, _, err = self.run_main(["start", "w1", "--events", self.events], fake)
+        rc, _, err = self.run_main(["start", "w1", "--manager", "m1"], fake)
         self.assertEqual(rc, 0, err)
         self.assertEqual(fake.store["@cwd"], os.path.realpath(os.getcwd()))
         self.assertEqual(fake.store["@flags"], "[]")
@@ -967,10 +975,91 @@ class MainTest(WorkerCase):
         self.assertEqual(self.run_main(["reply", "w1"], fake), (0, "", ""))
 
     def test_usage_error(self):
-        for argv in (["start", "w1"], ["start", "w1", "--events", self.events, "--split", "left"]):
+        for argv in (["start"], ["start", "w1", "--manager", "m1", "--split", "left"]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
                 workers.main(argv)
             self.assertEqual(cm.exception.code, 2, argv)
+
+
+class ManagerDirTest(WorkerCase):
+    """main's events file is the manager directory's (core/skills/tmux/SKILL.md › Start 1); start and next_event are
+    fakes, the tmux session of the caller's pane `session` (none: outside tmux)."""
+    CMDS = (["start", "w1"], ["next-event", "--after", "0"])
+
+    def setUp(self):
+        super().setUp()
+        self.agent_pm = hermetic.home(self)
+        self.managers = os.path.join(self.agent_pm, "managers")
+
+    def events_of(self, name):
+        return os.path.join(self.managers, name, "events")
+
+    def run_main(self, argv, session=None):
+        """(exit code, stderr, the events file argv's command was given or None)."""
+        env = {} if session is None else {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
+        fake = Fake(results={"display-message": lambda argv: f"{session}\n"})
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(workers.subprocess, "run", fake), \
+                mock.patch.object(workers, "start", return_value=SID) as start, \
+                mock.patch.object(workers, "next_event", return_value=(1, "10:00:01 w1 outcome done")) as nxt, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = workers.main(argv)
+        called, at = (start, 1) if argv[0] == "start" else (nxt, 0)
+        return rc, err.getvalue(), called.call_args.args[at] if called.called else None
+
+    def test_default_is_the_own_sessions_events_made_on_first_use(self):
+        for cmd, session in zip(self.CMDS, ("m1", "m2")):
+            with self.subTest(cmd=cmd[0]):
+                self.assertFalse(os.path.exists(self.events_of(session)))
+                self.assertEqual(self.run_main(cmd, session), (0, "", self.events_of(session)))
+                self.assertEqual(stat.S_IMODE(os.stat(self.events_of(session)).st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(self.events_of(session))).st_mode), 0o700)
+
+    def test_manager_overrides_the_own_session(self):
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.run_main([cmd[0], "--manager", "other", *cmd[1:]], "mgr"),
+                                 (0, "", self.events_of("other")))
+        self.assertEqual(os.listdir(self.managers), ["other"])
+
+    def test_a_worker_that_starts_workers_uses_its_own_directory(self):
+        self.assertEqual(self.run_main(["start", "w2"], "w1"), (0, "", self.events_of("w1")))
+
+    def test_outside_tmux_without_manager_exit_1(self):
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.run_main(cmd),
+                                 (1, "workers: no manager directory: run inside tmux or give --manager <name>\n", None))
+                self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_events_option_is_gone_exit_2(self):
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]), mock.patch.object(workers, "start") as start, \
+                    mock.patch.object(workers, "next_event") as nxt:
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                    workers.main([cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]])
+                self.assertEqual(cm.exception.code, 2)
+                self.assertFalse(start.called or nxt.called)
+                self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_a_bad_manager_exit_1(self):
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.run_main([cmd[0], "--manager", "a/b", *cmd[1:]], "mgr"),
+                                 (1, "workers: manager 'a/b': want [A-Za-z0-9_-]+\n", None))
+
+    def test_a_bad_own_session_name_exit_1(self):
+        self.assertEqual(self.run_main(["start", "w1"], "a.b"),
+                         (1, "workers: own tmux session 'a.b': want [A-Za-z0-9_-]+; give --manager <name>\n", None))
+
+    def test_a_bad_directory_exit_1(self):
+        with open(self.managers, "w"):
+            pass
+        for cmd in self.CMDS:
+            with self.subTest(cmd=cmd[0]):
+                self.assertEqual(self.run_main([cmd[0], "--manager", "m1", *cmd[1:]]),
+                                 (1, f"workers: manager directory {self.managers}: not a directory owned by you\n",
+                                  None))
 
 
 def nl(*lines):
@@ -984,9 +1073,10 @@ class NextEventTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = os.path.join(os.path.realpath(self.tmp.name), "events")
+        hermetic.home(self)
 
-    def append(self, data):
-        with open(self.path, "ab") as f:
+    def append(self, data, path=None):
+        with open(path or self.path, "ab") as f:
             f.write(data if isinstance(data, bytes) else data.encode())
 
     def sleeping(self, *steps):
@@ -1004,7 +1094,7 @@ class NextEventTest(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(workers.subprocess, "run", Fake()), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["next-event", *argv])
+            rc = workers.main(["next-event", "--manager", "m1", *argv])
         return rc, out.getvalue(), err.getvalue()
 
     def error(self, reason, after=0, path=None):
@@ -1110,21 +1200,22 @@ class NextEventTest(unittest.TestCase):
             self.error(os.strerror(errno.EISDIR), path=self.tmp.name)
 
     def test_main_prints_line_and_event(self):
-        self.append(nl(self.A, self.B))
+        path = manager.events(manager.directory("m1"))
+        self.append(nl(self.A, self.B), path)
         with self.sleeping():
-            self.assertEqual(self.run_main("--events", self.path, "--after", "1"), (0, f"2 {self.B}\n", ""))
-        with self.sleeping(lambda: self.append(nl(self.C))):
-            self.assertEqual(self.run_main("--events", self.path, "--after", "end"), (0, f"3 {self.C}\n", ""))
+            self.assertEqual(self.run_main("--after", "1"), (0, f"2 {self.B}\n", ""))
+        with self.sleeping(lambda: self.append(nl(self.C), path)):
+            self.assertEqual(self.run_main("--after", "end"), (0, f"3 {self.C}\n", ""))
 
     def test_main_error_exit(self):
-        with self.sleeping():
-            self.assertEqual(self.run_main("--events", self.tmp.name, "--after", "0"),
-                             (1, "", f"workers: events file {self.tmp.name}: {os.strerror(errno.EISDIR)}\n"))
+        err = workers.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
+        with mock.patch.object(workers, "next_event", side_effect=err):
+            self.assertEqual(self.run_main("--after", "0"), (1, "", f"workers: {err}\n"))
 
     def test_main_usage_error(self):
         for argv in (["--after", "-1"], ["--after", "x"], ["--after", "1.5"], ["--after", ""], []):
             with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-                workers.main(["next-event", "--events", self.path, *argv])
+                workers.main(["next-event", "--manager", "m1", *argv])
             self.assertEqual(cm.exception.code, 2, argv)
 
 
@@ -1143,6 +1234,10 @@ class NextEventContentTest(WorkerCase):
     PANE = [f"pane {i}" for i in range(50)]
     CAPTURE = ["tmux", "capture-pane", "-p", "-J", "-t", "=w1:", "-S", "-40"]
 
+    def setUp(self):
+        super().setUp()
+        hermetic.home(self)
+
     def run_event(self, event, fake, *transcript):
         """main's (exit code, stdout, stderr) for next-event on an events file holding only `event`; transcript: the
         lines of session SID's transcript, if any."""
@@ -1151,12 +1246,12 @@ class NextEventContentTest(WorkerCase):
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, SID + ".jsonl"), "w") as f:
                 f.write("".join(transcript))
-        with open(self.events, "w") as f:
+        with open(manager.events(manager.directory("m1")), "w") as f:
             f.write(event + "\n")
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(workers.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["next-event", "--events", self.events, "--after", "0"])
+            rc = workers.main(["next-event", "--manager", "m1", "--after", "0"])
         return rc, out.getvalue(), err.getvalue()
 
     def pane(self, worker=True, fake=None):

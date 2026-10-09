@@ -4,17 +4,17 @@ channel the run reports its progress and outcome to (report.py), then checks and
 
 drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
-         [--events FILE] [--detach] [--dry-run]
+         [--events FILE] [--manager NAME] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
 under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text,
 its client's stderr and its progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
---runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
+--runner, --split, --split-from, --prefix, --events, --manager and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
-"driver", the driver session's name) and changes nothing.
+"driver", the driver session's name; with an events file also "events") and changes nothing.
 Exits 0 when the run returns a valid outcome (or the prompt is printed, or --detach's session runs), 1 when it doesn't,
 2 on a config error, 3 when the client or its tmux session fails.
 """
@@ -43,6 +43,7 @@ from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
+import manager  # noqa: E402
 import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
@@ -805,8 +806,12 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>)")
     ap.add_argument("--events", metavar="FILE", help="the tui runner appends the session's state events to FILE; with "
                                                      "--detach, the driver its outcome")
+    ap.add_argument("--manager", metavar="NAME",
+                    help="the manager directory whose events file the run uses when --events is not given (default: "
+                         "the caller's tmux session's; core/skills/tmux/SKILL.md › Start 1)")
     ap.add_argument("--detach", action="store_true",
-                    help="run the driver in a new detached tmux session, print its name and exit (needs --events)")
+                    help="run the driver in a new detached tmux session, print its name and exit (needs --events or "
+                         "--manager)")
     ap.add_argument("--opener", help=argparse.SUPPRESS)   # --detach's: the caller's
     ap.add_argument("--driver", help=argparse.SUPPRESS)   # --detach's: this is the driver in tmux session DRIVER
     ap.add_argument("--dry-run", action="store_true")
@@ -847,8 +852,8 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
               else None)
     name = a.client or "claude"
     try:
-        if a.detach and a.events is None:
-            raise ConfigError("--detach needs --events")
+        if a.manager is not None and a.runner != "tui" and not a.detach:
+            raise ConfigError("--manager needs --runner tui or --detach")
         check_naming(a.runner, a.prefix, None if a.detach or a.driver is not None else a.events)
         client = clients.get(name, root)
         if client.runs:
@@ -861,6 +866,15 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
             driver = driver_session(run.role, params.sid, params.prefix)
             if a.detach and not tui_claude.NAME.fullmatch(driver):
                 raise ConfigError(f"driver session {driver!r}: want {tui_claude.NAME.pattern}")
+            if a.driver is None and a.events is None and (a.runner == "tui" or a.detach):
+                try:
+                    directory = manager.directory(a.manager, proc=proc)
+                    if directory is not None:
+                        a.events = manager.events(directory, create=not a.dry_run)
+                except manager.ManagerError as e:
+                    raise ConfigError(str(e)) from e
+            if a.detach and a.events is None:
+                raise ConfigError("--detach needs --events or --manager")
         else:
             if a.runner != "headless":
                 raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no --runner {a.runner}")
@@ -877,7 +891,8 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         return 0, None
     print(f"drive.py: session {params.sid}", file=sys.stderr)
     if a.dry_run:
-        shown = {"argv": cmd, "cwd": launch.cwd, "env": launch.env, **({"driver": driver} if a.detach else {})}
+        shown = {"argv": cmd, "cwd": launch.cwd, "env": launch.env, **({"driver": driver} if a.detach else {}),
+                 **({"events": a.events} if a.events is not None else {})}
         print(json.dumps(shown, ensure_ascii=False, indent=1))
         return 0, None
     if a.detach:
