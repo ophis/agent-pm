@@ -22,10 +22,11 @@ explicit extension.
   steps  a turn's steps, run in order; default []. A string is assistant text: with -p and --output-format stream-json
          an assistant line on stdout, else a plain line. A dict is a report line in drive_test's builder shapes,
          {"kind": "progress", "name", "text"} or {"kind": "outcome", "outcome": {status, title, summary, questions, url,
-         files, deliverable}}: the fake runs it as report.py's subcommand, through the report command, the first
-         backticked `python3 <path>/report.py --to <channel>` holding no `<` in the turn prompts so far (none: exit
-         1). A failing call's stderr goes to the fake's; it goes on. {"kind": "hook", "event": E} runs E's hooks now
-         (E a non-empty string). {"kind": "write", "path": P, "text": T} writes string T to file P (made or
+         files, deliverable}}: the fake runs it as report.py's subcommand, through the report command: the `report` line
+         of the first `# Parameters` section in the turn prompts so far that has one (a line `- `<name>`: <inline
+         code>`, as compose writes it), `<scripts>` and `<Workdir>` replaced by their lines' values, split into words
+         (none: exit 1). A failing call's stderr goes to the fake's; it goes on. {"kind": "hook", "event": E} runs E's
+         hooks now (E a non-empty string). {"kind": "write", "path": P, "text": T} writes string T to file P (made or
          replaced), as the Write tool; {"kind": "read", "path": P} is a text step of P's text, as the Read tool; P a
          non-empty string, relative to the cwd. A failing write or read: a stderr line; it goes on. Any other step:
          exit 1.
@@ -66,6 +67,8 @@ STEPS = {**REPORTS, **FILES, "hook": {"kind", "event"}}
 FIELDS = ("status", "title", "summary", "questions", "url", "files", "deliverable")
 REPORT_TIMEOUT = 30   # seconds
 HOOK_TIMEOUT = 60   # seconds
+SECTION = re.compile(r"^# Parameters\n(.*?)(?=^# |\Z)", re.M | re.S)
+LINE = re.compile(r"^- `([^`\n]+)`: (`+)(.+)\2$", re.M)
 
 
 def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
@@ -157,17 +160,26 @@ def parse(argv: list[str]) -> argparse.Namespace:
     return a
 
 
+def parameters(prompt: str) -> dict[str, str]:
+    """The names and values of `prompt`'s `# Parameters` section, whose lines are `- `<name>`: <inline code>`."""
+    section = SECTION.search(prompt)
+    # compose._code pads a value holding a backtick with a space each side.
+    return {name: value[1:-1] if "`" in value else value
+            for name, _, value in LINE.findall(section.group(1))} if section else {}
+
+
 def report_command(prompts: list[str]) -> list[str] | None:
-    """The first backticked `python3 <path>/report.py --to <channel>` holding no `<` in `prompts`, split."""
+    """The `report` value of the first of `prompts` with one, `<scripts>` and `<Workdir>` replaced, split."""
     for prompt in prompts:
-        for span in re.findall(r"`([^`]*)`", prompt):
+        names = parameters(prompt)
+        if "report" in names:
+            command = names["report"]
+            for name in ("<scripts>", "<Workdir>"):
+                command = command.replace(name, names.get(name, name))
             try:
-                words = shlex.split(span)
+                return shlex.split(command)
             except ValueError:
                 continue
-            if (len(words) == 4 and words[0] == "python3" and os.path.basename(words[1]) == "report.py"
-                    and words[2] == "--to" and "<" not in words[1] + words[3]):
-                return words
     return None
 
 
