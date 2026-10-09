@@ -2,7 +2,7 @@
 """Inner: one core agent run of an issue, per orchestrator/config.toml, in the driver's tmux session that router.py's
 outer starts (CLAUDE.md › Architecture); nobody runs it by hand.
 
-run.py --uuid ISSUE_UUID [--target OWNER/NAME] --issue ID --project PROJECT_ID --assignee EMAIL --sid SID --task TASK
+run.py --uuid ISSUE_UUID [--target OWNER/NAME] --issue ID --project PROJECT_ID --assignee EMAIL --sid SID [--task TASK]
        --mode new|resume [--runner headless|tui] [--split right|below] [--split-from SESSION] [--opener OPENER]
        [--events FILE]
   Exits 2 bad arguments, 1 a config, role or task failure, else 0; the agent run's own code goes to the end lines.
@@ -58,7 +58,7 @@ def inner(a, *, layout, gql, popen, runs, root):
     def begun():  # run.json now names the session's cwd, which the comment's resume command needs
         if reg := sessions.post(a.issue, rec, gql=harness):
             router.append_quiet(plog, reg)
-    ctx = router.context(a, cfg, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)
+    ctx = router.context(a, cfg, name, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)
     rc, result = 1, None
     try:
         core = os.path.join(root, "core")
@@ -92,9 +92,10 @@ def inner(a, *, layout, gql, popen, runs, root):
 
 def main(argv, *, gql=linear_gql, popen=subprocess.Popen, runs=RUNS_LOG, root=ROOT):
     ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--task"):
+    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid"):
         ap.add_argument(f, required=True)
     ap.add_argument("--mode", choices=("new", "resume"), required=True)
+    ap.add_argument("--task")
     ap.add_argument("--target")
     ap.add_argument("--runner", choices=("headless", "tui"), default="headless")
     ap.add_argument("--split")

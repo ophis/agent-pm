@@ -89,7 +89,7 @@ class Inner(Base):
             p.start()
             self.addCleanup(p.stop)
 
-    def inner(self, assignee=ENGINEER, task="build", mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
+    def inner(self, assignee=ENGINEER, task=None, mode="new", target="Ophis/Agent-PM", uuid=UUID, extra=()):
         return self.main(["--uuid", uuid, *(["--target", target] if target else []), *forwarded(assignee, task, mode), *extra])
 
     def rec(self):
@@ -108,8 +108,12 @@ class Inner(Base):
         return line
 
     def test_build_run(self):
+        """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start comment
+        and run.json."""
+        pick = "light-build: a template wording tweak, like TASK-226."
+
         def lines():
-            reported(self.rd, {"kind": "progress", "name": "start", "text": "first build of the PRD"})
+            reported(self.rd, {"kind": "progress", "name": "start", "text": pick})
             yield said("Working on it")
             reported(self.rd, outcome(DONE))
         self.lines = lines()
@@ -118,7 +122,7 @@ class Inner(Base):
         self.assertEqual(self.plog(), [
             "<ts> launch TASK-7 mode=new session=" + SID,
             "claude: warning",
-            "Progress (start): first build of the PRD",
+            f"Progress (start): {pick}",
             "<ts> writeback TASK-7: start",
             "Working on it",
             "<ts> end TASK-7 session=" + SID + " exit=0",
@@ -129,7 +133,7 @@ class Inner(Base):
         posts = self.harness(0)
         self.assertEqual(self.gql.calls, [
             *posts[:2],
-            ("comment", KEY, {"i": UUID, "b": "Build started: first build of the PRD"}),
+            ("comment", KEY, {"i": UUID, "b": f"Build started: {pick}"}),
             ("read", KEY, {"i": UUID}),
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Build ready: Opened the PR.\n\n{PR}"}),
@@ -140,6 +144,8 @@ class Inner(Base):
         (argv, kw), = self.popen_calls
         self.assertEqual((argv[:2], argv[3:5], kw["cwd"]), (["claude", "-p"], ["--session-id", SID], self.rd))
         self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"), argv[2][-200:])
+        self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2])
+        self.assertEqual([(p["name"], p["text"]) for p in self.record()["progress"]], [("start", pick)])
         self.assertEqual((kw["stderr"].name, kw["stderr"].mode, kw["stderr"].closed), (self.plog_path(), "a", True))
         self.assertIn("Working on it", self.err)
         self.assertEqual(os.environ["PATH"], config.PATH)
@@ -194,7 +200,7 @@ class Inner(Base):
                          (dataclasses.replace(launch, interactive=[]), r, dataclasses.replace(params, prefix=None)),
                          [s.__qualname__ for s in kw.pop("sinks")], sorted(kw), self.gql.calls))
         (h_own, *headless), (t_own, *tui) = seen
-        self.assertEqual(h_own, ["headless", None, None, None, f"engineer-build-{SID[:8]}"])
+        self.assertEqual(h_own, ["headless", None, None, None, f"engineer-{SID[:8]}"])
         self.assertEqual(t_own, ["tui", drive.Layout("below", "dev", "w0t0p0:ABC"), "/x/ev.log", "engineer-TASK-7",
                                  f"engineer-TASK-7-{SID[:8]}"])
         self.assertEqual(tui, headless)
@@ -239,11 +245,20 @@ class Inner(Base):
                 self.assertEqual(self.err, f"run.py: {msg}\n")
         self.assertEqual((self.gql.calls, self.popen_calls, os.path.exists(self.runs)), ([], [], False))
 
-    def test_deep_research_argv_has_the_brake(self):
-        self.assertEqual(self.inner(RESEARCHER, "deep-research", target=None), 0)
+    def test_a_task_reaches_drive_and_the_prompt_names_it(self):
+        self.assertEqual(self.inner(task="light-build"), 0)
         (argv, _), = self.popen_calls
-        self.assertIn(f"Bash(python3 {shlex.quote(self.root)}/orchestrator/src/router.py --brake)", argv)
-        self.assertEqual(self.plog("deep-research")[0], "<ts> launch TASK-7 mode=new session=" + SID)
+        self.assertIn("**Your task**: `light-build`. Read only that task's file", argv[2])
+
+    def test_a_researcher_run_has_the_brake(self):
+        self.assertEqual(self.inner(RESEARCHER, target=None), 0)
+        (argv, _), = self.popen_calls
+        gate = f"python3 {shlex.quote(self.root)}/orchestrator/src/router.py --brake"
+        self.assertIn(f"Bash({gate})", argv)
+        self.assertIn(f"the gate is `{gate}`", argv[2])
+        dirs = [d for flag, d in zip(argv, argv[1:]) if flag == "--add-dir"]
+        self.assertIn(os.path.join(self.root, "core", "team", "tasks"), dirs)
+        self.assertEqual(self.plog("researcher")[0], "<ts> launch TASK-7 mode=new session=" + SID)
 
     def record(self):
         return json.loads(self.read(os.path.join(self.rd, "run.json")))
@@ -290,8 +305,8 @@ class Inner(Base):
     def test_step_2_errors_write_the_end_line(self):
         cases = [(dict(assignee="x@y.com"), "run.py: 'x@y.com' is not a role account\n", None),
                  (dict(assignee=RESEARCHER, task="build"), "run.py: task 'build' is not one of researcher's "
-                  "tasks (deep-research, light-research)\n", "deep-research")]
-        for kw, err, task in cases:
+                  "tasks (deep-research, light-research)\n", "researcher")]
+        for kw, err, role in cases:
             with self.subTest(err=err):
                 os.makedirs(os.path.dirname(self.runs), exist_ok=True)
                 open(self.runs, "w").close()
@@ -299,8 +314,8 @@ class Inner(Base):
                 self.assertEqual(self.err, err)
                 self.assertEqual([TS.sub("<ts> ", x) for x in self.read(self.runs).splitlines()],
                                  ["<ts> end TASK-7 session=" + SID + " exit=1"])
-                if task:
-                    self.assertEqual(self.plog(task), ["<ts> end TASK-7 session=" + SID + " exit=1"])
+                if role:
+                    self.assertEqual(self.plog(role), ["<ts> end TASK-7 session=" + SID + " exit=1"])
         self.assertEqual((self.gql.calls, self.popen_calls), ([], []))
 
     def test_config_error_writes_the_end_line(self):

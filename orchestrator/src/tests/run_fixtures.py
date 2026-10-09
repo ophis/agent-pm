@@ -27,7 +27,7 @@ ENGINEER, RESEARCHER, PM = "engineer@agents.test", "researcher@agents.test", "pm
 KEY = "linear-api-key-engineer"
 CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
           + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
-          + '[core.roles.researcher.tasks.deep-research]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
+          + '[core.roles.researcher]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
 TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
@@ -122,9 +122,10 @@ class Run:
         raise AssertionError(f"unexpected {argv}")
 
 
-def forwarded(assignee=ENGINEER, task="build", mode="new", sid=SID):
-    """SHARED as the outer passes them to the inner."""
-    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}", f"--task={task}", f"--mode={mode}"]
+def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID):
+    """SHARED as the outer passes them to the inner: --task only when given."""
+    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}",
+            *([f"--task={task}"] if task else []), f"--mode={mode}"]
 
 
 class Base(unittest.TestCase):
@@ -172,11 +173,11 @@ class Base(unittest.TestCase):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def plog_path(self, task="build"):
-        return os.path.join(self.root, "logs", "projects", f"{task}.log")
+    def plog_path(self, role="engineer"):
+        return os.path.join(self.root, "logs", "projects", f"{role}.log")
 
-    def plog(self, task="build"):
-        return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(task)).splitlines()]
+    def plog(self, role="engineer"):
+        return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(role)).splitlines()]
 
     def transcript(self):
         self.write(config.transcript(ID, SID, self.projects), "")

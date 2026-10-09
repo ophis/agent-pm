@@ -53,7 +53,7 @@ USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] "
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
 TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+) task=(\S+)$")
+LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+) (?:role=([\w-]+)|task=\S+)$")
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -62,9 +62,9 @@ Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { 
 Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
-def start_line(ident, sid, task, kind="start"):
+def start_line(ident, sid, role, kind="start"):
     """The runs.log line of a new agent run, or with kind "resume" of a resumed one."""
-    return f"{kind} {ident} session={sid} task={task}"
+    return f"{kind} {ident} session={sid} role={role}"
 
 
 def local_time(s):
@@ -72,7 +72,8 @@ def local_time(s):
 
 
 def parse_log(path):
-    """(time, kind, issue, sid, task) of every start/resume line, in file order. runs.log timestamps are local time."""
+    """(time, kind, issue, sid, role) of every start/resume line, in file order; an old `task=` line's role is None.
+    runs.log timestamps are local time."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -107,10 +108,6 @@ def prune(path, now):
 
 def latest_sid(entries, issue):
     return next((e[3] for e in reversed(entries) if e[2] == issue), None)
-
-
-def logged_task(entries, sid):
-    return next((e[4] for e in reversed(entries) if e[3] == sid), None)
 
 
 def sid_times(entries, sid):
@@ -177,11 +174,11 @@ def blockers(issue):
 
 
 def task_for(labels, group, role, role_tasks, label_tasks):
-    """(task, None) from the issue's labels in the task label group (none -> role's default), or (None, comment) for an invalid one.
-    The task is label_tasks[label id]; only the comment carries label names."""
+    """(task, None) from the issue's labels in the task label group (none: (None, None), the agent run picks), or
+    (None, comment) for an invalid one. The task is label_tasks[label id]; only the comment carries label names."""
     found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
     if not found:
-        return role_tasks[0], None
+        return None, None
     if len(found) > 1:
         return None, f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
     name = found[0]["name"]
@@ -306,33 +303,33 @@ class Board:
 
     def recover(self, live_ids=()):
         """Settle the role accounts' In Progress issues, leaving those in live_ids (IDs with a session; take skips them too)
-        untouched; returns the resume candidates [(issue, sid, task)] in resume order."""
+        untouched; returns the resume candidates [(issue, sid)] in resume order."""
         self.live = set(live_ids)
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in self.live]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
                                  first_line_time(self.entries, p[1]) if p[1] else self.now))
-        return [(issue, sid, task) for issue, sid in mine if (task := self.settle(issue, sid))]
+        return [(issue, sid) for issue, sid in mine if self.settle(issue, sid)]
 
     def settle(self, issue, sid, wait=True):
-        """Recover's decision for one In Progress issue without a live session, sid its current_sid: the task to resume sid
-        with, or None, having acted (the attempts cap or a task not the role's → In Review; no sid or no transcript →
-        Todo). wait (the tick's) leaves the issue alone while its latest transcript changed within LIVE, a sid without a
-        transcript until LIVE after its last line, and no sid until STALE after the last update; --issue trusts tmux ls."""
+        """Recover's decision for one In Progress issue without a live session, sid its current_sid: True to resume sid,
+        else False, having acted (the attempts cap or a logged role, None too, not the assignee's → In Review; no sid or
+        no transcript → Todo). wait (the tick's) leaves the issue alone while its latest transcript changed within
+        LIVE, a sid without a transcript until LIVE after its last line, and no sid until STALE after the last update;
+        --issue trusts tmux ls."""
         ident = issue["identifier"]
         if wait and (latest := latest_sid(self.entries, ident)) and is_live(self.tdir, ident, latest, self.now):
-            return None
+            return False
         if sid and self.attempts(issue) >= CAP:
             log(f"recover: {ident} reached {CAP} attempts; In Review")
             self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover:")
         elif sid and has_transcript(self.tdir, ident, sid):
-            role = self.role(issue)
-            run = self.runs[role]
-            task = logged_task(self.entries, sid)
-            if task in run.tasks:
-                return task
-            log(f"recover: {ident} task={task} is not one of {role}'s tasks; In Review")
-            self.comment_and_move(issue, f'The interrupted agent run\'s task "{task}" is not one of {role}\'s tasks '
-                                         f'({", ".join(run.tasks)}); needs a look.', "in_review", "in_progress", "recover:")
+            role, logged = self.role(issue), next((e[4] for e in reversed(self.entries) if e[3] == sid), None)
+            if logged == role:
+                return True
+            why = f"role ({logged or 'none logged'}) is not the assignee's ({role})"
+            log(f"recover: {ident} {why}; In Review")
+            self.comment_and_move(issue, f"The interrupted agent run's {why}; needs a look.",
+                                  "in_review", "in_progress", "recover:")
         elif sid:
             if not wait or sid_times(self.entries, sid)[-1] < self.now - LIVE:
                 log(f"recover: {ident} session={sid} has no transcript")
@@ -340,20 +337,20 @@ class Board:
         elif not wait or parse_time(issue["updatedAt"]) < self.now - STALE:
             log(f"recover: {ident} (last updated {issue['updatedAt']})")
             self.comment_and_move(issue, INTERRUPTED, "todo", "in_progress", "recover:")
-        return None
+        return False
 
     def queue(self, full=()):
         """The available ready Todo issues, highest priority first, then later role, then oldest."""
         return sorted((i for i in self.todo() if self.available(i, full)), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
 
     def next_run(self, cands, full=()):
-        """("resume", issue, sid, task) for the first available of Recover's cands; else ("new",) while the queue holds an
+        """("resume", issue, sid) for the first available of Recover's cands; else ("new",) while the queue holds an
         issue; else None. Logs the plan."""
         cand = next((c for c in cands if self.available(c[0], full)), None)
         if cand:
-            issue, sid, task = cand
+            issue, sid = cand
             log(f"plan: resume {issue['identifier']} session={sid}")
-            return ("resume", issue, sid, task)
+            return ("resume", issue, sid)
         if queue := self.queue(full):
             log(f"plan: new ({len(queue)} in queue)")
             return ("new",)
@@ -361,7 +358,7 @@ class Board:
         return None
 
     def take(self, only=None, full=()):
-        """(claimed Todo issue, its task) from the queue, or None. Dry: (pick, None), unclaimed."""
+        """(claimed Todo issue, its label's task or None) from the queue, or None. Dry: (pick, None), unclaimed."""
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
@@ -380,13 +377,13 @@ class Board:
                 log(f"claim: {ident} is no longer Todo; skipping")
                 continue
             role = self.role(issue)
-            role_tasks = list(self.runs[role].tasks)
-            task, comment = task_for(current["labels"]["nodes"], self.group, role, role_tasks, self.label_tasks)
+            task, comment = task_for(current["labels"]["nodes"], self.group, role, self.runs[role].tasks,
+                                     self.label_tasks)
             if comment:
                 log(f"claim: {ident} bad task label; In Review")
                 self.comment_and_move(issue, comment, "in_review", "todo", "claim:")
                 continue
-            log(f"claim: {ident} task={task}")
+            log(f"claim: {ident} role={role}" + (f" task={task}" if task else ""))
             linear.call(self.gql, linear.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
             return issue, task
         if queue:
@@ -421,10 +418,10 @@ def _humans(cfg):
     return tuple(e.lower() for e in cfg.get("human_members") or [])
 
 
-def context(a, cfg, role, gql, plog, issue_id, repo):
+def context(a, cfg, name, role, gql, plog, issue_id, repo):
     """The agent run's write-back Context, acting as the role account."""
     return writeback.Context(
-        ident=a.issue, issue_id=issue_id, task=a.task, sid=a.sid, resume=a.mode == "resume", project=a.project,
+        ident=a.issue, issue_id=issue_id, role=name, sid=a.sid, resume=a.mode == "resume", project=a.project,
         workdir=run_dir(a.issue), plog=plog, gql=functools.partial(gql, service=role.key), humans=_humans(cfg),
         states=cfg["states"], repos=cfg["project_repos"], team=cfg["team"], target=repo)
 
@@ -447,22 +444,21 @@ def load(root):
 
 
 def setup(a, root):
-    """(cfg, roles, name, role, plog) for the agent run's assignee and task, else Setup."""
+    """(cfg, roles, name, role, plog) for the agent run's assignee and task (None: the run picks), else Setup."""
     cfg, roles = load(root)
     name = role_for(roles, a.assignee)
     if name is None:
         raise Setup(f"{a.assignee!r} is not a role account", 2)
-    role, logs = roles[name], config.LOGS_DIR
-    if a.task not in role.tasks:
-        raise Setup(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2,
-                    project_log(role.default, logs))
-    return cfg, roles, name, role, project_log(a.task, logs)
+    role, plog = roles[name], project_log(name, config.LOGS_DIR)
+    if a.task is not None and a.task not in role.tasks:
+        raise Setup(f"task {a.task!r} is not one of {name}'s tasks ({', '.join(role.tasks)})", 2, plog)
+    return cfg, roles, name, role, plog
 
 
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """Checks, bounces or prepares the agent run (a: SHARED and the tui runner's options), then starts the inner in tmux.
     Exits 0 started or bounced, 1 config, input or tmux failure, 2 a bad id, not a role account, config error or a failed
-    tui check, 3 transient; a config error or transient failure is also logged to the task's project log. The tui
+    tui check, 3 transient; a config error or transient failure is also logged to the role's project log. The tui
     runner's attach commands go to stderr."""
     os.environ["PATH"] = PATH
     if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
@@ -485,7 +481,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         return e.rc
     if layout:
         try:
-            tui = drive.tui_session(name, a.task, a.sid, prefix=attended.prefix(name, a.issue))
+            tui = drive.tui_session(name, a.sid, prefix=attended.prefix(name, a.issue))
         except ValueError as e:
             return fail(plog, a.issue, "config-error", str(e), 2)
     if a.mode == "resume":
@@ -498,7 +494,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         issue = issues.read_issue(gql, a.issue)
     except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
         return fail(plog, a.issue, "transient", f"Linear: {one_line(e)}", 3)
-    kind, repos, repo = TASKS[a.task].kind, cfg["project_repos"], None
+    kind, repos, repo = TASKS[name].kind, cfg["project_repos"], None
     if kind == "build":
         try:
             repo = target.check(issue, repos, run=run, work=config.RUNS_DIR)
@@ -508,7 +504,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
             return fail(plog, a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, target.Invalid):
             try:
-                writeback.bounce(context(a, cfg, role, gql, plog, issue.id, None), issue, repo.reason)
+                writeback.bounce(context(a, cfg, name, role, gql, plog, issue.id, None), issue, repo.reason)
             except (Exception, SystemExit) as e:
                 return fail(plog, a.issue, "transient", f"bounce: {one_line(e)}", 3)
             append_quiet(plog, f"bounce {a.issue}: {repo.reason}")
@@ -520,13 +516,13 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     rd = run_dir(a.issue)
     docs = config.docs(roles, root)
     try:
-        sources = inputs.gather(issue, a.task, docs, run=run)
+        sources = inputs.gather(issue, name, docs, run=run)
     except Exception as e:  # gh's RuntimeError; a decode, timeout or OS error too
         return fail(plog, a.issue, "transient", f"docs: {e}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
         drive.save(os.path.join(rd, "input.md"),
-                   inputs.render(issue, a.task, sources, humans=_humans(cfg), target=repo, docs=docs))
+                   inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs))
     except Exception as e:
         print(f"router.py: input.md: {one_line(e)}", file=sys.stderr)
         return 1
@@ -540,17 +536,17 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     try:
         sh(["tmux", "new-session", "-d", *iterm, "-s", session(name, a.issue), "-c", rd, sys.executable, RUN,
             "--uuid", issue.id, *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
-            *(f"--{k}={getattr(a, k)}" for k in SHARED), *attended_argv], check=True)
+            *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv], check=True)
     except subprocess.CalledProcessError as e:
         print(f"router.py: tmux: {one_line(e)}", file=sys.stderr)
         return 1
     return 0
 
 
-def begin(mode, issue, sid, task, opts, runs):
+def begin(mode, issue, sid, role, task, opts, runs):
     """Logs the agent run's start (mode new) or resume line in runs.log; returns the outer's arguments."""
     ident = issue["identifier"]
-    append(runs, start_line(ident, sid, task, "resume" if mode == "resume" else "start"))
+    append(runs, start_line(ident, sid, role, "resume" if mode == "resume" else "start"))
     return argparse.Namespace(issue=ident, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
                               task=task, mode=mode, runner="tui" if opts["tui"] else "headless", split=opts["split"],
                               split_from=opts["split_from"], events=opts["events"])
@@ -593,14 +589,14 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
         log(f"skip: {kind} blocked by usage: {usage}")
         return 0
     if kind == "resume":
-        _, issue, sid, task = run
+        (_, issue, sid), task = run, None
     else:
         taken = board.take(full=full)
         if not taken:
             log("skip: nothing claimed")
             return 0
         (issue, task), sid = taken, str(uuid.uuid4())
-    a = begin(kind, issue, sid, task, opts, runs)
+    a = begin(kind, issue, sid, board.role(issue), task, opts, runs)
     name = f"{a.issue} ({issue['project']['name']})"
     try:
         rc = start(a)
@@ -623,15 +619,15 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
     board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
     if issue := next((i for i in board.issues("in_progress") if i["identifier"] == ident), None):
         sid = board.current_sid(issue)
-        if not (task := board.settle(issue, sid, wait=False)):
+        if not board.settle(issue, sid, wait=False):
             return stop
         log(f"plan: resume {ident} session={sid}")
-        mode = "resume"
+        mode, task = "resume", None
     elif board.is_blocked(ident) or not (taken := board.take(ident)):
         return stop
     else:
         (issue, task), mode, sid = taken, "new", str(uuid.uuid4())
-    return 0 if dry else start(begin(mode, issue, sid, task, opts, runs))
+    return 0 if dry else start(begin(mode, issue, sid, board.role(issue), task, opts, runs))
 
 
 def options(argv):

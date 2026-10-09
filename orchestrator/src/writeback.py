@@ -37,7 +37,7 @@ class Context:
     """What write-back needs of an agent run."""
     ident: str
     issue_id: str
-    task: str
+    role: str
     sid: str
     resume: bool
     project: str | None
@@ -110,13 +110,13 @@ def _step(ctx, step, call):
 
 
 def sink(ctx) -> drive.Sink:
-    """Phases 1 and 2: the `start` mark as the task's start comment, once per sid; any other mark as
+    """Phases 1 and 2: the `start` mark as the role's start comment, once per sid; any other mark as
     `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the agent run."""
     def handle(event):
         try:
             if event.kind != "progress":
                 return
-            task = TASKS[ctx.task]
+            task = TASKS[ctx.role]
             if event.name == "start":
                 _step(ctx, "start", lambda: comment(ctx.gql, ctx.issue_id, say(task.start, event.text)))
             else:
@@ -152,7 +152,7 @@ def _read_file(path, workdir):
 
 def _url(ctx, url):
     """url, or "" when an engineering url is not on ctx.target (every url without one)."""
-    if not url or TASKS[ctx.task].kind != "build":
+    if not url or TASKS[ctx.role].kind != "build":
         return url
     if ctx.target and url.lower().startswith(f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()):
         return url
@@ -172,7 +172,7 @@ def finish(ctx, outcome: drive.Outcome) -> bool:
 
 
 def _finish(ctx, o):
-    task, gql, issue = TASKS[ctx.task], ctx.gql, ctx.issue_id
+    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
     url = _url(ctx, o.url)
     if o.status == "done":
         lead, text, state = task.done, o.summary, "in_review"
