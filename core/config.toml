@@ -49,7 +49,7 @@ language = "English"
 type = "local"
 
 # Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (team/roles/<role>.md › Tasks). A role
-# table holding default_task or tasks (the old task-level config) is an error.
+# table holding the old task-level keys is an error (README › Task labels: Upgrade).
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
 #   read          extra dirs the agent run reads; `repo` is drive.py's --repo dir, {{methods}} core's team/methods/
 #                 dir; core's team/tasks/ is always read. Read-only by the prompt only: no deny rules. unset → none

@@ -9,17 +9,17 @@ A persona with standards and boundaries (researcher, pm, engineer, dummy-tester)
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, light research, product design, build, light build, echo), defined by steps plus run config.
+One job a role can do (deep research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
 _Avoid_: skill, job
 
 **Principles**:
 Rules every role follows; precedence: `core/team/guide.md`.
 
 **Charter**:
-A role's text: the rules shared by all of that role's tasks.
+A role's text: its task index and the rules shared by all of that role's tasks.
 
 **Agent run**:
-One task done once as one role: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
+One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -27,10 +27,10 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, a task and free-text input into an agent run: a composer plus a driver.
+The component that turns a role, an optional task and free-text input into an agent run: a composer plus a driver.
 
 **Composer**:
-The part of the delegate that assembles principles, role, task and input into a prompt and run config.
+The part of the delegate that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Driver**:
 The part of the delegate that starts an agent run through a client and checks its output; the same for every client.
