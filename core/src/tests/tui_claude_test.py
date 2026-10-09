@@ -1781,10 +1781,23 @@ class GridTree(unittest.TestCase):
             layout = tui_claude._parse_layout(layout)
         return tui_claude._grid_tree("%0", panes, [self.MGR, *rows], layout)
 
-    def test_nodes_by_pane_id_then_manual_panes(self):
+    def test_nodes_by_session_name_then_manual_panes(self):
         rows = [(2, "a", "mgr", "%10"), (3, "b", "mgr", "%2"), (4, "c", "", "%9")]
         self.assertEqual(self.tree(rows, ["%0", "%10", "%5", "%2", "%9", "%3"]),
-                         [slot("%2"), slot("%9"), slot("%10"), slot("%3"), slot("%5")])
+                         [slot("%10"), slot("%2"), slot("%9"), slot("%3"), slot("%5")])
+
+    def test_main_cells_by_role_then_numbers_as_numbers(self):
+        names = ["pm-TASK-10-a", "engineer-TASK-227-b", "researcher-TASK-3-c", "engineer-TASK-23-d", "pm-TASK-9-e",
+                 "engineer-TASK-9-f"]
+        rows = [(i + 2, name, "mgr", f"%{i + 1}") for i, name in enumerate(names)]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5", "%6"]),
+                         [slot(p) for p in ("%6", "%4", "%2", "%5", "%1", "%3")])
+
+    def test_sub_workers_stay_in_their_parents_cell_by_pane_id(self):
+        rows = [(2, "pm-1", "mgr", "%1"), (3, "engineer-2", "mgr", "%2"), (4, "z", "pm-1", "%3"),
+                (5, "a", "pm-1", "%4"), (6, "b", "engineer-2", "%5")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5"]),
+                         [slot("%2", slot("%5")), slot("%1", slot("%3"), slot("%4"))])
 
     def test_a_closed_pane_keeps_the_rest_in_order(self):
         panes = ["%0", "%1", "%3", "%4", "%5", "%6", "%7"]
@@ -1803,7 +1816,7 @@ class GridTree(unittest.TestCase):
     def test_openers_that_are_no_node_of_the_window(self):
         rows = [(2, "x", "mgr", "%77"), (3, "y", "x", "%1"), (4, "z", "mgr", "%0"), (5, "v", "z", "%2"),
                 (6, "u", "", "%3")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%1"), slot("%2"), slot("%3")])
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%3"), slot("%2"), slot("%1")])
 
     def test_duplicate_pane_claims_the_lower_session_id_owns(self):
         rows = [(5, "x", "mgr", "%1"), (3, "y", "mgr", "%1"), (6, "z", "x", "%2"), (7, "w", "y", "%3")]
@@ -1825,7 +1838,7 @@ class GridTree(unittest.TestCase):
                 ([*cycle, (6, "x", "a", "%5")], ["%0", "%1", "%2", "%3", "%4", "%5"],
                  "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39x8,121,0,3,39x7,121,9,4]},"
                  "80x15,80,17,1,80x15,80,33,2]}",
-                 [slot(None, slot("%3"), slot("%4")), slot("%1"), slot("%2"), slot("%5")])):
+                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2"), slot("%5")])):
             with self.subTest(panes=panes):
                 self.assertEqual(self.tree(rows, panes, layout), want)
 
@@ -1833,6 +1846,14 @@ class GridTree(unittest.TestCase):
         # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
         layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}"
         rows = [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
+                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3")])
+
+    def test_orphans_take_the_killed_parents_place_by_name(self):
+        # pm-1 (with a %4 and b %5) killed, its orphans' cell last
+        layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33[80x7,80,33,4,80x7,80,41,5]]}"
+        rows = [(2, "engineer-1", "mgr", "%1"), (4, "researcher-1", "mgr", "%3"), (5, "a", "pm-1", "%4"),
+                (6, "b", "pm-1", "%5")]
         self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
                          [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3")])
 
@@ -1853,18 +1874,18 @@ class GridTree(unittest.TestCase):
                        "39x11,121,13,4],39x23,121,25,5]}}"):
             with self.subTest(layout=layout):
                 self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
-                                 [slot("%1"), orphans, slot("%5")])
+                                 [orphans, slot("%1"), slot("%5")])
 
     def test_two_orphan_groups_beside_a_one_pane_first_column_stay_main(self):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
         layout = tui_claude._render_layout(grid([slot("%1"), *groups], 1))
-        for p1, p2 in (("p", "q"), ("q", "p")):
+        for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [(2, "a", "mgr", "%1"), (4, "c1", p1, "%3"), (5, "c2", p1, "%4"), (7, "d1", p2, "%6"),
                         (8, "d2", p2, "%7")]
                 self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%6", "%7"], layout),
-                                 [slot("%1"), *groups])
+                                 [slot("%1"), *want])
 
     def test_orphans_skip_a_manual_panes_cell(self):
         layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
