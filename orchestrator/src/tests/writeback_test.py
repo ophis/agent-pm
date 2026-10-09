@@ -1,4 +1,4 @@
-import hashlib, json, os, re, shutil, sys, tempfile, unittest
+import hashlib, json, os, shutil, sys, tempfile, unittest
 from dataclasses import replace
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,6 +9,7 @@ import config  # noqa: E402
 import linear  # noqa: E402
 import writeback  # noqa: E402
 import drive  # noqa: E402
+from run_fixtures import logged, show  # noqa: E402
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -29,7 +30,6 @@ FOOTER = "Answer in a comment, then move this issue back to Todo."
 APPROVE = "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
 APPROVE_MAPPED = ("**🔴 Target repo:** `ophis/agent-pm` **(from the project mapping). To approve, move this issue to "
                   "Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**")
-TS = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 
 NAMES = {linear.M_SUBSCRIBE: "subscribe", linear.M_COMMENT: "comment", linear.M_STATE: "state",
          writeback.M_TITLE: "title", writeback.M_ATTACH: "attach", writeback.M_UNARCHIVE: "unarchive",
@@ -122,13 +122,15 @@ class Base(unittest.TestCase):
             self.addCleanup(patch.stop)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
-        self.plog = os.path.join(self.tmp, "project.log")
+        p = mock.patch.object(config, "LOGS_DIR", os.path.join(self.tmp, "logs"))
+        p.start()
+        self.addCleanup(p.stop)
 
     def ctx(self, role="engineer", *, gql=None, resume=False, target=TARGET, project=None, sid=SID, workdir=None):
         if workdir is None:
             workdir = tempfile.mkdtemp(dir=self.tmp)
         return writeback.Context(ident=ID, issue_id=UUID, role=role, sid=sid, resume=resume, project=project,
-                                 workdir=workdir, plog=self.plog, gql=gql or Gql(), humans=HUMANS, states=STATES,
+                                 workdir=workdir, gql=gql or Gql(), humans=HUMANS, states=STATES,
                                  repos=REPOS, team=board_ids.TEAM, target=target)
 
     def write(self, ctx, rel, text):
@@ -144,13 +146,10 @@ class Base(unittest.TestCase):
                 self.write(ctx, "src/agent-pm/docs/ENG-7-plan.md", PLAN_TEXT))
 
     def lines(self):
-        if not os.path.exists(self.plog):
-            return []
-        with open(self.plog) as f:
-            out = f.read().splitlines()
-        for line in out:
-            self.assertRegex(line, TS)
-        return [TS.sub("", line, count=1) for line in out]
+        """show() of each writeback event, its sid (checked: SID) left out."""
+        events = logged()
+        self.assertEqual({(e["src"], e.get("sid", SID)) for e in events} - {("writeback", SID)}, set())
+        return [show({k: v for k, v in e.items() if k != "sid"}) for e in events]
 
     def ledger(self, ctx):
         with open(os.path.join(ctx.workdir, "writeback.json")) as f:
@@ -234,13 +233,14 @@ class FinishGolden(Base):
                         self.assertTrue(writeback.finish(ctx, self.outcomes(role, spec, plan)[status]))
                         self.assertEqual(gql.calls, self.golden(role, status, resume))
 
-    def test_plog_and_ledger(self):
+    def test_log_and_ledger(self):
         ctx = self.ctx()
         spec, plan = self.files(ctx)
         writeback.finish(ctx, self.outcomes("engineer", spec, plan)["done"])
         steps = [f"file:ENG-7-spec.md:{sha(SPEC_TEXT)}", f"file:ENG-7-plan.md:{sha(PLAN_TEXT)}", "comment",
                  f"attach:{PR}", "move:in_review"]
-        self.assertEqual(self.lines(), [f"writeback {ID}: {s}" for s in steps])
+        self.assertEqual(self.lines(), [f"step {ID} step={s}" for s in steps])
+        self.assertEqual([e["sid"] for e in logged()], [SID] * len(steps))
         self.assertEqual(self.ledger(ctx), {SID: steps})
 
     def test_design_retitle_and_mapped_approve_line(self):
@@ -269,7 +269,7 @@ class FinishLedger(Base):
         done = outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan])
         self.assertFalse(writeback.finish(ctx, done))
         self.assertEqual(broken.calls[-1], comment("Build ready: Ready."))
-        self.assertEqual(self.lines()[-1], f"writeback-error {ID}: comment: RuntimeError: commentCreate: success: false")
+        self.assertEqual(self.lines()[-1], f"step-error {ID} step=comment error=RuntimeError: commentCreate: success: false")
         again = Gql()
         self.assertTrue(writeback.finish(replace(ctx, gql=again), done))
         self.assertEqual(again.calls, expect(body="Build ready: Ready.", state="in_review", attach=PR,
@@ -280,7 +280,7 @@ class FinishLedger(Base):
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
         self.assertEqual(gql.calls, [READ])
-        self.assertEqual(self.lines(), [f"writeback-error {ID}: read: SystemExit: linear api error: down"])
+        self.assertEqual(self.lines(), [f"step-error {ID} step=read error=SystemExit: linear api error: down"])
 
     def test_other_sid_does_not_skip(self):
         ctx = self.ctx()
@@ -356,14 +356,14 @@ class FinishSteps(Base):
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
         self.assertEqual(gql.calls[-1][0], "attach")
-        self.assertEqual(self.lines()[-1], f"writeback-error {ID}: attach:{PR}: SystemExit: linear api error: boom")
+        self.assertEqual(self.lines()[-1], f"step-error {ID} step=attach:{PR} error=SystemExit: linear api error: boom")
 
     def test_state_already_target(self):
         gql = Gql(states=[STATES["in_review"]])
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         self.assertEqual(gql.calls[-1], reread())
-        self.assertEqual(self.lines()[-1], f"writeback {ID}: move:in_review")
+        self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
     def test_state_never_overrides_a_user_move(self):
@@ -371,7 +371,7 @@ class FinishSteps(Base):
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         self.assertEqual(gql.calls[-1], reread())
-        self.assertIn(f"writeback-skip {ID}: move to in_review: issue is {STATES['handoff']}", self.lines())
+        self.assertIn(f"skip {ID} reason=move to in_review: issue is {STATES['handoff']}", self.lines())
         self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
     def test_subscribe_failures_noted_and_finish_continues(self):
@@ -395,7 +395,7 @@ class FinishSteps(Base):
         body = f"Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
         self.assertEqual(gql.calls, expect(files=[spec_comment(), plan_comment()], body=body, state="in_review",
                                            attach=PR, attach_title="ENG-7: x"))
-        self.assertIn(f"writeback-error {ID}: file:ENG-7-spec.md:{sha(SPEC_TEXT)}: SystemExit: linear api error: body too long",
+        self.assertIn(f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=SystemExit: linear api error: body too long",
                       self.lines())
 
     def test_files_only_for_files_roles(self):
@@ -486,7 +486,7 @@ class UrlCheck(Base):
         ctx = self.ctx(gql=gql)
         writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=evil))
         self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
-        self.assertEqual(self.lines()[0], f"writeback-skip {ID}: url not on ophis/agent-pm")
+        self.assertEqual(self.lines()[0], f"skip {ID} reason=url not on ophis/agent-pm")
 
     def test_case_insensitive_match(self):
         gql = Gql()
@@ -500,7 +500,7 @@ class UrlCheck(Base):
         ctx = self.ctx(gql=gql, target=None)
         writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted", url=TREE))
         self.assertEqual(gql.calls, expect(body="Build failed: push not permitted", state="in_review"))
-        self.assertEqual(self.lines()[0], f"writeback-skip {ID}: url not on a target repo")
+        self.assertEqual(self.lines()[0], f"skip {ID} reason=url not on a target repo")
 
 
 class Sink(Base):
@@ -512,7 +512,7 @@ class Sink(Base):
         writeback.sink(ctx)(start)
         self.assertEqual(gql.calls, [comment("Build started: first build of the PRD")])
         self.assertEqual(self.ledger(ctx), {SID: ["start"]})
-        self.assertEqual(self.lines(), [f"writeback {ID}: start"])
+        self.assertEqual(self.lines(), [f"step {ID} step=start"])
         writeback.sink(replace(ctx, sid=OTHER_SID))(start)
         self.assertEqual(len(gql.calls), 2)
 
@@ -557,7 +557,7 @@ class Sink(Base):
         ctx = self.ctx(gql=gql)
         start = drive.Event("progress", text="x", name="start")
         writeback.sink(ctx)(start)
-        self.assertEqual(self.lines(), [f"writeback-error {ID}: start: SystemExit: linear api error: down"])
+        self.assertEqual(self.lines(), [f"step-error {ID} step=start error=SystemExit: linear api error: down"])
         ok = Gql()
         writeback.sink(replace(ctx, gql=ok))(start)
         self.assertEqual(ok.calls, [comment("Build started: x")])
@@ -573,16 +573,17 @@ class Sink(Base):
 
     def test_never_raises(self):
         gql = Gql(fail=lambda name, v: RuntimeError("boom"))
-        ctx = replace(self.ctx(gql=gql), plog=os.path.join(self.tmp, "missing", "p.log"))
-        writeback.sink(ctx)(drive.Event("progress", text="x", name="start"))
+        open(os.path.join(self.tmp, "file"), "w").close()
+        with mock.patch.object(config, "LOGS_DIR", os.path.join(self.tmp, "file", "logs")):  # an unwritable log too
+            writeback.sink(self.ctx(gql=gql))(drive.Event("progress", text="x", name="start"))
         writeback.sink(replace(self.ctx(), role="nope"))(drive.Event("progress", text="x", name="start"))
-        self.assertEqual(self.lines(), [f"writeback-error {ID}: sink: KeyError: 'nope'"])
+        self.assertEqual(self.lines(), [f"step-error {ID} step=sink error=KeyError: 'nope'"])
 
 
 class FinishNeverRaises(Base):
     def test_unknown_role_logged(self):
         self.assertFalse(writeback.finish(self.ctx("nope"), outcome("done", summary="x")))
-        self.assertEqual(self.lines(), [f"writeback-error {ID}: finish: KeyError: 'nope'"])
+        self.assertEqual(self.lines(), [f"step-error {ID} step=finish error=KeyError: 'nope'"])
 
     def test_signal_exit_stops_the_steps(self):
         for name in ("read", "subscribe", "comment", "attach"):
@@ -591,7 +592,7 @@ class FinishNeverRaises(Base):
                 ctx = self.ctx(gql=gql)
                 self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
                 self.assertEqual(gql.calls[-1][0], name)
-                self.assertEqual(self.lines()[-1], f"writeback-error {ID}: finish: SystemExit: 143")
+                self.assertEqual(self.lines()[-1], f"step-error {ID} step=finish error=SystemExit: 143")
                 self.assertNotIn("state", [c[0] for c in gql.calls])
 
 
@@ -629,8 +630,8 @@ class Bounce(Base):
         writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
         t = self.text("r")
         self.assertEqual(gql.calls[-4:], [comment(t, SRC_UUID), reread(SRC_UUID), comment(t), reread()])
-        self.assertEqual(self.lines(), [f"writeback-skip PRD-3: move to in_review: issue is {STATES['handoff']}",
-                                        f"writeback-skip {ID}: move to canceled: issue is {STATES['todo']}"])
+        self.assertEqual(self.lines(), [f"skip PRD-3 reason=move to in_review: issue is {STATES['handoff']}",
+                                        f"skip {ID} reason=move to canceled: issue is {STATES['todo']}"])
 
     def test_mapped_reason_names_project_repos(self):
         gql = Gql(issue=self.src())

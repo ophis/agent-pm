@@ -5,7 +5,8 @@ outer starts (CLAUDE.md › Architecture); nobody runs it by hand.
 run.py --uuid ISSUE_UUID [--target OWNER/NAME] --issue ID --project PROJECT_ID --assignee EMAIL --sid SID [--task TASK]
        --mode new|resume [--runner headless|tui] [--split right|below] [--split-from SESSION] [--opener OPENER]
        [--events FILE] --input TEXT
-  Exits 2 bad arguments, 1 a config, role or task failure, else 0; the agent run's own code goes to the end lines.
+  Exits 2 bad arguments, 1 a config, role or task failure, else 0. Past the argument checks an `end` event
+  (orchestrator.jsonl, src run) always follows, with the agent run's own code (1 when it never started).
 """
 import argparse
 import functools
@@ -22,15 +23,15 @@ import router  # noqa: E402
 import sessions  # noqa: E402
 import writeback  # noqa: E402
 from config import PATH, ROOT, UUID_RE, repo_slug, run_dir  # noqa: E402
-from linear import ISSUE_ID, linear_gql, one_line  # noqa: E402
+from linear import ISSUE_ID, linear_gql, log, one_line  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
 
 def inner(a, *, layout, gql, popen, root):
-    """In tmux, cwd <work_dir>/work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to the end lines.
-    `layout` is the tui runner's, None for headless."""
+    """In tmux, cwd <work_dir>/work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to
+    the `end` event. `layout` is the tui runner's, None for headless."""
     os.environ["PATH"] = PATH
 
     def stop(signum, frame):
@@ -38,27 +39,22 @@ def inner(a, *, layout, gql, popen, root):
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, stop)
     signal.pthread_sigmask(signal.SIG_UNBLOCK, drive.SIGNALS)   # blocked by drive.detach until now
-    plog = None
     try:
-        cfg, roles, name, role, plog = router.setup(a, root)
+        cfg, roles, name, role = router.setup(a, root)
     except (Exception, SystemExit) as e:
-        plog = e.plog if isinstance(e, router.Setup) else None
-        print(f"run.py: {e.msg if isinstance(e, router.Setup) else e.code if isinstance(e, SystemExit) else one_line(e)}",
-              file=sys.stderr)
-        if plog:
-            router.append_quiet(plog, f"end {a.issue} session={a.sid} exit=1")
+        log("run", "config-error", a.issue, reason=e.msg if isinstance(e, router.Setup) else one_line(e))
+        log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
-    router.append_quiet(plog, f"launch {a.issue} mode={a.mode} session={a.sid}")
+    log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
     for c in attended.close(a.issue):
-        where = a.issue if c.name is None else f"{a.issue} {c.name}"
-        router.append_quiet(plog, f"tui-{c.status} {where}: {c.msg}" if c.msg else f"tui-{c.status} {where}")
+        log("run", f"tui-{c.status}", a.issue, session=c.name, msg=c.msg or None)
     rec = sessions.base(sid=a.sid, workdir=rd, started_at=sessions.now())
 
-    def begun():  # run.jsonl now names the session's cwd, which the comment's resume command needs
-        if reg := sessions.post(a.issue, rec, gql=harness):
-            router.append_quiet(plog, reg)
-    ctx = router.context(a, cfg, name, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)
+    def post(rc=None):  # as begun: run.jsonl now names the session's cwd, which the comment's resume command needs
+        if error := sessions.post(a.issue, rec, rc, gql=harness):
+            log("run", "registry-error", a.issue, sid=a.sid, error=error)
+    ctx = router.context(a, cfg, name, role, gql, a.uuid, repo_slug(a.target) if a.target else None)
     rc, result = 1, None
     try:
         core = os.path.join(root, "core")
@@ -67,24 +63,21 @@ def inner(a, *, layout, gql, popen, root):
                                    workdir=rd, sid=a.sid, resume=a.mode == "resume",
                                    prefix=attended.prefix(name, a.issue) if layout else None)
         launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
-        with open(plog, "a", encoding="utf-8", errors="replace") as err:  # claude's stderr outlives the pane
-            sinks = [drive.terminal(sys.stderr), drive.terminal(err), writeback.sink(ctx)]
-            result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
-                                 sinks=sinks, begun=begun, popen=popen)
+        result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
+                             sinks=[drive.terminal(sys.stderr), writeback.sink(ctx)], begun=post, popen=popen)
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):
             rc = e.code  # the signal handler's
         else:
-            router.append_quiet(plog, f"run-error {a.issue}: {one_line(e)}")
+            log("run", "run-error", a.issue, error=one_line(e))
     finally:
-        router.append_quiet(plog, f"end {a.issue} session={a.sid} exit={rc}")
+        log("run", "end", a.issue, sid=a.sid, exit=rc)
         if result and result.outcome:
             writeback.finish(ctx, result.outcome)
         else:
-            router.append_quiet(plog, f"no-outcome {a.issue}: {(result.error if result else '') or 'no result'}")
-        if reg := sessions.post(a.issue, rec, rc, gql=harness):
-            router.append_quiet(plog, reg)
+            log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
+        post(rc)
     return 0
 
 

@@ -61,16 +61,6 @@ def sh_run(argv, timeout):
                           env={**os.environ, "PATH": PATH})
 
 
-def slug(name):
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def project_log(name, logs=LOGS_DIR):
-    d = os.path.join(logs, "projects")
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, f"{slug(name)}.log")
-
-
 def run_dir(issue):
     return os.path.join(RUNS_DIR, issue)
 

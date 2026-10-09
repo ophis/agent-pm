@@ -1,5 +1,5 @@
 """Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
-and history, and small shared helpers.
+and history, and small shared helpers, among them log, the one writer of orchestrator.jsonl.
 """
 import functools
 import json
@@ -8,7 +8,7 @@ import subprocess
 import sys
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import config  # noqa: E402
 import drive  # noqa: E402
@@ -34,25 +34,58 @@ def linear_gql(query, *, timeout=30, service=None, **variables):
     return body["data"]
 
 
-STAMP = "%Y-%m-%d %H:%M:%S"
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
+ONCE = ("src", "kind", "issue", "entry", "reason")
+WINDOW = timedelta(hours=24)
+_recent = {}
 
 
-def stamp():
-    """Now, local, in STAMP."""
-    return datetime.now().strftime(STAMP)
+def log(src, kind, issue=None, *, once=False, dry=False, **fields):
+    """Appends {"ts", "src", "kind", "issue", **fields} (None values left out) to <LOGS_DIR>/orchestrator.jsonl, unless
+    dry; copies it to stderr when dry or a terminal (launchd's stderr is the file). once: skipped when a line with the
+    same ONCE values was written within WINDOW. Never raises OSError."""
+    line = {k: v for k, v in {"ts": drive.stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
+            if v is not None}
+    path, key = os.path.join(config.LOGS_DIR, "orchestrator.jsonl"), _key(line)
+    if once and key in _recent_keys(path):
+        return
+    text = json.dumps(line, ensure_ascii=False)
+    try:
+        if not dry:
+            os.makedirs(config.LOGS_DIR, exist_ok=True)
+            drive.append_line(path, text + "\n")
+            if path in _recent:
+                _recent[path].add(key)
+    except OSError:
+        pass
+    try:
+        if dry or sys.stderr.isatty():
+            print(drive.printable(text), file=sys.stderr, flush=True)
+    except OSError:  # a gone tmux pane's EIO
+        pass
 
 
-def append(path, line):
-    """Appends `<stamp> <line>` to path (its directory created) and returns that line; raises OSError."""
-    text = f"{stamp()} {line}".encode("utf-8", "replace").decode()
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    drive.append_line(path, text + "\n")
-    return text
+def _key(line):
+    return json.dumps([line.get(k) for k in ONCE])
 
 
-def log(msg):
-    print(f"{stamp()} {msg}", file=sys.stderr, flush=True)
+def _recent_keys(path):
+    """The ONCE keys of path's lines from the last WINDOW, read once per process."""
+    if path not in _recent:
+        cutoff, keys = datetime.now(timezone.utc) - WINDOW, set()
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    try:
+                        line = json.loads(raw)
+                        if datetime.fromisoformat(line["ts"]) >= cutoff:
+                            keys.add(_key(line))
+                    except (ValueError, TypeError, KeyError):
+                        pass
+        except OSError:
+            pass
+        _recent[path] = keys
+    return _recent[path]
 
 
 def one_line(x):

@@ -114,19 +114,14 @@ class Inner(Base):
         self.lines = lines()
         self.claude_stderr = ["claude: warning\n"]
         self.assertEqual(self.inner(), 0)
-        plog = self.plog()
-        self.assertEqual(plog.count("claude: warning"), 1)   # on its own thread: its place among the rest is open
-        plog.remove("claude: warning")
-        self.assertEqual(plog, [
-            "<ts> launch TASK-7 mode=new session=" + SID,
-            f"Progress (start): {pick}",
-            "<ts> writeback TASK-7: start",
-            "Working on it",
-            "<ts> end TASK-7 session=" + SID + " exit=0",
-            "<ts> writeback TASK-7: comment",
-            f"<ts> writeback TASK-7: attach:{PR}",
-            "<ts> writeback TASK-7: move:in_review"])
-        self.assertFalse(os.path.exists(self.runs))
+        self.assertEqual(self.said(), [
+            f"run launch TASK-7 mode=new sid={SID}",
+            f"writeback step TASK-7 sid={SID} step=start",
+            f"run end TASK-7 sid={SID} exit=0",
+            f"writeback step TASK-7 sid={SID} step=comment",
+            f"writeback step TASK-7 sid={SID} step=attach:{PR}",
+            f"writeback step TASK-7 sid={SID} step=move:in_review"])
+        self.assertEqual(os.listdir(os.path.join(self.root, "logs")), ["orchestrator.jsonl"])
         posts = self.harness(0)
         self.assertEqual(self.gql.calls, [
             *posts[:2],
@@ -153,8 +148,8 @@ class Inner(Base):
     def test_no_outcome_leaves_the_issue(self):
         self.lines = [said("Working on it")]
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[-2:], ["<ts> end TASK-7 session=" + SID + " exit=0",
-                                            "<ts> no-outcome TASK-7: the agent run returned no outcome"])
+        self.assertEqual(self.said()[-2:], [f"run end TASK-7 sid={SID} exit=0",
+                                            "run no-outcome TASK-7 error=the agent run returned no outcome"])
         self.assertEqual(self.gql.calls, self.harness(0))
 
     def test_nonzero_exit(self):
@@ -163,8 +158,7 @@ class Inner(Base):
             yield from ()
         self.lines, self.rc = lines(), 1
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[-2:], ["<ts> end TASK-7 session=" + SID + " exit=1",
-                                            "<ts> no-outcome TASK-7: the client exited 1"])
+        self.assertEqual(self.said()[-2:], [f"run end TASK-7 sid={SID} exit=1", "run no-outcome TASK-7 error=the client exited 1"])
         self.assertFalse(os.path.exists(self.runs))
         self.assertEqual(self.gql.calls, self.harness(1))
 
@@ -176,9 +170,8 @@ class Inner(Base):
         self.lines = lines()
         self.assertEqual(self.inner(), 0)
         self.assertTrue(self.proc.killed)
-        self.assertEqual(self.plog(), ["<ts> launch TASK-7 mode=new session=" + SID, "Working on it",
-                                       "<ts> end TASK-7 session=" + SID + " exit=129",
-                                       "<ts> no-outcome TASK-7: no result"])
+        self.assertEqual(self.said(), [f"run launch TASK-7 mode=new sid={SID}", f"run end TASK-7 sid={SID} exit=129",
+                                       "run no-outcome TASK-7 error=no result"])
         self.assertEqual(self.gql.calls, self.harness(129))
         self.assertIn("interrupted", self.gql.calls[-1][2]["b"])
         self.assertEqual(set(self.handlers), {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})
@@ -234,8 +227,8 @@ class Inner(Base):
                 self.gql = Gql(node(), lambda name, v: seen.append(list(self.tmux.live)))
                 with mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
                     self.assertEqual(self.inner(extra=extra), 0)
-                self.assertEqual(self.plog()[-5:-2], ["<ts> launch TASK-7 mode=new session=" + SID,
-                                                      *(f"<ts> tui-closed TASK-7 {n}" for n in mine)])
+                self.assertEqual(self.said()[-5:-2], [f"run launch TASK-7 mode=new sid={SID}",
+                                                      *(f"run tui-closed TASK-7 session={n}" for n in mine)])
                 self.assertEqual(self.tmux.tmux_calls(), ["list-sessions", "kill-session", "kill-session"])
                 self.assertEqual(seen[0], other)
 
@@ -246,9 +239,9 @@ class Inner(Base):
         with mock.patch.object(attended, "close", return_value=closed), \
                 mock.patch.object(drive, "start", return_value=drive.Result(0, None)):
             self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[1:4], ["<ts> tui-closed TASK-7 e-TASK-7-aaaaaaaa",
-                                            "<ts> tui-error TASK-7 e-TASK-7-bbbbbbbb: TuiError: boom",
-                                            "<ts> tui-error TASK-7: TuiError: tmux: nope"])
+        self.assertEqual(self.said()[1:4], ["run tui-closed TASK-7 session=e-TASK-7-aaaaaaaa",
+                                            "run tui-error TASK-7 session=e-TASK-7-bbbbbbbb msg=TuiError: boom",
+                                            "run tui-error TASK-7 msg=TuiError: tmux: nope"])
 
     def test_bad_layout_exits_2(self):
         cases = [(("--runner=tui", "--split=left"), "layout split 'left': want one of right, below"),
@@ -275,7 +268,7 @@ class Inner(Base):
         self.assertIn(f"the gate is `{gate}`", argv[2])
         dirs = [d for flag, d in zip(argv, argv[1:]) if flag == "--add-dir"]
         self.assertIn(os.path.join(self.root, "core", "team", "tasks"), dirs)
-        self.assertEqual(self.plog("researcher")[0], "<ts> launch TASK-7 mode=new session=" + SID)
+        self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def events(self):
         return [json.loads(line) for line in self.read(os.path.join(self.rd, "run.jsonl")).splitlines()]
@@ -289,7 +282,7 @@ class Inner(Base):
         self.assertEqual((argv[3:5], argv[2].startswith(compose.RESUME)), (["--resume", SID], True))
         self.assertEqual([e["kind"] for e in self.events()],
                          ["session", "progress", "input", "session", "result", "end"])
-        self.assertEqual(self.plog()[0], "<ts> launch TASK-7 mode=resume session=" + SID)
+        self.assertEqual(self.said()[0], f"run launch TASK-7 mode=resume sid={SID}")
 
     def test_an_overlay_cwd_runs_the_agent_there_and_its_resume_stays_there(self):
         there, later = os.path.join(self.tmp, "data repo"), os.path.join(self.tmp, "later")
@@ -310,34 +303,43 @@ class Inner(Base):
             self.assertIn(f"cd '{there}' && claude --resume {SID} --add-dir '{self.rd}'", self.gql.calls[1][2]["b"])
         self.assertEqual(config.transcript(ID, SID, self.projects), clients.claude.transcript(there, SID, self.projects))
 
+    def test_a_failed_session_comment_is_a_registry_error(self):
+        self.gql = Gql(node(), lambda name, v: RuntimeError("down") if name == "find" else None)
+        self.lines = [said("Working on it")]
+        self.assertEqual(self.inner(), 0)
+        self.assertEqual([x for x in self.said() if "registry-error" in x],
+                         [f"run registry-error TASK-7 sid={SID} error=RuntimeError: down"] * 2)
+
     def test_run_error(self):
         def popen(argv, **kw):
             raise FileNotFoundError(2, "No such file or directory", "claude")
         self.popen = popen
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.plog()[1:], [
-            "<ts> run-error TASK-7: FileNotFoundError: [Errno 2] No such file or directory: 'claude'",
-            "<ts> end TASK-7 session=" + SID + " exit=1", "<ts> no-outcome TASK-7: no result"])
+        self.assertEqual(self.said()[1:], [
+            "run run-error TASK-7 error=FileNotFoundError: [Errno 2] No such file or directory: 'claude'",
+            f"run end TASK-7 sid={SID} exit=1", "run no-outcome TASK-7 error=no result"])
         self.assertEqual(self.gql.calls, self.harness(1))
 
-    def test_step_2_errors_write_the_end_line_to_the_project_log_when_the_role_is_known(self):
-        cases = [(dict(assignee="x@y.com"), "run.py: 'x@y.com' is not a role account\n", None),
-                 (dict(assignee=RESEARCHER, task="build"), "run.py: task 'build' is not one of researcher's "
-                  "tasks (deep-research, light-research)\n", "researcher")]
-        for kw, err, role in cases:
-            with self.subTest(err=err):
+    def test_a_role_or_task_error_logs_config_error_and_end(self):
+        cases = [(dict(assignee="x@y.com"), "'x@y.com' is not a role account"),
+                 (dict(assignee=RESEARCHER, task="build"),
+                  "task 'build' is not one of researcher's tasks (deep-research, light-research)")]
+        for kw, reason in cases:
+            with self.subTest(reason=reason):
                 self.assertEqual(self.inner(**kw), 1)
-                self.assertEqual(self.err, err)
+                self.assertEqual(self.said()[-2:], [f"run config-error TASK-7 reason={reason}",
+                                                    f"run end TASK-7 sid={SID} exit=1"])
+                self.assertEqual(self.err, "")
                 self.assertFalse(os.path.exists(self.runs))
-                if role:
-                    self.assertEqual(self.plog(role), ["<ts> end TASK-7 session=" + SID + " exit=1"])
         self.assertEqual((self.gql.calls, self.popen_calls), ([], []))
 
     def test_config_error_writes_no_runs_line(self):
         os.remove(os.path.join(self.root, "orchestrator", "config.toml"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
         self.assertEqual(self.inner(), 1)
-        self.assertTrue(self.err.startswith("run.py: orchestrator/config.toml: missing harness_key"), self.err)
+        error, end = self.said()
+        self.assertTrue(error.startswith("run config-error TASK-7 reason=orchestrator/config.toml: missing harness_key"), error)
+        self.assertEqual(end, f"run end TASK-7 sid={SID} exit=1")
         self.assertFalse(os.path.exists(self.runs))
 
     def test_bad_uuid_or_target(self):

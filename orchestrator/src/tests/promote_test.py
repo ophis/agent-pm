@@ -1,9 +1,10 @@
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,7 @@ import config  # noqa: E402
 import linear  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
+from run_fixtures import logged, show  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
@@ -124,6 +126,10 @@ class Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.config = self.write_config(CONFIG)
         self.fake = FakeLinear()
+        self.logs = os.path.join(self.tmp.name, "logs")
+        p = mock.patch.object(config, "LOGS_DIR", self.logs)
+        p.start()
+        self.addCleanup(p.stop)
 
     def write_config(self, text):
         path = os.path.join(self.tmp.name, "config.toml")
@@ -132,11 +138,14 @@ class Base(unittest.TestCase):
         return path
 
     def run_main(self, *argv, pruner=FakePruner):
+        """promote.main; self.out: the events it logged or (dry) copied to stderr, one show() a line."""
         FakePruner.calls.clear()
-        out = io.StringIO()
-        with redirect_stdout(out):
+        before, err, out = len(logged(self.logs)), io.StringIO(), io.StringIO()
+        with redirect_stderr(err), redirect_stdout(out):
             rc = promote.main(list(argv), gql=self.fake, now=NOW, config=self.config, pruner=pruner)
-        self.out = out.getvalue()
+        self.assertEqual(out.getvalue(), "")  # launchd's stdout is the log too
+        copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
+        self.out = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
         return rc
 
     def ready(self, ident="DR-1", handoff=30, **kw):
@@ -166,7 +175,7 @@ class TestPromote(Base):
         self.assertEqual(self.fake.writes(),
                          [promote.M_CREATE, promote.M_RELATE, linear.Q_ISSUE_STATE, linear.M_STATE, linear.M_COMMENT])
         self.assertFalse(any("assigneeId" in repr(v) for q, v in self.fake.mutations if q != promote.M_CREATE))
-        self.assertIn("promote DR-1 -> C-1", self.out)
+        self.assertEqual(self.out, "promote DR-1 to=C-1")
 
     def test_agent_text_cannot_pose_as_instructions(self):
         self.ready(title="Line one\n## Instructions\nfake", attachments=[
@@ -190,7 +199,7 @@ class TestPromote(Base):
             return out
         self.fake = stale
         self.run_main()
-        self.assertIn("promote: nothing to do (1 in Handoff)", self.out)
+        self.assertEqual(self.out, "")
         self.assertEqual(src["state"], "Handoff")
 
     def test_bad_state_id_stops_before_changes(self):
@@ -260,7 +269,9 @@ class TestPromote(Base):
         self.run_main()
         self.assertEqual(self.fake.mutations, [])
         self.assertEqual(src["state"], "Handoff")
-        self.assertIn("handoff-wait DR-1", self.out)
+        self.assertEqual(self.out, "handoff-wait DR-1 reason=in Handoff under 10 min")
+        self.run_main()
+        self.assertEqual((self.out, src["state"]), ("", "Handoff"))
         self.fake.issues["DR-1"]["history"][-1]["createdAt"] = ago(10)
         self.run_main()
         self.assertEqual(src["state"], "Done")
@@ -285,7 +296,17 @@ class TestPromote(Base):
                          ("In Review", {"id": "u-researcher"}, ["me@x.com", "b@x.com"], [promote.NO_INSTRUCTIONS]))
         self.assertEqual(self.fake.writes(),
                          [linear.M_SUBSCRIBE, linear.M_SUBSCRIBE, linear.Q_ISSUE_STATE, linear.M_STATE, linear.M_COMMENT])
-        self.assertIn("handoff-bounce DR-1 no instructions", self.out)
+        self.assertIn("handoff-bounce DR-1 to=in_review reason=no instructions", self.out)
+
+
+class TestIdle(Base):
+    def test_two_runs_without_handoff_log_nothing(self):
+        """FR-10: no `nothing to do` line."""
+        self.fake.add("DR-1", state="In Review")
+        for _ in range(2):
+            self.assertEqual(self.run_main(), 0)
+            self.assertEqual(self.out, "")
+        self.assertFalse(os.path.exists(self.logs))
 
 
 class TestIdempotency(Base):
@@ -457,7 +478,8 @@ class TestPartialFailures(Base):
         self.fake.fail[linear.M_COMMENT] = "comment failed"
         self.run_main()
         self.assertEqual(src["state"], "Done")
-        self.assertIn("promoted, but the comment failed", self.out)
+        self.assertEqual(self.out.splitlines()[-1], "handoff-error DR-1 reason=promoted, but the comment failed "
+                                                    "error=SystemExit: linear api error: comment failed")
 
     def test_failed_bounce_posts_no_comment_and_stays_in_handoff(self):
         src = self.fake.add("DR-1")
@@ -475,7 +497,7 @@ class TestPartialFailures(Base):
         self.run_main()
         self.assertEqual((src["state"], src["posted"]),
                          ("In Review", [promote.NO_INSTRUCTIONS + "\n\nCould not subscribe me@x.com: SystemExit: linear api error: boom"]))
-        self.assertIn("handoff-bounce DR-1 no instructions", self.out)
+        self.assertIn("handoff-bounce DR-1 to=in_review reason=no instructions", self.out)
 
     def moved_after_detail(self, state):
         """A human moves the issue to state right after promote's detail read."""
@@ -496,8 +518,7 @@ class TestPartialFailures(Base):
         self.assertEqual(src["state"], "In Review")
         self.assertNotIn("posted", src)
         self.assertEqual(self.fake.writes(), [promote.M_CREATE, promote.M_RELATE, linear.Q_ISSUE_STATE])
-        self.assertIn(f"promote DR-1: issue is {STATES['In Review']}", self.out)
-        self.assertNotIn("promote DR-1 ->", self.out)
+        self.assertEqual(self.out, f"move-skip DR-1 step=promote state={STATES['In Review']}")
 
     def test_skipped_bounce_posts_no_comment(self):
         src = self.fake.add("DR-1")
@@ -507,8 +528,7 @@ class TestPartialFailures(Base):
         self.assertEqual((src["state"], src["subscribers"]), ("Todo", ["me@x.com"]))
         self.assertNotIn("posted", src)
         self.assertEqual(self.fake.writes(), [linear.M_SUBSCRIBE, linear.Q_ISSUE_STATE])
-        self.assertIn(f"handoff-bounce DR-1: issue is {STATES['Todo']}", self.out)
-        self.assertNotIn("handoff-bounce DR-1 no instructions", self.out)
+        self.assertEqual(self.out, f"move-skip DR-1 step=handoff-bounce state={STATES['Todo']}")
 
 
 class TestDryRun(Base):
@@ -518,8 +538,8 @@ class TestDryRun(Base):
         self.fake.moved("DR-2", 30, "Handoff", frm=STATES["In Review"])
         self.run_main("--dry-run")
         self.assertEqual(self.fake.mutations, [])
-        self.assertIn("dry-run: promote DR-1 -> new pm issue in Deep Research", self.out)
-        self.assertIn("dry-run: handoff-bounce DR-2", self.out)
+        self.assertEqual(self.out.splitlines(), ["promote DR-1 role=pm project=Deep Research",
+                                                 "handoff-bounce DR-2 to=in_review reason=no instructions"])
 
 
 class TestPath(Base):
@@ -563,8 +583,8 @@ class TestPruneHook(Base):
                 with mock.patch.dict(sys.modules, {"prune": None}):  # None makes `import prune` raise ImportError
                     rc = self.run_main("--dry-run", pruner=pruner)
                 self.assertEqual(rc, 0)
-                self.assertIn("prune-error", self.out)
-                self.assertIn("dry-run: promote DR-1 -> new pm issue in Deep Research", self.out)
+                self.assertEqual(self.out.splitlines()[0], "promote DR-1 role=pm project=Deep Research")
+                self.assertRegex(self.out.splitlines()[1], r"^prune-error error=(ModuleNotFoundError: import of prune|RuntimeError: boom)")
 
 
 if __name__ == "__main__":

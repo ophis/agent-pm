@@ -1,12 +1,12 @@
 """Fixtures of an agent run shared by router_test (the outer) and run_test (the inner): a temp root linking the repo's core,
-a fake Linear (Gql) and a fake gh/git (Run)."""
+a fake Linear (Gql) and a fake gh/git (Run); and orchestrator.jsonl's reader (logged, show)."""
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,7 +28,6 @@ KEY = "linear-api-key-engineer"
 CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
           + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
           + '[core.roles.researcher]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
-TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
              "user": {"email": "ME@x.com", "name": "Me", "isMe": False}}
@@ -59,6 +58,26 @@ Add a session registry.
 ## PRD
 
 None linked."""
+
+
+def logged(logs=None):
+    """The lines of orchestrator.jsonl in logs (default config.LOGS_DIR) as dicts, each checked to open with ts (ISO 8601
+    with offset), src and kind."""
+    try:
+        with open(os.path.join(logs or config.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
+            lines = [json.loads(line) for line in f]
+    except FileNotFoundError:
+        return []
+    for d in lines:
+        assert list(d)[:3] == ["ts", "src", "kind"] and datetime.fromisoformat(d["ts"]).utcoffset() is not None, d
+    return lines
+
+
+def show(event):
+    """An event as `kind [issue] key=value…`, ts and src left out; a value not a str as JSON."""
+    fields = [f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}" for k, v in event.items()
+              if k not in ("ts", "src", "kind", "issue")]
+    return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 
 
 def res(stdout="", code=0, stderr=""):
@@ -181,11 +200,9 @@ class Base(unittest.TestCase):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def plog_path(self, role="engineer"):
-        return os.path.join(self.root, "logs", "projects", f"{role}.log")
-
-    def plog(self, role="engineer"):
-        return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(role)).splitlines()]
+    def said(self, src=None):
+        """show() of each orchestrator.jsonl event (of src only, when given), `src ` first when src is None."""
+        return [show(e) if src else f"{e['src']} {show(e)}" for e in logged() if src in (None, e["src"])]
 
     def transcript(self):
         self.write(config.transcript(ID, SID, self.projects), "")

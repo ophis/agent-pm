@@ -89,10 +89,7 @@ def write(gql, issue, sid, text, limit=LIMIT):
 
 def post(issue, rec, rc=None, *, gql=None, ended_at=None):
     """Record the session rec on issue: running for rc None, else its end (ended_at defaults to now). gql defaults to
-    the harness account's, bounded by LIMIT. None once written, else the one unstamped registry-error line."""
-    sid = rec["sid"]
+    the harness account's, bounded by LIMIT. None once written, else why not, one line (the caller logs
+    registry-error)."""
     text = body(rec) if rc is None else body(rec, rc, ended_at or now())
-    reason = write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, sid, text)
-    if reason:
-        return one_line(f"registry-error {issue} session={sid}: {reason}")
-    return None
+    return write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, rec["sid"], text)

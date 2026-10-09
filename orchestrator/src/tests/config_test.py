@@ -716,13 +716,6 @@ class WorkDir(ConfigFile, unittest.TestCase):
 
 
 class Paths(unittest.TestCase):
-    def test_slug_and_project_log(self):
-        self.assertEqual(config.slug("Deep Research"), "deep-research")
-        with tempfile.TemporaryDirectory() as d:
-            path = config.project_log("light-research", logs=d)
-            self.assertEqual(path, os.path.join(d, "projects", "light-research.log"))
-            self.assertTrue(os.path.isdir(os.path.dirname(path)))
-
     def test_run_dir_and_transcript(self):
         self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.RUNS_DIR, "TASK-9"))
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
