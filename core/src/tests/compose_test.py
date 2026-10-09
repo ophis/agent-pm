@@ -628,7 +628,8 @@ class RealCore(unittest.TestCase):
 
     def test_no_skill_names_the_tracker(self):
         skills = glob.glob(os.path.join(CORE, "skills", "*", "SKILL.md"))
-        self.assertIn(os.path.join(CORE, "skills", "manage", "SKILL.md"), skills)
+        self.assertIn(os.path.join(CORE, "skills", "act-as", "SKILL.md"), skills)
+        skills.append(os.path.join(CORE, "skills", "tmux", "manager.md"))
         for path in skills:
             with open(path) as f:
                 self.assertNotIn("Linear", f.read(), path)
