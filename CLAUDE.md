@@ -56,6 +56,7 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 - `inputs_test.py` and `writeback_test.py` pin the input text and the Linear calls; `router_test.py` pins the tmux argv.
 - Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`compose_test.py` checks): without the start report `drive.py` logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in core prompts or skills; `compose_test.py` fails on it.
+- Skills and `core/config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:tmux`), never "the tmux skill" or `agent-pm:tmux`; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
 - Tmux targets: `core/skills/tmux/SKILL.md` › Gotchas. The code targets only with `=<name>`: the router reads `list-sessions` and names via `new-session -s`; `attended.close` kills by exact target (`tui_claude.kill`).
