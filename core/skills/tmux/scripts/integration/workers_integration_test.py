@@ -1,6 +1,6 @@
 """workers.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
-state, events, blocked, dead, restart, early death; the grid (columns, re-tile, name order, sub-workers) and a split
-outside it."""
+state, events, blocked, dead, restart, early death; the grid (columns, re-tile, name order, sub-workers, a state
+needing two passes settling, concurrent tiles, the mute, the breaker) and a split outside it."""
 import contextlib
 import functools
 import json
@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import unittest
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +20,7 @@ sys.path[:0] = [TESTS, os.path.join(TESTS, "integration")]
 import hermetic  # noqa: E402
 import fake_claude  # noqa: E402
 import live_tmux  # noqa: E402
+tui_claude = workers.tui_claude
 
 WORKERS = os.path.join(SCRIPTS, "workers.py")
 TUI = os.path.join(workers.CORE, "src", "tui_claude.py")
@@ -26,6 +28,8 @@ MANAGER = "mgr"
 TIMEOUT = 60   # seconds, per process
 BORDER = " #{session_name} #{@state} "
 IGNORED = "tui: show: grid: --split/--split-from ignored"
+STEADY = 1   # seconds a settled layout must hold
+BREAKER_TIMEOUT = 60   # seconds a forced re-tile loop may run before the breaker must have stopped it
 
 
 class Live(unittest.TestCase):
@@ -285,6 +289,107 @@ class Grid(Live):
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
         self.ok(self.kill("m2"))
         self.grid([["m1", ["z3"], "m3"]])
+
+
+class Settle(Live):
+    """mgr's window as an incident left it, built by hand before any grid exists: w1's and w2's panes (sessions of gone
+    openers old1, old2) and mgr's, in that order of ids, in pane order w2 w1 mgr under an old top-bottom layout. At
+    per-column 1 it needs two tile passes, the second swapping. A layout by hand is even-vertical: even-horizontal of
+    these three panes already is their grid."""
+
+    def setUp(self):
+        super().setUp()
+        self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
+        self.window = self.display(MANAGER, "#{window_id}")
+        w1 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE)
+        w2 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", w1, *live_tmux.IDLE)
+        for name, opener, pane in (("w1", "old1", w1), ("w2", "old2", w2)):
+            self.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
+            self.tmux("set-option", "-t", f"={name}:", "@opener", opener, ";", "set-option", "-t", f"={name}:",
+                      "@pane", pane)
+        self.tmux("swap-pane", "-d", "-s", self.manager, "-t", w2)
+        self.assertEqual(self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
+                         [w2, w1, self.manager])
+        old = tui_claude._render_layout(tui_claude._parse_layout(
+            f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"))
+        self.tmux("select-layout", "-t", self.window, old)
+        self.assertEqual(self.layout(), old)
+
+    def tmux(self, *args: str) -> str:
+        return self.ok(self.server.tmux(*args)).stdout.removesuffix("\n")
+
+    def layout(self) -> str:
+        return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
+
+    def grid_up(self) -> None:
+        """_grid_up on the window at per-column 1, in a process in mgr's pane: how the incident installed the grid."""
+        code = (f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tui_claude; "
+                f"sys.exit(tui_claude._grid_up({self.window!r}, {self.manager!r}, 1, subprocess.run))")
+        self.ok(self.call(sys.executable, "-I", "-c", code))
+
+    def settled(self) -> str:
+        """The grid of the two orphan groups, one per column (the manager 99 wide: half its old full width), then
+        steady; its layout."""
+        self.grid([[["w1"]], [["w2"]]], 99)
+        return self.steady(self.layout())
+
+    def steady(self, layout: str) -> str:
+        """Fails unless the window's layout is `layout` throughout STEADY s."""
+        end = time.monotonic() + STEADY
+        while time.monotonic() < end:
+            self.assertEqual(self.layout(), layout)
+            time.sleep(live_tmux.POLL)
+        return layout
+
+    def test_grid_up_settles(self):
+        self.grid_up()
+        self.settled()
+
+    def test_concurrent_tiles_settle(self):
+        self.tmux("set-option", "-w", "-t", self.window, tui_claude.GRID_MANAGER, self.manager, ";",
+                  "set-option", "-w", "-t", self.window, tui_claude.GRID_PER_COLUMN, "1")
+        env = self.server.env(**self.server.inside(MANAGER))
+        tiles = [subprocess.Popen([sys.executable, TUI, "tile", *flag, self.window], env=env, cwd=self.cwd,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 for flag in (["--no-wait"], []) for _ in range(8)]
+        for p in tiles:
+            _, err = p.communicate(timeout=TIMEOUT)
+            self.assertEqual(p.returncode, 0, f"{p.args}: {err}")
+        self.settled()
+
+    def test_busy_mutes_the_hooks(self):
+        self.grid_up()
+        grid = self.settled()
+        self.tmux("set-option", "-w", "-t", self.window, tui_claude.GRID_BUSY, self.window)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.assertNotEqual(self.steady(self.layout()), grid)
+        self.tmux("set-option", "-u", "-w", "-t", self.window, tui_claude.GRID_BUSY)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.settled()
+
+    def test_breaker_stops_a_loop(self):
+        self.grid_up()
+        self.settled()
+        most, end = 0, time.monotonic() + BREAKER_TIMEOUT
+        while True:
+            self.tmux("select-layout", "-t", self.window, "even-vertical")
+            manager, tiles = self.tmux("display-message", "-p", "-t", self.window,
+                                       f"#{{{tui_claude.GRID_MANAGER}}}\t#{{{tui_claude.GRID_TILES}}}").split("\t")
+            if not manager:
+                break
+            most = max(most, len(tiles.split()))
+            self.assertLess(time.monotonic(), end, f"still a grid after {BREAKER_TIMEOUT} s; at most {most} re-tiles")
+            time.sleep(live_tmux.POLL)
+        # the trip follows TILE_LIMIT re-tiles; the driver's last look may miss the last one
+        self.assertGreaterEqual(most, tui_claude.TILE_LIMIT - 1)
+        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN, tui_claude.GRID_TILES, tui_claude.GRID_BUSY)
+        self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
+        hooks = self.tmux("show-hooks", "-w", "-t", self.window)
+        self.assertEqual([h for h in tui_claude.GRID_HOOKS if h in hooks], [], hooks)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.steady(self.layout())
+        self.started("w3")
+        self.grid([[["w1"], ["w2"], "w3"]])
 
 
 class Splits(Live):
