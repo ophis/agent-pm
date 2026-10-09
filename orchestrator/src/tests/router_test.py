@@ -23,6 +23,7 @@ from run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEE
                           forwarded, logged, node, res, show)
 from attended_test import Tmux  # noqa: E402
 from linear_test import Stderr  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 import config  # noqa: E402
 import attended  # noqa: E402
 import inputs  # noqa: E402
@@ -273,7 +274,7 @@ class Base(unittest.TestCase):
         self.assertEqual({e["src"] for e in events} - {"router"}, set())
         return [self.unmap(show(e)) for e in events]
 
-    def tick(self, fake, *argv, hour=2, shell=None, again=False):
+    def tick(self, fake, *argv, hour=2, shell=None, again=False, now=NOW):
         """router.main with argv (a tick, or --issue), the outer faked by self.sh.start; again: on the last log."""
         self.sh = shell or FakeShell()
         with open(self.log, "w") as f:
@@ -281,7 +282,7 @@ class Base(unittest.TestCase):
         err = io.StringIO()
         with redirect_stderr(err), mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
                 self.log_dir(again):
-            rc = router.main(list(argv), gql=fake, now=NOW, tdir=self.tdir, config=self.config, runs=self.log,
+            rc = router.main(list(argv), gql=fake, now=now, tdir=self.tdir, config=self.config, runs=self.log,
                              sh=self.sh, hour=hour, root=self.root, start=self.sh.start)
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -1484,6 +1485,62 @@ class OneRouter(Base):
                 self.assertEqual(router.main(["--brake"], runs=self.log, sh=FakeShell()), 0)
             self.assertRegex(out.getvalue(), "^status=allowed ")
         self.assertEqual(fake.mutations, [])
+
+
+class LostClaim(FakeLinear):
+    """The first state change is applied (updatedAt NOW), its answer lost: Unavailable."""
+    def __init__(self, issues):
+        super().__init__(issues)
+        self.lose = True
+
+    def __call__(self, query, **v):
+        out = super().__call__(query, **v)
+        if query == linear.M_STATE and self.lose:
+            self.lose = False
+            self.issues[v["i"]]["updatedAt"] = ago(minutes=0)
+            raise linear.Unavailable("issueUpdate", reason="TimeoutError: timed out")
+        return out
+
+
+class Outage(Base):
+    """Linear unavailable: the router stops at the first failure, one linear-error a day, exit 1, the lock released."""
+    SAID = {name: f"linear-error op=teams {fields}" for name, fields in FIELDS.items()}
+
+    def test_a_failure_at_board_setup_is_one_linear_error_a_day(self):
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            for name, error in FAILURES.items():
+                with self.subTest(argv=argv, failure=name):
+                    for again in (False, True):
+                        gql = failing(error)
+                        self.assertEqual(self.tick(gql, *argv, again=again), 1)
+                        self.assertEqual((self.said(), self.raw), ([] if again else [self.SAID[name]], ""))
+                        self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})])
+                        self.assertEqual((self.sh.launches(), self.state), ([], ""))
+                    fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                    self.assertEqual(self.tick(fake, *argv), 0)
+                    self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
+
+    def test_a_dry_run_prints_it_and_writes_nothing(self):
+        for argv in (("--now", "--dry-run"), ("--issue", "TASK-1", "--dry-run")):
+            for name, error in FAILURES.items():
+                with self.subTest(argv=argv, failure=name):
+                    self.assertEqual(self.tick(failing(error), *argv), 1)
+                    self.assertEqual((self.said(), len(self.raw.splitlines())), ([self.SAID[name]], 1))
+                    self.assertEqual((os.listdir(self.logs), self.state), ([], ""))
+
+    def test_a_claim_applied_with_its_answer_lost_is_recovered_once_stale(self):
+        for argv, plan in ((("--now",), ["plan mode=new queue=1"]), (("--issue", "TASK-1"), [])):
+            with self.subTest(argv=argv):
+                fake = LostClaim([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tick(fake, *argv), 1)
+                self.assertEqual(self.said(), plan + ["pick TASK-1 queue=1", "claim TASK-1 role=researcher",
+                                                      "linear-error op=issueUpdate reason=TimeoutError: timed out"])
+                self.assertEqual((fake.issues["TASK-1"]["state"], self.sh.launches(), self.state), ("In Progress", [], ""))
+                self.assertEqual(self.tick(fake, "--now", now=NOW + router.STALE + timedelta(minutes=1)), 0)
+                self.assertEqual(self.said(), [f"recover TASK-1 to=todo reason=no session updated={ago(minutes=0)}",
+                                               "plan mode=new queue=1", "pick TASK-1 queue=1", "claim TASK-1 role=researcher",
+                                               "launch TASK-1 exit=0"])
+                self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
 
 
 class TuiTick(Base):

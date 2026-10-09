@@ -1,5 +1,5 @@
 """promote.py as a process against the fake Linear and the test's tmux server (flow_fixtures.Flow): a researcher's
-Handoff issue becomes the pm's child issue, also after a failed move; prune after Done."""
+Handoff issue becomes the pm's child issue, also after a failed move or a Linear outage; prune after Done."""
 import os
 import subprocess
 import sys
@@ -33,6 +33,14 @@ class Tick(Flow):
     def events(self):
         """orchestrator.jsonl's events without ts."""
         return [{k: v for k, v in e.items() if k != "ts"} for e in self.logged()]
+
+    def outage(self, op):
+        """promote.py exits 1, printing nothing; its last request the one that failed (HTTP 503), so no prune; its
+        one event a linear-error of op."""
+        res = self.promote()
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
+        self.assertEqual(self.requests()[-1].result, "503")
+        self.assertEqual(self.events(), [{"src": "promote", "kind": "linear-error", "op": op, "status": 503}])
 
     def assert_requests(self, writes, problems=()):
         """Every request the harness account's and answered ok but `problems` ((op, account, result) each); the
@@ -86,24 +94,45 @@ class Promote(Tick):
         self.assert_requests(WRITES)
         self.assertEqual(self.events(), [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
 
-    def test_a_failed_move_is_retried_without_a_second_child(self):
-        self.fake.fail("linear.M_STATE", "503", account=HARNESS_EMAIL)
-        failed = [("linear.M_STATE", HARNESS_EMAIL, "503")]
-        self.tick()
+    def assert_move_retried(self, failed):
+        """After a run whose move of SOURCE to Done failed (failed: its problems): the child made and related, SOURCE
+        in Handoff with the human's comment only; the next run promotes it, reusing the child."""
         with self.fake.lock:
             self.assertIsNotNone(self.fake.find(self.child), f"no issue {self.child}")
             self.assertEqual(self.fake.relations, [("related", self.source, self.child)])
         self.assertEqual(self.state(SOURCE), "handoff")
         self.assertEqual(self.comments(SOURCE), [(HUMAN, INSTRUCTIONS)])
+        self.assert_requests(WRITES[:3], failed)
+        before = self.events()
+
+        self.tick()
+        child = self.assert_promoted()
+        self.assertEqual(self.events(), [*before, {"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
+        self.assert_requests(WRITES[:3] + WRITES[2:], failed)
+
+    def test_a_failed_move_is_retried_without_a_second_child(self):
+        self.fake.fail("linear.M_STATE", "error", account=HARNESS_EMAIL)
+        self.tick()
         [error] = self.events()
         self.assertEqual((error["src"], error["kind"], error["issue"]), ("promote", "handoff-error", SOURCE))
-        self.assertIn("503", error["error"])
-        self.assert_requests(WRITES[:3], failed)
+        self.assertIn("linear.M_STATE: injected error", error["error"])
+        self.assert_move_retried([("linear.M_STATE", HARNESS_EMAIL, "error")])
+
+    def test_a_linear_outage_moving_the_source_is_retried_without_a_second_child(self):
+        self.fake.fail("linear.M_STATE", "503", account=HARNESS_EMAIL)
+        self.outage("issueUpdate")
+        self.assert_move_retried([("linear.M_STATE", HARNESS_EMAIL, "503")])
+
+    def test_a_linear_outage_reading_the_handoffs_is_retried(self):
+        self.fake.fail("promote.Q_HANDOFF", "503")
+        self.outage("issues")
+        self.assertEqual(self.state(SOURCE), "handoff")
+        self.assert_requests([], [("promote.Q_HANDOFF", HARNESS_EMAIL, "503")])
 
         self.tick()
         child = self.assert_promoted()
         self.assertEqual(self.events()[1:], [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
-        self.assert_requests(WRITES[:3] + WRITES[2:], failed)
+        self.assert_requests(WRITES, [("promote.Q_HANDOFF", HARNESS_EMAIL, "503")])
 
 
 class Prune(Tick):

@@ -8,7 +8,7 @@
     {
       "name": "agent-pm",
       "source": "./core",
-      "description": "tmux workers with manager guidelines, and agent-pm's core roles and tasks"
+      "description": "tmux workers, commander guidelines, and agent-pm's core roles and tasks"
     }
   ]
 }

@@ -15,7 +15,8 @@ flowchart LR
 
 `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role in a pane or headless: `core/skills/tmux/SKILL.md`; manager guidelines, read before starting workers: `core/skills/tmux/manager.md`.
+- `/agent-pm:tmux`: start and direct other Claude Code sessions (workers) in iTerm2 or tmux panes, or run a core role in a pane or headless: `core/skills/tmux/SKILL.md`.
+- `/agent-pm:manage`: your guidelines for the commander session, the one you talk to, e.g. `ctmux`'s; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `core/skills/manage/SKILL.md`.
 - `ctmux <session>` in iTerm2: a manager `claude --permission-mode auto` in tmux session `<session>` (made in the current dir if missing), attached with `tmux -CC`, so worker panes are native iTerm2 splits in the same window. Install: add `alias ctmux=~/.claude/plugins/marketplaces/agent-pm/core/skills/tmux/scripts/ctmux` to `~/.zshrc` (or `~/.bashrc`); the marketplace clone, not the versioned cache, keeps the path across updates.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `core/skills/act-as/SKILL.md`.
 
@@ -92,7 +93,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 
 | Log | Contents |
 |---|---|
-| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip or config-load error, once a day. launchd's crash output may add non-JSON lines |
+| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day. launchd's crash output may add non-JSON lines |
 | `<work_dir>/logs/runs.jsonl` | Agent run start/resume lines of the last 7 days: keep it, resume and Recover read it |
 
 An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs; moving `<work_dir>` or the repo breaks the installed plists.

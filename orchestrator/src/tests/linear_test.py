@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import os
@@ -6,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
@@ -15,6 +17,7 @@ import hermetic  # noqa: E402,F401
 from board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node  # noqa: E402
 import config  # noqa: E402
 import linear  # noqa: E402
+from outage import FAILURES, failing  # noqa: E402
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
@@ -203,6 +206,123 @@ class LinearGql(unittest.TestCase):
                     self.assertNotIn(key, code)
 
 
+def http_error(code, body=b""):
+    return urllib.error.HTTPError(linear.URL, code, "Error", {}, io.BytesIO(body))
+
+
+def errors(*codes):
+    """A GraphQL error body, one error per extensions.code."""
+    return json.dumps({"errors": [{"message": "m", "extensions": {"code": c}} for c in codes]}).encode()
+
+
+class Unavailable(unittest.TestCase):
+    """linear_gql's transport or Linear failing: Unavailable when a later try can succeed."""
+    def setUp(self):
+        no_seam(self)
+        p = mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(stdout=SECRET + "\n"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def gql(self, query, opened=None, read=None, body=b'{"data": {}}'):
+        """linear_gql(query): urlopen raising opened, else answering body, or raising read on reading it."""
+        resp = respond(body)
+        if read:
+            resp.__enter__.return_value = mock.Mock(read=mock.Mock(side_effect=read))
+        with mock.patch.object(linear.urllib.request, "urlopen", side_effect=opened, return_value=resp):
+            return linear.linear_gql(query, service="svc")
+
+    def unavailable(self, query, **kw):
+        with self.assertRaises(linear.Unavailable) as cm:
+            self.gql(query, **kw)
+        e = cm.exception
+        for text in (str(e), linear.one_line(e)):
+            self.assertNotIn(SECRET, text)
+        return e.op, e.status, e.reason, str(e)
+
+    def test_5xx_and_rate_limit_carry_the_status(self):
+        cases = [(linear.Q_TEAM, http_error(503), ("teams", 503, None, "teams: HTTP 503")),
+                 (linear.M_STATE, http_error(500, b"<html>"), ("issueUpdate", 500, None, "issueUpdate: HTTP 500")),
+                 (linear.M_COMMENT, http_error(400, errors("OTHER", "RATELIMITED")),
+                  ("commentCreate", 400, "RATELIMITED", "commentCreate: RATELIMITED"))]
+        for query, error, want in cases:
+            with self.subTest(want=want):
+                self.assertEqual(self.unavailable(query, opened=error), want)
+
+    def test_other_http_errors_unchanged(self):
+        for error in (http_error(400, errors("GRAPHQL_VALIDATION_FAILED")), http_error(400, b"not json"),
+                      http_error(400), http_error(400, b'{"errors": 1}'), http_error(401, errors("AUTHENTICATION_ERROR")),
+                      http_error(401, errors("RATELIMITED"))):
+            with self.subTest(code=error.code), error, self.assertRaises(urllib.error.HTTPError) as cm:
+                self.gql(VIEWER, opened=error)
+            self.assertIs(cm.exception, error)
+
+    def test_transport_errors_carry_the_reason(self):
+        cases = [({"opened": TimeoutError("timed out")}, "TimeoutError: timed out"),
+                 ({"opened": urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))},
+                  "ConnectionRefusedError: [Errno 61] Connection refused"),
+                 ({"opened": urllib.error.URLError("no\n host")}, "no host"),
+                 ({"opened": ConnectionResetError(54, "Connection reset by peer")},
+                  "ConnectionResetError: [Errno 54] Connection reset by peer"),
+                 ({"read": http.client.IncompleteRead(b"{", 9)},
+                  "IncompleteRead: IncompleteRead(1 bytes read, 9 more expected)"),
+                 ({"read": TimeoutError("The read operation timed out")}, "TimeoutError: The read operation timed out")]
+        for kw, reason in cases:
+            with self.subTest(reason=reason):
+                self.assertEqual(self.unavailable(VIEWER, **kw), ("viewer", None, reason, f"viewer: {reason}"))
+
+    def test_a_2xx_body_not_json(self):
+        for body in (b"<html>502 Bad Gateway</html>", b"", b"\xff\xfe{"):
+            with self.subTest(body=body):
+                self.assertEqual(self.unavailable(linear.Q_TEAM, body=body),
+                                 ("teams", None, "response not JSON", "teams: response not JSON"))
+
+    def test_graphql_errors_in_a_200_stay_systemexit(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.gql(VIEWER, body=errors("RATELIMITED"))
+        self.assertEqual(cm.exception.code, "linear api error: [{'message': 'm', 'extensions': {'code': 'RATELIMITED'}}]")
+
+    def test_operation_is_the_first_field_of_the_top_level_selection_set(self):
+        cases = {VIEWER: "viewer", linear.Q_TEAM: "teams", linear.Q_ISSUE_STATE: "issue", linear.M_STATE: "issueUpdate",
+                 linear.M_COMMENT: "commentCreate", "{issues(first: 1) { nodes { id } } }": "issues", "query { }": "?",
+                 "query { 1x }": "?", "query": "?", "": "?"}
+        for query, op in cases.items():
+            with self.subTest(query=query):
+                self.assertEqual(linear.operation(query), op)
+
+    def test_attributes_and_text(self):
+        e = linear.Unavailable("teams", status=503)
+        self.assertEqual((e.op, e.status, e.reason, str(e)), ("teams", 503, None, "teams: HTTP 503"))
+        e = linear.Unavailable("issues", reason="TimeoutError: timed out")
+        self.assertEqual((e.op, e.status, e.reason, str(e)), ("issues", None, "TimeoutError: timed out",
+                                                              "issues: TimeoutError: timed out"))
+
+
+class Outage(unittest.TestCase):
+    """tests/outage.py: the real linear_gql, its transport failing."""
+    def test_each_failure_is_unavailable_and_recorded(self):
+        want = {"5xx": (503, None), "timeout": (None, "TimeoutError: timed out"),
+                "URLError": (None, "ConnectionRefusedError: [Errno 61] Connection refused")}
+        self.assertEqual(set(FAILURES), set(want))
+        with mock.patch.dict(os.environ, {SEAM: os.path.join(hermetic.HOME, "missing.json")}):
+            for name, error in FAILURES.items():
+                with self.subTest(name):
+                    gql = failing(error)
+                    for _ in range(2):
+                        with self.assertRaises(linear.Unavailable) as cm:
+                            gql(linear.Q_TEAM, t=TEAM)
+                        self.assertEqual((cm.exception.op, cm.exception.status, cm.exception.reason), ("teams", *want[name]))
+                    self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})] * 2)
+            self.assertEqual(os.environ[SEAM], os.path.join(hermetic.HOME, "missing.json"))
+
+    def test_ops_names_the_failing_operations(self):
+        gql = failing(FAILURES["5xx"], gql=lambda q, **v: {"q": q, **v}, ops={"teams", "issueUpdate"})
+        self.assertEqual(gql(linear.Q_ISSUE_STATE, i="I"), {"q": linear.Q_ISSUE_STATE, "i": "I"})
+        for query in (linear.Q_TEAM, linear.M_STATE):
+            with self.assertRaises(linear.Unavailable):
+                gql(query, i="I")
+        self.assertEqual(gql.failed, [(linear.Q_TEAM, {"i": "I"}), (linear.M_STATE, {"i": "I"})])
+
+
 class HasKey(unittest.TestCase):
     def test_without_the_seam_the_secret_is_never_read(self):
         no_seam(self)
@@ -353,8 +473,8 @@ class Stderr(io.StringIO):
         return super().write(s)
 
 
-class Log(unittest.TestCase):
-    """linear.log: the one writer of <LOGS_DIR>/orchestrator.jsonl."""
+class Logs(unittest.TestCase):
+    """A temp LOGS_DIR; stamps at TS."""
     TS = "2026-10-09T00:26:33-04:00"
 
     def setUp(self):
@@ -367,12 +487,12 @@ class Log(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def log(self, *args, tty=False, fail=None, **kw):
-        """linear.log(*args, **kw) at TS; returns its stderr."""
+    def stderr(self, call, tty=False, fail=None):
+        """call() at TS; returns (its result, its stderr)."""
         err = Stderr(tty, fail)
         with mock.patch.object(sys, "stderr", err), mock.patch.object(linear.drive, "stamp", return_value=self.TS):
-            linear.log(*args, **kw)
-        return err.getvalue()
+            out = call()
+        return out, err.getvalue()
 
     def text(self, path=None):
         try:
@@ -383,6 +503,18 @@ class Log(unittest.TestCase):
 
     def lines(self):
         return [json.loads(line) for line in self.text().splitlines()]
+
+    def json(self, src, kind, issue=None, **fields):
+        """The stderr copy of a line."""
+        line = {"ts": self.TS, "src": src, "kind": kind, **({"issue": issue} if issue else {}), **fields}
+        return json.dumps(line, ensure_ascii=False) + "\n"
+
+
+class Log(Logs):
+    """linear.log: the one writer of <LOGS_DIR>/orchestrator.jsonl."""
+    def log(self, *args, tty=False, fail=None, **kw):
+        """linear.log(*args, **kw); returns its stderr."""
+        return self.stderr(lambda: linear.log(*args, **kw), tty, fail)[1]
 
     def test_line_shape_and_key_order(self):
         self.assertEqual(self.log("router", "claim", "TASK-1", role="pm", task=None), "")
@@ -411,11 +543,6 @@ class Log(unittest.TestCase):
         open(file, "w").close()
         with mock.patch.object(config, "LOGS_DIR", os.path.join(file, "logs")):
             self.log("run", "end", "TASK-1")
-
-    def json(self, src, kind, issue=None, **fields):
-        """The stderr copy of a line."""
-        line = {"ts": self.TS, "src": src, "kind": kind, **({"issue": issue} if issue else {}), **fields}
-        return json.dumps(line, ensure_ascii=False) + "\n"
 
     def test_an_oserror_from_stderr_never_raises(self):
         for dry in (False, True):
@@ -489,6 +616,42 @@ class Log(unittest.TestCase):
                 plist = plistlib.load(f)
             self.assertEqual({plist["StandardOutPath"], plist["StandardErrorPath"]},
                              {"/Users/francis/.agent-pm/logs/orchestrator.jsonl"}, job)
+
+
+class LinearError(Logs):
+    """linear.linear_error: one linear-error line a day per reason."""
+    def error(self, e, tty=False, dry=False, src="router"):
+        """linear_error's (exit code, stderr)."""
+        return self.stderr(lambda: linear.linear_error(src, e, dry), tty)
+
+    def test_once_a_day_per_reason_printed_only_on_a_terminal(self):
+        timeout, limit = (linear.Unavailable("teams", reason="TimeoutError: timed out"),
+                          linear.Unavailable("commentCreate", status=400, reason="RATELIMITED"))
+        line = {"src": "router", "kind": "linear-error"}
+        cases = [(linear.Unavailable("teams", status=502), False, "", {"op": "teams", "status": 502}),
+                 (linear.Unavailable("issues", status=503), True, "router.py: Linear unavailable: issues: HTTP 503\n", None),
+                 (timeout, True, self.json(**line, op="teams", reason="TimeoutError: timed out")
+                  + "router.py: Linear unavailable: teams: TimeoutError: timed out\n",
+                  {"op": "teams", "reason": "TimeoutError: timed out"}),
+                 (limit, False, "", {"op": "commentCreate", "status": 400, "reason": "RATELIMITED"}),
+                 (limit, False, "", None), (timeout, False, "", None)]
+        written = []
+        for e, tty, err, new in cases:
+            with self.subTest(e=str(e), tty=tty):
+                self.assertEqual(self.error(e, tty), (1, err))
+                written += [{"ts": self.TS, **line, **new}] if new else []
+                self.assertEqual(self.lines(), written)
+        self.assertEqual(self.error(timeout, src="promote"), (1, ""))
+        self.assertEqual(self.lines()[-1], {"ts": self.TS, "src": "promote", "kind": "linear-error", "op": "teams",
+                                            "reason": "TimeoutError: timed out"})
+
+    def test_dry_prints_the_line_and_writes_nothing(self):
+        e = linear.Unavailable("teams", status=503)
+        for tty in (False, True):
+            for _ in range(2):
+                self.assertEqual(self.error(e, tty, dry=True),
+                                 (1, self.json("router", "linear-error", op="teams", status=503)))
+        self.assertFalse(os.path.exists(self.logs))
 
 
 IN_PROGRESS, IN_REVIEW, TODO = STATES["in_progress"], STATES["in_review"], STATES["todo"]

@@ -5,7 +5,8 @@ assigned to role accounts, then starts it through the outer; each step: CLAUDE.m
 (no mode)           One tick (launchd): the hours check, then at most one agent run.
   --now             Skip the 01:00-06:59 hours check.
 --issue ID          Start or resume only this issue, without the hours, max_runs and usage gates. Exits 2 bad
-                    arguments, 1 a config error, a live agent run of the issue or nothing started, else the outer's code.
+                    arguments, 1 a config error, Linear unavailable (linear-error, once a day), a live agent run of the
+                    issue or nothing started, else the outer's code.
 --dry-run           With either: print the plan (a tick's: and one usage probe); change nothing, launch nothing; exit 0.
 --tui [--split right|below] [--split-from SESSION] [--events FILE]
                     With either: the agent run is attended (the tui runner); the TUI pane's place and the events file
@@ -707,9 +708,12 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
             return 2
     now = now or datetime.now(timezone.utc)
     start = start or functools.partial(outer, sh=sh, gql=gql, run=run, projects=tdir, keychain=keychain, root=root)
-    if opts["issue"]:
-        return run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start)
-    return tick(opts, gql, now, cfg, tdir, runs, sh, datetime.now().hour if hour is None else hour, root, start)
+    try:
+        if opts["issue"]:
+            return run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start)
+        return tick(opts, gql, now, cfg, tdir, runs, sh, datetime.now().hour if hour is None else hour, root, start)
+    except linear.Unavailable as e:
+        return linear.linear_error("router", e, opts["dry"])
 
 
 if __name__ == "__main__":

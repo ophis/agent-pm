@@ -7,7 +7,7 @@ human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
-config error exits 1, logged once a day (linear.config_error).
+config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
 
 At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
 finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
 import linear  # noqa: E402
-from linear import CONFIG_ERRORS, config_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
+from linear import CONFIG_ERRORS, config_error, linear_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -78,6 +78,8 @@ class Promoter:
                     if detail["state"]["id"] != self.states["handoff"]:  # the Handoff list can lag behind a just-made move
                         continue
                     work.append((self.moves(src, detail), src, detail, role, nxt))
+                except linear.Unavailable:
+                    raise
                 except (Exception, SystemExit) as e:
                     self.say("handoff-error", src["identifier"], error=one_line(e))
         for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
@@ -88,6 +90,8 @@ class Promoter:
             found = [None]
             try:
                 self.promote(src, detail, role, nxt, cutoff, first, found)
+            except linear.Unavailable:
+                raise
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
                 self.say("handoff-error", src["identifier"], error=one_line(e))
                 if self.now - parse_time(latest) > GRACE:
@@ -164,6 +168,8 @@ class Promoter:
         try:
             if self.comment_and_move(src, body, "handoff-failed"):
                 self.say("handoff-failed", src["identifier"], to="in_review")
+        except linear.Unavailable:
+            raise
         except (Exception, SystemExit) as e:
             self.say("handoff-error", src["identifier"], reason="could not move to In Review", error=one_line(e))
 
@@ -193,6 +199,8 @@ def run_prune(gql, now, dry, team, roles, pruner=None):
         if pruner is None:
             from prune import Pruner as pruner
         pruner(gql, now, dry, team=team, roles=roles).run()
+    except linear.Unavailable as e:
+        linear_error("prune", e, dry)
     except (Exception, SystemExit) as e:
         log("prune", "prune-error", dry=dry, error=one_line(e))
 
@@ -209,8 +217,11 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     except CONFIG_ERRORS as e:
         return config_error("promote", e, dry)
     now = now or datetime.now(timezone.utc)
-    promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
-    promoter.run()
+    try:
+        promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
+        promoter.run()
+    except linear.Unavailable as e:
+        return linear_error("promote", e, dry)
     run_prune(gql, now, dry, promoter.team, promoter.roles, pruner)
     return 0
 

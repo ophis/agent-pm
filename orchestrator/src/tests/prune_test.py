@@ -11,6 +11,7 @@ import config, linear, promote, prune, repo  # noqa: E402
 import promote_test as tp  # noqa: E402
 from attended_test import Tmux  # noqa: E402
 from run_fixtures import logged, show  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
@@ -552,7 +553,8 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(list(tmux.live), [B])
 
     def tick(self, prune_gql):
-        """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output)."""
+        """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output); self.events: its events,
+        self.err: its stderr."""
         fake = tp.FakeLinear()
         fake.add("DR-1")
         fake.moved("DR-1", 60, "In Review")
@@ -565,11 +567,12 @@ class PruneTest(unittest.TestCase):
             self.user_queries += query == linear.Q_USER
             return (prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else fake)(query, **v)
         self.user_queries = 0
-        before = len(logged(self.logs))
-        with redirect_stderr(io.StringIO()):
+        before, err = len(logged(self.logs)), io.StringIO()
+        with redirect_stderr(err):
             code = promote.main([], gql=gql, now=NOW, config=config,
                                 pruner=partial(prune.Pruner, work=self.work, proc=Tmux()))
-        return code, fake.issues["DR-1"]["state"], "\n".join(show(e) for e in logged(self.logs)[before:])
+        self.events, self.err = logged(self.logs)[before:], err.getvalue()
+        return code, fake.issues["DR-1"]["state"], "\n".join(show(e) for e in self.events)
 
     def test_promote_tick_archives_with_its_roles(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
@@ -587,6 +590,34 @@ class PruneTest(unittest.TestCase):
         self.assertEqual((code, state), (0, "Done"))
         self.assertIn("prune-error TASK-49 error=Linear: SystemExit: linear api error: down", out)
         self.assertTrue(os.path.isdir(clone))
+
+    def outage(self, op, issues, failed):
+        """For each outage.FAILURES, twice: promote's tick, prune's calls of op failing and the rest to issues: exit 0,
+        DR-1 promoted, one linear-error (src prune) the first time, none the second; failed: the calls that failed."""
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                for said in ([("prune", f"linear-error op={op} {FIELDS[name]}")], []):
+                    gql = failing(error, gql=issues, ops={op})
+                    self.assertEqual(self.tick(gql)[:2], (0, "Done"))
+                    self.assertEqual(([(e["src"], show(e)) for e in self.events], self.err),
+                                     ([("promote", "promote DR-1 to=C-1"), *said], ""))
+                    self.assertEqual(gql.failed, failed)
+
+    def test_an_outage_reading_an_issue_stops_prune(self):
+        clones = [self.mkc(ident, "src", "o", "repo") for ident in ("TASK-48", "TASK-49")]
+        issues = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
+        self.outage("issue", issues, [(prune.Q_ISSUE, {"i": "TASK-48"})])
+        self.assertEqual(issues.calls, [])
+        self.assertTrue(all(os.path.isdir(c) for c in clones))
+
+    def test_an_outage_reading_the_finished_issues_stops_prune(self):
+        issues = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
+        self.outage("issues", issues, [(prune.Q_FINISHED, mock.ANY)])
+
+    def test_an_outage_archiving_stops_prune(self):
+        done = ("Done", [(30, "Done")])
+        issues = gql_for({"TASK-1": done, "TASK-2": done}, owners={"TASK-1": "u-pm", "TASK-2": "u-pm"})
+        self.outage("issueArchive", issues, [(prune.M_ARCHIVE, {"i": "id-TASK-1"})])
 
 
 class Imports(unittest.TestCase):

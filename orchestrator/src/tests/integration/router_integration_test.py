@@ -1,6 +1,6 @@
 """router.py --issue as a process, then tmux → run.py → drive → the fake claude → write-back, against the fake
-Linear, gh and git (flow_fixtures.Flow). Issue TASK-7 in Todo, assigned to the engineer account, in the mapped
-project."""
+Linear, gh and git (flow_fixtures.Flow); a Linear outage stopping router.py. Issue TASK-7 in Todo, assigned to the
+engineer account, in the mapped project."""
 import os
 import signal
 import sys
@@ -126,6 +126,29 @@ class Router(Flow):
         self.assertEqual(len(ready), 1)
         self.assertEqual(len(self.sent("writeback.M_ATTACH", ENGINEER)), 1)
         self.assertEqual(self.problems(), [("linear.M_STATE", ENGINEER, "503")])
+
+    def outage(self, *argv):
+        """router.py argv with the team read answering HTTP 503: exit 1, nothing printed; the read its only request;
+        one event, a linear-error; TASK-7 still Todo."""
+        self.fake.fail("linear.Q_TEAM", "503")
+        res = self.router(*argv)
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
+        self.assertEqual([(r.op, r.account, r.result) for r in self.requests()],
+                         [("linear.Q_TEAM", HARNESS_EMAIL, "503")])
+        self.assertEqual([{k: v for k, v in e.items() if k != "ts"} for e in self.logged()],
+                         [{"src": "router", "kind": "linear-error", "op": "teams", "status": 503}])
+        self.assertEqual(self.state(ID), "todo")
+
+    def test_a_linear_outage_stops_the_tick(self):
+        self.outage("--now")
+
+    def test_a_linear_outage_stops_issue_and_the_rerun_claims_it(self):
+        self.outage("--issue", ID)
+        self.scene(steps=[START, DONE])
+        sid = self.claim()
+        self.wait_end(sid, ID)
+        self.assert_built(sid)
+        self.assertEqual([e["kind"] for e in self.logged()].count("linear-error"), 1)
 
 
 if __name__ == "__main__":
