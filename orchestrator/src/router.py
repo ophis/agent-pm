@@ -8,9 +8,11 @@ assigned to role accounts, then starts it through the outer; each step: CLAUDE.m
                     arguments, 1 a config error, Linear unavailable (linear-error, once a day), a live agent run of the
                     issue or nothing started, else the outer's code.
 --dry-run           With either: print the plan (a tick's: and one usage probe); change nothing, launch nothing; exit 0.
---tui [--split right|below] [--split-from SESSION] [--events FILE]
+--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]
                     With either: the agent run is attended (the tui runner); the TUI pane's place and the events file
-                    are checked first (exit 2 when one fails). A tmux grid ignores --split and --split-from.
+                    are checked first (exit 2 when one fails). A tmux grid ignores --split and --split-from. Without
+                    --events the file is the manager directory's (core/src/manager.py; NAME, else this tmux session);
+                    outside tmux with neither, there is none.
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start.
 
 Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none.
@@ -40,6 +42,7 @@ import writeback  # noqa: E402
 from linear import (CONFIG_ERRORS, ISSUE_ID, config_error, humans, linear_gql, log, one_line, parse_time,  # noqa: E402
                     role_ids, task_group, team)
 import drive  # noqa: E402
+import manager  # noqa: E402
 import tui_claude  # noqa: E402
 
 STALE = timedelta(hours=2)
@@ -55,7 +58,7 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
 USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] "
-         "[--tui [--split right|below] [--split-from SESSION] [--events FILE]] | --brake")
+         "[--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]] | --brake")
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
 DONE = {"completed", "canceled", "duplicate"}
@@ -650,16 +653,18 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
 
 def options(argv):
     """The options from argv, or None for a form USAGE doesn't allow."""
-    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "split_from": None, "events": None}
+    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "split_from": None, "events": None,
+            "manager": None}
     flags = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
-    valued = {"--issue": "issue", "--split": "split", "--split-from": "split_from", "--events": "events"}
+    valued = {"--issue": "issue", "--split": "split", "--split-from": "split_from", "--events": "events",
+              "--manager": "manager"}
     i = 0
     while i < len(argv):
         a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
         name, eq, inline = a.partition("=")
         if a in flags:
             opts[flags[a]] = True
-        elif eq and name in ("--split", "--split-from", "--events") and opts[valued[name]] is None:
+        elif eq and name in ("--split", "--split-from", "--events", "--manager") and opts[valued[name]] is None:
             opts[valued[name]] = inline
         elif a in valued and opts[valued[a]] is None and value is not None and value not in flags | valued:
             opts[valued[a]] = value
@@ -669,7 +674,7 @@ def options(argv):
         i += 1
     if opts["issue"] is not None and opts["now"]:
         return None
-    if not opts["tui"] and any(opts[k] is not None for k in ("split", "split_from", "events")):
+    if not opts["tui"] and any(opts[k] is not None for k in ("split", "split_from", "events", "manager")):
         return None
     return opts
 
@@ -703,7 +708,12 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
             attended.layout(opts["split"], opts["split_from"])
             if opts["events"] is not None:
                 tui_claude.events_file(opts["events"])
-        except (attended.Bad, tui_claude.TuiError) as e:
+            elif (directory := manager.directory(opts["manager"], proc=sh)) is not None:
+                opts["events"] = manager.events(directory, create=not opts["dry"])
+            else:
+                print("router.py: no manager directory (not in tmux): this run writes no events; "
+                      "give --manager <name>", file=sys.stderr)
+        except (attended.Bad, tui_claude.TuiError, manager.ManagerError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
     now = now or datetime.now(timezone.utc)

@@ -750,15 +750,26 @@ class Usage(unittest.TestCase):
                      ["--tui", "--split-from=dev", "--split-from", "dev"], ["--now", "--issue=TASK-1"], ["--tui", "--now=x"],
                      ["--events", "x"], ["--issue", "TASK-1", "--events=x"], ["--tui", "--events"],
                      ["--tui", "--events", "a", "--events", "b"], ["--issue", "TASK-1", "--issue", "TASK-2"], ["--issue"],
-                     ["--issue", "TASK-1", "--split", "below"]):
+                     ["--issue", "TASK-1", "--split", "below"], ["--manager", "m1"], ["--manager=m1"],
+                     ["--now", "--manager", "m1"], ["--issue", "TASK-1", "--manager=m1"], ["--tui", "--manager"],
+                     ["--tui", "--manager", "--now"], ["--tui", "--manager", "a", "--manager", "b"],
+                     ["--tui", "--manager=a", "--manager", "b"], ["--tui", "--manager=a", "--manager=b"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("probe ran"))), 2)
                 self.assertEqual(err.getvalue(), router.USAGE + "\n")
         self.assertEqual(router.USAGE, "usage: router.py [--now] [--dry-run] [--issue ID] "
-                                       "[--tui [--split right|below] [--split-from SESSION] [--events FILE]] | --brake")
+                                       "[--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]] "
+                                       "| --brake")
         self.assertNotIn("--gate", router.USAGE + router.__doc__)
+        self.assertIn("--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]", router.__doc__)
+
+    def test_manager_is_parsed_with_tui(self):
+        for argv, want in ((["--tui"], None), (["--tui", "--manager", "m1"], "m1"), (["--manager=m1", "--tui"], "m1"),
+                           (["--issue", "TASK-1", "--tui", "--manager=m-2", "--events", "e"], "m-2")):
+            with self.subTest(argv=argv):
+                self.assertEqual(router.options(argv)["manager"], want)
 
     def test_bad_issue_id(self):
         for argv in (["--issue", "task-7"], ["--tui", "--issue", "TASK"]):
@@ -965,15 +976,18 @@ def outer_args(ident, project, assignee, sid, task, mode, runner="headless", spl
 class FakeShell:
     """sessions: the tmux session names list-sessions prints; none = no tmux server (exit 1). fives: five_hour of the first
     probes, then probe_five. start, the fake outer, records ("launch", its arguments) in calls; it raises raises.get(ID),
-    else exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from the assignee) unless ID is in bounce."""
-    def __init__(self, sessions=(), probe_five=0.2, fives=(), exits=None, bounce=(), raises=None):
-        self.calls, self.five, self.sessions = [], probe_five, list(sessions)
+    else exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from the assignee) unless ID is in bounce. own: the
+    session name display-message prints."""
+    def __init__(self, sessions=(), probe_five=0.2, fives=(), exits=None, bounce=(), raises=None, own="mgr"):
+        self.calls, self.five, self.sessions, self.own = [], probe_five, list(sessions), own
         self.fives, self.exits, self.bounce, self.raises = list(fives), exits or {}, set(bounce), raises or {}
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         if cmd == LIST:
             return subprocess.CompletedProcess(cmd, 0 if self.sessions else 1, stdout="".join(f"{n}\n" for n in self.sessions))
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{self.own}\n")
         if cmd[0] == "claude":
             five = self.fives.pop(0) if self.fives else self.five
             ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
@@ -1543,9 +1557,30 @@ class Outage(Base):
                 self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
 
 
+HINT = "router.py: no manager directory (not in tmux): this run writes no events; give --manager <name>"
+DISPLAY = ["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]
+
+
 class TuiTick(Base):
     """router.py --tui: attended.layout (patched) and the events file before the tick or --issue; the outer gets the tui
-    runner."""
+    runner. Outside tmux and on a HOME of its own unless a test says otherwise (in_tmux)."""
+    def setUp(self):
+        super().setUp()
+        self.agent_pm = hermetic.home(self)
+        self.managers = os.path.join(self.agent_pm, "managers")
+        self.enterContext(mock.patch.dict(os.environ))
+        for k in ("TMUX", "TMUX_PANE"):
+            os.environ.pop(k, None)
+
+    def in_tmux(self, pane="%3"):
+        os.environ.update(TMUX="/tmp/tmux-501/default,1,0", TMUX_PANE=pane)
+
+    def events_of(self, name):
+        return os.path.join(self.managers, name, "events")
+
+    def mode(self, path):
+        return os.stat(path).st_mode & 0o777
+
     def tui_tick(self, fake, *argv, layout=None, **kw):
         place = mock.Mock(side_effect=layout, return_value=drive.Layout())
         with mock.patch.object(attended, "layout", place):
@@ -1629,6 +1664,111 @@ class TuiTick(Base):
                 (launch,) = self.sh.launches()
                 self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from, launch.events),
                                  ("new", "headless", None, None, None))
+
+    def test_without_events_in_tmux_the_events_file_is_the_own_sessions_manager_directory(self):
+        want = self.events_of("mgr")
+        for argv in (("--now", "--tui"), ("--issue", "TASK-1", "--tui")):
+            with self.subTest(argv=argv):
+                self.in_tmux()
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                (launch,) = self.sh.launches()
+                self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, None, "new",
+                                                    "tui", None, None, want))
+                self.assertEqual(self.sh.calls[0], DISPLAY)
+                self.assertEqual((self.mode(want), self.mode(os.path.dirname(want)), self.err), (0o600, 0o700, ""))
+
+    def test_manager_names_the_directory_in_or_out_of_tmux(self):
+        for tmux in (False, True):
+            for argv, name in ((("--now", "--tui", "--manager", "m1"), "m1"), (("--tui", "--manager=m-2", "--now"), "m-2")):
+                with self.subTest(tmux=tmux, argv=argv):
+                    if tmux:
+                        self.in_tmux()
+                    fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                    self.assertEqual(self.tui_tick(fake, *argv), 0)
+                    (launch,) = self.sh.launches()
+                    self.assertEqual(launch.events, self.events_of(name))
+                    self.assertEqual((self.mode(launch.events), self.err), (0o600, ""))
+                    self.assertNotIn(DISPLAY, self.sh.calls)
+
+    def test_events_beats_the_manager_and_tmux(self):
+        events = os.path.join(self.tmp.name, "events.log")
+        self.in_tmux()
+        for argv in (("--now", "--tui", "--events", events), ("--now", "--tui", "--manager", "m1", f"--events={events}")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                (launch,) = self.sh.launches()
+                self.assertEqual(launch.events, events)
+                self.assertEqual(self.err, "")
+                self.assertNotIn(DISPLAY, self.sh.calls)
+                self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_outside_tmux_without_events_or_manager_the_run_goes_on_without_events_and_says_so(self):
+        for argv in (("--now", "--tui"), ("--issue", "TASK-1", "--tui"), ("--tui", "--dry-run", "--now")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                self.assertEqual([l.events for l in self.sh.launches()], [] if "--dry-run" in argv else [None])
+                self.assertEqual(self.err.splitlines().count(HINT), 1)
+                self.assertTrue(self.err.startswith(HINT + "\n"))
+                self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_dry_run_resolves_but_creates_nothing(self):
+        for tmux, extra in ((True, ()), (False, ("--manager", "m1"))):
+            with self.subTest(tmux=tmux):
+                if tmux:
+                    self.in_tmux()
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, "--tui", "--dry-run", "--now", *extra), 0)
+                self.assertEqual((self.sh.launches(), fake.mutations, HINT in self.err), ([], [], False))
+                self.assertEqual((DISPLAY in self.sh.calls, os.listdir(self.agent_pm)), (tmux, []))
+
+    def test_a_tick_without_tui_neither_resolves_nor_hints(self):
+        self.in_tmux()
+        for argv in ((), ("--now",), ("--issue", "TASK-1"), ("--now", "--dry-run")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 0)
+                self.assertNotIn(DISPLAY, self.sh.calls)
+                self.assertEqual((HINT in self.err, os.listdir(self.agent_pm)), (False, []))
+        os.environ.pop("TMUX")
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        self.assertEqual(self.tui_tick(fake, "--now"), 0)
+        self.assertNotIn(HINT, self.err)
+
+    def test_a_manager_that_fails_exits_2_before_any_linear_call(self):
+        elsewhere = os.path.join(self.agent_pm, "elsewhere")
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, self.managers)
+        want = "[A-Za-z0-9_-]+"
+        rows = [("%3", "mgr", ("--manager", "a/b"), f"manager 'a/b': want {want}"),
+                ("%3", "mgr", ("--manager=",), f"manager '': want {want}"),
+                ("%3", "a b", (), f"own tmux session 'a b': want {want}; give --manager <name>"),
+                ("x", "mgr", (), "bad $TMUX_PANE 'x'; give --manager <name>"),
+                ("%3", "mgr", (), f"manager directory {self.managers}: not a directory owned by you"),
+                ("%3", "mgr", ("--manager", "m1"), f"manager directory {self.managers}: not a directory owned by you")]
+        for pane, own, extra, msg in rows:
+            for argv in (("--tui", "--now", *extra), ("--issue", "TASK-1", "--tui", *extra)):
+                with self.subTest(pane=pane, own=own, argv=argv):
+                    self.in_tmux(pane)
+                    fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                    self.assertEqual(self.tui_tick(fake, *argv, shell=FakeShell(own=own)), 2)
+                    self.assertEqual(self.err, f"router.py: {msg}\n")
+                    self.assertEqual((fake.queries, self.sh.launches(), self.state), ([], [], ""))
+        self.assertEqual(os.listdir(elsewhere), [])
+
+    def test_a_bad_default_events_file_exits_2_before_any_linear_call(self):
+        events = self.events_of("mgr")
+        os.makedirs(os.path.dirname(events))
+        os.symlink(os.path.join(self.agent_pm, "elsewhere"), events)
+        self.in_tmux()
+        for argv in (("--tui", "--now"), ("--issue", "TASK-1", "--tui")):
+            with self.subTest(argv=argv):
+                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                self.assertEqual(self.tui_tick(fake, *argv), 2)
+                self.assertTrue(self.err.startswith(f"router.py: events file {events}: "), self.err)
+                self.assertEqual((fake.queries, self.sh.launches(), self.state), ([], [], ""))
 
 
 class TaskLabels(Base):
@@ -2169,14 +2309,15 @@ class ClaimLinear(FakeLinear):
 
 
 class AttendedEntry(OuterBase):
-    """router.py --issue ID --tui: the claim on a fake Linear, then the real outer with the tui runner."""
+    """router.py --issue ID --tui: the claim on a fake Linear, then the real outer with the tui runner. Outside tmux: the
+    stderr hint (no manager directory) is left out of self.err and noted in self.hinted."""
     def setUp(self):
         super().setUp()
         self.todo = issue(ID, "Todo", "engineer")
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
         self.tmux = Tmux(live=["dev"])
-        for k in ("TMUX", "ITERM_SESSION_ID"):
+        for k in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID"):
             os.environ.pop(k, None)
         os.environ["TERM_PROGRAM"] = "iTerm.app"
         p = mock.patch.object(attended, "layout", functools.partial(LAYOUT, proc=self.tmux))
@@ -2194,7 +2335,8 @@ class AttendedEntry(OuterBase):
         with redirect_stderr(err):
             rc = router.main(argv, gql=self.gql, tdir=self.projects, config=self.config, runs=self.runs, sh=self.sh,
                              root=self.root, run=self.run, keychain=self.keychain)
-        self.err = err.getvalue()
+        self.hinted = HINT + "\n" in err.getvalue()
+        self.err = err.getvalue().replace(HINT + "\n", "")
         return rc
 
     def entry(self, *extra, tty=False):
@@ -2225,6 +2367,7 @@ class AttendedEntry(OuterBase):
                     os.remove(self.runs)
                 self.at_launch = []
                 self.assertEqual(self.entry(*extra), 0)
+                self.assertEqual(self.hinted, "--events" not in extra)
                 sid = self.started()
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
                 self.assertEqual(self.sh_calls[:-1], [(LIST, {"capture_output": True, "text": True})])
@@ -2287,7 +2430,7 @@ class AttendedEntry(OuterBase):
         for extra, msg in cases:
             with self.subTest(msg=msg):
                 self.assertEqual(self.entry(*extra), 2)
-                self.assertEqual(self.err, f"router.py: {msg}\n")
+                self.assertEqual((self.err, self.hinted), (f"router.py: {msg}\n", False))
         self.assertEqual((self.sh_calls, self.gql.queries, os.path.exists(self.runs)), ([], [], False))
         self.assertEqual(os.environ["PATH"], config.PATH)
 
