@@ -771,11 +771,20 @@ class RealCore(unittest.TestCase):
 
     def test_no_skill_names_the_tracker(self):
         skills = glob.glob(os.path.join(CORE, "skills", "*", "SKILL.md"))
-        self.assertIn(os.path.join(CORE, "skills", "act-as", "SKILL.md"), skills)
-        skills.append(os.path.join(CORE, "skills", "tmux", "manager.md"))
+        for name in ("act-as", "manage"):
+            self.assertIn(os.path.join(CORE, "skills", name, "SKILL.md"), skills)
         for path in skills:
             with open(path) as f:
                 self.assertNotIn("Linear", f.read(), path)
+
+    def test_only_the_user_loads_the_manager_guidelines(self):
+        with open(os.path.join(CORE, "skills", "manage", "SKILL.md")) as f:
+            front = re.match(r"---\n(.*?)\n---\n", f.read(), re.S)
+        self.assertIn("disable-model-invocation: true", front.group(1).splitlines())
+        with open(os.path.join(CORE, "skills", "tmux", "SKILL.md")) as f:
+            tmux = f.read()
+        for path in ("manager.md", "manage/SKILL.md"):
+            self.assertNotIn(path, tmux)
 
     def test_every_researcher_run_names_the_gate_default_none(self):
         gate = "python3 /u/usage.py --below 80"
