@@ -52,6 +52,8 @@ PREFIXES = (({}, ""), ({"TUI_ATTACH_PREFIX": " \t"}, ""),
 MAIN_VERTICAL = "7f31,160x48,0,0{80x48,0,0,0,79x48,81,0[79x24,81,0,1,79x23,81,25,2]}"
 TILED_SPLIT = ("9a18,160x48,0,0[160x15,0,0{79x15,0,0,0,40x15,80,0,1,39x15,121,0,5},"
                "160x15,0,16{79x15,0,16,2,80x15,80,16,3},160x16,0,32,4]")
+GRID_PANES = "#{window_id}\t#{@grid-manager}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{socket_path}"
+PY, SCRIPT = "/usr/bin/python3", "/opt/a_b.c@1+2-3/tui_claude.py"   # sys.executable and the module's path, patched
 
 
 def done(argv, rc=0, out="", err=""):
@@ -71,6 +73,19 @@ def split_window(flag, pane, sock=SOCK):
 
 def clients_of(session):
     return ["tmux", "list-clients", "-t", f"={session}", "-F", CLIENTS]
+
+
+def grid_read(pane):
+    return ["tmux", "list-panes", "-t", pane, "-F", GRID_PANES]
+
+
+def grid_set(window, manager, n=3, hooks=True):
+    """The one tmux call setting a grid window's options and, with hooks, its three hooks."""
+    hook = f"run-shell -b '{PY} -I {SCRIPT} tile {window} >/dev/null 2>&1 || true'"
+    return ["tmux", "set-option", "-w", "-t", window, "@grid-manager", manager, ";",
+            "set-option", "-w", "-t", window, "@grid-per-column", str(n),
+            *(a for h in ("pane-exited", "window-resized", "window-layout-changed") if hooks
+              for a in (";", "set-hook", "-w", "-t", window, h, hook))]
 
 
 def environ(**values):
@@ -375,9 +390,9 @@ class Start(unittest.TestCase):
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
         with unittest.mock.patch.object(tui_claude, "show", side_effect=show):
-            self.start(fake, template="tmpl", split="below", split_from="b", opener="o")
-        self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "split_from": "b", "opener": "o", "proc": fake}, False,
-                                 ["display-message", "new-session", *DECORATE])])
+            self.start(fake, template="tmpl", split="below", split_from="b", opener="o", per_column=2)
+        self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "split_from": "b", "opener": "o", "per_column": 2,
+                                                 "proc": fake}, False, ["display-message", "new-session", *DECORATE])])
 
     def test_a_failed_show_is_only_printed(self):
         fake = Tmux(results={"osascript": FileNotFoundError(2, "No such file or directory", "osascript")})
@@ -408,6 +423,17 @@ class Start(unittest.TestCase):
             fake = Tmux()
             self.start(fake, template="", split="up", split_from="a b", opener="a:b:c")
             self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+
+    def test_bad_per_column_refused_before_tmux(self):
+        for bad in (0, 10000, True, "3"):
+            with self.subTest(per_column=bad):
+                fake = Tmux()
+                with self.assertRaisesRegex(tui_claude.TuiError, "^per_column must be an int from 1 to 9999"):
+                    self.start(fake, template=None, per_column=bad)
+                self.assertEqual(fake.calls, [])
+        fake = Tmux()
+        self.start(fake, template="", per_column=0)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
 
     def test_hooks_events_and_decorations(self):
         here = os.getcwd()
@@ -975,8 +1001,8 @@ class Pane(unittest.TestCase):
         fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": self.clients((5, "/dev/ttys004", "%9")),
                              "osascript": (0, "ok NEW\n")})
         self.assertIsNone(self.show(fake, INSIDE, split_from="b", split="below"))
-        self.assertEqual(fake.calls, [OWN, clients_of("b"), HOSTS, PGREP, osa("below", "tty", "s", "/dev/ttys004"),
-                                      *record("own", "NEW")])
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("b"), HOSTS, PGREP,
+                                      osa("below", "tty", "s", "/dev/ttys004"), *record("own", "NEW")])
 
     def test_tmux_split_split_from(self):
         clients = self.clients((5, "/dev/ttys004", "%9"), (9, "/dev/ttys005", "%7"))
@@ -991,7 +1017,8 @@ class Pane(unittest.TestCase):
     def test_control_mode_client_gets_a_tmux_split_of_own_pane(self):
         # iTerm2's tmux -CC: the control-mode client's tty is the hidden gateway tab's; iTerm2 draws the tmux split
         clients = self.clients((300, "/dev/ttys009", "%1", "1"), (100, "/dev/ttys001", "%2"))
-        for split, flag, head in ((None, "-h", [OWN, SESSIONS]), ("right", "-h", [OWN]), ("below", "-v", [OWN])):
+        for split, flag, head in ((None, "-h", [OWN, SESSIONS]), ("right", "-h", [OWN, SESSIONS]),
+                                  ("below", "-v", [OWN, SESSIONS])):
             with self.subTest(split=split):
                 fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients,
                                      "split-window": (0, "%10\n")})
@@ -1002,7 +1029,7 @@ class Pane(unittest.TestCase):
 
     def test_split_from_a_session_only_a_control_mode_client_shows(self):
         clients = self.clients((5, "/dev/ttys009", "%9", "1"))
-        for env, head, opener in (({}, [], None), (INSIDE, [OWN], "own")):
+        for env, head, opener in (({}, [], None), (INSIDE, [OWN, SESSIONS], "own")):
             with self.subTest(env=env):
                 fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients,
                                      "split-window": (0, "%10\n")})
@@ -1124,6 +1151,8 @@ class Stack(unittest.TestCase):
 
     def fake(self, rows=(), live=(), own="cmd", clients=f"5 /dev/ttys004 %9 0 {SOCK}\n", hosts=(), **results):
         def list_panes(argv):
+            if "-a" not in argv:   # a grid read: a window with no grid
+                return 0, f"@1\t\t{argv[3]}\t80\t24\t{SOCK}\n"
             return (0, "".join(p + "\n" for p in live)) if argv[-1] == "#{pane_id}" else panes(*hosts)(argv)
         return Tmux(results={"display-message": (0, own + "\n"),
                              "list-sessions": (0, "".join("\t".join(r) + "\n" for r in rows)), "list-panes": list_panes,
@@ -1179,16 +1208,17 @@ class Stack(unittest.TestCase):
         live = ["%3", "%7", "%8"]
         fake = self.fake(stack, live, own="W", pgrep=(0,), osascript=(0, "ok NEW\n"))
         self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("W"), HOSTS, PGREP,
+        self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%8"), clients_of("W"), HOSTS, PGREP,
                                       osa("right", "tty", "s", "/dev/ttys004"), *record("W", "NEW")])
         # W shown by a nested client in the commander's pane %8: that pane splits, never one in W's window
         fake = self.fake(stack, live, own="W", hosts=[("0", "/dev/ttys001", "%7"), ("0", "/dev/ttys004", "%8")])
         self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("W"), HOSTS, split_window("-h", "%8"),
+        self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%8"), clients_of("W"), HOSTS, split_window("-h", "%8"),
                                       *record("W", "%99")])
         fake = self.fake([*stack, self.row(3, "w2", "%20", "W")], [*live, "%20"], own="W")
         self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, split_window("-v", "%20"), *record("W", "%99")])
+        self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%8"), LIVE, split_window("-v", "%20"),
+                                      *record("W", "%99")])
 
     def test_explicit_split_or_split_from_overrides_the_stack(self):
         for kw, (session, flag, pane) in (({"split": "right"}, ("cmd", "-h", "%3")),
@@ -1198,8 +1228,8 @@ class Stack(unittest.TestCase):
             with self.subTest(**kw):
                 fake = self.fake([self.row(1, "a", "%7")], live=["%3", "%7"])
                 self.assertIsNone(self.show(fake, **kw))
-                self.assertEqual(fake.calls, [OWN, clients_of(session), HOSTS, PGREP, split_window(flag, pane),
-                                              *record("cmd", "%99")])
+                self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of(session), HOSTS, PGREP,
+                                              split_window(flag, pane), *record("cmd", "%99")])
 
     def test_iterm2_panes_stack_too(self):
         opener = ITERM["ITERM_SESSION_ID"]
@@ -1361,6 +1391,192 @@ class Container(unittest.TestCase):
         self.assertTrue(why.endswith("; watch it with docker exec -it box tmux attach -t '=s'"), why)
         self.assertNotIn("split-window", fake.commands())
         self.assertNotIn("osascript", fake.commands())
+
+
+class GridOpen(unittest.TestCase):
+    """Grid mode. The caller is in root session mgr (no @opener), pane %3, shown by a terminal client (tty
+    /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes rows (window, @grid-manager, pane,
+    width, height), a pane not in it is gone; list-panes -a prints nothing; iTerm2 runs; a split prints %20; tile
+    records its call in the fake's calls."""
+    MGR = ("$1", "mgr", "", "")
+    NEW = [("@1", "", "%3", "160", "48")]   # mgr's window, no grid yet
+    NOTICE = "tui: show: grid: --split/--split-from ignored\n"
+
+    def setUp(self):
+        self.tile = unittest.mock.Mock(side_effect=lambda window, *, per_column, proc:
+                                       proc.calls.append(["tile", window, per_column]))
+        for p in (unittest.mock.patch.object(tui_claude, "tile", self.tile),
+                  unittest.mock.patch.object(sys, "executable", PY),
+                  unittest.mock.patch.object(tui_claude, "__file__", SCRIPT)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def fake(self, windows, rows=(MGR,), own="mgr", clients=f"5 /dev/ttys004 %9 0 {SOCK}\n", **results):
+        def list_panes(argv):
+            if "-a" in argv:
+                return 0, ""
+            if argv[3] not in windows:
+                return 1, "", f"can't find pane: {argv[3]}\n"
+            return 0, "".join("\t".join((*r, SOCK)) + "\n" for r in windows[argv[3]])
+        return Tmux(results={"display-message": (0, own + "\n"),
+                             "list-sessions": (0, "".join("\t".join((*r, SOCK)) + "\n" for r in rows)),
+                             "list-clients": (0, clients), "list-panes": list_panes, "split-window": (0, "%20\n"),
+                             "pgrep": (0,), "osascript": (0, "ok NEW\n"), **results})
+
+    def show(self, fake, env=INSIDE, **kw):
+        self.stderr = io.StringIO()
+        with environ(**env), which(), redirect_stderr(self.stderr):
+            return tui_claude.show("s", proc=fake, **kw)
+
+    def opened(self, window="@1", manager="%3", opener="mgr", n=3):
+        """What follows a grid split: the records, the grid's options and hooks, then tile."""
+        return [*record(opener, "%20"), grid_set(window, manager, n), ["tile", window, n]]
+
+    def test_own_root_starts_a_grid_right_of_its_pane(self):
+        # plain tmux in iTerm2 ($ITERM_SESSION_ID set, iTerm2 running): a tmux split all the same
+        fake = self.fake({"%3": self.NEW})
+        self.assertIsNone(self.show(fake))
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"), split_window("-h", "%3"),
+                                      *self.opened()])
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
+        # its @pane gone: still a root
+        fake = self.fake({"%3": self.NEW}, [("$1", "mgr", "", "%77")])
+        self.assertIsNone(self.show(fake))
+        self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%77"), clients_of("mgr"), grid_read("%3"),
+                                      split_window("-h", "%3"), *self.opened()])
+
+    def test_the_largest_pane_but_the_managers_splits_below(self):
+        for workers, target in (([("%10", "80", "24"), ("%11", "80", "23")], "%10"),
+                                ([("%12", "40", "48"), ("%8", "80", "24"), ("%4", "20", "10")], "%12"),
+                                ([("%8", "80", "24"), ("%12", "40", "48")], "%12")):
+            with self.subTest(target=target, workers=workers):
+                fake = self.fake({"%3": [("@1", "%3", "%3", "79", "48"), *(("@1", "%3", *w) for w in workers)]})
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls[3:], [grid_read("%3"), split_window("-v", target), *self.opened()])
+
+    def test_a_stored_manager_not_a_pane_of_the_window_starts_a_new_grid_at_the_anchor(self):
+        for manager in ("%99", "x", "%3;", " %3"):
+            with self.subTest(manager=manager):
+                fake = self.fake({"%3": [("@1", manager, "%3", "79", "48"), ("@1", manager, "%5", "80", "48")]})
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls[3:], [grid_read("%3"), split_window("-v", "%5"), *self.opened()])
+
+    def test_a_root_not_the_callers_anchors_at_its_clients_pane(self):
+        # the most recently active client's pane; a control-mode client (iTerm2's tmux -CC) too
+        clients = f"5 /dev/ttys004 %8 0 {SOCK}\n9 /dev/ttys009 %9 1 {SOCK}\n"
+        for env, head in ((INSIDE, [SESSIONS, clients_of("mgr"), OWN]), ({}, [SESSIONS, clients_of("mgr")])):
+            with self.subTest(env=env):
+                fake = self.fake({"%9": [("@2", "", "%9", "160", "48")]}, own="drv", clients=clients)
+                self.assertIsNone(self.show(fake, env, opener="mgr"))
+                self.assertEqual(fake.calls, [*head, grid_read("%9"), split_window("-h", "%9"),
+                                              *self.opened("@2", "%9")])
+        # the client's pane in a grid window: that grid
+        fake = self.fake({"%9": [("@1", "%3", "%3", "79", "48"), ("@1", "%3", "%9", "80", "48")]}, own="drv")
+        self.assertIsNone(self.show(fake, opener="mgr"))
+        self.assertEqual(fake.calls[3:], [grid_read("%9"), split_window("-v", "%9"), *self.opened()])
+
+    def test_a_given_opener_that_is_the_callers_session_anchors_at_its_pane(self):
+        fake = self.fake({"%3": self.NEW})
+        self.assertIsNone(self.show(fake, opener="mgr"))
+        self.assertEqual(fake.calls, [SESSIONS, clients_of("mgr"), OWN, grid_read("%3"), split_window("-h", "%3"),
+                                      *self.opened()])
+
+    def test_a_member_opens_a_sub_worker_in_its_window(self):
+        rows = (self.MGR, ("$2", "w1", "mgr", "%10"))
+        window = [("@1", "%3", "%3", "79", "48"), ("@1", "%3", "%10", "80", "48")]
+        for kw, head in (({}, [OWN, SESSIONS]), ({"opener": "w1"}, [SESSIONS])):
+            with self.subTest(**kw):
+                fake = self.fake({"%10": window}, rows, own="w1")
+                self.assertIsNone(self.show(fake, **kw))
+                self.assertEqual(fake.calls, [*head, grid_read("%10"), split_window("-v", "%10"),
+                                              *self.opened(opener="w1")])
+
+    def test_todays_path_for_a_detached_root_or_a_member_outside_a_grid(self):
+        fake = self.fake({"%3": self.NEW}, clients="")
+        self.assertIsNone(self.show(fake))
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), clients_of("mgr"), PGREP,
+                                      osa("right", "id", "s", "ABC"), *record("mgr", "NEW")])
+        rows = (self.MGR, ("$2", "w1", "x", "%10"))
+        for windows in ({"%10": [("@1", "", "%10", "160", "48")]}, {"%10": [("@1", "%9", "%10", "160", "48")]}, {}):
+            with self.subTest(windows=windows):
+                fake = self.fake(windows, rows, own="w1", pgrep=(1,))
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%10"), clients_of("w1"), HOSTS, PGREP,
+                                              split_window("-h", "%3"), *record("w1", "%20")])
+                self.assertEqual(self.stderr.getvalue(), ATTACH)
+
+    def test_a_failed_or_unreadable_grid_read_falls_back_to_todays_path(self):
+        for windows in ({}, *({"%3": [row]} for row in (
+                ("@1;", "", "%3", "160", "48"), ("1", "", "%3", "160", "48"), ("@1", "", "%3;", "160", "48"),
+                ("@1", "", "%3", "x", "48"), ("@1", "", "%3", "160", "²"), ("@1", "", "%3", "160")))):
+            with self.subTest(windows=windows):
+                fake = self.fake(windows, pgrep=(1,))
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"), clients_of("mgr"),
+                                              HOSTS, PGREP, split_window("-h", "%3"), *record("mgr", "%20")])
+        fake = self.fake({"%3": self.NEW}, **{"list-clients": (1, "", "boom\n")})
+        self.assertEqual(self.show(fake), "tmux: boom" + WATCH)
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), clients_of("mgr")])
+
+    def test_split_and_split_from_ignored_in_the_grid(self):
+        for kw in ({"split": "below"}, {"split_from": "b"}, {"split": "right", "split_from": "b"}):
+            with self.subTest(**kw):
+                fake = self.fake({"%3": self.NEW})
+                self.assertIsNone(self.show(fake, **kw))
+                self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"),
+                                              split_window("-h", "%3"), *self.opened()])
+                self.assertEqual(self.stderr.getvalue(), ATTACH + self.NOTICE)
+
+    def test_split_honored_outside_the_grid(self):
+        fake = self.fake({"%3": self.NEW}, clients="")
+        self.assertIsNone(self.show(fake, split="below"))
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), clients_of("mgr"), PGREP,
+                                      osa("below", "id", "s", "ABC"), *record("mgr", "NEW")])
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
+
+    def test_a_failed_split_changes_nothing_else(self):
+        fake = self.fake({"%3": self.NEW}, **{"split-window": (1, "", "no space for new pane\n")})
+        self.assertEqual(self.show(fake), "tmux: no space for new pane")
+        self.assertEqual(fake.calls[-1], split_window("-h", "%3"))
+        self.assertEqual(self.stderr.getvalue(), ATTACH + "tui: show: tmux: no space for new pane\n")
+
+    def test_hooks_need_paths_tmux_takes_verbatim(self):
+        for target, name, bad in ((sys, "executable", "/a b/python3"), (sys, "executable", "/a#b/python3"),
+                                  (sys, "executable", "/a/python3;"), (sys, "executable", "/a/pythön"),
+                                  (sys, "executable", ""), (sys, "executable", None),
+                                  (tui_claude, "__file__", "/a'b/tui_claude.py"),
+                                  (tui_claude, "__file__", "/a$(x)/tui_claude.py")):
+            with self.subTest(name=name, bad=bad), unittest.mock.patch.object(target, name, bad):
+                fake = self.fake({"%3": self.NEW})
+                self.assertIsNone(self.show(fake))
+                self.assertEqual(fake.calls[-4:], [*record("mgr", "%20"), grid_set("@1", "%3", hooks=False),
+                                                   ["tile", "@1", 3]])
+                self.assertEqual(self.stderr.getvalue(),
+                                 ATTACH + f"tui: show: grid: hooks: {bad or ''}: tmux would misread it\n")
+
+    def test_a_failure_after_the_split_is_the_shows_and_leaves_the_pane(self):
+        fake = self.fake({"%3": self.NEW}, **{"set-option": lambda argv: (1, "", "boom\n") if "-w" in argv else (0,)})
+        self.assertEqual(self.show(fake), "tmux: boom")
+        self.assertEqual(fake.calls[-3:], [*record("mgr", "%20"), grid_set("@1", "%3")])
+        self.tile.side_effect = tui_claude.TuiError("tmux: boom")
+        fake = self.fake({"%3": self.NEW})
+        self.assertEqual(self.show(fake), "tmux: boom")
+        self.assertEqual(fake.calls[-3:], [*record("mgr", "%20"), grid_set("@1", "%3")])
+        self.assertNotIn("kill-session", fake.commands())
+        self.assertEqual(self.stderr.getvalue(), ATTACH + "tui: show: tmux: boom\n")
+
+    def test_per_column(self):
+        fake = self.fake({"%3": self.NEW})
+        self.assertIsNone(self.show(fake, per_column=2))
+        self.assertEqual(fake.calls[-2:], [grid_set("@1", "%3", 2), ["tile", "@1", 2]])
+        for bad in (0, 10000, -1, True, "3", 2.0):
+            with self.subTest(per_column=bad):
+                fake = self.fake({"%3": self.NEW})
+                for call in (lambda: self.show(fake, per_column=bad),
+                             lambda: tui_claude.open_pane("s", per_column=bad, proc=fake)):
+                    with self.assertRaisesRegex(tui_claude.TuiError, "^per_column must be an int from 1 to 9999"):
+                        call()
+                self.assertEqual(fake.calls, [])
 
 
 class Opener(unittest.TestCase):
@@ -1854,7 +2070,7 @@ class Cli(unittest.TestCase):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
                 start.assert_called_once_with(session, command, cwd=os.getcwd(), env=dict(os.environ), events=events,
-                                              template=template, split=split, split_from=split_from)
+                                              template=template, split=split, split_from=split_from, per_column=3)
         self.main("start", "--show", "", "a", "--", "cmd")
         self.assertEqual(start.call_args.kwargs["template"], "")
 
@@ -1896,9 +2112,32 @@ class Cli(unittest.TestCase):
         self.assertEqual(read.call_args_list, [unittest.mock.call("s", None), unittest.mock.call("s", 3)])
         self.assertEqual(self.main("show", "--show", "x", "--split", "below", "--split-from", "b", "s"), (0, "", ""))
         status.assert_called_once_with("s")
-        show.assert_called_once_with("s", "x", split="below", split_from="b")
+        show.assert_called_once_with("s", "x", split="below", split_from="b", per_column=3)
         self.main("show", "s")
-        self.assertEqual(show.call_args, unittest.mock.call("s", None, split=None, split_from=None))
+        self.assertEqual(show.call_args, unittest.mock.call("s", None, split=None, split_from=None, per_column=3))
+
+    @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
+    def test_per_column(self):
+        start, show = self.patch("start"), self.patch("show", return_value=None)
+        self.patch("status", return_value=tui_claude.RUNNING)
+        for value, n in (("1", 1), ("2", 2), ("9999", 9999), ("0003", 3)):
+            with self.subTest(value=value):
+                self.assertEqual(self.main("start", "--per-column", value, "a", "--", "cmd")[0], 0)
+                self.assertEqual(start.call_args.kwargs["per_column"], n)
+                self.assertEqual(self.main("show", "--per-column", value, "s")[0], 0)
+                self.assertEqual(show.call_args.kwargs["per_column"], n)
+        start.reset_mock()
+        show.reset_mock()
+        for value in ("0", "10000", "00000", "-1", "x", "", "2.0", "\u00b2", " 2"):
+            with self.subTest(value=value):
+                rc, _, err = self.main("show", "--per-column", value, "s")
+                self.assertEqual(rc, 2)
+                self.assertIn("--per-column", err)
+                self.assertEqual(self.main("start", "--per-column", value, "a", "--", "cmd")[0], 2)
+        start.assert_not_called()
+        show.assert_not_called()
+        for cmd in ("start", "show"):
+            self.assertIn("--per-column N", " ".join(self.main(cmd, "-h")[1].split()))
 
     def test_tile(self):
         real, fake = tui_claude.tile, Tmux()
