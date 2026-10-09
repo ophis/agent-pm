@@ -30,6 +30,9 @@ explicit extension.
   exit   the exit code after the turns; default 0.
   hang   true: after the steps, sleep until killed; default false. It exits by itself once orphaned or after HANG_CAP s.
   log    a file; on start the fake appends {"pid", "argv" (without argv[0]), "cwd"} to it as a JSON line.
+  gate   a file; default none. After the log line and before the first turn (either mode; before any transcript, hook
+         or output) the fake polls every 0.05 s until the file exists. Orphaned or HANG_CAP s without it: exit 1 with a
+         stderr line. A non-string: exit 1.
 stream-json opens with a system init line and, on a normal exit, ends with a result line.
 
 Hooks: the `hooks` object of --settings (none: nothing runs). Event E runs each command hook (`"type": "command"`) of
@@ -53,7 +56,7 @@ from collections.abc import Iterator
 
 ENV = "FAKE_CLAUDE_SCENARIO"
 HANG_CAP = 120   # seconds
-DEFAULTS = {"steps": [], "turns": [], "exit": 0, "hang": False, "log": None}
+DEFAULTS = {"steps": [], "turns": [], "exit": 0, "hang": False, "log": None, "gate": None}
 REPORTS = {"progress": {"kind", "name", "text"}, "outcome": {"kind", "outcome"}}
 STEPS = {**REPORTS, "hook": {"kind", "event"}}
 FIELDS = ("status", "title", "summary", "questions", "url", "files", "deliverable")
@@ -108,6 +111,8 @@ def scenario() -> dict:
     if extra := sorted(set(data) - set(DEFAULTS)):
         sys.exit(f"fake_claude.py: unknown scenario key {extra[0]!r}")
     data = {**DEFAULTS, **data}
+    if not (data["gate"] is None or isinstance(data["gate"], str)):
+        sys.exit("fake_claude.py: gate: want a file path")
     if not isinstance(data["turns"], list):
         sys.exit("fake_claude.py: turns: want a list")
     for where, steps in [("steps", data["steps"]), *((f"turns[{i}]", t) for i, t in enumerate(data["turns"]))]:
@@ -204,6 +209,17 @@ class Stranded(Exception):
     """Orphaned, or HANG_CAP s without a line."""
 
 
+def held(path: str, parent: int) -> bool:
+    """Waits for the file `path` to exist; False, a stderr line said, once orphaned or HANG_CAP s have passed."""
+    until = time.monotonic() + HANG_CAP
+    while not os.path.exists(path):
+        if os.getppid() != parent or time.monotonic() > until:
+            print(f"fake_claude.py: gate {path}: never created", file=sys.stderr, flush=True)
+            return False
+        time.sleep(0.05)
+    return True
+
+
 def inputs(prompt: str | None, parent: int) -> Iterator[str]:
     """`prompt` if any, then stdin's lines without their newline (an unterminated last one too), until EOF or a read
     error. Waits in short slices to notice orphaning; raises Stranded."""
@@ -243,6 +259,8 @@ def main(argv: list[str]) -> int:
     transcript = os.path.join(os.path.expanduser("~/.claude/projects"), project, f"{sid}.jsonl")
     if a.resume and not os.path.isfile(transcript):
         sys.exit(f"No conversation found with session ID: {sid}")
+    if s["gate"] and not held(s["gate"], parent):
+        return 1
     os.makedirs(os.path.dirname(transcript), exist_ok=True)
     stream = a.print and a.output_format == "stream-json"
 
