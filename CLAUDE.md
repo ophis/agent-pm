@@ -48,7 +48,7 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
 - No em dashes (U+2014): use a colon, semicolon, comma or parentheses.
 - Every task has a `## Resume` section; shared text: `compose.RESUME`, then the charter's `## Resume`, if any.
-- Add a task to a role: `core/team/tasks/<task>.md`, its line in the role's task index (`core/CLAUDE.md` › Rules), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
+- Add a task to a role: `core/team/tasks/<task>.md`, its line `` - `<task>` (`<tasks>/<task>.md`): … `` in the role's task index (format: `core/CLAUDE.md` › Rules), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
 
 ## Gotchas
 

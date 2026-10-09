@@ -1,13 +1,17 @@
 import glob
+import io
 import os
 import re
+import shlex
 import shutil
 import sys
 import tempfile
 import textwrap
 import tomllib
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import replace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
@@ -41,14 +45,18 @@ CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 RUN = replace(PARAMS, out="/runs/W-1/out.md", workdir="/runs/W-1")   # a workdir no other prompt text holds
 
-WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\nUnsure → `short-note`.\n\n- `short-note`: a note; most times; light.\n"
-          "- `long-note`: a long note; when asked; heavy.\n\n## Style\n\n- `draft`: not a task.\n")
+INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
+WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +
+          "- `short-note` (`<tasks>/short-note.md`): a note; most times; light.\n"
+          "- `long-note` (`<tasks>/long-note.md`): a long note; when asked; heavy.\n\n"
+          "## Style\n\n- `draft`: not a task.\n")
 FILES = {
     "team/guide.md": ("# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"
                       "On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task's.\n"),
     "team/principles.md": "# Principles\n",
     "team/roles/writer.md": WRITER,
-    "team/roles/editor.md": "# Editor\n\nEdit well.\n\n## Tasks\n\n- `long-note`: a long note; always; heavy.\n",
+    "team/roles/editor.md": ("# Editor\n\nEdit well.\n\n## Tasks\n\n" + INTRO.format("long-note") +
+                             "- `long-note` (`<tasks>/long-note.md`): a long note; always; heavy.\n"),
     "team/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
     "team/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
     "team/templates/note.md": "# Note: [Title]\n",
@@ -205,18 +213,44 @@ class Resolve(Fake):
 
 
 class Index(Fake):
-    def test_the_tasks_section_lists_each_task_and_its_line_in_order(self):
+    def test_the_tasks_section_lists_each_task_and_its_description_in_order(self):
         self.assertEqual(list(compose.index(self.root, "writer").items()),
                          [("short-note", "a note; most times; light."), ("long-note", "a long note; when asked; heavy.")])
         self.assertEqual(list(compose.index(self.root, "editor")), ["long-note"])
 
     def test_no_tasks_section_or_an_empty_one(self):
-        for text in ("# Writer\n\nWrite well.\n", "# Writer\n\n## Tasks\n\nUnsure → `x`.\n\n## Style\n\n- `short-note`: a.\n"):
+        for text in ("# Writer\n\nWrite well.\n", "# Writer\n\n## Tasks\n\n" + INTRO.format("x") +
+                     "## Style\n\n- `short-note` (`<tasks>/short-note.md`): a.\n"):
             with self.subTest(text=text):
                 self.write({"team/roles/writer.md": text})
                 with self.assertRaisesRegex(compose.ConfigError, r"roles/writer\.md: no task index"):
                     compose.index(self.root, "writer")
                 self.fails("roles/writer.md: no task index")
+
+    def test_a_task_path_other_than_its_file(self):
+        line = "- `long-note` (`<tasks>/long-note.md`): "
+        for path, wrong in (("`<tasks>/long.md`", "'<tasks>/long.md'"),
+                            ("`tasks/long-note.md`", "'tasks/long-note.md'"),
+                            ("`<tasks>/short-note.md`", "'<tasks>/short-note.md'"), (None, "''")):
+            with self.subTest(path=path):
+                new = "- `long-note`: " if path is None else f"- `long-note` ({path}): "
+                self.write({"team/roles/writer.md": WRITER.replace(line, new)})
+                msg = f"roles/writer.md: 'long-note' has path {wrong}, not '<tasks>/long-note.md'"
+                with self.assertRaisesRegex(compose.ConfigError, re.escape(msg)):
+                    compose.index(self.root, "writer")
+                self.fails(msg, task="short-note")
+
+    def test_a_default_unlisted_with_a_wrong_path_or_missing(self):
+        intro = INTRO.format("short-note")
+        for new, msg in ((INTRO.format("essay"), "the default 'essay' is not a listed task"),
+                         (intro.replace("`<tasks>/short-note.md`", "`<tasks>/note.md`"),
+                          "'short-note' has path '<tasks>/note.md', not '<tasks>/short-note.md'"),
+                         ("Pick the task below that fits the input.\n\n", "## Tasks opens without its default"),
+                         ("", "## Tasks opens without its default")):
+            with self.subTest(new=new):
+                self.write({"team/roles/writer.md": WRITER.replace(intro, new)})
+                with self.assertRaisesRegex(compose.ConfigError, re.escape(f"roles/writer.md: {msg}")):
+                    compose.index(self.root, "writer")
 
     def test_a_listed_task_without_its_file(self):
         os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
@@ -365,7 +399,8 @@ class Prompt(Fake):
         self.assertIn("On conflict: [Principles](#principles) > [Writer rules](#writer) > your task's.", guide)
         self.assertEqual(prompt.count("On conflict:"), 1)
         prompt, _ = self.compose(task="long-note")
-        self.assertIn("You are Writer. Task: `long-note`; files in", prompt.split("# Principles", 1)[0])
+        self.assertIn("You are Writer. Task: `long-note` (`<tasks>/long-note.md`); files in",
+                      prompt.split("# Principles", 1)[0])
 
     def test_no_task_text_reaches_the_prompt(self):
         for task in (None, "short-note", "long-note"):
@@ -650,6 +685,32 @@ def parameter_names(role, task=None, **changes):
     return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
 
 
+TICKET = re.compile(r"TASK-\d+")   # an internal ticket id
+# The format examples shipped core text may hold: core path → its examples, each allowed once.
+TICKET_EXAMPLES = {"team/principles.md": ["(e.g. `TASK-142`)"],
+                   "skills/tmux/SKILL.md": ["`pm-TASK-9-…`", "`pm-TASK-10-…`"]}
+
+
+def tickets(root):
+    """{core path: its ticket ids beyond TICKET_EXAMPLES} of root's shipped text: team/, output/, skills/ (tests aside)
+    and config.toml."""
+    paths = [os.path.join(root, compose.CONFIG)]
+    for d in (compose.TEXT, compose.OUTPUT, "skills"):
+        for top, dirs, files in os.walk(os.path.join(root, d)):
+            dirs[:] = [x for x in dirs if x != "__pycache__"]
+            paths += [os.path.join(top, f) for f in files if not f.endswith("_test.py")]
+    found = {}
+    for path in paths:
+        rel = os.path.relpath(path, root)
+        with open(path, errors="replace") as f:
+            text = f.read()
+        for example in TICKET_EXAMPLES.get(rel, ()):
+            text = text.replace(example, "", 1)
+        if ids := TICKET.findall(text):
+            found[rel] = ids
+    return found
+
+
 GENERIC_NAME = re.compile(r"(?<![/\w])(agent-pm|autopilot):[\w-]+|\bthe [\w-]+ skill\b")
 
 
@@ -662,8 +723,8 @@ REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkou
              "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
-PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
-        "that task's file, `<tasks>/<task>.md`, and follow its steps in order.")
+PICK = ("**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
+        "wins. Read only that task's file, `<tasks>/<task>.md`, and follow its steps in order.")
 COMMANDS_RULE = ("- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
                  "command (no `cd`, pipe, redirect or `&&`).")
 RETURN = """Report through `report`, never in a reply:
@@ -690,6 +751,23 @@ class GenericNames(unittest.TestCase):
 
     def test_slash_commands_and_workflow_names_pass(self):
         self.assertEqual(generic_names("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research"), [])
+
+
+class Tickets(unittest.TestCase):
+    def test_an_id_beyond_the_examples_is_caught(self):
+        with tempfile.TemporaryDirectory() as root:
+            for rel, text in {"team/roles/x.md": "when asked, e.g. a wording tweak like TASK-300; light.",
+                              "team/principles.md": "the id (e.g. `TASK-142`); twice (e.g. `TASK-142`)",
+                              "output/output.md": "the id (e.g. `TASK-142`)",
+                              "skills/tmux/SKILL.md": "(`pm-TASK-9-…` before `pm-TASK-10-…`)",
+                              "skills/tmux/scripts/x_test.py": "TASK-1", "skills/tmux/scripts/x.py": "# TASK-2",
+                              "config.toml": "# like TASK-7"}.items():
+                os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+                with open(os.path.join(root, rel), "w") as f:
+                    f.write(text)
+            self.assertEqual(tickets(root), {"team/roles/x.md": ["TASK-300"], "team/principles.md": ["TASK-142"],
+                                             "output/output.md": ["TASK-142"], "skills/tmux/scripts/x.py": ["TASK-2"],
+                                             "config.toml": ["TASK-7"]})
 
 
 class RealCore(unittest.TestCase):
@@ -746,16 +824,27 @@ class RealCore(unittest.TestCase):
         for role, default in defaults.items():
             with open(os.path.join(CORE, "team", "roles", f"{role}.md")) as f:
                 text = f.read()
-            self.assertTrue(text.split("\n## ")[1].startswith(f"Tasks\n\nUnsure → `{default}`.\n\n- `"), role)
+            self.assertTrue(text.split("\n## ")[1].startswith(f"Tasks\n\n{INTRO.format(default)}- `"), role)
             self.assertIn(default, compose.index(CORE, role), role)
-            for line in compose.index(CORE, role).values():
+            for t, line in compose.index(CORE, role).items():
+                self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", text, role)
                 self.assertRegex(line, r"; (light|heavy)\.$", role)
         self.assertEqual(sorted(t for _, t in ALL), sorted(f.removesuffix(".md") for f in os.listdir(TASKS)))
 
-    def test_engineers_index_gives_the_users_examples(self):
+    def test_shipped_text_has_no_ticket_id_but_the_format_examples(self):
+        self.assertEqual(tickets(CORE), {})
+        for rel, examples in TICKET_EXAMPLES.items():
+            with open(os.path.join(CORE, rel)) as f:
+                text = f.read()
+            for example in examples:
+                self.assertEqual(text.count(example), 1, (rel, example))
+
+    def test_engineers_tasks_name_their_skill_by_slash_command(self):
         tasks = compose.index(CORE, "engineer")
-        self.assertIn("e.g. a PRD feature spanning several modules like TASK-227", tasks["build"])
-        self.assertIn("e.g. a template or wording tweak like TASK-226", tasks["light-build"])
+        for t in ("build", "light-build"):
+            self.assertIn(f" with `/autopilot:{t}` (", tasks[t])
+            self.assertIn(f"`/autopilot:{t}`", task_text(t))
+            self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
     def test_task_files_have_no_frontmatter_no_placeholder_and_one_start_mark(self):
         # The start mark: the root CLAUDE.md › Gotchas.
@@ -806,10 +895,12 @@ class RealCore(unittest.TestCase):
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
-        self.assertIn("**Your task**: `light-research`. Read only that task's file", named)
+        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`). Read only that task's file",
+                      named)
         self.assertNotIn("pick it from", named)
         picked = guide(composed("researcher")[0])
         self.assertIn(PICK, picked)
+        self.assertNotIn("unsure → the default it names", picked)
         self.assertIn("Your start progress report names the task and why.", picked)
         self.assertNotIn("light-research", picked)
 
@@ -817,7 +908,7 @@ class RealCore(unittest.TestCase):
         for role, task in [(r, None) for r in ROLES] + ALL:
             prompt, _ = composed(role, task)
             for t, line in compose.index(CORE, role).items():
-                self.assertIn(f"\n- `{t}`: {line}\n", prompt, (role, task))
+                self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", prompt, (role, task))
                 for step in task_text(t).splitlines():
                     if len(step.strip()) >= 30 and not step.startswith("#"):
                         self.assertNotIn(step.strip(), prompt, (role, task, t))
@@ -1013,6 +1104,17 @@ class RealCore(unittest.TestCase):
                 self.assertEqual(generic_names(f.read()), [], path)
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
+
+    def test_the_tmux_skills_role_listing_gives_descriptions_without_paths(self):
+        with open(os.path.join(CORE, "skills", "tmux", "SKILL.md")) as f:
+            cmd = re.search(r"`(python3 -c '.*?' \$\{CLAUDE_SKILL_DIR\}/\.\./\.\./src)`", f.read()).group(1)
+        code, src = shlex.split(cmd.replace("${CLAUDE_SKILL_DIR}", os.path.join(CORE, "skills", "tmux")))[2:]
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["-c", src]), mock.patch.object(sys, "path", list(sys.path)), \
+                redirect_stdout(out):
+            exec(code, {})
+        self.assertIn("\n  build: a PRD into a pull request with `/autopilot:build` (", out.getvalue())
+        self.assertNotIn("<tasks>", out.getvalue())
 
     def test_only_the_user_loads_the_manager_guidelines(self):
         with open(os.path.join(CORE, "skills", "manage", "SKILL.md")) as f:

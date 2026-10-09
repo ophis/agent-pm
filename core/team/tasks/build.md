@@ -1,6 +1,6 @@
 # Build
 
-Build the PRD with `autopilot:build`, then open a pull request.
+Build the PRD with `/autopilot:build`, then open a pull request.
 
 ## Input processing
 
@@ -17,7 +17,7 @@ Engineer › Input processing, the requirement being the PRD (a path or its text
    - Else → a first build of the PRD.
 4. **Report progress:**
    [agent-pm-progress:start] the build (continue `<plan doc>`, new or first)
-5. **Build**: `autopilot:build` (Engineer › Autopilot), the requirements being the PRD and the user's requirements; docs line "Spec and plan go where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`."; push points: each task and review round.
+5. **Build**: `/autopilot:build` (Engineer › Autopilot), the requirements being the PRD and the user's requirements; docs line "Spec and plan go where the repo keeps design docs, else in `docs/.autopilot/`; commit them unless git ignores them, never with `git add -f`."; push points: each task and review round.
    - **Report progress** at the end of each build step (`S<n>`) you run:
      [agent-pm-progress:step] the step and its result
 6. **Finish** (Engineer › Finish), adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc, whichever exist on failure; the PR description names the PRD (path or title).

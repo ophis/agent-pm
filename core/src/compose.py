@@ -2,10 +2,10 @@
 templates + output + input into its prompt; the agent run reads its task's file itself. A module for the driver
 (drive.py).
 
-Guide and principles get {{role}}, its anchor, {{task}} (the named task; none → the guide's default text) and
-{{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its path in the
-workdir> (no params → each line holding it is dropped). Every other run value is a PARAMETERS name, its value given once
-in # Parameters.
+Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the guide's default
+text) and {{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its
+path in the workdir> (no params → each line holding it is dropped). Every other run value is a PARAMETERS name, its
+value given once in # Parameters.
 """
 import json
 import os
@@ -33,8 +33,9 @@ RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates"
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column"}
 OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
-INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index: its lines - `<task>`: <text>
-INDEX_LINE = re.compile(r"^- `([\w-]+)`: (.+)$", re.M)
+INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index (core/CLAUDE.md › Rules)
+INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)   # task, path (none → ""), description
+INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")   # in the index's opening sentence
 METHOD = re.compile(r"<methods>/([\w-]+)\.md")   # a method file named in a text
 REPORT = "report"   # the report command's Parameters name
 # The # Parameters section's names, in order: name → (the regex a text uses it by, its value's source in _parameters).
@@ -160,11 +161,22 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 
 
 def index(root: str, role: str) -> dict[str, str]:
-    """{task: its line} of the role's task index, team/roles/<role>.md › Tasks, in order: the only list of its tasks."""
+    """{task: its description} of the role's task index, team/roles/<role>.md › Tasks, in order: the only list of its
+    tasks. ConfigError unless its opening sentence names a listed default and each task's path is <tasks>/<task>.md,
+    with that file in team/tasks/."""
     rel = f"roles/{role}.md"
     m = INDEX.search(_read(os.path.join(root, TEXT), rel))
-    if not (tasks := dict(INDEX_LINE.findall(m.group(1))) if m else {}):
-        raise ConfigError(f"{rel}: no task index (a ## Tasks section of - `<task>`: … lines)")
+    section = m.group(1).strip() if m else ""
+    if not (lines := INDEX_LINE.findall(section)):
+        raise ConfigError(f"{rel}: no task index (a ## Tasks section of - `<task>` (`<tasks>/<task>.md`): … lines)")
+    tasks = {t: what for t, _, what in lines}
+    if not (default := INDEX_DEFAULT.search(section.split("\n", 1)[0])):
+        raise ConfigError(f"{rel}: ## Tasks opens without its default (unsure → `<task>` (`<tasks>/<task>.md`))")
+    if default.group(1) not in tasks:
+        raise ConfigError(f"{rel}: the default {default.group(1)!r} is not a listed task")
+    for t, path in [default.groups(), *((t, path) for t, path, _ in lines)]:
+        if path != f"<tasks>/{t}.md":
+            raise ConfigError(f"{rel}: {t!r} has path {path!r}, not '<tasks>/{t}.md'")
     for t in tasks:
         if not os.path.isfile(os.path.join(root, TEXT, "tasks", f"{t}.md")):
             raise ConfigError(f"{rel} lists {t!r} without tasks/{t}.md")
@@ -195,7 +207,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
-    names |= {"task": f"`{run.task}`"} if run.task else {}
+    names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
     rel = f"roles/{run.role}.md"
     guide, principles, role = _read(text, "guide.md"), _read(text, "principles.md"), _read(text, rel)
     if not run.language:

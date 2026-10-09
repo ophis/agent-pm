@@ -259,7 +259,7 @@ class Inner(Base):
     def test_a_task_reaches_drive_and_the_prompt_names_it(self):
         self.assertEqual(self.inner(task="light-build"), 0)
         (argv, _), = self.popen_calls
-        self.assertIn("**Your task**: `light-build`. Read only that task's file", argv[2])
+        self.assertIn("**Your task**: `light-build` (`<tasks>/light-build.md`). Read only that task's file", argv[2])
 
     def test_a_researcher_run_has_the_brake(self):
         self.assertEqual(self.inner(RESEARCHER, target=None), 0)
