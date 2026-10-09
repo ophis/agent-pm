@@ -86,7 +86,7 @@ class Segment(Flow):
             yield
             self.verify()
         except AssertionError as e:
-            raise self.failureException(f"failed at step {n} ({name}): {e}") from None
+            raise self.failureException(f"failed at step {n} ({name}): {e}") from e
         except Exception as e:
             e.add_note(f"failed at step {n} ({name})")
             raise
@@ -200,7 +200,8 @@ class Segment(Flow):
         self.scene(steps=script.steps, turns=script.turns, gate=gate)
         calls, events, runs = len(self.calls()), len(self.logged()), len(self.runs())
         res = self.router("--issue", ident, *argv)
-        self.assertEqual(res.returncode, 0, f"router.py: {res.stderr.strip()!r}; events {self.logged()[events:]}")
+        if res.returncode != 0:
+            self.fail(f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}")
         added = self.runs()[runs:]
         self.assertEqual(len(added), 1, f"runs.jsonl lines added: {added}")
         line = added[0]
@@ -251,21 +252,30 @@ class Segment(Flow):
 
     # Step helpers
 
-    def seed_backlog(self, role, title, description, labels=()):
-        """Step `seed: backlog`: a Backlog issue of the role's account in PROJECT, tracked. Returns its ID."""
-        with self.step("seed: backlog"):
-            ident = self.fake.issue(title, state="backlog", assignee=self.ids[ACCOUNTS[role]], project=PROJECT,
-                                    description=description, labels=labels)["identifier"]
-            self.track(ident, state="backlog", title=title)
+    def backlog_issue(self, role, title, description, labels=()):
+        """A Backlog issue of the role's account in PROJECT, tracked; no step of its own. Returns its ID."""
+        ident = self.fake.issue(title, state="backlog", assignee=self.ids[ACCOUNTS[role]], project=PROJECT,
+                                description=description, labels=labels)["identifier"]
+        self.track(ident, state="backlog", title=title)
         return ident
 
+    def seed_backlog(self, role, title, description, labels=()):
+        """Step `seed: backlog`: backlog_issue. Returns its ID."""
+        with self.step("seed: backlog"):
+            ident = self.backlog_issue(role, title, description, labels)
+        return ident
+
+    def refused(self, ident):
+        """router.py --issue ident exits 1; returns the events it logged."""
+        events = len(self.logged())
+        res = self.router("--issue", ident)
+        self.assertEqual(res.returncode, 1, res.stderr)
+        return self.logged()[events:]
+
     def backlog_not_claimed(self, ident):
-        """Step `router: backlog not claimed`: router.py --issue exits 1, its one event a pick-none."""
+        """Step `router: backlog not claimed`: refused, its one event a pick-none."""
         with self.step("router: backlog not claimed"):
-            events = len(self.logged())
-            res = self.router("--issue", ident)
-            self.assertEqual(res.returncode, 1, res.stderr)
-            self.assertEqual([(e["src"], e["kind"], e.get("issue")) for e in self.logged()[events:]],
+            self.assertEqual([(e["src"], e["kind"], e.get("issue")) for e in self.refused(ident)],
                              [("router", "pick-none", ident)])
 
     def human_move(self, ident, to, name):
@@ -289,13 +299,14 @@ class Segment(Flow):
     def claim(self, ident, role, script, task=None, tui=False):
         """Step `router: claim` of the Todo issue ident with script (agent_run() runs it): a new sid's start line, the
         claim event's task `task`, no transient event; In Progress by the harness; its session comment running.
-        tui: attended, split from MANAGER."""
+        tui: attended, split from MANAGER. Returns the sid."""
         with self.step("router: claim"):
             line, argv, events = self.launch(ident, role, script, False,
                                              *(("--tui", "--split-from", MANAGER) if tui else ()))
             sid = line["sid"]
             self.assertEqual((line["kind"], line["issue"], line["role"]), ("start", ident, role))
             self.assertNotIn(sid, self.sids())
+            self.assertIn("--session-id", argv)
             self.assertEqual(argv[argv.index("--session-id") + 1], sid)
             mine = [e for e in events if e.get("issue") == ident]
             self.assertEqual([e for e in mine if e["kind"] == "transient"], [])
@@ -303,16 +314,19 @@ class Segment(Flow):
             self.expect_runs(("start", ident, sid, role))
             self.expect(ident, state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)])
             self.expect_session(ident, sid, "running")
+        return sid
 
     def resume(self, ident, role, sid, script):
         """Step `router: resume` of sid with script (agent_run() runs it), headless: a resume line, the fake's argv
-        `--resume <sid>`; sid's session comment running again."""
+        `--resume <sid>`; sid's session comment running again. Returns sid."""
         with self.step("router: resume"):
             line, argv, _ = self.launch(ident, role, script, True)
             self.assertEqual((line["kind"], line["issue"], line["sid"], line["role"]), ("resume", ident, sid, role))
+            self.assertIn("--resume", argv)
             self.assertEqual(argv[argv.index("--resume") + 1], sid)
             self.expect_runs(("resume", ident, sid, role))
             self.expect_session(ident, sid, "running")
+        return sid
 
     def promote_now(self):
         """promote.py --now as a process (Flow.promote, which the step promote() overrides)."""
@@ -329,6 +343,15 @@ class Segment(Flow):
                         comments=[(HARNESS_EMAIL, f"promoted {child}")])
             self.track(child, state="todo", title=title)
         return child
+
+    def promote_nothing(self, ident):
+        """Step `promote: nothing`: promote.py --now exits 0, printing nothing; no promote.M_CREATE request yet;
+        nothing changes; ident never reached Handoff."""
+        with self.step("promote: nothing"):
+            res = self.promote_now()
+            self.assertEqual((res.returncode, res.stderr, res.stdout), (0, "", ""))
+            self.assertEqual(self.sent("promote.M_CREATE"), [])
+            self.assertNotIn("handoff", [to for _, to, _ in self.history(ident)])
 
     def assert_child(self, ident, role, nxt):
         """ident's one `related` child is nxt's account's, in Todo, in ident's project, titled from ident and
@@ -367,6 +390,18 @@ class Segment(Flow):
         self.assertEqual((rec["assignee"], fake_linear.NAMES[rec["state"]], rec["project"]),
                          (self.ids[ACCOUNTS["pm"]], "todo", PROJECT))
 
+    def prompt(self, ident, sid):
+        """sid's first prompt, the run's input: its transcript's first line, a user line."""
+        first = self.transcript(ident, sid)[0]
+        self.assertEqual(first["type"], "user")
+        return first["message"]["content"]
+
+    def section(self, prompt, heading):
+        """prompt's `## <heading>` section body, up to the next `## ` line; fails without one."""
+        if m := re.search(rf"^## {re.escape(heading)}\n\n(.*?)(?=^## |\Z)", prompt, re.M | re.S):
+            return m[1]
+        self.fail(f"no `## {heading}` section in the prompt:\n{prompt}")
+
     # Segment helpers
 
     def researcher_ready(self, labels=()):
@@ -376,11 +411,14 @@ class Segment(Flow):
         self.human_move(ident, "todo", "human: to todo")
         return ident
 
-    def researcher_to_pm(self, labels=(), task=None):
-        """researcher_ready, a claimed run done, the human's handoff (INSTRUCTIONS), promote. Returns the pm child's
-        ID."""
-        ident = self.researcher_ready(labels)
+    def researcher_done(self, ident, task=None):
+        """Of the Todo research issue ident: a claimed run done, the human's handoff (INSTRUCTIONS), promote. Returns
+        the pm child's ID."""
         self.claim(ident, "researcher", self.script("researcher", "done", ident), task=task)
         self.agent_run()
         self.handoff(ident, INSTRUCTIONS)
         return self.promote(ident, "researcher", "pm")
+
+    def researcher_to_pm(self, labels=(), task=None):
+        """researcher_ready, then researcher_done. Returns the pm child's ID."""
+        return self.researcher_done(self.researcher_ready(labels), task)
