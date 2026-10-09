@@ -5,12 +5,14 @@ import contextlib
 import copy
 import os
 import re
+import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 import hermetic  # noqa: F401  (first: config reads HOME at import)
 import config
+import linear
 import router
 import sessions
 from flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT, RESEARCH_DIR, TIMEOUT, Flow,
@@ -267,12 +269,16 @@ class Segment(Flow):
             ident = self.backlog_issue(role, title, description, labels)
         return ident
 
-    def refused(self, ident):
-        """router.py --issue ident exits 1; returns the events it logged."""
+    def refused(self, ident, note=""):
+        """router.py --issue ident exits 1, else fails naming its stderr, the events it logged and note; returns those
+        events."""
         events = len(self.logged())
         res = self.router("--issue", ident)
-        self.assertEqual(res.returncode, 1, res.stderr)
-        return self.logged()[events:]
+        added = self.logged()[events:]
+        if res.returncode != 1:
+            self.fail("; ".join([f"router.py exit {res.returncode}: {res.stderr.strip()!r}", f"events {added}",
+                                 *([note] if note else [])]))
+        return added
 
     def backlog_not_claimed(self, ident):
         """Step `router: backlog not claimed`: refused, its one event a pick-none."""
@@ -320,10 +326,11 @@ class Segment(Flow):
 
     def resume(self, ident, role, sid, script):
         """Step `router: resume` of sid with script (agent_run() runs it), headless: a resume line, the fake's argv
-        `--resume <sid>`; sid's session comment running again. Returns sid."""
+        `--resume <sid>`, no `--session-id`; sid's session comment running again. Returns sid."""
         with self.step("router: resume"):
             line, argv, _ = self.launch(ident, role, script, True)
             self.assertEqual((line["kind"], line["issue"], line["sid"], line["role"]), ("resume", ident, sid, role))
+            self.assertNotIn("--session-id", argv)
             self.assertIn("--resume", argv)
             self.assertEqual(argv[argv.index("--resume") + 1], sid)
             self.expect_runs(("resume", ident, sid, role))
@@ -391,6 +398,24 @@ class Segment(Flow):
             rec = copy.deepcopy(self.fake.find(ident))
         self.assertEqual((rec["assignee"], fake_linear.NAMES[rec["state"]], rec["project"]),
                          (self.ids[ACCOUNTS["pm"]], "todo", PROJECT))
+
+    def moved_to_todo(self, ident):
+        """The time of the human's last move of ident to Todo."""
+        with self.fake.lock:
+            return linear.last_move(self.fake.find(ident)["history"], {fake_linear.IDS["todo"]}, {self.ids[HUMAN]})
+
+    def wait_next_second(self, ident):
+        """Sleeps into the wall-clock second after moved_to_todo: router.attempt_count counts the runs.jsonl lines
+        strictly after that move, and their ts is to the second (drive.stamp), so a claim within its second is no
+        attempt."""
+        time.sleep(max(0, (self.moved_to_todo(ident).replace(microsecond=0) + timedelta(seconds=1)
+                           - datetime.now(timezone.utc)).total_seconds()))
+
+    def attempts(self, ident):
+        """router.attempt_count's attempts of ident since moved_to_todo, and the times compared."""
+        moved, entries = self.moved_to_todo(ident), router.parse_log(os.path.join(self.logs, "runs.jsonl"))
+        return (f"{router.attempt_count(entries, ident, moved)} attempts since the human's move to Todo at "
+                f"{moved.isoformat()}; runs.jsonl at {[e[0].isoformat() for e in entries]}")
 
     def prompt(self, ident, sid):
         """sid's first prompt, the run's input: its transcript's first line, a user line."""

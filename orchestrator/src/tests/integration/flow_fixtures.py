@@ -206,10 +206,13 @@ class Flow(unittest.TestCase):
         """The fake claude's invocations from its log, {pid, argv, cwd} each."""
         return _jsonl(self.claude_log)
 
+    def transcript_path(self, ident, sid):
+        """sid's transcript file, the fake claude's in the issue's workdir."""
+        return clients.claude.transcript(self.workdir(ident), sid, os.path.join(self.home, ".claude", "projects"))
+
     def transcript(self, ident, sid):
-        """The lines of sid's transcript, the fake claude's in the issue's workdir."""
-        projects = os.path.join(self.home, ".claude", "projects")
-        return _jsonl(clients.claude.transcript(self.workdir(ident), sid, projects))
+        """The lines of sid's transcript (transcript_path)."""
+        return _jsonl(self.transcript_path(ident, sid))
 
     def requests(self):
         """The fake Linear's request log (fake_linear.Request)."""
