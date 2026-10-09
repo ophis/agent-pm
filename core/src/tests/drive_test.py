@@ -111,6 +111,15 @@ class Claude(Base):
         for role, task in (("researcher", "light-research"), ("engineer", "build")):
             self.assertNotIn("--disallowedTools", self.plan(role, task, client="claude", repo=self.repo).argv)
 
+    def test_the_prompt_names_the_file_the_agent_writes_the_deliverable_to(self):
+        elsewhere = os.path.join(self.tmp.name, "elsewhere", "out.md")
+        for layers in ([{"output": {"type": "local"}}], [{"output": {"type": "orchestrator"}}]):
+            for params, want in (({}, f"{self.work}/out.md"), ({"out": elsewhere}, f"{self.work}/tmp/deliverable.md")):
+                with self.subTest(layers=layers, params=params):
+                    launch = self.plan(client="claude", repo=self.repo, layers=layers, **params)
+                    self.assertIn(f"Write the deliverable to `{want}` and return that file as the outcome's "
+                                  "`deliverable`", launch.argv[2])
+
     def test_light_research_argv(self):
         launch = self.plan(client="claude", repo=self.repo)
         self.assertEqual(launch.argv[:2], ["claude", "-p"])
@@ -514,6 +523,12 @@ class Cwd(Base):
 class Skill(Base):
     def text(self, role, task=None):
         return drive.inline(CORE, clients.get("skill", CORE), role, task)
+
+    def test_a_destination_has_no_deliverable_file_line(self):
+        for role in ("researcher", "pm", "dummy-tester"):
+            text = self.text(role)
+            self.assertNotIn("Write the deliverable to", text, role)
+            self.assertIn("publish, post or save it nowhere. Leave `url` empty.", text, role)
 
     def test_prints_the_prompt_with_this_cores_paths(self):
         text = self.text("pm")
@@ -1189,6 +1204,92 @@ class Start(Base):
             self.assertEqual(f.read(), "mine")
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
         self.assertEqual(self.read("out.md"), "# Doc\n")
+
+    def spy_save(self):
+        patch = unittest.mock.patch.object(drive, "save", wraps=drive.save)
+        self.addCleanup(patch.stop)
+        return patch.start()
+
+    def test_a_deliverable_the_agent_wrote_to_out_is_not_saved_again(self):
+        save, out, written = self.spy_save(), os.path.join(self.work, "out.md"), []
+
+        def items():
+            with open(out, "w") as f:
+                f.write("# Doc\n")
+            written.append(os.stat(out))
+            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+
+        for dest in ("local", "orchestrator"):
+            with self.subTest(dest):
+                r, _, _ = self.start(items(), output={"type": dest})
+                st = os.stat(out)
+                self.assertEqual((st.st_ino, st.st_mtime_ns), (written[-1].st_ino, written[-1].st_mtime_ns))
+                self.assertEqual((save.called, self.read("out.md")), (False, "# Doc\n"))
+                self.assertEqual((r.outcome.url, r.outcome.deliverable), (out if dest == "local" else "", "# Doc\n"))
+
+    def test_a_deliverable_from_another_file_is_saved_to_out(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+        other = os.path.join(self.work, "tmp", "deliverable.md")
+
+        def items():
+            os.makedirs(os.path.dirname(other))
+            with open(other, "w") as f:
+                f.write("# Doc\n")
+            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+
+        r, _, _ = self.start(items())
+        self.assertEqual([(str(c.args[0]), c.args[1]) for c in save.call_args_list], [(out, "# Doc\n")])
+        self.assertEqual((r.outcome.url, self.read("out.md"), self.read("tmp/deliverable.md")), (out, "# Doc\n", "# Doc\n"))
+
+    def test_an_out_that_differs_from_the_deliverable_is_replaced(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+        for written in ("", "# Do", "# Doc", "# Doc\n\n", "# Doc\nmore", "# Dac\n"):
+            def items():
+                with open(out, "w") as f:
+                    f.write(written)
+                yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+
+            with self.subTest(written=written):
+                save.reset_mock()
+                self.start(items())
+                self.assertEqual((save.call_count, self.read("out.md")), (1, "# Doc\n"))
+
+    def test_a_stale_out_never_stands_for_the_deliverable(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+        os.makedirs(self.work)
+        with open(out, "w") as f:
+            f.write("# Doc\n")
+        seen = []
+        launch = drive.Launch(["fake"], cwd=self.work)
+        p = self.params()
+        drive.start(launch, run(), p, client=claude(), sinks=[], begun=lambda: seen.append(os.path.lexists(out)),
+                    popen=lambda argv, **kw: FakeProc(feed(p.channel, [outcome(DONE)])))
+        self.assertEqual((seen, save.call_count, self.read("out.md")), ([False], 1, "# Doc\n"))
+
+    def test_a_fifo_at_out_is_replaced_not_waited_on(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+
+        def items():
+            os.mkfifo(out)
+            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+
+        self.start(items())
+        self.assertEqual((save.call_count, stat.S_ISREG(os.lstat(out).st_mode), self.read("out.md")), (1, True, "# Doc\n"))
+
+    def test_a_symlink_at_out_is_replaced_even_when_its_target_holds_the_deliverable(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+        target = os.path.join(self.tmp.name, "zshrc")
+        with open(target, "w") as f:
+            f.write("# Doc\n")
+
+        def items():
+            os.symlink(target, out)
+            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+
+        self.start(items())
+        self.assertEqual((save.call_count, os.path.islink(out), self.read("out.md")), (1, False, "# Doc\n"))
+        with open(target) as f:
+            self.assertEqual(f.read(), "# Doc\n")
 
     def test_a_record_replaced_by_a_symlink_is_not_followed_and_the_run_still_ends(self):
         target = os.path.join(self.tmp.name, "zshrc")

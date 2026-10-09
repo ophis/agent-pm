@@ -6,9 +6,9 @@ drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--re
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
          [--events FILE] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
---out is where the deliverable is saved (local and orchestrator destinations); the run's cwd: place(). By default
-(start's sinks) a run shows its text and progress on stderr; every run appends to its record <workdir>/run.jsonl
-(start).
+--out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
+under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text
+and progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
 --runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
@@ -198,6 +198,16 @@ def save(path: str | Path, text: str) -> None:
         except BaseException:
             os.unlink(f.name)
             raise
+
+
+def holds(path: str | Path, text: str) -> bool:
+    """Whether the regular file at `path` holds exactly `text`; a symlink, a FIFO, a missing file or any error is no."""
+    data = text.encode()
+    try:
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
+            return stat.S_ISREG(os.fstat(f.fileno()).st_mode) and f.read(len(data) + 1) == data
+    except OSError:
+        return False
 
 
 def append_line(path: str | Path, text: str) -> None:
@@ -651,14 +661,14 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
           popen=subprocess.Popen) -> Result:
     """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its host's
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
-    deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
-    this call began count. The channel is the run's record: its `input` and `session` events come before `begun` is
-    called and the host starts; `result` (the outcome without its deliverable, else the error) and `end` close it
-    however the run ends, an exception (raised on) as `stopped: <type>: <message>`. A done or failed new run that
-    never reported `start` gets a stderr line and a `missing` event first. The tui runner names its session
-    tui_session(…, params.prefix) and appends its state events to the `events` file. Raises ConfigError, before
-    anything starts, when the client lacks the runner's command or the layout, params.prefix or events is one the
-    runner can't take (check_layout, check_naming); a RunnerError stops the runner and is the Result, with rc 1 and
+    deliverable to params.out where the destination says so (unless the run wrote it there), and hands the outcome on
+    too. Only reports made after this call began count. The channel is the run's record: its `input` and `session`
+    events come before `begun` is called and the host starts; `result` (the outcome without its deliverable, else the
+    error) and `end` close it however the run ends, an exception (raised on) as `stopped: <type>: <message>`. A done
+    or failed new run that never reported `start` gets a stderr line and a `missing` event first. The tui runner names
+    its session tui_session(…, params.prefix) and appends its state events to the `events` file. Raises ConfigError,
+    before anything starts, when the client lacks the runner's command or the layout, params.prefix or events is one
+    the runner can't take (check_layout, check_naming); a RunnerError stops the runner and is the Result, with rc 1 and
     `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
@@ -743,7 +753,8 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
     except InvalidOutcome as e:
         return Result(rc, None, f"invalid outcome: {e}")
     if run.output["type"] in SAVES_DELIVERABLE and outcome.deliverable:
-        save(out, outcome.deliverable)
+        if not holds(out, outcome.deliverable):   # else the agent run wrote it there (params.deliverable)
+            save(out, outcome.deliverable)
         if run.output["type"] == "local":
             outcome = replace(outcome, url=str(out))
     # A resumed session reported its start before the interruption.

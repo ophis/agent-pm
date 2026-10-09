@@ -4,7 +4,7 @@ output into its prompt; the agent run reads its task's file itself. A module for
 Guide and principles get {{role}}, its anchor, {{task}} (the named task; none → the guide's default text) and
 {{language}} (unset → each line holding it is dropped); guide, principles and role text get {{scripts}} (this dir, or
 the client's path to it), {{methods}} (team/methods/, likewise), {{tasks}} (team/tasks/, likewise) and {{gate}}; a
-destination gets its output values.
+destination gets its output values and {{deliverable}} (no params → each line holding it is dropped).
 """
 import json
 import os
@@ -13,6 +13,7 @@ import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Literal, Protocol, get_args
 
 import repo
@@ -91,7 +92,8 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable is saved, its workdir and Claude session."""
+    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and Claude
+    session."""
     input: str
     out: str
     workdir: str
@@ -110,6 +112,15 @@ class RunParams:
     @property
     def channel(self) -> str:
         return os.path.join(os.path.abspath(self.workdir), CHANNEL)
+
+    @property
+    def deliverable(self) -> str:
+        """The file the agent run writes its deliverable to: `out` when it lies under the real workdir, else
+        <workdir>/tmp/deliverable.md."""
+        out = os.path.abspath(self.out)
+        if Path(os.path.realpath(out)).is_relative_to(os.path.realpath(self.workdir)):
+            return out
+        return os.path.join(os.path.abspath(self.workdir), "tmp", "deliverable.md")
 
 
 def tui_session(role: str, sid: str, prefix: str | None = None) -> str:
@@ -173,7 +184,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
              "tasks": client.tasks_path(root), "gate": run.gate or "none"}
     principles = _read(text, "principles.md")
     if not run.language:
-        principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
+        principles = _without(principles, "{{language}}")
     rel = f"roles/{run.role}.md"
     parts = [fill(_read(text, "guide.md"), names | paths, "guide.md"), fill(principles, names | paths, "principles.md"),
              fill(_read(text, rel), paths, rel)]
@@ -185,7 +196,12 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     output, dest = os.path.join(root, OUTPUT), f"destinations/{run.output['type']}.md"
     if not os.path.isfile(os.path.join(output, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
-    parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(_read(output, dest), run.output, dest))
+    destination, values = _read(output, dest), run.output
+    if params:
+        values = values | {"deliverable": params.deliverable}
+    else:
+        destination = _without(destination, "{{deliverable}}")
+    parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(destination, values, dest))
     if handover := client.handover():
         report = {"report": report_command(paths["scripts"], params)} if params else {}
         parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
@@ -249,6 +265,11 @@ def _read(root: str, rel: str) -> str:
         raise ConfigError(f"missing file {rel}")
     with open(path) as f:
         return f.read().strip() + "\n"
+
+
+def _without(text: str, placeholder: str) -> str:
+    """`text` less each line holding `placeholder`."""
+    return "".join(line for line in text.splitlines(True) if placeholder not in line)
 
 
 def _title(text: str, rel: str) -> str:

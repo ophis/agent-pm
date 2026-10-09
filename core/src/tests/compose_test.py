@@ -439,6 +439,44 @@ class Prompt(Fake):
         self.fails("unfilled placeholder {{tool}}")
 
 
+class Deliverable(Fake):
+    DEST = {"output/destinations/local.md": "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"}
+
+    def test_it_is_out_under_the_real_workdir_else_tmp_deliverable(self):
+        wd, elsewhere = (os.path.join(os.path.realpath(self.root), d) for d in ("wd", "elsewhere"))
+        os.makedirs(os.path.join(wd, "sub"))
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(wd, "link"))
+        os.symlink(wd, os.path.join(self.root, "via"))
+        tmp = os.path.join(wd, "tmp", "deliverable.md")
+        for out, want in ((f"{wd}/out.md", f"{wd}/out.md"), (f"{wd}/sub/../out.md", f"{wd}/out.md"),
+                          (f"{elsewhere}/out.md", tmp), (f"{wd}/../elsewhere/out.md", tmp),
+                          (f"{wd}/link/out.md", tmp), (f"{self.root}/via/out.md", f"{self.root}/via/out.md")):
+            with self.subTest(out=out):
+                self.assertEqual(compose.RunParams(input="x", out=out, workdir=wd).deliverable, want)
+
+    def test_a_destination_names_it(self):
+        self.write(self.DEST)
+        prompt, _ = self.compose()
+        self.assertIn("Keep it local.\nWrite it to `/w/out.md`.\n", prompt)
+        prompt, _ = self.compose(out="/elsewhere/out.md")
+        self.assertIn("Write it to `/w/tmp/deliverable.md`.", prompt)
+
+    def test_without_params_its_lines_are_dropped(self):
+        self.write(self.DEST)
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, client=Plain())
+        self.assertNotIn("Write it to", prompt)
+        self.assertTrue(prompt.rstrip().endswith("Keep it local."))
+
+    def test_an_unfilled_placeholder_in_another_destination_line_still_fails(self):
+        self.write({"output/destinations/local.md": "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"})
+        run = compose.load_run(self.root, "writer")
+        with self.assertRaises(compose.ConfigError) as cm:
+            compose.render(self.root, run, client=Plain())
+        self.assertIn("unfilled placeholder {{dir}}", str(cm.exception))
+
+
 class Fill(unittest.TestCase):
     def test_default_used_when_value_missing(self):
         self.assertEqual(compose.fill("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "t"), "https://github.com/o/n")
@@ -557,6 +595,17 @@ class RealCore(unittest.TestCase):
             self.assertNotIn("{{", text, name)
             self.assertEqual(len(re.findall(r"^\s*\[agent-pm-progress:start\] \S", text, re.M)), 1, name)
             self.assertNotIn("agent-pm-progress:budget", text, name)
+
+    def test_local_and_orchestrator_destinations_have_the_deliverable_line_once(self):
+        for dest in ("local", "orchestrator"):
+            run = replace(compose.load_run(CORE, "researcher"), output={"type": dest})
+            with_params = compose.render(CORE, run, PARAMS, client=Plain())
+            self.assertEqual(with_params.count("`/w/out.md`"), 1, dest)
+            self.assertIn("Write the deliverable to `/w/out.md` and return that file as the outcome's `deliverable`",
+                          with_params, dest)
+            without = compose.render(CORE, run, client=Plain())
+            self.assertNotIn("Write the deliverable to", without, dest)
+            self.assertIn("Leave `url` empty.", without, dest)
 
     def test_every_run_compiles_without_placeholders(self):
         for role, task in [(r, None) for r in ROLES] + ALL:
