@@ -535,11 +535,17 @@ class Skill(Base):
         self.assertTrue(text.startswith("# Guide"))
         self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`",
                       text)
-        self.assertTrue(text.endswith("\n---\n\nInput: given with this prompt\n"
-                                      "Workdir: the dir `mktemp -d` prints, run once at the start and reused for this "
-                                      "invocation\n"))
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
+
+    def test_parameters_and_input_replace_the_tail(self):
+        text = self.text("pm")
+        self.assertIn("\n# Parameters\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the start and reused "
+                      "for this invocation\n- `<scripts>`: ", text)
+        self.assertNotIn("- `report`:", text)
+        self.assertTrue(text.endswith("\n# Input\n\nGiven with this prompt.\n"))
+        for tail in ("\n---\n\nInput:", "Workdir: "):
+            self.assertNotIn(tail, text)
 
     def test_a_researcher_names_core_methods(self):
         text = self.text("researcher")

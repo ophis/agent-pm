@@ -594,6 +594,12 @@ def guide(prompt):
     return prompt.split("\n# Principles\n", 1)[0]
 
 
+def parameter_names(role, task=None, **changes):
+    """The # Parameters names of the claude client's prompt for `role`, its run changed by `changes`."""
+    run = replace(compose.load_run(CORE, role, task), **changes)
+    return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
+
+
 LANGUAGE_RULE = "headings and fixed labels included"
 REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>",
              "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
@@ -747,6 +753,17 @@ class RealCore(unittest.TestCase):
             self.assertIn("# Template: `templates/research-report.md`", prompt)
             self.assertIn("`ophis/private_docs`", prompt)
             self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
+
+    def test_each_roles_parameters_follow_what_its_texts_use(self):
+        base, out = ["<Workdir>", "<scripts>", "<tasks>"], ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"]
+        want = {"engineer": [*base, "report"], "pm": [*base, *out, "report"],
+                "researcher": [*base, "<methods>", "<gate>", *out, "report"]}
+        for role, task in [(r, None) for r in want] + [(r, t) for r, t in ALL if r in want]:
+            self.assertEqual(parameter_names(role, task), want[role], (role, task))
+
+    def test_a_local_output_leaves_the_researcher_no_out_parameters(self):
+        self.assertEqual(parameter_names("researcher", output={"type": "local"}),
+                         ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>", "report"])
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
