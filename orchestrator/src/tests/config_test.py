@@ -730,8 +730,9 @@ class Paths(unittest.TestCase):
             rd = config.run_dir("TASK-9")
             self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), clients.claude.transcript(rd, sid, "/p"))
             os.makedirs(rd)
-            with open(os.path.join(rd, "run.json"), "w") as f:
-                json.dump({"sessions": [{"sid": sid, "cwd": "/data/x.y", "project": True}]}, f)
+            with open(os.path.join(rd, "run.jsonl"), "w") as f:
+                f.write(json.dumps({"ts": "t", "kind": "session", "sid": sid, "cwd": "/data/x.y",
+                                    "project": True}) + "\n")
             self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), f"/p/-data-x-y/{sid}.jsonl")
         self.assertIsNone(config.transcript("TASK-9", "../x"))
 

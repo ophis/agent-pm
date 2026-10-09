@@ -48,7 +48,7 @@ def said(text):
 
 def reported(rd, *lines):
     """Appends to the agent run's report channel, as core's report.py does."""
-    with open(os.path.join(rd, ".report.jsonl"), "a") as f:
+    with open(os.path.join(rd, compose.CHANNEL), "a") as f:
         f.writelines(json.dumps(line) + "\n" for line in lines)
 
 
@@ -108,8 +108,8 @@ class Inner(Base):
         return line
 
     def test_build_run(self):
-        """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start comment
-        and run.json."""
+        """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start
+        comment."""
         pick = "light-build: a template wording tweak, like TASK-226."
 
         def lines():
@@ -143,9 +143,10 @@ class Inner(Base):
             *posts[2:]])
         (argv, kw), = self.popen_calls
         self.assertEqual((argv[:2], argv[3:5], kw["cwd"]), (["claude", "-p"], ["--session-id", SID], self.rd))
-        self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"), argv[2][-200:])
+        self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\n{self.rd}/input.md\n"), argv[2][-200:])
         self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2])
-        self.assertEqual([(p["name"], p["text"]) for p in self.record()["progress"]], [("start", pick)])
+        self.assertEqual([e["kind"] for e in self.events()],
+                         ["input", "session", "progress", "outcome", "result", "end"])
         self.assertEqual((kw["stderr"].name, kw["stderr"].mode, kw["stderr"].closed), (self.plog_path(), "a", True))
         self.assertIn("Working on it", self.err)
         self.assertEqual(os.environ["PATH"], config.PATH)
@@ -260,17 +261,18 @@ class Inner(Base):
         self.assertIn(os.path.join(self.root, "core", "team", "tasks"), dirs)
         self.assertEqual(self.plog("researcher")[0], "<ts> launch TASK-7 mode=new session=" + SID)
 
-    def record(self):
-        return json.loads(self.read(os.path.join(self.rd, "run.json")))
+    def events(self):
+        return [json.loads(line) for line in self.read(os.path.join(self.rd, "run.jsonl")).splitlines()]
 
     def test_resume(self):
-        start = {"ts": "t", "name": "start", "text": "x"}
-        self.write(os.path.join(self.rd, "run.json"), json.dumps(
-            {"sessions": [{"sid": SID, "cwd": self.rd, "project": False}], "progress": [start], "outcome": {"status": "done"}}))
+        self.write(os.path.join(self.rd, "run.jsonl"), "".join(json.dumps(e) + "\n" for e in (
+            {"ts": "t", "kind": "session", "sid": SID, "cwd": self.rd, "project": False},
+            {"ts": "t", "kind": "progress", "name": "start", "text": "x"})))
         self.assertEqual(self.inner(mode="resume"), 0)
         (argv, _), = self.popen_calls
         self.assertEqual((argv[3:5], argv[2].startswith(compose.RESUME)), (["--resume", SID], True))
-        self.assertEqual((self.record()["progress"], self.record()["outcome"]), ([start], None))
+        self.assertEqual([e["kind"] for e in self.events()],
+                         ["session", "progress", "input", "session", "result", "end"])
         self.assertEqual(self.plog()[0], "<ts> launch TASK-7 mode=resume session=" + SID)
 
     def test_an_overlay_cwd_runs_the_agent_there_and_its_resume_stays_there(self):
@@ -285,9 +287,9 @@ class Inner(Base):
             (argv, kw), = self.popen_calls
             self.assertEqual((kw["cwd"], argv[argv.index("--add-dir") + 1]), (there, self.rd))
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "user")
-            self.assertTrue(argv[2].endswith(f"Input: {self.rd}/input.md\nWorkdir: {self.rd}\n"))
+            self.assertTrue(argv[2].endswith(f"Workdir: {self.rd}\nInput:\n\n{self.rd}/input.md\n"))
             self.assertIn(f"drive.py: cwd {there} is not in trusted_dirs", self.err)
-            (entry,) = self.record()["sessions"]
+            entry = drive.session(self.rd, SID)
             self.assertEqual((entry["cwd"], entry["project"]), (there, False))
             self.assertIn(f"cd '{there}' && claude --resume {SID} --add-dir '{self.rd}'", self.gql.calls[1][2]["b"])
         self.assertEqual(config.transcript(ID, SID, self.projects), clients.claude.transcript(there, SID, self.projects))

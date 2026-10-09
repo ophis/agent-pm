@@ -1211,9 +1211,10 @@ class Tick(Base):
         self.moved("TASK-1", 61)
         self.add("start", "TASK-1", "a", 60)
         os.makedirs(config.run_dir("TASK-1"), exist_ok=True)
-        with open(os.path.join(config.run_dir("TASK-1"), "run.json"), "w") as f:
-            json.dump({"sessions": [{"sid": self.sid("a"), "cwd": self.tmp.name, "project": False}]}, f)
-        self.addCleanup(os.remove, os.path.join(config.run_dir("TASK-1"), "run.json"))
+        with open(os.path.join(config.run_dir("TASK-1"), "run.jsonl"), "w") as f:
+            f.write(json.dumps({"ts": "t", "kind": "session", "sid": self.sid("a"), "cwd": self.tmp.name,
+                                "project": False}) + "\n")
+        self.addCleanup(os.remove, os.path.join(config.run_dir("TASK-1"), "run.jsonl"))
         self.touch("TASK-1", "a", 40)
         self.assertTrue(config.transcript("TASK-1", self.sid("a"), self.tdir).startswith(
             os.path.join(self.tdir, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(self.tmp.name)))))

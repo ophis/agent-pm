@@ -367,12 +367,16 @@ class Prompt(Fake):
         prompt, _ = self.compose()
         self.assertIn("````markdown\n```js\nx\n```\n````", prompt)
 
-    def test_tail_with_a_file_input(self):
-        path = os.path.join(self.root, "in.md")
-        self.write({"in.md": "question"})
-        prompt, _ = self.compose(input=path, out="o.md", workdir="wd")
-        tail = prompt.rsplit("\n---\n", 1)[1]
-        self.assertEqual(tail.strip().splitlines(), [f"Input: {path}", f"Workdir: {os.path.abspath('wd')}"])
+    def test_an_input_naming_a_file_is_text(self):
+        self.write({"input.md": "question"})
+        here = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, here)
+        for given in ("input.md", os.path.join(self.root, "input.md")):
+            prompt, _ = self.compose(input=given, out="o.md", workdir="wd")
+            tail = prompt.rsplit("\n---\n", 1)[1]
+            self.assertEqual(tail.strip().splitlines(), [f"Workdir: {os.path.abspath('wd')}", "Input:", "", given])
+            self.assertNotIn("question", prompt)
 
     def test_tail_with_free_text_input(self):
         prompt, _ = self.compose(input="Compare cmux and tmux.\nKeep it short.")
@@ -388,10 +392,10 @@ class Prompt(Fake):
     def test_handover_gets_the_report_command(self):
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
-        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/.report.jsonl outcome <file>`.", prompt)
+        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/run.jsonl outcome <file>`.", prompt)
         spaced = replace(PARAMS, workdir="/my w")
-        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
-        self.assertEqual(spaced.channel, "/my w/.report.jsonl")
+        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/run.jsonl'")
+        self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
     def test_guide_principles_and_role_text_name_the_clients_paths(self):
         self.write({"team/principles.md": "# Principles\n\nRun `{{scripts}}/x.py`; tasks in `{{tasks}}`.\n",
@@ -422,6 +426,13 @@ class Prompt(Fake):
         self.assertIn("Task: pick one;", prompt)
         prompt, _ = self.compose()
         self.assertTrue(prompt.startswith("# Guide"))
+
+    def test_a_resumes_input_adds_to_the_sessions_earlier_input(self):
+        self.assertIn("The input below is current: it adds to this session's earlier input.", compose.RESUME)
+        self.assertNotIn("re-read the input", compose.RESUME)
+        prompt, _ = self.compose(resume=True, input="Answers:\n- Use B.")
+        self.assertTrue(prompt.startswith(compose.RESUME))
+        self.assertTrue(prompt.endswith("\nInput:\n\nAnswers:\n- Use B.\n"))
 
     def test_leftover_placeholder_in_a_rule_file(self):
         self.write({"team/roles/writer.md": WRITER + "\nUse {{tool}}.\n"})

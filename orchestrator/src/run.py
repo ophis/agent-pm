@@ -55,7 +55,7 @@ def inner(a, *, layout, gql, popen, runs, root):
         router.append_quiet(plog, f"tui-{c.status} {where}: {c.msg}" if c.msg else f"tui-{c.status} {where}")
     rec = sessions.base(sid=a.sid, workdir=rd, started_at=sessions.now())
 
-    def begun():  # run.json now names the session's cwd, which the comment's resume command needs
+    def begun():  # run.jsonl now names the session's cwd, which the comment's resume command needs
         if reg := sessions.post(a.issue, rec, gql=harness):
             router.append_quiet(plog, reg)
     ctx = router.context(a, cfg, name, role, gql, plog, a.uuid, repo_slug(a.target) if a.target else None)

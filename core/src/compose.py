@@ -35,10 +35,10 @@ INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task 
 INDEX_LINE = re.compile(r"^- `([\w-]+)`: (.+)$", re.M)
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
-CHANNEL = ".report.jsonl"
-RESUME = ("Resumed agent run after an interruption. These rules and the input are current; either may have changed since this "
-          "session started, so re-read the input. Continue the task this session already picked or was given; never "
-          "pick it again.\n\n")
+CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
+RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "
+          "started. The input below is current: it adds to this session's earlier input. Continue the task this "
+          "session already picked or was given; never pick it again.\n\n")
 
 
 class ConfigError(Exception):
@@ -191,12 +191,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
         parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
     if params:
-        tail = f"Workdir: {os.path.abspath(params.workdir)}"
-        if os.path.isfile(params.input):
-            tail = f"Input: {os.path.abspath(params.input)}\n{tail}"
-        else:
-            tail = f"{tail}\nInput:\n\n{params.input.strip()}"
-        prompt += f"\n---\n\n{tail}\n"
+        prompt += f"\n---\n\nWorkdir: {os.path.abspath(params.workdir)}\nInput:\n\n{params.input.strip()}\n"
     return prompt
 
 

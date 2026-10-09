@@ -72,7 +72,7 @@ class Base(unittest.TestCase):
                           layers=layers, cwd=cwd or self.work)[0]
 
     def report(self):
-        return f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl"
+        return f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl"
 
 
 class ClientConfig(unittest.TestCase):
@@ -192,7 +192,7 @@ class Claude(Base):
     def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
-        cmd = f"python3 {CORE}/src/report.py --to {self.work}/.report.jsonl stop --pending background_tasks"
+        cmd = f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"enabledPlugins": {"agent-pm@agent-pm": False},
                           "hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
@@ -294,7 +294,7 @@ class Generic(Base):
         gate = "python3 /u/usage.py {{workdir}} *"
         acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s",
                            methods="/m", tasks="/t")
-        report = f"python3 /s/report.py --to {self.work}/.report.jsonl *"
+        report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
         self.assertEqual(acc.commands, ["/s/x *", report, gate])
         acc = drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s", methods="/m", tasks="/t")
         self.assertEqual(acc.commands, ["x", report])
@@ -303,7 +303,7 @@ class Generic(Base):
         acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
                            repo=self.repo, scripts="/s", methods="/m", tasks="/t")
         self.assertEqual(acc, drive.Access(dirs=["/t", self.repo], commands=[
-            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/.report.jsonl *"], cwd=self.work))
+            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/run.jsonl *"], cwd=self.work))
 
     def test_methods_fills_read_and_write_entries_and_nothing_else_does(self):
         acc = drive.access(run(read=["{{methods}}", "/t"], write=["{{methods}}/out"]), self.params(), repo=None,
@@ -458,9 +458,19 @@ class Cwd(Base):
         self.assertIn("trusted_dirs", str(cm.exception))
 
     def write_record(self, *entries):
+        """<workdir>/run.jsonl holding one `session` event per entry."""
         os.makedirs(self.work, exist_ok=True)
-        with open(os.path.join(self.work, "run.json"), "w") as f:
-            json.dump({"sessions": list(entries), "progress": [], "outcome": None}, f)
+        with open(os.path.join(self.work, "run.jsonl"), "w") as f:
+            f.writelines(json.dumps({"ts": "t", "kind": "session", **e}) + "\n" for e in entries)
+
+    def test_a_resume_runs_in_the_cwd_its_start_recorded(self):
+        new, _ = self.launch(self.trusted, cwd=self.trusted)
+        p = self.params()
+        with redirect_stderr(io.StringIO()):
+            drive.start(new, run(), p, client=claude(), sinks=[],
+                        popen=lambda argv, **kw: FakeProc(feed(p.channel, [outcome(DONE)])))
+        launch, err = self.launch(self.trusted, cwd=self.other, layers=[{"cwd": self.work}], resume=True)
+        self.assertEqual((launch.cwd, launch.project, err), (self.trusted, True, ""))
 
     def test_a_resume_reuses_the_recorded_cwd_and_project(self):
         self.write_record({"sid": SID, "cwd": self.trusted, "project": True})
@@ -485,7 +495,7 @@ class Cwd(Base):
                 launch, err = self.launch(self.trusted, cwd=self.trusted, resume=True)
                 self.assertEqual((launch.cwd, launch.project, err), (self.work, False, ""))
 
-    def test_prompt_paths_stay_absolute_whatever_the_cwd(self):
+    def test_prompt_paths_stay_absolute_whatever_the_cwd_and_an_input_naming_a_file_is_text(self):
         os.makedirs(self.work)
         with open(os.path.join(self.work, "input.md"), "w") as f:
             f.write("Research X.")
@@ -497,8 +507,8 @@ class Cwd(Base):
                 launch, _ = self.launch(self.trusted, cwd=cwd, input="work/input.md", workdir="work")
                 tail = launch.argv[2].rsplit("\n---\n", 1)[1]
                 work = os.path.join(os.getcwd(), "work")
-                self.assertEqual(tail, f"\nInput: {work}/input.md\nWorkdir: {work}\n")
-                self.assertIn(f"--to {work}/.report.jsonl", launch.argv[2])
+                self.assertEqual(tail, f"\nWorkdir: {work}\nInput:\n\nwork/input.md\n")
+                self.assertIn(f"--to {work}/run.jsonl", launch.argv[2])
 
 
 class Skill(Base):
@@ -768,7 +778,7 @@ class Report(Base):
     def setUp(self):
         super().setUp()
         os.makedirs(self.work)
-        self.channel = os.path.join(self.work, ".report.jsonl")
+        self.channel = os.path.join(self.work, "run.jsonl")
 
     def report(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -1000,8 +1010,13 @@ class Start(Base):
         with open(os.path.join(self.work, name)) as f:
             return f.read()
 
-    def record(self):
-        return json.loads(self.read("run.json"))
+    def events(self):
+        """The run's record, <workdir>/run.jsonl, one dict per line."""
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def last(self, kind):
+        return [e for e in self.events() if e["kind"] == kind][-1]
 
     def exists(self, name):
         return os.path.lexists(os.path.join(self.work, name))
@@ -1012,8 +1027,9 @@ class Start(Base):
         self.assertEqual((r.returncode, r.outcome.status, r.outcome.url), (0, "done", out))
         self.assertEqual((argv, kw["cwd"], kw["env"]["FAKE"]), (["fake"], self.work, "1"))
         self.assertEqual(self.read("out.md"), "# Doc\n")
-        self.assertEqual(self.record()["outcome"]["url"], out)
-        self.assertEqual([p | {"ts": ""} for p in self.record()["progress"]], [{"ts": "", "name": "round", "text": "half way"}])
+        self.assertEqual(self.last("result")["outcome"]["url"], out)
+        self.assertEqual([(e["name"], e["text"]) for e in self.events() if e["kind"] == "progress"],
+                         [("round", "half way")])
         self.assertEqual(log, "Progress (round): half way\nhi\n")
 
     def test_run_env_drops_the_parent_session_keys(self):
@@ -1044,7 +1060,7 @@ class Start(Base):
         got = threading.Event()
 
         def quiet():
-            drive.append_line(os.path.join(self.work, ".report.jsonl"), json.dumps(progress("start", "go")) + "\n")
+            drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(progress("start", "go")) + "\n")
             self.assertTrue(got.wait(5), "no progress event while stdout was quiet")
             yield said("after")
 
@@ -1063,13 +1079,13 @@ class Start(Base):
 
     def test_the_channel_exists_before_launch(self):
         def items():
-            self.assertTrue(os.path.isfile(os.path.join(self.work, ".report.jsonl")))
+            self.assertTrue(os.path.isfile(os.path.join(self.work, "run.jsonl")))
             yield said("x")
         self.start(items())
 
     def test_only_lines_appended_after_start_count(self):
         os.makedirs(self.work)
-        with open(os.path.join(self.work, ".report.jsonl"), "w") as f:
+        with open(os.path.join(self.work, "run.jsonl"), "w") as f:
             f.write(json.dumps(progress("start", "old")) + "\n" + json.dumps(outcome(DONE)) + "\n")
         seen = []
         r, _, _ = self.start([said("resumed")], sinks=[seen.append], resume=True)
@@ -1096,16 +1112,16 @@ class Start(Base):
 
     def test_a_fifo_at_the_channel_is_refused_not_waited_on(self):
         os.makedirs(self.work)
-        os.mkfifo(os.path.join(self.work, ".report.jsonl"))
+        os.mkfifo(os.path.join(self.work, "run.jsonl"))
         with self.assertRaises(OSError):
             self.start([outcome(DONE)])
 
     def test_garbage_and_partial_lines(self):
         def items():
-            with open(os.path.join(self.work, ".report.jsonl"), "a") as f:
+            with open(os.path.join(self.work, "run.jsonl"), "a") as f:
                 f.write("not json\n[]\n" + json.dumps(progress("a", "1"))[:10])
             yield said("x")
-            with open(os.path.join(self.work, ".report.jsonl"), "a") as f:
+            with open(os.path.join(self.work, "run.jsonl"), "a") as f:
                 f.write(json.dumps(progress("a", "1"))[10:] + "\n")
         seen = []
         self.start(items(), sinks=[seen.append])
@@ -1118,8 +1134,8 @@ class Start(Base):
             f.write(json.dumps(outcome(DONE)) + "\n")
 
         def items():
-            os.remove(os.path.join(self.work, ".report.jsonl"))
-            os.symlink(target, os.path.join(self.work, ".report.jsonl"))
+            os.remove(os.path.join(self.work, "run.jsonl"))
+            os.symlink(target, os.path.join(self.work, "run.jsonl"))
             with open(target, "a") as f:
                 f.write(json.dumps(outcome(DONE)) + "\n")
             yield said("x")
@@ -1139,7 +1155,7 @@ class Start(Base):
 
     def test_needs_input_reaches_the_record(self):
         self.start([outcome({**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""})])
-        self.assertEqual(self.record()["outcome"]["questions"], ["Which repo?"])
+        self.assertEqual(self.last("result")["outcome"]["questions"], ["Which repo?"])
 
     def test_no_outcome(self):
         r, _, _ = self.start([said("bye")])
@@ -1151,7 +1167,7 @@ class Start(Base):
         r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append])
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("out.md"))
-        self.assertIsNone(self.record()["outcome"])
+        self.assertEqual(self.last("result")["error"], "the client exited 143")
 
     def test_invalid_outcome_is_the_error_and_reaches_no_sink(self):
         seen = []
@@ -1159,23 +1175,50 @@ class Start(Base):
         self.assertIn("invalid outcome: status 'maybe'", r.error)
         self.assertEqual(seen, [])
 
-    def test_a_symlink_planted_during_the_run_is_replaced_not_followed(self):
+    def test_a_symlink_planted_at_out_during_the_run_is_replaced_not_followed(self):
         target = os.path.join(self.tmp.name, "zshrc")
         with open(target, "w") as f:
             f.write("mine")
 
         def items():
-            os.remove(os.path.join(self.work, "run.json"))
-            for name in ("run.json", "out.md"):
-                os.symlink(target, os.path.join(self.work, name))
-            yield from feed(os.path.join(self.work, ".report.jsonl"), [progress("round", "x"), outcome(DONE)])
+            os.symlink(target, os.path.join(self.work, "out.md"))
+            yield from feed(os.path.join(self.work, "run.jsonl"), [progress("round", "x"), outcome(DONE)])
 
         self.start(items())
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
-        self.assertFalse(os.path.islink(os.path.join(self.work, "run.json")))
-        self.assertEqual(self.record()["outcome"]["status"], "done")
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
         self.assertEqual(self.read("out.md"), "# Doc\n")
+
+    def test_a_record_replaced_by_a_symlink_is_not_followed_and_the_run_still_ends(self):
+        target = os.path.join(self.tmp.name, "zshrc")
+        with open(target, "w") as f:
+            f.write("mine")
+
+        def items():
+            os.remove(os.path.join(self.work, "run.jsonl"))
+            os.symlink(target, os.path.join(self.work, "run.jsonl"))
+            yield said("x")
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            r, _, _ = self.start(items())
+        with open(target) as f:
+            self.assertEqual(f.read(), "mine")
+        self.assertEqual(r, drive.Result(0, None, "the agent run returned no outcome"))
+        self.assertEqual(len(re.findall(r"^drive\.py: .*run\.jsonl", err.getvalue(), re.M)), 2, err.getvalue())
+
+    def test_a_symlink_at_the_record_stops_the_run_before_it_starts(self):
+        os.makedirs(self.work)
+        target = os.path.join(self.tmp.name, "zshrc")
+        with open(target, "w") as f:
+            f.write("mine")
+        os.symlink(target, os.path.join(self.work, "run.jsonl"))
+        with self.assertRaises(OSError):
+            self.start([outcome(DONE)])
+        with open(target) as f:
+            self.assertEqual(f.read(), "mine")
+        self.assertFalse(hasattr(self, "proc"))
 
     def test_an_error_reading_stdout_stops_the_run(self):
         def items():
@@ -1200,80 +1243,94 @@ class Start(Base):
         self.assertEqual([e.kind for e in a], ["text", "missing", "outcome"])
         self.assertEqual(a, b)
 
-    def test_resume_appends_progress_a_new_run_resets_it(self):
-        self.start([progress("round", "one"), outcome(DONE)])
-        self.start([progress("round", "二"), outcome(DONE)], resume=True)
-        self.assertEqual([p["text"] for p in self.record()["progress"]], ["one", "二"])
-        self.assertIn("二", self.read("run.json"))
-        self.start([progress("round", "three"), outcome(DONE)])
-        self.assertEqual([p["text"] for p in self.record()["progress"]], ["three"])
-
     def recorded(self, launch, items=(), **params):
-        """drive.start of `launch` over `items`; (result, the record `begun` saw, the record after)."""
+        """drive.start of `launch` over `items`; (result, the record's events when `begun` ran, its events after)."""
         p, seen = self.params(**params), []
-
-        def begun():
-            seen.append(drive.record(self.work))
-        r = drive.start(launch, run(), p, client=claude(), sinks=[], begun=begun,
+        r = drive.start(launch, run(), p, client=claude(), sinks=[], begun=lambda: seen.append(self.events()),
                         popen=lambda argv, **kw: FakeProc(feed(p.channel, items)))
-        return r, seen[0], self.record()
+        return r, seen[0], self.events()
 
-    def test_the_record_holds_the_session_its_progress_and_outcome(self):
+    @staticmethod
+    def bare(event):
+        return {k: v for k, v in event.items() if k != "ts"}
+
+    def test_the_record_is_input_session_the_reports_result_and_end(self):
         launch = drive.Launch(["fake"], cwd=self.repo, transcript="/p/x.jsonl", resume="cd x && resume", project=True)
-        r, before, after = self.recorded(launch, [progress("round", "one"), outcome(DONE)])
-        entry = {"sid": SID, "cwd": self.repo, "project": True, "transcript": "/p/x.jsonl", "resume": "cd x && resume"}
-        (b,), (a,) = before["sessions"], after["sessions"]
-        self.assertEqual((b | {"started": ""}, before["progress"], before["outcome"]),
-                         (entry | {"started": "", "ended": None}, [], None))
-        self.assertEqual((a["started"], a["ended"] is not None), (b["started"], True))
-        self.assertEqual([(x["name"], x["text"]) for x in after["progress"]], [("round", "one")])
-        self.assertEqual(after["outcome"], dataclasses.asdict(r.outcome))
-        self.assertEqual(drive.session(self.work, SID), a)
+        r, before, after = self.recorded(launch, [progress("start", "go"), outcome(DONE)])
+        self.assertEqual([e["kind"] for e in before], ["input", "session"])
+        self.assertEqual([e["kind"] for e in after], ["input", "session", "progress", "outcome", "result", "end"])
+        mine = after[:2] + after[4:]
+        self.assertEqual([list(e) for e in mine], [["ts", "kind", "text"],
+                                                   ["ts", "kind", "sid", "cwd", "project", "transcript", "resume"],
+                                                   ["ts", "kind", "outcome"], ["ts", "kind", "sid", "rc"]])
+        for e in mine:
+            self.assertIsNotNone(datetime.fromisoformat(e["ts"]).utcoffset(), e["ts"])
+        kept = {k: v for k, v in dataclasses.asdict(r.outcome).items() if k != "deliverable"}
+        self.assertEqual([self.bare(e) for e in mine], [
+            {"kind": "input", "text": "Research X."},
+            {"kind": "session", "sid": SID, "cwd": self.repo, "project": True, "transcript": "/p/x.jsonl",
+             "resume": "cd x && resume"},
+            {"kind": "result", "outcome": kept}, {"kind": "end", "sid": SID, "rc": 0}])
+        self.assertEqual((kept["url"], r.outcome.deliverable), (os.path.join(self.work, "out.md"), "# Doc\n"))
+        self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
+        self.assertEqual(drive.session(self.work, SID), after[1])
 
-    def test_a_new_session_adds_an_entry_and_restarts_progress_a_resume_keeps_both(self):
-        other = "99999999-2222-3333-4444-555555555555"
-        self.recorded(drive.Launch(["fake"], cwd=self.work), [progress("a", "1")])
-        self.recorded(drive.Launch(["fake"], cwd=self.work), [progress("b", "2")], sid=other)
-        _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.repo), [progress("c", "3")], sid=other, resume=True)
-        self.assertEqual([e["sid"] for e in rec["sessions"]], [SID, other])
-        self.assertEqual([x["name"] for x in rec["progress"]], ["b", "c"])
-        self.assertEqual(rec["sessions"][1]["cwd"], self.repo)
+    def test_the_input_is_recorded_as_given_and_the_cwd_defaults_to_the_workdir(self):
+        _, before, _ = self.recorded(drive.Launch(["fake"]), input="  Answers:\n- B\n")
+        self.assertEqual((before[0]["text"], before[1]["cwd"]), ("  Answers:\n- B\n", self.work))
 
-    def test_a_resume_keeps_its_sessions_start_time(self):
-        self.recorded(drive.Launch(["fake"], cwd=self.work))
-        started = self.record()["sessions"][0]["started"]
-        with unittest.mock.patch.object(drive, "stamp", lambda: "later"):
-            _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.work), resume=True)
-        self.assertEqual((rec["sessions"][0]["started"], rec["sessions"][0]["ended"]), (started, "later"))
+    def test_a_run_without_a_valid_outcome_records_its_error(self):
+        for items, rc in (([said("bye")], 0), ([outcome(DONE)], 143), ([outcome({**DONE, "status": "maybe"})], 0)):
+            with self.subTest(items=items, rc=rc):
+                r, _, _ = self.start(items, rc=rc)
+                result, end = self.events()[-2:]
+                self.assertTrue(r.error)
+                self.assertEqual((self.bare(result), self.bare(end)),
+                                 ({"kind": "result", "error": r.error}, {"kind": "end", "sid": SID, "rc": rc}))
 
-    def test_an_unreadable_record_is_started_anew(self):
+    def test_a_resume_appends_its_input_and_session(self):
+        self.recorded(drive.Launch(["fake"], cwd=self.repo), [progress("start", "go"), outcome(self.NEEDS)])
+        self.recorded(drive.Launch(["fake"], cwd=self.repo), [outcome(DONE)], resume=True, input="Use B.")
+        events = self.events()
+        self.assertEqual([e["kind"] for e in events], ["input", "session", "progress", "outcome", "result", "end",
+                                                       "input", "session", "outcome", "result", "end"])
+        self.assertEqual([e["text"] for e in events if e["kind"] == "input"], ["Research X.", "Use B."])
+        self.assertEqual([e["outcome"]["status"] for e in events if e["kind"] == "result"], ["needs_input", "done"])
+
+    def test_the_driver_events_are_no_reports(self):
         os.makedirs(self.work)
-        for text in ("not json", "[]", '{"sessions": 1, "progress": 2}', '{"sessions": [1, {"sid": "x"}]}'):
-            with self.subTest(text=text):
-                with open(os.path.join(self.work, "run.json"), "w") as f:
-                    f.write(text)
-                _, _, rec = self.recorded(drive.Launch(["fake"], cwd=self.work), resume=True)
-                self.assertEqual([e["sid"] for e in rec["sessions"] if isinstance(e, dict) and "cwd" in e], [SID])
+        tail = drive.Tail(os.path.join(self.work, "run.jsonl"))
+        lines = [{"ts": "t", "kind": "input", "text": "x"},
+                 {"ts": "t", "kind": "session", "sid": SID, "cwd": "/", "project": False},
+                 {"ts": "t", "kind": "result", "outcome": DONE}, {"ts": "t", "kind": "end", "sid": SID, "rc": 0}]
+        for line in lines:
+            drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(line) + "\n")
+        self.assertEqual(list(tail()), [])
 
-    def test_a_symlink_or_fifo_record_is_not_read(self):
-        os.makedirs(self.work)
-        target = os.path.join(self.tmp.name, "planted.json")
-        with open(target, "w") as f:
-            json.dump({"sessions": [{"sid": SID, "cwd": "/", "project": True}]}, f)
-        path = os.path.join(self.work, "run.json")
-        os.symlink(target, path)
-        self.assertEqual((drive.record(self.work), drive.session(self.work, SID)), ({}, None))
-        os.remove(path)
-        os.mkfifo(path)
-        self.assertEqual(drive.record(self.work), {})
+    def test_a_result_line_the_agent_appends_is_no_outcome(self):
+        r, _, _ = self.start([{"kind": "result", "outcome": DONE}])
+        self.assertEqual(r.error, "the agent run returned no outcome")
 
-    def test_the_end_time_is_recorded_when_the_run_raises(self):
+    def test_the_record_ends_when_the_run_raises(self):
         def items():
             yield said("x")
             raise KeyboardInterrupt
         with self.assertRaises(KeyboardInterrupt):
             self.start(items(), sinks=[])
-        self.assertIsNotNone(self.record()["sessions"][0]["ended"])
+        result, end = self.events()[-2:]
+        self.assertEqual(self.bare(result), {"kind": "result", "error": "stopped: KeyboardInterrupt"})
+        self.assertEqual(self.bare(end), {"kind": "end", "sid": SID, "rc": 1})
+
+    def test_the_closing_writes_never_mask_the_runs_exception(self):
+        def items():
+            os.remove(os.path.join(self.work, "run.jsonl"))
+            os.mkdir(os.path.join(self.work, "run.jsonl"))
+            yield said("x")
+            raise KeyboardInterrupt
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(KeyboardInterrupt):
+            self.start(items(), sinks=[])
+        self.assertEqual(len(re.findall(r"^drive\.py: .*run\.jsonl", err.getvalue(), re.M)), 2, err.getvalue())
 
     FAILED = {**DONE, "status": "failed", "deliverable": ""}
     NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
@@ -1300,6 +1357,39 @@ class Start(Base):
     def test_no_outcome_reports_nothing(self):
         _, missing, err, _ = self.missing(said("bye"))
         self.assertEqual((missing, err), ([], ""))
+
+
+class Session(Base):
+    """drive.session: a session's entry in <workdir>/run.jsonl."""
+    def write(self, *lines):
+        os.makedirs(self.work, exist_ok=True)
+        with open(os.path.join(self.work, "run.jsonl"), "wb") as f:
+            f.writelines((line if isinstance(line, bytes) else json.dumps(line).encode()) + b"\n" for line in lines)
+
+    def test_the_latest_valid_session_event_of_the_sid_wins(self):
+        first = {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": False}
+        latest = {**first, "cwd": "/b", "project": True}
+        self.write(first, latest, b"not json", b"[]", b"\xff\xfe", b'{"kind": "session"', {**first, "kind": "input"},
+                   {**first, "sid": "other"}, {**first, "cwd": "rel"}, {**first, "cwd": "/x\x1b[2J"},
+                   {**first, "cwd": 3}, {**first, "project": 1}, {k: v for k, v in first.items() if k != "project"})
+        self.assertEqual(drive.session(self.work, SID), latest)
+
+    def test_none_without_a_valid_session_event(self):
+        self.assertIsNone(drive.session(self.work, SID))
+        self.write(b"", {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": "yes"})
+        self.assertIsNone(drive.session(self.work, SID))
+
+    def test_a_symlink_or_fifo_record_is_not_read(self):
+        os.makedirs(self.work)
+        target = os.path.join(self.tmp.name, "planted.jsonl")
+        with open(target, "w") as f:
+            f.write(json.dumps({"kind": "session", "sid": SID, "cwd": "/", "project": True}) + "\n")
+        path = os.path.join(self.work, "run.jsonl")
+        os.symlink(target, path)
+        self.assertIsNone(drive.session(self.work, SID))
+        os.remove(path)
+        os.mkfifo(path)
+        self.assertIsNone(drive.session(self.work, SID))
 
 
 class Command(unittest.TestCase):
@@ -1353,6 +1443,25 @@ class HostFailure(Base):
             with self.subTest(**kw):
                 self.assertEqual(self.start(**kw), drive.Result(1, None, "failing: no host"))
                 self.assertEqual(self.stopped, [True])
+                with open(os.path.join(self.work, "run.jsonl")) as f:
+                    result, end = [json.loads(line) for line in f][-2:]
+                self.assertEqual((result["error"], end["rc"]), ("failing: no host", 1))
+
+    def test_an_exception_out_of_the_loop_ends_the_record_stopped(self):
+        for error, rc, text in ((SystemExit(129), 129, "stopped: SystemExit: 129"),
+                                (SystemExit("bye"), 1, "stopped: SystemExit: bye"),
+                                (KeyboardInterrupt(), 1, "stopped: KeyboardInterrupt"),
+                                (RuntimeError("one\ntwo"), 1, "stopped: RuntimeError: one two")):
+            with self.subTest(error=error):
+                with self.assertRaises(type(error)) as cm:
+                    self.start(poll=error)
+                self.assertIs(cm.exception, error)
+                with open(os.path.join(self.work, "run.jsonl")) as f:
+                    events = [json.loads(line) for line in f]
+                self.assertEqual([e["kind"] for e in events[-4:]], ["input", "session", "result", "end"])
+                self.assertEqual({k: events[-2][k] for k in ("kind", "error")}, {"kind": "result", "error": text})
+                self.assertEqual({k: events[-1][k] for k in ("kind", "sid", "rc")},
+                                 {"kind": "end", "sid": SID, "rc": rc})
 
     def test_headless_raises_a_failed_popen(self):
         popen = unittest.mock.Mock(side_effect=FileNotFoundError(2, "No such file or directory", "fake"))
@@ -1381,7 +1490,7 @@ class TuiRunner(Base):
         return r, self.fake.calls, [e.kind for e in seen], self.err.getvalue()
 
     def main(self, *steps, api=None, extra=()):
-        fake, err = FakeTui(os.path.join(self.work, ".report.jsonl"), steps), io.StringIO()
+        fake, err = FakeTui(os.path.join(self.work, "run.jsonl"), steps), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
                 "--workdir", self.work, "--runner", "tui", *extra]
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
@@ -1738,7 +1847,7 @@ class Detach(Base):
 
     def inner(self, *steps, argv=None, api=None):
         """drive.main as the driver of a tui run over FakeTui(steps); (exit code, its calls)."""
-        fake = FakeTui(os.path.join(self.work, ".report.jsonl"), steps)
+        fake = FakeTui(os.path.join(self.work, "run.jsonl"), steps)
         argv = argv or self.argv("--runner", "tui", "--events", self.events, "--driver", "d-drive")
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
             return drive.main(argv, root=CORE), fake.calls
@@ -1892,7 +2001,7 @@ class Detach(Base):
 
     def test_a_headless_driver_appends_only_its_outcome(self):
         def popen(argv, **kw):
-            return FakeProc(feed(os.path.join(self.work, ".report.jsonl"), [outcome(DONE)]))
+            return FakeProc(feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)]))
 
         with redirect_stderr(io.StringIO()):
             code = drive.main(self.argv("--events", self.events, "--driver", "d-drive"), root=CORE, popen=popen)
@@ -2054,7 +2163,7 @@ class Main(Base):
 
         def popen(argv, **kw):
             calls.append((argv, kw))
-            return FakeProc(feed(os.path.join(self.work, ".report.jsonl"), lines), rc)
+            return FakeProc(feed(os.path.join(self.work, "run.jsonl"), lines), rc)
 
         out, err = io.StringIO(), io.StringIO()
         argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
@@ -2102,6 +2211,22 @@ class Main(Base):
         self.assertEqual((code, entry["cwd"], entry["project"]), (0, os.getcwd(), False))
         self.assertEqual(entry["resume"], f"cd {os.getcwd()} && claude --resume {SID} --add-dir {self.work}")
         self.assertEqual(entry["transcript"], clients.claude.transcript(os.getcwd(), SID))
+
+    def test_input_is_text_from_the_argument_or_stdin_never_a_files_content(self):
+        here = os.getcwd()
+        os.chdir(self.tmp.name)
+        self.addCleanup(os.chdir, here)
+        with open("input.md", "w") as f:
+            f.write("SECRET")
+        for argv, stdin, want in ((["--input", "input.md"], "", "input.md"),
+                                  (["--input", "-"], "Use B.\n", "Use B.\n")):
+            with self.subTest(argv=argv), unittest.mock.patch("sys.stdin", io.StringIO(stdin)):
+                code, _, _, ((cmd, _),) = self.run_main(*argv, lines=[outcome(DONE)])
+            with open(os.path.join(self.work, "run.jsonl")) as f:
+                inputs = [e["text"] for e in map(json.loads, f) if e["kind"] == "input"]
+            self.assertEqual((code, inputs[-1]), (0, want))
+            self.assertTrue(cmd[2].endswith(f"\nInput:\n\n{want.strip()}\n"), cmd[2][-100:])
+            self.assertNotIn("SECRET", cmd[2])
 
     def test_no_outcome_exits_1(self):
         code, _, err, _ = self.run_main()

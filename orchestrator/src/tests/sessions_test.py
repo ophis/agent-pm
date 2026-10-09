@@ -73,8 +73,9 @@ class Record(unittest.TestCase):
     def test_command_runs_in_the_recorded_cwd_never_the_recorded_command(self):
         with tempfile.TemporaryDirectory() as workdir:
             cwd = "/data/my repo"
-            with open(os.path.join(workdir, "run.json"), "w") as f:
-                json.dump({"sessions": [{"sid": SID, "cwd": cwd, "project": True, "resume": "rm -rf ~"}]}, f)
+            with open(os.path.join(workdir, "run.jsonl"), "w") as f:
+                f.write(json.dumps({"ts": "t", "kind": "session", "sid": SID, "cwd": cwd, "project": True,
+                                    "resume": "rm -rf ~"}) + "\n")
             self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
                              ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", workdir])
 

@@ -2,12 +2,13 @@
 """Driver: composes an agent run, has its client (src/clients/) build the command, starts it through a runner, tails the
 channel the run reports its progress and outcome to (report.py), then checks and saves the outcome.
 
-drive.py --role ROLE [--task TASK] --input FILE|TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
+drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
          [--events FILE] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
 --out is where the deliverable is saved (local and orchestrator destinations); the run's cwd: place(). By default
-(start's sinks) a run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
+(start's sinks) a run shows its text and progress on stderr; every run appends to its record <workdir>/run.jsonl
+(start).
 --runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
 The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
@@ -45,13 +46,12 @@ import clients  # noqa: E402
 import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill, load_run, outcome_schema,  # noqa: E402
-                     render, report_command, tui_session)
+from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill, load_run,  # noqa: E402
+                     outcome_schema, render, report_command, tui_session)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
 SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
-RECORD = "run.json"   # in the workdir: the driver's record of the agent run (Record)
 NAME = re.compile(r"[\w-]+")
 POLL = 0.5   # seconds between reads of the channel while the host is quiet
 WAIT_LIMIT = 2 * 60 * 60   # seconds
@@ -324,67 +324,39 @@ def stamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def record(workdir: str) -> dict:
-    """<workdir>/run.json as written by Record; {} when it is missing or no JSON object. A symlink or anything but a
-    regular file at the path is never read."""
+def note(path: str, kind: str, *, best_effort: bool = False, **fields) -> None:
+    """Appends driver event `kind` to the run's record at `path` as one line {"ts", "kind", **fields}; with best_effort
+    an OSError is printed, never raised."""
     try:
-        fd = os.open(os.path.join(workdir, RECORD), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return {}
-    with os.fdopen(fd, "rb") as f:
-        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
-            return {}
-        try:
-            data = json.loads(f.read())
-        except ValueError:
-            return {}
-    return data if isinstance(data, dict) else {}
+        append_line(path, json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n")
+    except OSError as e:
+        if not best_effort:
+            raise
+        print(f"drive.py: {e}", file=sys.stderr)
 
 
 def session(workdir: str, sid: str) -> dict | None:
-    """The record's entry for session `sid`, when it names a printable absolute cwd and project as a bool; else None.
-    The agent run can write its workdir: no other field is checked."""
-    entries = record(workdir).get("sessions")
-    for e in entries if isinstance(entries, list) else ():
-        if (isinstance(e, dict) and e.get("sid") == sid and isinstance(e.get("cwd"), str) and os.path.isabs(e["cwd"])
-                and e["cwd"].isprintable() and isinstance(e.get("project"), bool)):
-            return e
-    return None
-
-
-class Record:
-    """<workdir>/run.json, written only here, each write replacing the file (save): `sessions`, one entry per session
-    (sid, cwd, project, transcript, resume, started, ended; a resume keeps its entry's started), the
-    `progress` reports (a new session starts them anew) and the last validated `outcome` (null until one holds)."""
-    def __init__(self, launch: Launch, params: RunParams):
-        workdir = os.path.abspath(params.workdir)
-        self.path, old = os.path.join(workdir, RECORD), record(workdir)
-        entries = [e for e in old.get("sessions") or [] if isinstance(e, dict)] if isinstance(old.get("sessions"), list) else []
-        prior = session(workdir, params.sid) if params.resume else None
-        entry = {"sid": params.sid, "cwd": launch.cwd or workdir, "project": launch.project,
-                 "transcript": launch.transcript, "resume": launch.resume, "started": stamp(), "ended": None}
-        if prior and isinstance(prior.get("started"), str):
-            entry["started"] = prior["started"]
-        at = next((i for i, e in enumerate(entries) if e.get("sid") == params.sid), len(entries))
-        entries[at:at + 1] = [entry]
-        progress = old.get("progress") if params.resume and isinstance(old.get("progress"), list) else []
-        self.data, self.entry = {"sessions": entries, "progress": progress, "outcome": None}, entry
-        self.write()
-
-    def write(self) -> None:
-        save(self.path, json.dumps(self.data, ensure_ascii=False, indent=1) + "\n")
-
-    def progress(self, event: Event) -> None:
-        self.data["progress"].append({"ts": stamp(), "name": event.name, "text": event.text})
-        self.write()
-
-    def outcome(self, outcome: dict) -> None:
-        self.data["outcome"] = outcome
-        self.write()
-
-    def end(self) -> None:
-        self.entry["ended"] = stamp()
-        self.write()
+    """The latest `session` event of `sid` in <workdir>/run.jsonl that names a printable absolute cwd and project as a
+    bool; else None. A symlink or anything but a regular file at the path is never read. The agent run can append to
+    the record: no other field is checked."""
+    try:
+        fd = os.open(os.path.join(workdir, CHANNEL), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            return None
+        lines = f.read().split(b"\n")
+    found = None
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(e, dict) and e.get("kind") == "session" and e.get("sid") == sid and isinstance(e.get("cwd"), str)
+                and os.path.isabs(e["cwd"]) and e["cwd"].isprintable() and isinstance(e.get("project"), bool)):
+            found = e
+    return found
 
 
 def report_event(line: str) -> Event | None:
@@ -680,12 +652,14 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its host's
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
-    this call began count. The Record holds the session, its progress and the checked outcome; `begun` is called once
-    its first write is done, before the host starts. A done or failed new run that never reported `start` gets a stderr
-    line and a `missing` event first. The tui runner names its session tui_session(…, params.prefix) and appends its
-    state events to the `events` file. Raises ConfigError, before anything starts, when the client lacks the runner's command
-    or the layout, params.prefix or events is one the runner can't take (check_layout, check_naming); a RunnerError
-    stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
+    this call began count. The channel is the run's record: its `input` and `session` events come before `begun` is
+    called and the host starts; `result` (the outcome without its deliverable, else the error) and `end` close it
+    however the run ends, an exception (raised on) as `stopped: <type>: <message>`. A done or failed new run that
+    never reported `start` gets a stderr line and a `missing` event first. The tui runner names its session
+    tui_session(…, params.prefix) and appends its state events to the `events` file. Raises ConfigError, before
+    anything starts, when the client lacks the runner's command or the layout, params.prefix or events is one the
+    runner can't take (check_layout, check_naming); a RunnerError stops the runner and is the Result, with rc 1 and
+    `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
     check_naming(runner, params.prefix, events)
@@ -697,18 +671,31 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     out = Path(params.out).absolute()
     if not out.is_dir():
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this agent run's
-    append_line(params.channel, "")   # created before launch, so the agent run's report command finds it
-    rec = Record(launch, params)
+    note(params.channel, "input", text=params.input)
+    note(params.channel, "session", sid=params.sid, cwd=launch.cwd or workdir, project=launch.project,
+         transcript=launch.transcript, resume=launch.resume)
+    rc = 1
     try:
         if begun:
             begun()
-        return _drive(launch, run, params, host=host, argv=argv, runner=runner, sinks=sinks, rec=rec, out=out)
+        result = _drive(launch, run, params, host=host, argv=argv, runner=runner, sinks=sinks, out=out)
+        rc, closing = result.returncode, {"error": result.error}
+        if result.outcome is not None:
+            closing = {"outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"}}
+        return result
+    except BaseException as e:
+        text = " ".join(str(e).split())
+        closing = {"error": f"stopped: {type(e).__name__}" + (f": {text}" if text else "")}
+        if isinstance(e, SystemExit) and isinstance(e.code, int):
+            rc = e.code
+        raise
     finally:
-        rec.end()
+        note(params.channel, "result", best_effort=True, **closing)
+        note(params.channel, "end", best_effort=True, sid=params.sid, rc=rc)
 
 
 def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, argv: list[str], runner: str,
-           sinks: Sequence[Sink], rec: Record, out: Path) -> Result:
+           sinks: Sequence[Sink], out: Path) -> Result:
     """start()'s loop, from the host's begin to the checked outcome."""
     workdir = os.path.abspath(params.workdir)
     tail, raw, seen = Tail(params.channel), None, set()
@@ -722,7 +709,6 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
             return
         if event.kind == "progress":
             seen.add(event.name)
-            rec.progress(event)
         for sink in sinks:
             sink(event)
 
@@ -765,7 +751,6 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         print("drive.py: missing progress mark: start", file=sys.stderr)
         for sink in sinks:
             sink(Event("missing", name="start"))
-    rec.outcome(asdict(outcome))
     for sink in sinks:
         sink(Event("outcome", outcome=asdict(outcome)))
     return Result(rc, outcome)
@@ -775,7 +760,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap = argparse.ArgumentParser(prog="drive.py")
     ap.add_argument("--role", required=True)
     ap.add_argument("--task")
-    ap.add_argument("--input")
+    ap.add_argument("--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's")
     ap.add_argument("--out")
     ap.add_argument("--workdir")
     ap.add_argument("--repo")
