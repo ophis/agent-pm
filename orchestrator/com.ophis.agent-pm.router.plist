@@ -13,9 +13,9 @@
 		<string>--now</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>/Users/francis/.agent-pm/logs/router.log</string>
+	<string>/Users/francis/.agent-pm/logs/orchestrator.jsonl</string>
 	<key>StandardOutPath</key>
-	<string>/Users/francis/.agent-pm/logs/router.log</string>
+	<string>/Users/francis/.agent-pm/logs/orchestrator.jsonl</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>

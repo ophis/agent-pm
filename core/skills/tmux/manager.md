@@ -27,7 +27,7 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
 - Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `SKILL.md` › Direct › Stop. Close a pane only by killing its tmux session.
 - Kill your own live-test sessions as soon as the test ends.
-- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `SKILL.md` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.json`, progress, transcripts).
+- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `SKILL.md` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.jsonl`, transcripts).
 - Pull the default branch only while `tmux ls` shows no `agent-pm-*` driver session: a scheduled router may have started one.
 
 ## Babysitting

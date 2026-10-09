@@ -1,12 +1,12 @@
 """Fixtures of an agent run shared by router_test (the outer) and run_test (the inner): a temp root linking the repo's core,
-a fake Linear (Gql) and a fake gh/git (Run)."""
+a fake Linear (Gql) and a fake gh/git (Run); and orchestrator.jsonl's reader (logged, show)."""
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,7 +28,6 @@ KEY = "linear-api-key-engineer"
 CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
           + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
           + '[core.roles.researcher]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
-TS = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ")
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
 USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
              "user": {"email": "ME@x.com", "name": "Me", "isMe": False}}
@@ -59,6 +58,26 @@ Add a session registry.
 ## PRD
 
 None linked."""
+
+
+def logged(logs=None):
+    """The lines of orchestrator.jsonl in logs (default config.LOGS_DIR) as dicts, each checked to open with ts (ISO 8601
+    with offset), src and kind."""
+    try:
+        with open(os.path.join(logs or config.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
+            lines = [json.loads(line) for line in f]
+    except FileNotFoundError:
+        return []
+    for d in lines:
+        assert list(d)[:3] == ["ts", "src", "kind"] and datetime.fromisoformat(d["ts"]).utcoffset() is not None, d
+    return lines
+
+
+def show(event):
+    """An event as `kind [issue] key=value…`, ts and src left out; a value not a str as JSON."""
+    fields = [f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}" for k, v in event.items()
+              if k not in ("ts", "src", "kind", "issue")]
+    return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 
 
 def res(stdout="", code=0, stderr=""):
@@ -139,17 +158,19 @@ class Base(unittest.TestCase):
         os.symlink(config.CORE, os.path.join(self.root, "core"))
         self.config = os.path.join(self.root, "orchestrator", "config.toml")
         self.write(self.config, CONFIG)
+        self.runs = os.path.join(self.root, "logs", "runs.jsonl")
         for p in (mock.patch.object(config, "RUNS_DIR", os.path.join(self.root, "work")),
-                  mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")), mock.patch.dict(os.environ)):
+                  mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")),
+                  mock.patch.object(config, "RUNS_LOG", self.runs), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
         os.environ.pop("TUI_ATTACH_PREFIX", None)
         self.rd = os.path.join(self.root, "work", ID)
-        self.runs = os.path.join(self.root, "logs", "runs.log")
         self.projects = os.path.join(self.tmp, "projects")
         self.gql = Gql(node(comments=[USER_NOTE]))
         self.run = Run(ENG_RUN)
-        self.sh_calls, self.sh_error, self.missing, self.keychain_calls = [], None, set(), []
+        self.sh_calls, self.tmux_error, self.missing, self.keychain_calls = [], None, set(), []
+        self.handovers = {}
         self.tmux_sessions = []
 
     def write(self, path, text):
@@ -162,22 +183,26 @@ class Base(unittest.TestCase):
             return f.read()
 
     def sh(self, argv, **kw):
+        """Fake tmux: list-sessions prints tmux_sessions; new-session (drive.detach's) fails with tmux_error, else takes
+        the handover file as tui_claude.EXEC does, keeping it in handovers by path."""
         self.sh_calls.append((argv, kw))
-        if self.sh_error:
-            raise self.sh_error
         if argv == LIST:
             return subprocess.CompletedProcess(argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), "")
-        return subprocess.CompletedProcess(argv, 0)
+        if argv[:2] == ["tmux", "new-session"]:
+            if self.tmux_error:
+                return subprocess.CompletedProcess(argv, 1, "", self.tmux_error)
+            with open(argv[-1]) as f:
+                self.handovers[argv[-1]] = json.load(f)
+            os.unlink(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
     def keychain(self, service):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def plog_path(self, role="engineer"):
-        return os.path.join(self.root, "logs", "projects", f"{role}.log")
-
-    def plog(self, role="engineer"):
-        return [TS.sub("<ts> ", line) for line in self.read(self.plog_path(role)).splitlines()]
+    def said(self, src=None):
+        """show() of each orchestrator.jsonl event (of src only, when given), `src ` first when src is None."""
+        return [show(e) if src else f"{e['src']} {show(e)}" for e in logged() if src in (None, e["src"])]
 
     def transcript(self):
         self.write(config.transcript(ID, SID, self.projects), "")

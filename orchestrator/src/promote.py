@@ -6,12 +6,14 @@ create that role's issue in the same project, assigned to its account, in Todo w
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
-Needs Python 3.11+ (tomllib).
+Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
+config error exits 1, logged once a day (linear.config_error).
 
 At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
 finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
 failure is logged and never breaks the Handoff work.
 """
+import functools
 import hashlib
 import os
 import sys
@@ -21,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
 import linear  # noqa: E402
-from linear import linear_gql, one_line, parse_time, role_ids, stamp, team  # noqa: E402
+from linear import CONFIG_ERRORS, config_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -62,13 +64,9 @@ class Promoter:
         self.runs = runnable(cfg)
         self.roles = role_ids(gql, self.runs)
         self.ids = {r: i for i, r in self.roles.items()}
-
-    def say(self, msg):
-        self.said = True
-        print(f"{stamp()} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
+        self.say = functools.partial(log, "promote", dry=dry)
 
     def run(self):
-        self.said = False
         issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))["issues"]["nodes"]
         work = []
         for src in issues:
@@ -81,20 +79,19 @@ class Promoter:
                         continue
                     work.append((self.moves(src, detail), src, detail, role, nxt))
                 except (Exception, SystemExit) as e:
-                    self.say(f"handoff-error {src['identifier']}: {e}")
+                    self.say("handoff-error", src["identifier"], error=one_line(e))
         for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
             if self.wait and self.now - parse_time(latest) < MATURE:
-                self.say(f"handoff-wait {src['identifier']} (in Handoff under {MATURE.seconds // 60} min)")
+                self.say("handoff-wait", src["identifier"], once=True,
+                         reason=f"in Handoff under {MATURE.seconds // 60} min")
                 continue
             found = [None]
             try:
                 self.promote(src, detail, role, nxt, cutoff, first, found)
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
-                self.say(f"handoff-error {src['identifier']}: {e}")
+                self.say("handoff-error", src["identifier"], error=one_line(e))
                 if self.now - parse_time(latest) > GRACE:
                     self.bounce_failed(src, e, found[0])
-        if not self.said:  # one line per run, so the log shows the job is alive
-            self.say(f"promote: nothing to do ({len(issues)} in Handoff)")
 
     def moves(self, src, detail):
         """(cutoff, first Handoff move after it, latest Handoff move), as API timestamps."""
@@ -117,14 +114,14 @@ class Promoter:
         required = self.cfg["roles"].get(role, {}).get("require_instructions", True)
         if not comments and required:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
-                self.say(f"handoff-bounce {src['identifier']} no instructions")
+                self.say("handoff-bounce", src["identifier"], to="in_review", reason="no instructions")
             return
         cid = child_id(src["id"], nxt, first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
         if existing:
             child = found[0] = existing[0]
         elif self.dry:
-            self.say(f"promote {src['identifier']} -> new {nxt} issue in {src['project']['name']}")
+            self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
             return
         else:
             child = found[0] = linear.call(self.gql, M_CREATE, "issueCreate", **{"in": {
@@ -139,11 +136,11 @@ class Promoter:
                         **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}})
         if not self.move(src, "done", "promote"):
             return
-        self.say(f"promote {src['identifier']} -> {child['identifier']}")
+        self.say("promote", src["identifier"], to=child["identifier"])
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
         except (Exception, SystemExit) as e:
-            self.say(f"handoff-error {src['identifier']}: promoted, but the comment failed: {e}")
+            self.say("handoff-error", src["identifier"], reason="promoted, but the comment failed", error=one_line(e))
 
     def description(self, src, comments, detail):
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
@@ -166,27 +163,27 @@ class Promoter:
         body = f"Handoff failed: {str(error)[:300]}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
         try:
             if self.comment_and_move(src, body, "handoff-failed"):
-                self.say(f"handoff-failed {src['identifier']} moved to In Review")
+                self.say("handoff-failed", src["identifier"], to="in_review")
         except (Exception, SystemExit) as e:
-            self.say(f"handoff-error {src['identifier']}: could not move to In Review: {e}")
+            self.say("handoff-error", src["identifier"], reason="could not move to In Review", error=one_line(e))
 
     def comment(self, src, body):
         if not self.dry:
             linear.comment(self.gql, src["id"], body)
 
-    def move(self, src, state, prefix):
+    def move(self, src, state, step):
         """linear.move from Handoff; True once moved (or dry)."""
-        return self.dry or self.moved(src, prefix, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"]))
+        return self.dry or self.moved(src, step, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"]))
 
-    def comment_and_move(self, src, body, prefix):
+    def comment_and_move(self, src, body, step):
         """linear.comment_and_move from Handoff to In Review, the humans subscribed; True once moved (or dry)."""
-        return self.dry or self.moved(src, prefix, linear.comment_and_move(
+        return self.dry or self.moved(src, step, linear.comment_and_move(
             self.gql, src["id"], body, self.states["in_review"], self.states["handoff"], self.cfg.get("human_members") or []))
 
-    def moved(self, src, prefix, left):
+    def moved(self, src, step, left):
         """True for a move made (left None); else logs the skip."""
         if left is not None:
-            self.say(f"{prefix} {src['identifier']}: issue is {left}")
+            self.say("move-skip", src["identifier"], step=step, state=left)
         return left is None
 
 
@@ -197,7 +194,7 @@ def run_prune(gql, now, dry, team, roles, pruner=None):
             from prune import Pruner as pruner
         pruner(gql, now, dry, team=team, roles=roles).run()
     except (Exception, SystemExit) as e:
-        print(f"{stamp()} prune-error: {e}", flush=True)
+        log("prune", "prune-error", dry=dry, error=one_line(e))
 
 
 def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
@@ -205,9 +202,13 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    cfg = load_config(config)
-    now = now or datetime.now(timezone.utc)
     dry = "--dry-run" in argv
+    try:
+        cfg = load_config(config)
+        runnable(cfg)
+    except CONFIG_ERRORS as e:
+        return config_error("promote", e, dry)
+    now = now or datetime.now(timezone.utc)
     promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
     promoter.run()
     run_prune(gql, now, dry, promoter.team, promoter.roles, pruner)

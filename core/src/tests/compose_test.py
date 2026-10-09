@@ -367,12 +367,16 @@ class Prompt(Fake):
         prompt, _ = self.compose()
         self.assertIn("````markdown\n```js\nx\n```\n````", prompt)
 
-    def test_tail_with_a_file_input(self):
-        path = os.path.join(self.root, "in.md")
-        self.write({"in.md": "question"})
-        prompt, _ = self.compose(input=path, out="o.md", workdir="wd")
-        tail = prompt.rsplit("\n---\n", 1)[1]
-        self.assertEqual(tail.strip().splitlines(), [f"Input: {path}", f"Workdir: {os.path.abspath('wd')}"])
+    def test_an_input_naming_a_file_is_text(self):
+        self.write({"input.md": "question"})
+        here = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, here)
+        for given in ("input.md", os.path.join(self.root, "input.md")):
+            prompt, _ = self.compose(input=given, out="o.md", workdir="wd")
+            tail = prompt.rsplit("\n---\n", 1)[1]
+            self.assertEqual(tail.strip().splitlines(), [f"Workdir: {os.path.abspath('wd')}", "Input:", "", given])
+            self.assertNotIn("question", prompt)
 
     def test_tail_with_free_text_input(self):
         prompt, _ = self.compose(input="Compare cmux and tmux.\nKeep it short.")
@@ -388,10 +392,10 @@ class Prompt(Fake):
     def test_handover_gets_the_report_command(self):
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
-        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/.report.jsonl outcome <file>`.", prompt)
+        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/run.jsonl outcome <file>`.", prompt)
         spaced = replace(PARAMS, workdir="/my w")
-        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/.report.jsonl'")
-        self.assertEqual(spaced.channel, "/my w/.report.jsonl")
+        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/run.jsonl'")
+        self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
     def test_guide_principles_and_role_text_name_the_clients_paths(self):
         self.write({"team/principles.md": "# Principles\n\nRun `{{scripts}}/x.py`; tasks in `{{tasks}}`.\n",
@@ -423,9 +427,54 @@ class Prompt(Fake):
         prompt, _ = self.compose()
         self.assertTrue(prompt.startswith("# Guide"))
 
+    def test_a_resumes_input_adds_to_the_sessions_earlier_input(self):
+        self.assertIn("The input below is current: it adds to this session's earlier input.", compose.RESUME)
+        self.assertNotIn("re-read the input", compose.RESUME)
+        prompt, _ = self.compose(resume=True, input="Answers:\n- Use B.")
+        self.assertTrue(prompt.startswith(compose.RESUME))
+        self.assertTrue(prompt.endswith("\nInput:\n\nAnswers:\n- Use B.\n"))
+
     def test_leftover_placeholder_in_a_rule_file(self):
         self.write({"team/roles/writer.md": WRITER + "\nUse {{tool}}.\n"})
         self.fails("unfilled placeholder {{tool}}")
+
+
+class Deliverable(Fake):
+    DEST = {"output/destinations/local.md": "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"}
+
+    def test_it_is_out_under_the_real_workdir_else_tmp_deliverable(self):
+        wd, elsewhere = (os.path.join(os.path.realpath(self.root), d) for d in ("wd", "elsewhere"))
+        os.makedirs(os.path.join(wd, "sub"))
+        os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(wd, "link"))
+        os.symlink(wd, os.path.join(self.root, "via"))
+        tmp = os.path.join(wd, "tmp", "deliverable.md")
+        for out, want in ((f"{wd}/out.md", f"{wd}/out.md"), (f"{wd}/sub/../out.md", f"{wd}/out.md"),
+                          (f"{elsewhere}/out.md", tmp), (f"{wd}/../elsewhere/out.md", tmp),
+                          (f"{wd}/link/out.md", tmp), (f"{self.root}/via/out.md", f"{self.root}/via/out.md")):
+            with self.subTest(out=out):
+                self.assertEqual(compose.RunParams(input="x", out=out, workdir=wd).deliverable, want)
+
+    def test_a_destination_names_it(self):
+        self.write(self.DEST)
+        prompt, _ = self.compose()
+        self.assertIn("Keep it local.\nWrite it to `/w/out.md`.\n", prompt)
+        prompt, _ = self.compose(out="/elsewhere/out.md")
+        self.assertIn("Write it to `/w/tmp/deliverable.md`.", prompt)
+
+    def test_without_params_its_lines_are_dropped(self):
+        self.write(self.DEST)
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, client=Plain())
+        self.assertNotIn("Write it to", prompt)
+        self.assertTrue(prompt.rstrip().endswith("Keep it local."))
+
+    def test_an_unfilled_placeholder_in_another_destination_line_still_fails(self):
+        self.write({"output/destinations/local.md": "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"})
+        run = compose.load_run(self.root, "writer")
+        with self.assertRaises(compose.ConfigError) as cm:
+            compose.render(self.root, run, client=Plain())
+        self.assertIn("unfilled placeholder {{dir}}", str(cm.exception))
 
 
 class Fill(unittest.TestCase):
@@ -546,6 +595,18 @@ class RealCore(unittest.TestCase):
             self.assertNotIn("{{", text, name)
             self.assertEqual(len(re.findall(r"^\s*\[agent-pm-progress:start\] \S", text, re.M)), 1, name)
             self.assertNotIn("agent-pm-progress:budget", text, name)
+
+    def test_local_and_orchestrator_destinations_have_the_deliverable_line_once(self):
+        for dest in ("local", "orchestrator"):
+            run = replace(compose.load_run(CORE, "researcher"), output={"type": dest})
+            with_params = compose.render(CORE, run, PARAMS, client=Plain())
+            self.assertEqual(with_params.count("`/w/out.md`"), 1, dest)
+            self.assertIn("Write the deliverable to `/w/out.md` and return that file as the outcome's `deliverable`",
+                          with_params, dest)
+            without = compose.render(CORE, run, client=Plain())
+            self.assertNotIn("Write the deliverable to", without, dest)
+            self.assertIn("Put the deliverable in the outcome's `deliverable`", without, dest)
+            self.assertIn("Leave `url` empty.", without, dest)
 
     def test_every_run_compiles_without_placeholders(self):
         for role, task in [(r, None) for r in ROLES] + ALL:

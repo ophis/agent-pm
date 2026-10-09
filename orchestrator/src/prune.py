@@ -16,11 +16,14 @@ branches are never touched. Agent runs and the harness are the same macOS user: 
 TUI sessions: attended.close ends a finished issue's live ones before its checkouts go, since a left-open claude may
 work in one.
 
+Each step is logged (linear.log, src prune); a skip once a day, a plan only in a dry run.
+
 Archive: every finished issue of the team assigned to the pm or engineer role
 account is archived (issueArchive, not trashed).
 
 An issue is queried on its own only when it has such an entry or a live TUI session.
 """
+import functools
 import os
 import re
 import shutil
@@ -34,7 +37,7 @@ from config import CLONES, RUNS_DIR  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
 import tui_claude  # noqa: E402
-from linear import HISTORY, ISSUE_ID, call, last_move, one_line, stamp  # noqa: E402
+from linear import HISTORY, ISSUE_ID, call, last_move, log, one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -63,13 +66,11 @@ class Pruner:
         self.team, self.roles, self.proc, self.run_git = team, roles, proc, run
         self.writable = config.writable(work) if writable is None else writable
         self.errors = 0
+        self.say = functools.partial(log, "prune", dry=dry)
 
-    def say(self, msg):
-        print(f"{stamp()} {'dry-run: ' if self.dry else ''}{msg}", flush=True)
-
-    def error(self, key, msg):
+    def error(self, issue=None, **fields):
         self.errors += 1
-        self.say(f"prune-error {key}: {msg}")
+        self.say("prune-error", issue, **fields)
 
     def entries(self, ident):
         """Paths below <work_dir>/work/<ident>/, as parts: (src, owner, n), (src, owner) when not a real directory (prune
@@ -111,29 +112,29 @@ class Pruner:
             common = repo.common_dir(path) if os.path.isfile(dotgit) else None
             return common if self.delete(key, path, "worktree" if os.path.isfile(dotgit) else "clone") else None
         except Skip as e:
-            self.say(f"prune-skip {key}: {e}")
+            self.say("prune-skip", once=True, entry=key, reason=str(e))
 
     def delete(self, key, path, what):
         """True once `path` is deleted (planned, in a dry run)."""
         if self.dry:
-            self.say(f"prune-plan {key}: delete the {what}")
+            self.say("prune-plan", entry=key, what=f"delete the {what}")
             return True
         try:
             shutil.rmtree(path)
         except OSError as e:
-            self.error(key, f"rmtree: {one_line(e)}")
+            self.error(entry=key, error=f"rmtree: {one_line(e)}")
             return False
-        self.say(f"prune-removed {key}: {what}")
+        self.say("prune-removed", entry=key, what=what)
         return True
 
     def clean_clone(self, ident, common):
         """In the local clone of deleted worktrees: drops their records and the <ident>-* branches origin holds."""
         clone = os.path.dirname(common)
         if root := repo.under(common, self.writable):
-            self.say(f"prune-skip {ident}: {clone} is under {root}, so no git runs there")
+            self.say("prune-skip", ident, once=True, reason=f"{clone} is under {root}, so no git runs there")
             return
         if self.dry:
-            self.say(f"prune-plan {ident}: prune {clone}'s worktree records and pushed {ident}-* branches")
+            self.say("prune-plan", ident, what=f"prune {clone}'s worktree records and pushed {ident}-* branches")
             return
         at = ["git", *repo.GUARD, "-C", clone, f"--git-dir={common}"]
         try:
@@ -148,11 +149,11 @@ class Pruner:
                 if any(self.run_git([*at, "merge-base", "--is-ancestor", f"refs/heads/{branch}", f"refs/remotes/origin/{b}"],
                                     repo.SHORT).returncode == 0 for b in dict.fromkeys(filter(None, (branch, default)))):
                     repo.git(self.run_git, clone, at[-1], "branch", "-D", branch, pre=repo.GUARD)
-                    self.say(f"prune-removed {ident}: branch {branch} in {clone}")
+                    self.say("prune-removed", ident, what=f"branch {branch} in {clone}")
                 else:
-                    self.say(f"prune-skip {ident}: branch {branch} in {clone} kept: not pushed")
+                    self.say("prune-skip", ident, once=True, reason=f"branch {branch} in {clone} kept: not pushed")
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-            self.error(ident, one_line(e))
+            self.error(ident, error=one_line(e))
 
     def rmdir_owners(self, ident, owners):
         for owner in sorted(owners):
@@ -166,17 +167,16 @@ class Pruner:
             try:
                 names = attended.sessions(ident, proc=self.proc)
             except tui_claude.TuiError as e:
-                self.error(ident, one_line(e))
+                self.error(ident, error=one_line(e))
                 return
             for name in names:
-                self.say(f"prune-plan {ident}/{name}: close the tui session")
+                self.say("prune-plan", ident, session=name, what="close the tui session")
             return
         for c in attended.close(ident, proc=self.proc):
-            key = ident if c.name is None else f"{ident}/{c.name}"
             if c.status == "closed":
-                self.say(f"prune-closed {key}: tui session")
+                self.say("prune-closed", ident, session=c.name)
             else:
-                self.error(key, c.msg)
+                self.error(ident, session=c.name, error=c.msg)
 
     def archive(self, finished):
         try:
@@ -193,24 +193,24 @@ class Pruner:
                     break
                 cursor = end
         except (Exception, SystemExit) as e:
-            self.error("archive", f"Linear: {e}")
+            self.error(error=f"archive: Linear: {one_line(e)}")
             return
         for node in nodes:
             ident = node["identifier"]
             since = last_move(node["history"]["nodes"], finished)
             if since is None:
-                self.say(f"prune-skip {ident}: archive: finish time unknown")
+                self.say("prune-skip", ident, once=True, reason="archive: finish time unknown")
             elif self.now - since < QUARANTINE:
                 continue
             elif self.dry:
-                self.say(f"prune-plan {ident}: archive")
+                self.say("prune-plan", ident, what="archive")
             else:
                 try:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except (Exception, SystemExit) as e:
-                    self.error(ident, f"archive: {e}")
+                    self.error(ident, error=f"archive: {one_line(e)}")
                     continue
-                self.say(f"prune-archived {ident}")
+                self.say("prune-archived", ident)
 
     def run(self):
         """0, or 3 if anything failed."""
@@ -223,20 +223,20 @@ class Pruner:
         try:
             live = attended.issues(proc=self.proc)
         except tui_claude.TuiError as e:
-            self.error("tui", one_line(e))
+            self.error(error=f"tui: {one_line(e)}")
             live = []
         idents = sorted(set(idents) | set(live))
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
-                self.error(ident, f"Linear: {e}")
+                self.error(ident, error=f"Linear: {one_line(e)}")
                 continue
             if not issue or issue["state"]["id"] not in finished:
                 continue
             since = last_move(issue["history"]["nodes"], finished)
             if since is None:
-                self.say(f"prune-skip {ident}: finish time unknown")
+                self.say("prune-skip", ident, once=True, reason="finish time unknown")
             elif self.now - since >= QUARANTINE:
                 self.close_sessions(ident)
                 entries = self.entries(ident)

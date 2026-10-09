@@ -669,7 +669,7 @@ class WorkDir(ConfigFile, unittest.TestCase):
     def test_unset_is_in_home(self):
         work = os.path.realpath(os.path.expanduser("~/.agent-pm"))
         self.assertEqual((config.WORK_DIR, config.RUNS_DIR, config.LOGS_DIR, config.RUNS_LOG),
-                         (work, work + "/work", work + "/logs", work + "/logs/runs.log"))
+                         (work, work + "/work", work + "/logs", work + "/logs/runs.jsonl"))
         home = os.path.realpath(self.dir)
         with mock.patch.dict(os.environ, {"HOME": home}):
             self.assertEqual(config.work_dir({}, os.path.join(home, "repo")), home + "/.agent-pm")
@@ -716,13 +716,6 @@ class WorkDir(ConfigFile, unittest.TestCase):
 
 
 class Paths(unittest.TestCase):
-    def test_slug_and_project_log(self):
-        self.assertEqual(config.slug("Deep Research"), "deep-research")
-        with tempfile.TemporaryDirectory() as d:
-            path = config.project_log("light-research", logs=d)
-            self.assertEqual(path, os.path.join(d, "projects", "light-research.log"))
-            self.assertTrue(os.path.isdir(os.path.dirname(path)))
-
     def test_run_dir_and_transcript(self):
         self.assertEqual(config.run_dir("TASK-9"), os.path.join(config.RUNS_DIR, "TASK-9"))
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -730,8 +723,9 @@ class Paths(unittest.TestCase):
             rd = config.run_dir("TASK-9")
             self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), clients.claude.transcript(rd, sid, "/p"))
             os.makedirs(rd)
-            with open(os.path.join(rd, "run.json"), "w") as f:
-                json.dump({"sessions": [{"sid": sid, "cwd": "/data/x.y", "project": True}]}, f)
+            with open(os.path.join(rd, "run.jsonl"), "w") as f:
+                f.write(json.dumps({"ts": "t", "kind": "session", "sid": sid, "cwd": "/data/x.y",
+                                    "project": True}) + "\n")
             self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), f"/p/-data-x-y/{sid}.jsonl")
         self.assertIsNone(config.transcript("TASK-9", "../x"))
 

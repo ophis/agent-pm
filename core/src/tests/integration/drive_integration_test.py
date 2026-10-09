@@ -49,9 +49,13 @@ class Integration(unittest.TestCase):
         return subprocess.run(self.argv(*extra), cwd=cwd or self.proj, env=self.env, stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, timeout=60)
 
-    def record(self) -> dict:
-        with open(os.path.join(self.work, "run.json")) as f:
-            return json.load(f)
+    def events(self) -> list[dict]:
+        """The run's record, <workdir>/run.jsonl, one dict per line."""
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def last(self, kind: str) -> dict:
+        return [e for e in self.events() if e["kind"] == kind][-1]
 
     def calls(self) -> list[dict]:
         """The fake's invocations, from its log."""
@@ -72,14 +76,16 @@ class NewRun(Integration):
             self.assertIn(line, res.stderr)
         with open(self.out) as f:
             self.assertEqual(f.read(), "Hello.\n")
-        rec = self.record()
-        (entry,) = rec["sessions"]
-        self.assertEqual([type(entry.pop(k)) for k in ("started", "ended")], [str, str])
-        self.assertEqual(entry, {"sid": SID, "cwd": self.proj, "project": False, "transcript": self.transcript,
-                                 "resume": f"cd {self.proj} && claude --resume {SID} --add-dir {self.work}"})
-        self.assertEqual([{k: p[k] for k in ("name", "text")} for p in rec["progress"]],
-                         [{"name": "start", "text": "echoing"}])
-        self.assertEqual(rec["outcome"], {**DONE, "url": self.out, "questions": [], "files": []})
+        events = [{k: v for k, v in e.items() if k != "ts"} for e in self.events()]
+        self.assertEqual(events, [
+            {"kind": "input", "text": "Hello."},
+            {"kind": "session", "sid": SID, "cwd": self.proj, "project": False, "transcript": self.transcript,
+             "resume": f"cd {self.proj} && claude --resume {SID} --add-dir {self.work}"},
+            progress("start", "echoing"), outcome(DONE),
+            {"kind": "result", "outcome": {"status": "done", "title": "echo", "summary": "Hello.", "questions": [],
+                                           "url": self.out, "files": []}},
+            {"kind": "end", "sid": SID, "rc": 0}])
+        self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         argv = call["argv"]
@@ -100,47 +106,56 @@ class Outcomes(Integration):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("status needs_input", res.stderr)
         self.assertFalse(os.path.exists(self.out))
-        self.assertEqual(self.record()["outcome"]["questions"], ["Which?"])
+        self.assertEqual(self.last("result")["outcome"]["questions"], ["Which?"])
 
     def test_no_outcome(self):
         res = self.drive(["Thinking."])
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("drive.py: the agent run returned no outcome", res.stderr)
-        rec = self.record()
-        self.assertIsNone(rec["outcome"])
-        self.assertIsInstance(rec["sessions"][0]["ended"], str)
+        self.assertEqual([e["kind"] for e in self.events()][-2:], ["result", "end"])
+        self.assertEqual(self.last("result")["error"], "the agent run returned no outcome")
         self.assertFalse(os.path.exists(self.out))
 
     def test_invalid_outcome_then_fixed(self):
         res = self.drive([outcome({k: v for k, v in DONE.items() if k != "deliverable"})])
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("drive.py: invalid outcome: done with a local destination must carry the deliverable", res.stderr)
-        self.assertIsNone(self.record()["outcome"])
+        self.assertIn("must carry the deliverable", self.last("result")["error"])
         self.assertFalse(os.path.exists(self.out))
         res = self.drive([outcome(DONE)], "--resume")
         self.assertEqual(res.returncode, 0, res.stderr)
         with open(self.out) as f:
             self.assertEqual(f.read(), "Hello.\n")
-        self.assertEqual(self.record()["outcome"]["status"], "done")
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
     def test_nonzero_exit(self):
         res = self.drive([outcome(DONE)], exit=1)
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertIn("drive.py: the client exited 1", res.stderr)
-        self.assertIsNone(self.record()["outcome"])
+        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
         self.assertFalse(os.path.exists(self.out))
+
+
+class Stderr(Integration):
+    def test_the_clients_stderr_lines_land_in_the_record(self):
+        res = self.drive([progress("start", "first")])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        os.unlink(self.transcript)
+        res = self.drive([outcome(DONE)], "--resume")
+        self.assertEqual(res.returncode, 3, res.stderr)
+        said = f"No conversation found with session ID: {SID}"
+        self.assertIn(said, res.stderr)
+        stderr = [e for e in self.events() if e["kind"] == "stderr"]
+        self.assertEqual([e["text"] for e in stderr], [said])
+        self.assertEqual([e["kind"] for e in self.events()][-3:], ["stderr", "result", "end"])
+        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
 
 
 class Resume(Integration):
     def test_resume_reuses_the_recorded_cwd_and_session(self):
         res = self.drive([progress("start", "first")])
         self.assertEqual(res.returncode, 1, res.stderr)
-        # Stamps have one-second resolution: a sentinel tells a kept `started` from a fresh one.
-        rec = self.record()
-        rec["sessions"][0]["started"] = started = "2000-01-01T00:00:00+0000"
-        with open(os.path.join(self.work, "run.json"), "w") as f:
-            json.dump(rec, f)
-        res = self.drive([progress("round", "second"), outcome(DONE)], "--resume", cwd=self.root)
+        res = self.drive([progress("round", "second"), outcome(DONE)], "--resume", "--input", "Use B.", cwd=self.root)
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
         self.assertEqual(second["cwd"], self.proj)
@@ -149,11 +164,13 @@ class Resume(Integration):
         self.assertTrue(prompt(second).startswith("Resumed agent run"))
         users = [line for line in self.transcribed() if line["type"] == "user"]
         self.assertEqual([u["message"]["content"] for u in users], [prompt(first), prompt(second)])
-        rec = self.record()
-        (entry,) = rec["sessions"]
-        self.assertEqual(entry["started"], started)
-        self.assertEqual([p["name"] for p in rec["progress"]], ["start", "round"])
-        self.assertEqual(rec["outcome"]["status"], "done")
+        self.assertTrue(prompt(second).endswith("\nInput:\n\nUse B.\n"))
+        events = self.events()
+        self.assertEqual([e["kind"] for e in events], ["input", "session", "progress", "result", "end",
+                                                       "input", "session", "progress", "outcome", "result", "end"])
+        self.assertEqual([e["text"] for e in events if e["kind"] == "input"], ["Hello.", "Use B."])
+        self.assertEqual([e["cwd"] for e in events if e["kind"] == "session"], [self.proj, self.proj])
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
 
 class Interrupt(Integration):
@@ -182,7 +199,7 @@ class Interrupt(Integration):
 
     def started(self) -> bool:
         try:
-            return "start" in [p["name"] for p in self.record()["progress"]]
+            return "start" in [e.get("name") for e in self.events() if e["kind"] == "progress"]
         except (OSError, ValueError):
             return False
 
@@ -205,9 +222,9 @@ class Interrupt(Integration):
             os.kill(call["pid"], 0)
         out, err = proc.communicate()
         self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)
-        rec = self.record()
-        self.assertIsInstance(rec["sessions"][0]["ended"], str)
-        self.assertIsNone(rec["outcome"])
+        result, end = self.events()[-2:]
+        self.assertEqual((result["kind"], result["error"]), ("result", "stopped: KeyboardInterrupt"))
+        self.assertEqual((end["kind"], end["sid"], end["rc"]), ("end", SID, 1))
 
 
 if __name__ == "__main__":

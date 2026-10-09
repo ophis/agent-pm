@@ -1,4 +1,4 @@
-import functools, json, os, re, shlex, subprocess, sys, tempfile, threading, time, unittest
+import functools, json, os, shlex, subprocess, sys, tempfile, threading, time, unittest
 from datetime import datetime
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,8 +73,9 @@ class Record(unittest.TestCase):
     def test_command_runs_in_the_recorded_cwd_never_the_recorded_command(self):
         with tempfile.TemporaryDirectory() as workdir:
             cwd = "/data/my repo"
-            with open(os.path.join(workdir, "run.json"), "w") as f:
-                json.dump({"sessions": [{"sid": SID, "cwd": cwd, "project": True, "resume": "rm -rf ~"}]}, f)
+            with open(os.path.join(workdir, "run.jsonl"), "w") as f:
+                f.write(json.dumps({"ts": "t", "kind": "session", "sid": SID, "cwd": cwd, "project": True,
+                                    "resume": "rm -rf ~"}) + "\n")
             self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
                              ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", workdir])
 
@@ -110,7 +111,7 @@ class Record(unittest.TestCase):
 
     def test_failed_start_leaves_end_to_create_the_comment(self):
         linear = FakeLinear(fail={"commentCreate": RuntimeError("down")})
-        self.assertIn("registry-error", start(linear, record()))
+        self.assertEqual(start(linear, record()), "RuntimeError: down")
         self.assertEqual(linear.comments, [])
         linear.fail = {}
         self.assertIsNone(end(linear, record(), 0))
@@ -155,9 +156,9 @@ class Record(unittest.TestCase):
 
 
 class Failure(unittest.TestCase):
-    def error(self, out, rest):
-        """out is one unstamped registry-error line, no newline, ending in rest."""
-        self.assertEqual(out, f"registry-error {rest}")
+    def error(self, out, reason):
+        """out is the reason, one line; the caller logs registry-error."""
+        self.assertEqual(out, reason)
 
     def failing(self, exc):
         def gql(query, **v):
@@ -166,7 +167,7 @@ class Failure(unittest.TestCase):
 
     def test_find_failure_never_writes(self):
         linear = FakeLinear(fail={"comments": RuntimeError("boom")})
-        self.error(start(linear, record()), f"{ISSUE} session={SID}: RuntimeError: boom")
+        self.error(start(linear, record()), "RuntimeError: boom")
         self.assertEqual(linear.calls, ["comments"])
         calls = []
 
@@ -174,7 +175,7 @@ class Failure(unittest.TestCase):
             calls.append(query)
             return {"issue": None}
         out = end(no_issue, record(), 0)
-        self.assertRegex(out, r"\A" + re.escape(f"registry-error {ISSUE} session={SID}: ") + r".+\Z")
+        self.assertRegex(out, r"\ATypeError: [^\n]+\Z")
         self.assertEqual(len(calls), 1)
 
     def test_write_failure_logs_one_line(self):
@@ -186,7 +187,7 @@ class Failure(unittest.TestCase):
                                 (RuntimeError("two\nlines"), "RuntimeError: two lines"), (False, "success: false")):
                 with self.subTest(op=op, reason=reason):
                     linear = FakeLinear(*seed, fail={op: exc})
-                    self.error(start(linear, record()), f"{ISSUE} session={SID}: {reason}")
+                    self.error(start(linear, record()), reason)
                     self.assertEqual(linear.calls, ["comments", op])
 
     def test_blocking_gql_times_out(self):
@@ -196,14 +197,14 @@ class Failure(unittest.TestCase):
         with mock.patch.object(sessions, "write", functools.partial(sessions.write, limit=0.1)):
             out = end(lambda q, **v: release.wait(30), record(), 0)
         self.assertLess(time.monotonic() - t, 5)
-        self.error(out, f"{ISSUE} session={SID}: timed out after 0.1s")
+        self.error(out, "timed out after 0.1s")
 
     def test_secret_outside_the_message_does_not_leak(self):
         exc = subprocess.CalledProcessError(1, ["security", "find-generic-password", "-s", "svc", "-w"],
                                             output="lin_api_SECRET", stderr="lin_api_SECRET")
         exc.headers = {"Authorization": "lin_api_SECRET"}
         out = start(self.failing(exc), record())
-        self.assertIn("registry-error", out)
+        self.assertTrue(out.startswith("CalledProcessError: "), out)
         self.assertNotIn("lin_api_SECRET", out)
 
 
