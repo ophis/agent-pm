@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import fcntl
 import functools
 import io
 import json
@@ -992,6 +994,15 @@ class FakeShell:
         return [c[1] for c in self.calls if c[0] == "launch"]
 
 
+@contextlib.contextmanager
+def other_router(runs):
+    """<runs' dir>/router.lock held as another router holds it (flock conflicts across open files in one process too)."""
+    os.makedirs(os.path.dirname(runs), exist_ok=True)
+    with open(os.path.join(os.path.dirname(runs), "router.lock"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
 class Tick(Base):
     def test_hours_boundaries(self):
         for hour, runs in ((0, False), (1, True), (6, True), (7, False), (12, False), (23, False)):
@@ -1027,7 +1038,7 @@ class Tick(Base):
         (launch,) = self.sh.launches()
         self.assertEqual(self.state, '{"ts": "2026-10-09T00:26:33-04:00", "kind": "start", "issue": "TASK-1", '
                                      f'"sid": "{launch.sid}", "role": "researcher"}}\n')
-        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "router.lock", "runs.jsonl", "transcripts"])
 
     def test_an_idle_tick_writes_no_line(self):
         """FR-10: outside hours, all roles full, nothing to do beside a live session; a blocked issue once a day."""
@@ -1444,6 +1455,36 @@ class IssueFlag(Base):
                 self.assertEqual(self.tick(fake, "--issue", ident), 1)
                 self.assertEqual(self.said(), [f"pick-none {ident} reason=not a Todo issue assigned to a role account"])
                 self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
+
+
+class OneRouter(Base):
+    """A router finding router.lock held does nothing else; once it is free, the same call goes on."""
+    def test_a_tick_skips_while_another_router_runs(self):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        before = self.unmap("\n".join(self.lines) + "\n")
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        with other_router(self.log):
+            self.assertEqual(self.tick(fake), 0)
+            self.assertEqual(self.said(), ["skip reason=another router is running"])
+            self.assertEqual((fake.queries, self.sh.calls, self.state, fake.issues["TASK-1"]["state"]), ([], [], before, "Todo"))
+            self.assertEqual((self.tick(fake, hour=12), self.said(), self.sh.calls), (0, [], []))  # outside hours: no lock
+        self.assertEqual(self.tick(fake), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
+        self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_a_dry_run_and_the_brake_take_no_lock(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        with other_router(self.log):
+            self.assertEqual(self.tick(fake, "--dry-run"), 0)
+            self.assertEqual(self.said()[:-1], ["plan mode=new queue=1", "pick TASK-1 queue=1"])
+            self.assertRegex(self.said()[-1], "^usage ")
+            self.assertEqual(self.tick(fake, "--dry-run", "--issue", "TASK-1"), 0)
+            self.assertEqual(self.said(), ["pick TASK-1 queue=1"])
+            out = io.StringIO()
+            with redirect_stdout(out), mock.patch.dict(os.environ):
+                self.assertEqual(router.main(["--brake"], runs=self.log, sh=FakeShell()), 0)
+            self.assertRegex(out.getvalue(), "^status=allowed ")
+        self.assertEqual(fake.mutations, [])
 
 
 class TuiTick(Base):
@@ -2212,6 +2253,19 @@ class AttendedEntry(OuterBase):
                 self.assertEqual(self.entry("--split-from", "dev"), 1)
                 self.assertEqual(self.err, f"router.py: {ID} has a live agent run: {prefix}tmux attach -t "
                                            f"'=agent-pm-engineer-{ID}'\n")
+
+    def test_another_router_running_leaves_the_issue_alone(self):
+        """TASK-237: a tick claimed it, its driver session not up yet; --issue must not send it back to Todo."""
+        self.todo["state"] = "In Progress"
+        with other_router(self.runs):
+            self.assertEqual(self.entry("--split-from", "dev"), 1)
+        self.assertEqual(self.err, "router.py: another router is running; try again\n")
+        self.assertEqual(self.said(), ["router skip TASK-7 reason=another router is running"])
+        self.assertEqual((self.todo["state"], self.gql.queries, self.sh_calls, os.path.exists(self.runs)),
+                         ("In Progress", [], [], False))
+        self.assertEqual(self.entry("--split-from", "dev"), 1)
+        self.assertEqual(self.said("router")[1:], [f"recover TASK-7 to=todo reason=no session updated={self.todo['updatedAt']}"])
+        self.assertEqual(self.todo["state"], "Todo")
 
     def test_nothing_started_exits_1_without_a_start_line(self):
         cases = [(dict(state="In Review"), "pick-none TASK-7 reason=not a Todo issue assigned to a role account", "In Review"),
