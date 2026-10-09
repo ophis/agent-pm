@@ -768,11 +768,13 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
 
 def _grid_layout(cells: list[Slot], *, width: int, height: int, manager: str, manager_width: int,
                  per_column: int) -> Cell | None:
-    """The grid window's layout: the manager left, full height, manager_width wide but narrowed till the columns fit;
-    cells (at least one) in columns of per_column, top down, then right. None when it does not fit."""
+    """The grid window's layout: the manager left, full height, manager_width wide (half when that is the window's)
+    but narrowed till the columns fit; cells (at least one) in columns of per_column, top down, then right. None when
+    it does not fit."""
     columns = tuple(Slot(None, tuple(cells[i:i + per_column])) for i in range(0, len(cells), per_column))
     c = len(columns)
-    mw = min(manager_width, width - 1 - (c * max(_min_width(s) for s in cells) + c - 1))
+    mw = min(manager_width if manager_width != width else (width - 1) // 2,
+             width - 1 - (c * max(_min_width(s) for s in cells) + c - 1))
     if mw < 1:
         return None
     root = Cell(width, height, 0, 0, kind=LEFT_RIGHT, children=(

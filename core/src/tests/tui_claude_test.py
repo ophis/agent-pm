@@ -1718,6 +1718,14 @@ class GridLayout(unittest.TestCase):
                          "160x48,0,0{156x48,0,0,0,3x48,157,0{1x48,157,0,1,1x48,159,0,2}}")
         self.assertEqual(grid([slot("%1", slot("%2", slot("%3")))], manager_width=200).children[0].w, 152)
 
+    def test_a_manager_as_wide_as_the_window_gets_half(self):
+        for width in (160, 161):
+            with self.subTest(width=width):
+                root = grid(2, width=width, manager_width=width)
+                self.assertEqual(root, grid(2, width=width, manager_width=(width - 1) // 2))
+                self.assertEqual(root.children[0].w, (width - 1) // 2)
+        self.assertEqual(grid(2, manager_width=159).children[0].w, 158)
+
     def test_infeasible(self):
         self.assertEqual(grid(7, width=7).children[0].w, 1)
         self.assertIsNone(grid(7, width=6))
@@ -1957,6 +1965,15 @@ class Tile(unittest.TestCase):
         fake = self.tile(*self.WIDE)
         self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3",
                                            "e37e,160x48,0,0{100x48,0,0,0,59x48,101,0{29x48,101,0,1,29x48,131,0,2}}"]])
+
+    def test_a_window_split_top_bottom_before_the_grid(self):
+        # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager gets half
+        layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
+        fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
+        want = tui_claude._render_layout(grid([slot("%2"), slot("%1")]))
+        self.assertEqual(fake.calls[3:], [["tmux", "swap-pane", "-d", "-s", "%2", "-t", "%1", ";",
+                                           "select-layout", "-t", "@3", want]])
+        self.assertEqual(want.split(",", 1)[1], "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,2,80x23,80,25,1]}")
 
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
