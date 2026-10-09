@@ -39,12 +39,12 @@ class ClaudeClient(Client):
             raise ConfigError("--setting-sources is the driver's (trusted_dirs): remove it from [clients.claude].flags")
 
     def handover(self) -> str:
-        return ("Report through `{{report}}`, a pre-approved shell command, never in a reply:\n\n"
+        return ("Report through `report`, never in a reply:\n\n"
                 f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, run "
-                "`{{report}} progress <name> <your report>`, e.g. "
-                "`{{report}} progress start <what that line asks you to report>`.\n"
+                "`report progress <name> <your report>`, e.g. "
+                "`report progress start <what that line asks you to report>`.\n"
                 "- **Outcome:** as your last action, after everything else is done and any background work you "
-                "started has finished, run `{{report}} outcome --status <done|needs_input|failed> --title <one line> "
+                "started has finished, run `report outcome --status <done|needs_input|failed> --title <one line> "
                 "--summary <text> [--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`: "
                 "`--question` and `--file` once per item; `--deliverable` a file holding the deliverable, which is "
                 "read as its text. If it fails, fix it and run it again.")
