@@ -542,6 +542,26 @@ class TestDryRun(Base):
                                                  "handoff-bounce DR-2 to=in_review reason=no instructions"])
 
 
+class TestConfigError(Base):
+    def test_a_config_error_is_logged_once_a_day_printed_only_on_a_terminal(self):
+        from linear_test import Stderr
+        FakePruner.calls.clear()
+        cases = (("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
+                 (CONFIG + role_table("bogus"), "orchestrator/config.toml: role 'bogus' is not in core/config.toml"))
+        for text, reason in cases:
+            with self.subTest(reason=reason):
+                self.write_config(text)
+                before = len(logged(self.logs))
+                for tty, printed in ((False, ""), (True, f"promote.py: {reason}\n")):
+                    err, out = Stderr(tty), io.StringIO()
+                    with redirect_stderr(err), redirect_stdout(out):
+                        rc = promote.main([], gql=self.fake, now=NOW, config=self.config, pruner=FakePruner)
+                    self.assertEqual((rc, err.getvalue(), out.getvalue()), (1, printed, ""))
+                events = logged(self.logs)[before:]
+                self.assertEqual([(e["src"], show(e)) for e in events], [("promote", f"config-error reason={reason}")])
+        self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
+
+
 class TestPath(Base):
     def test_main_sets_path_first(self):
         seen = []

@@ -693,7 +693,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     os.makedirs(workdir, exist_ok=True)
     sinks = [terminal()] if sinks is None else sinks
     out = Path(params.out).absolute()
-    if not out.is_dir():
+    if not out.is_dir() and not params.resume:   # a resumed session keeps the draft it wrote there
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this agent run's
     note(params.channel, "input", text=params.input)
     note(params.channel, "session", sid=params.sid, cwd=launch.cwd or workdir, project=launch.project,

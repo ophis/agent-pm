@@ -34,8 +34,8 @@ import issues  # noqa: E402
 import linear  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
-from linear import (ISSUE_ID, humans, linear_gql, log, one_line, parse_time, role_ids, task_group,  # noqa: E402
-                    team)
+from linear import (CONFIG_ERRORS, ISSUE_ID, config_error, humans, linear_gql, log, one_line, parse_time,  # noqa: E402
+                    role_ids, task_group, team)
 import drive  # noqa: E402
 import tui_claude  # noqa: E402
 
@@ -666,11 +666,9 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
     os.environ["PATH"] = PATH
     try:
         cfg = load_config(config) if config else load_config()
-    except SystemExit as e:
-        log("router", "config-error", once=True, dry=opts["dry"], reason=one_line(e.code))
-        if sys.stderr.isatty():  # elsewhere (launchd) stderr is the log
-            print(f"router.py: {e.code}", file=sys.stderr)
-        return 1
+        runnable(cfg, root)
+    except CONFIG_ERRORS as e:
+        return config_error("router", e, opts["dry"])
     if opts["tui"]:
         try:
             attended.layout(opts["split"], opts["split_from"])

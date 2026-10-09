@@ -2170,6 +2170,17 @@ class AttendedEntry(OuterBase):
             self.assertEqual(self.said(), ["router config-error reason=orchestrator/config.toml: unknown keys: bogus"])
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
+    def test_a_config_core_rejects_is_logged_once_a_day_before_a_tick_or_an_issue(self):
+        self.write(self.config, RUN_CONFIG + role_table("bogus"))
+        reason = "orchestrator/config.toml: role 'bogus' is not in core/config.toml"
+        for argv in (["--now"], ["--issue", ID]):
+            for tty, err in ((False, ""), (True, f"router.py: {reason}\n")):
+                with self.subTest(argv=argv, tty=tty):
+                    self.assertEqual(self.main(argv, tty), 1)
+                    self.assertEqual(self.err, err)
+        self.assertEqual(self.said(), [f"router config-error reason={reason}"])
+        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
+
     def test_no_place_for_the_pane_or_a_bad_events_file_before_any_linear_call(self):
         cases = [((), "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
                       "run from tmux or iTerm2, or pass --split-from SESSION"),

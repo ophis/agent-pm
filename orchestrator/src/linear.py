@@ -37,6 +37,7 @@ def linear_gql(query, *, timeout=30, service=None, **variables):
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
+CONFIG_ERRORS = (SystemExit, ValueError, OSError)   # load_config, runnable: a bad value, TOML, a missing file
 _recent = {}
 
 
@@ -63,6 +64,19 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
             print(drive.printable(text), file=sys.stderr, flush=True)
     except OSError:  # a gone tmux pane's EIO
         pass
+
+
+def config_error(src, e, dry=False):
+    """A config that does not load (load_config's or runnable's SystemExit, a TOML or file error; CONFIG_ERRORS):
+    logged once a day, printed too on a terminal unless dry (the dry copy shows it). Returns the exit code, 1."""
+    reason = one_line(e.code if isinstance(e, SystemExit) else e)
+    log(src, "config-error", once=True, dry=dry, reason=reason)
+    try:
+        if sys.stderr.isatty() and not dry:  # elsewhere (launchd) stderr is the log
+            print(f"{src}.py: {reason}", file=sys.stderr, flush=True)
+    except OSError:
+        pass
+    return 1
 
 
 def _key(line):

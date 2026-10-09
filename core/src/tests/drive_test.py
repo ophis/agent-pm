@@ -1338,6 +1338,18 @@ class Start(Base):
                     popen=lambda argv, **kw: FakeProc(feed(p.channel, [outcome(DONE)])))
         self.assertEqual((seen, save.call_count, self.read("out.md")), ([False], 1, "# Doc\n"))
 
+    def test_a_resume_keeps_the_draft_its_session_wrote_to_out(self):
+        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+        os.makedirs(self.work)
+        with open(out, "w") as f:
+            f.write("# Draft\n")
+        seen = []
+        launch = drive.Launch(["fake"], cwd=self.work)
+        p = self.params(resume=True)
+        drive.start(launch, run(), p, client=claude(), sinks=[], begun=lambda: seen.append(self.read("out.md")),
+                    popen=lambda argv, **kw: FakeProc(feed(p.channel, [outcome({**DONE, "deliverable": "# Draft\n"})])))
+        self.assertEqual((seen, save.call_count, self.read("out.md")), (["# Draft\n"], 0, "# Draft\n"))
+
     def test_a_fifo_at_out_is_replaced_not_waited_on(self):
         save, out = self.spy_save(), os.path.join(self.work, "out.md")
 

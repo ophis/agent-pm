@@ -6,7 +6,8 @@ create that role's issue in the same project, assigned to its account, in Todo w
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
-Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none.
+Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
+config error exits 1, logged once a day (linear.config_error).
 
 At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
 finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
@@ -22,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
 import linear  # noqa: E402
-from linear import linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
+from linear import CONFIG_ERRORS, config_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
 
 GRACE = timedelta(hours=1)
@@ -201,9 +202,13 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    cfg = load_config(config)
-    now = now or datetime.now(timezone.utc)
     dry = "--dry-run" in argv
+    try:
+        cfg = load_config(config)
+        runnable(cfg)
+    except CONFIG_ERRORS as e:
+        return config_error("promote", e, dry)
+    now = now or datetime.now(timezone.utc)
     promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
     promoter.run()
     run_prune(gql, now, dry, promoter.team, promoter.roles, pruner)
