@@ -85,5 +85,73 @@ class NewRun(Integration):
                          (SID, "stream-json"))
 
 
+def prompt(call: dict) -> str:
+    """The prompt of a fake invocation: the argument after `-p`."""
+    return call["argv"][call["argv"].index("-p") + 1]
+
+
+class Outcomes(Integration):
+    def test_needs_input(self):
+        asking = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which?"]}
+        res = self.drive([outcome(asking)])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("status needs_input", res.stderr)
+        self.assertFalse(os.path.exists(self.out))
+        self.assertEqual(self.record()["outcome"]["questions"], ["Which?"])
+
+    def test_no_outcome(self):
+        res = self.drive(["Thinking."])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("drive.py: the agent run returned no outcome", res.stderr)
+        rec = self.record()
+        self.assertIsNone(rec["outcome"])
+        self.assertIsInstance(rec["sessions"][0]["ended"], str)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_invalid_outcome_then_fixed(self):
+        res = self.drive([outcome({k: v for k, v in DONE.items() if k != "deliverable"})])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("drive.py: invalid outcome: done with a local destination must carry the deliverable", res.stderr)
+        self.assertIsNone(self.record()["outcome"])
+        self.assertFalse(os.path.exists(self.out))
+        res = self.drive([outcome(DONE)], "--resume")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(self.out) as f:
+            self.assertEqual(f.read(), "Hello.\n")
+        self.assertEqual(self.record()["outcome"]["status"], "done")
+
+    def test_nonzero_exit(self):
+        res = self.drive([outcome(DONE)], exit=1)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("drive.py: the client exited 1", res.stderr)
+        self.assertIsNone(self.record()["outcome"])
+        self.assertFalse(os.path.exists(self.out))
+
+
+class Resume(Integration):
+    def test_resume_reuses_the_recorded_cwd_and_session(self):
+        res = self.drive([progress("start", "first")])
+        self.assertEqual(res.returncode, 1, res.stderr)
+        # Stamps have one-second resolution: a sentinel tells a kept `started` from a fresh one.
+        rec = self.record()
+        rec["sessions"][0]["started"] = started = "2000-01-01T00:00:00+0000"
+        with open(os.path.join(self.work, "run.json"), "w") as f:
+            json.dump(rec, f)
+        res = self.drive([progress("round", "second"), outcome(DONE)], "--resume", cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        first, second = self.calls()
+        self.assertEqual(second["cwd"], self.proj)
+        self.assertEqual(second["argv"][second["argv"].index("--resume") + 1], SID)
+        self.assertNotIn("--session-id", second["argv"])
+        self.assertTrue(prompt(second).startswith("Resumed agent run"))
+        users = [line for line in self.transcribed() if line["type"] == "user"]
+        self.assertEqual([u["message"]["content"] for u in users], [prompt(first), prompt(second)])
+        rec = self.record()
+        (entry,) = rec["sessions"]
+        self.assertEqual(entry["started"], started)
+        self.assertEqual([p["name"] for p in rec["progress"]], ["start", "round"])
+        self.assertEqual(rec["outcome"]["status"], "done")
+
+
 if __name__ == "__main__":
     unittest.main()
