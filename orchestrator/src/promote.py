@@ -130,7 +130,7 @@ class Promoter:
             child = found[0] = linear.call(self.gql, M_CREATE, "issueCreate", **{"in": {
                 "id": cid, "teamId": self.team.id, "projectId": src["project"]["id"], "assigneeId": self.ids[nxt],
                 "stateId": self.states["todo"], "priority": src["priority"],
-                "title": child_title(TASKS[self.runs[nxt].default].prefix, TASKS[self.runs[role].default].prefix or None, src["title"]),
+                "title": child_title(TASKS[nxt].prefix, TASKS[role].prefix or None, src["title"]),
                 "description": self.description(src, comments, detail)}})["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}

@@ -1,7 +1,3 @@
----
-description: "Turn a product request, notes or research reports into a reviewed PRD: problem, goals, users, user flow and requirements. Use when an idea needs to become a buildable spec before engineering."
----
-
 # Product Design
 
 Turn the input into a reviewed PRD.

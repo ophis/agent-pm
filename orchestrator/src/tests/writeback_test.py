@@ -124,10 +124,10 @@ class Base(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp)
         self.plog = os.path.join(self.tmp, "project.log")
 
-    def ctx(self, task="build", *, gql=None, resume=False, target=TARGET, project=None, sid=SID, workdir=None):
+    def ctx(self, role="engineer", *, gql=None, resume=False, target=TARGET, project=None, sid=SID, workdir=None):
         if workdir is None:
             workdir = tempfile.mkdtemp(dir=self.tmp)
-        return writeback.Context(ident=ID, issue_id=UUID, task=task, sid=sid, resume=resume, project=project,
+        return writeback.Context(ident=ID, issue_id=UUID, role=role, sid=sid, resume=resume, project=project,
                                  workdir=workdir, plog=self.plog, gql=gql or Gql(), humans=HUMANS, states=STATES,
                                  repos=REPOS, team=board_ids.TEAM, target=target)
 
@@ -181,8 +181,8 @@ class SayAndApprove(Base):
 
 
 class FinishGolden(Base):
-    def outcomes(self, task, spec, plan):
-        kind = config.TASKS[task].kind
+    def outcomes(self, role, spec, plan):
+        kind = config.TASKS[role].kind
         if kind == "research":
             return {"done": outcome("done", summary="Three queues compared.\nRedis streams fit best.", url=DOC),
                     "needs_input": outcome("needs_input", questions=["Which repo?", "Which version?"], url=DOC),
@@ -198,10 +198,10 @@ class FinishGolden(Base):
                                        files=files),
                 "failed": outcome("failed", "ENG-7: Session registry", "push not permitted", url=TREE, files=files)}
 
-    def golden(self, task, status, resume):
+    def golden(self, role, status, resume):
         research = ("1. Which repo?\n2. Which version?\n\n" + FOOTER
                     + " To change the target repo, edit the description's `Repo:` line.")
-        files = [spec_comment(), plan_comment()] if config.TASKS[task].files else []
+        files = [spec_comment(), plan_comment()] if config.TASKS[role].files else []
         table = {
             ("research", "done"): expect(body=f"Three queues compared.\nRedis streams fit best.\n\n{DOC}", state="in_review",
                                          attach=DOC, attach_title="Queue options"),
@@ -219,28 +219,25 @@ class FinishGolden(Base):
             ("build", "failed"): expect(files=files, state="in_review",
                                         body=f"Build failed: push not permitted\n\n{TREE}"),
         }
-        return table[(config.TASKS[task].kind, status)]
+        return table[(config.TASKS[role].kind, status)]
 
-    def test_every_task_status_and_mode(self):
-        self.assertEqual(set(config.TASKS), {"deep-research", "light-research", "product-design", "build", "light-build"})
-        for task in config.TASKS:
+    def test_every_role_status_and_mode(self):
+        self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
+        for role in config.TASKS:
             for status in drive.STATUSES:
                 for resume in (False, True):
-                    with self.subTest(task=task, status=status, resume=resume):
+                    with self.subTest(role=role, status=status, resume=resume):
                         gql = Gql()
-                        build = config.TASKS[task].kind == "build"
-                        ctx = self.ctx(task, gql=gql, resume=resume, target=TARGET if build else None)
+                        build = config.TASKS[role].kind == "build"
+                        ctx = self.ctx(role, gql=gql, resume=resume, target=TARGET if build else None)
                         spec, plan = self.files(ctx)
-                        self.assertTrue(writeback.finish(ctx, self.outcomes(task, spec, plan)[status]))
-                        self.assertEqual(gql.calls, self.golden(task, status, resume))
-
-    def test_light_build_is_build_without_files(self):
-        self.assertEqual(config.TASKS["light-build"], replace(config.TASKS["build"], files=False))
+                        self.assertTrue(writeback.finish(ctx, self.outcomes(role, spec, plan)[status]))
+                        self.assertEqual(gql.calls, self.golden(role, status, resume))
 
     def test_plog_and_ledger(self):
         ctx = self.ctx()
         spec, plan = self.files(ctx)
-        writeback.finish(ctx, self.outcomes("build", spec, plan)["done"])
+        writeback.finish(ctx, self.outcomes("engineer", spec, plan)["done"])
         steps = [f"file:ENG-7-spec.md:{sha(SPEC_TEXT)}", f"file:ENG-7-plan.md:{sha(PLAN_TEXT)}", "comment",
                  f"attach:{PR}", "move:in_review"]
         self.assertEqual(self.lines(), [f"writeback {ID}: {s}" for s in steps])
@@ -248,7 +245,7 @@ class FinishGolden(Base):
 
     def test_design_retitle_and_mapped_approve_line(self):
         gql = Gql()
-        ctx = self.ctx("product-design", gql=gql, target=None, project=PROJECT)
+        ctx = self.ctx("pm", gql=gql, target=None, project=PROJECT)
         writeback.finish(ctx, outcome("done", "Session Registry", "PRD for the registry.", url=PRD))
         self.assertEqual(gql.calls, expect(title="PRD: Session Registry", body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE_MAPPED}",
                                            state="in_review", attach=PRD, attach_title="Session Registry"))
@@ -401,9 +398,9 @@ class FinishSteps(Base):
         self.assertIn(f"writeback-error {ID}: file:ENG-7-spec.md:{sha(SPEC_TEXT)}: SystemExit: linear api error: body too long",
                       self.lines())
 
-    def test_files_only_for_files_tasks(self):
+    def test_files_only_for_files_roles(self):
         gql = Gql()
-        ctx = self.ctx("product-design", gql=gql, target=None)
+        ctx = self.ctx("pm", gql=gql, target=None)
         spec, plan = self.files(ctx)
         writeback.finish(ctx, outcome("failed", "Session Registry", "Could not publish.", files=[spec, plan]))
         self.assertEqual(gql.calls, expect(body="Could not publish.", state="in_review"))
@@ -520,21 +517,23 @@ class Sink(Base):
         self.assertEqual(len(gql.calls), 2)
 
     def test_build_started_matches_the_cutoff(self):
-        for task in ("build", "light-build"):
-            with self.subTest(task=task):
-                gql = Gql()
-                writeback.sink(self.ctx(task, gql=gql))(drive.Event("progress", name="start"))
-                self.assertEqual(gql.calls, [comment("Build started")])
-                self.assertTrue(issues.BUILD_STARTED.match(gql.calls[0][1]["b"]))
+        gql = Gql()
+        writeback.sink(self.ctx(gql=gql))(drive.Event("progress", name="start"))
+        self.assertEqual(gql.calls, [comment("Build started")])
+        self.assertTrue(issues.BUILD_STARTED.match(gql.calls[0][1]["b"]))
 
     def test_start_leads(self):
-        for task, body in (("deep-research", "Research started: budget 2 rounds"),
-                           ("light-research", "Research started: budget 2 rounds"),
-                           ("product-design", "PRD started: budget 2 rounds")):
-            with self.subTest(task=task):
+        for role, body in (("researcher", "Research started: budget 2 rounds"), ("pm", "PRD started: budget 2 rounds")):
+            with self.subTest(role=role):
                 gql = Gql()
-                writeback.sink(self.ctx(task, gql=gql))(drive.Event("progress", text="budget 2 rounds", name="start"))
+                writeback.sink(self.ctx(role, gql=gql))(drive.Event("progress", text="budget 2 rounds", name="start"))
                 self.assertEqual(gql.calls, [comment(body)])
+
+    def test_the_start_comment_is_the_roles_lead_and_the_runs_pick(self):
+        gql = Gql()
+        pick = "light-build: a template wording tweak, like TASK-226."
+        writeback.sink(self.ctx("engineer", gql=gql))(drive.Event("progress", text=pick, name="start"))
+        self.assertEqual(gql.calls, [comment(f"Build started: {pick}")])
 
     def test_ignores_text_and_outcome(self):
         gql = Gql()
@@ -576,12 +575,12 @@ class Sink(Base):
         gql = Gql(fail=lambda name, v: RuntimeError("boom"))
         ctx = replace(self.ctx(gql=gql), plog=os.path.join(self.tmp, "missing", "p.log"))
         writeback.sink(ctx)(drive.Event("progress", text="x", name="start"))
-        writeback.sink(replace(self.ctx(), task="nope"))(drive.Event("progress", text="x", name="start"))
+        writeback.sink(replace(self.ctx(), role="nope"))(drive.Event("progress", text="x", name="start"))
         self.assertEqual(self.lines(), [f"writeback-error {ID}: sink: KeyError: 'nope'"])
 
 
 class FinishNeverRaises(Base):
-    def test_unknown_task_logged(self):
+    def test_unknown_role_logged(self):
         self.assertFalse(writeback.finish(self.ctx("nope"), outcome("done", summary="x")))
         self.assertEqual(self.lines(), [f"writeback-error {ID}: finish: KeyError: 'nope'"])
 

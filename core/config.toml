@@ -5,8 +5,8 @@
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core.local.toml on top) → the client's [clients.<name>] → the orchestrator's [core] overlay; so
-#           a later layer's global value beats an earlier layer's task value
-#   levels  within a layer: global → role ([roles.<role>]) → task ([roles.<role>.tasks.<task>])
+#           a later layer's global value beats an earlier layer's role value
+#   levels  within a layer: global → role ([roles.<role>])
 
 # ── Global ──────────────────────────────────────────────
 #   tier            required: model tier 1–4 (1 = strongest); [clients.<name>] maps it to a model
@@ -46,43 +46,31 @@ language = "English"
 #   branch  github: required
 #   dir     github: required; the folder in the repo
 #   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# The orchestrator needs deep-research, light-research and product-design on one github.com repo and branch (local:
-# their [output] below).
+# The orchestrator needs researcher's and pm's [output] on one github.com repo and branch (local: below).
 [output]
 type = "local"
 
-# Roles: [roles.<role>] and its tasks, [roles.<role>.tasks.<task>].
-#   default_task  role only: the task run when none is named; unset → one must be named
+# Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (team/roles/<role>.md › Tasks). A role
+# table holding the old task-level keys is an error (README › Task labels: Upgrade).
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
 #   read          extra dirs the agent run reads; `repo` is drive.py's --repo dir, {{methods}} core's team/methods/
-#                 dir. Read-only by the prompt only: no deny rules. unset → none
+#                 dir; core's team/tasks/ is always read. Read-only by the prompt only: no deny rules. unset → none
 #   write         extra dirs the agent run writes; the workdir is always reachable; unset → none
 #   commands      shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any
 #                 arguments); {{scripts}} is core's src/ dir, {{workdir}} the agent run's workdir; unset → none
-#   gate          a usage-gate command a task runs before a costly step (deep research: before a second round);
-#                 pre-approved; unset → none (the orchestrator's overlay sets deep-research's)
-#   <run key>     tier, effort, language, show, cwd or [output], for that role or task
+#   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
+#                 round); pre-approved; unset → none (the orchestrator's overlay sets researcher's, so every researcher
+#                 run pre-approves it, light-research too)
+#   <run key>     tier, effort, language, show, cwd or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]
-default_task = "deep-research"
-
-[roles.researcher.tasks.deep-research]
 templates = ["research-report"]
 read = ["{{methods}}"]
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-# local: [roles.researcher.tasks.deep-research]
+# local: [roles.researcher]
 # local: cwd = "~/src/<name>"
-# local: [roles.researcher.tasks.deep-research.output]
-# local: type = "github"
-# local: repo = "<owner>/<name>"
-# local: branch = "main"
-# local: dir = "Research/"
-
-[roles.researcher.tasks.light-research]
-templates = ["research-report"]
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-# local: [roles.researcher.tasks.light-research.output]
+# local: [roles.researcher.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
 # local: branch = "main"
@@ -90,12 +78,9 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 
 # ── PM ──────────────────────────────────────────────────
 [roles.pm]
-default_task = "product-design"
-
-[roles.pm.tasks.product-design]
 templates = ["prd"]
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
-# local: [roles.pm.tasks.product-design.output]
+# local: [roles.pm.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
 # local: branch = "main"
@@ -103,27 +88,14 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]
-default_task = "build"
-
-[roles.engineer.tasks.build]
 effort = "xhigh"
 commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
 
-[roles.engineer.tasks.build.output]
-type = "pull-request"
-
-[roles.engineer.tasks.light-build]
-effort = "xhigh"
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
-
-[roles.engineer.tasks.light-build.output]
+[roles.engineer.output]
 type = "pull-request"
 
 # ── Dummy Tester ────────────────────────────────────────
 [roles.dummy-tester]
-default_task = "echo"
-
-[roles.dummy-tester.tasks.echo]
 tier = 3
 effort = "low"
 
@@ -161,21 +133,14 @@ CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 
 # Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
 # conversation to follow (the act-as skill).
-#   output  per task (roles.<role>.tasks.<task>.output); a task without one keeps its own (build, light-build:
-#           pull-request)
+#   output  per role ([clients.skill.roles.<role>.output]); a role without one keeps its own (engineer: pull-request)
 [clients.skill]
 
-# ── Researcher ─────────────────────────────────────────
-[clients.skill.roles.researcher.tasks.deep-research.output]
+[clients.skill.roles.researcher.output]
 type = "orchestrator"
 
-[clients.skill.roles.researcher.tasks.light-research.output]
+[clients.skill.roles.pm.output]
 type = "orchestrator"
 
-# ── PM ─────────────────────────────────────────────────
-[clients.skill.roles.pm.tasks.product-design.output]
-type = "orchestrator"
-
-# ── Dummy Tester ───────────────────────────────────────
-[clients.skill.roles.dummy-tester.tasks.echo.output]
+[clients.skill.roles.dummy-tester.output]
 type = "orchestrator"

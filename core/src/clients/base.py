@@ -61,6 +61,10 @@ class Client:
         """How prompts name core's team/methods/ dir: its absolute path unless the client says otherwise."""
         return os.path.join(os.path.abspath(root), TEXT, "methods")
 
+    def tasks_path(self, root: str) -> str:
+        """How prompts name core's team/tasks/ dir: its absolute path unless the client says otherwise."""
+        return os.path.join(os.path.abspath(root), TEXT, "tasks")
+
     def handover(self) -> str:
         """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; `{{report}}` is
         filled with the report command (compose.report_command)."""
@@ -68,7 +72,7 @@ class Client:
 
     def value(self, run: RunConfig, key: str):
         """One of this client's own keys for the agent run, in config.toml's layout."""
-        return lookup(self.config, run.role, run.task, key)
+        return lookup(self.config, run.role, key)
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access) -> Launch:
         """The command for an agent run."""
