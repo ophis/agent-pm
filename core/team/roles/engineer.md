@@ -30,7 +30,7 @@ Unsure → `build`.
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.
-2. Run `python3 {{scripts}}/repo.py status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`). JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
+2. Run `python3 <scripts>/repo.py status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`). JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
 
 ## Merge
 

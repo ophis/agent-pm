@@ -68,8 +68,8 @@ class Client:
         return os.path.join(os.path.abspath(root), TEXT, "tasks")
 
     def handover(self) -> str:
-        """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; `{{report}}` is
-        filled with the report command (compose.report_command)."""
+        """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; a code span
+        starting with `report` names the report command (compose.PARAMETERS)."""
         return ""
 
     def value(self, run: RunConfig, key: str):

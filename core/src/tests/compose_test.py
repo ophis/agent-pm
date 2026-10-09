@@ -39,11 +39,12 @@ class Plain:
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
+RUN = replace(PARAMS, out="/runs/W-1/out.md", workdir="/runs/W-1")   # a workdir no other prompt text holds
 
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\nUnsure → `short-note`.\n\n- `short-note`: a note; most times; light.\n"
           "- `long-note`: a long note; when asked; heavy.\n\n## Style\n\n- `draft`: not a task.\n")
 FILES = {
-    "team/guide.md": ("# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `{{tasks}}`.\n\n"
+    "team/guide.md": ("# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"
                       "On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task's.\n"),
     "team/principles.md": "# Principles\n",
     "team/roles/writer.md": WRITER,
@@ -53,7 +54,7 @@ FILES = {
     "team/templates/note.md": "# Note: [Title]\n",
     "output/output.md": "# Output\n\nWrite `Output:`.\n",
     "output/destinations/local.md": "## Destination\n\nKeep it local.\n",
-    "output/destinations/github.md": "## Destination\n\nPush to `{{repo}}` on `{{branch}}`.\n",
+    "output/destinations/github.md": "## Destination\n\nPush to `<out-repo>` on `<out-branch>`.\n",
 }
 
 CONFIG = """
@@ -79,9 +80,21 @@ branch = "main"
 
 
 def parameters(prompt):
-    """{name: value} of the prompt's # Parameters lines, in order; a line of another shape fails."""
+    """{name: value} of the prompt's # Parameters lines after compose.RULE, in order; a line of another shape fails."""
     section = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
-    return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in section.splitlines())
+    lines = section.removeprefix(f"{compose.RULE}\n\n").splitlines()
+    return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
+
+
+def expanded(prompt):
+    """`prompt` with each # Parameters name written as its value, as the rule says a run writes a command: `report` at
+    a code span's start, then the names its value holds and every other."""
+    values = {name: value.strip("`") for name, value in parameters(prompt).items()}
+    if report := values.pop(compose.REPORT, None):
+        prompt = re.sub(r"`report(?=[` ])", lambda m: f"`{report}", prompt)
+    for name, value in values.items():
+        prompt = prompt.replace(name, value)
+    return prompt
 
 
 class Fake(unittest.TestCase):
@@ -145,15 +158,16 @@ class Resolve(Fake):
         _, run = self.compose("editor", layers=[layer, {"tier": 4}])
         self.assertEqual(run.tier, 4)
 
-    def test_gate_defaults_to_none_and_a_layers_gate_renders_verbatim(self):
-        self.write({"team/roles/writer.md": WRITER + "\nGate: `{{gate}}`.\n"})
+    def test_gate_defaults_to_none_and_a_layers_gate_is_its_value_verbatim(self):
+        self.write({"team/roles/writer.md": WRITER + "\nGate: `<gate>`.\n"})
         prompt, run = self.compose()
         self.assertEqual(run.gate, "")
-        self.assertIn("Gate: `none`.", prompt)
+        self.assertEqual(parameters(prompt)["<gate>"], "`none`")
         gate = "python3 /u/usage.py --below 80 *"
         prompt, run = self.compose(layers=[{"roles": {"writer": {"gate": gate}}}])
         self.assertEqual(run.gate, gate)
-        self.assertIn(f"Gate: `{gate}`.", prompt)
+        self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`")
+        self.assertIn("Gate: `<gate>`.", prompt)
 
     def test_gate_is_a_config_toml_run_key_too(self):
         self.config(CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"'))
@@ -321,9 +335,10 @@ class Validate(Fake):
         self.config(CONFIG.replace('type = "github"', 'type = "s3"'))
         self.fails("no destination 's3'", "editor")
 
-    def test_missing_placeholder_value(self):
+    def test_missing_output_value(self):
         self.config(CONFIG.replace('repo = "o/docs"\n', ""))
-        self.fails("unfilled placeholder {{repo}}", "editor")
+        self.fails("<out-repo> is used in destinations/github.md but Parameters doesn't define it "
+                   "(output.repo is not set)", "editor")
 
     def test_missing_template(self):
         self.config(CONFIG.replace('templates = ["note"]', 'templates = ["memo"]'))
@@ -344,10 +359,9 @@ class Prompt(Fake):
                                      "# Template: `templates/note.md`", "# Output", "## Destination", "# Input"], task)
 
     def test_the_guide_names_the_task_only_when_one_is_named(self):
-        tasks = os.path.join(self.root, "team", "tasks")
         prompt, _ = self.compose()
         guide = prompt.split("# Principles", 1)[0]
-        self.assertIn(f"You are Writer. Task: pick one; files in `{tasks}`.", guide)
+        self.assertIn("You are Writer. Task: pick one; files in `<tasks>`.", guide)
         self.assertIn("On conflict: [Principles](#principles) > [Writer rules](#writer) > your task's.", guide)
         self.assertEqual(prompt.count("On conflict:"), 1)
         prompt, _ = self.compose(task="long-note")
@@ -363,9 +377,9 @@ class Prompt(Fake):
         os.remove(os.path.join(self.root, "team", "guide.md"))
         self.fails("missing file guide.md")
 
-    def test_destination_is_filled(self):
+    def test_destination_keeps_its_names(self):
         prompt, _ = self.compose("editor")
-        self.assertIn("Push to `o/docs` on `main`.", prompt)
+        self.assertIn("Push to `<out-repo>` on `<out-branch>`.", prompt)
 
     def test_template_is_fenced(self):
         prompt, _ = self.compose()
@@ -403,22 +417,21 @@ class Prompt(Fake):
         body = prompt.rsplit("\n# Input\n", 1)[0]
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
-    def test_handover_gets_the_report_command(self):
-        run = compose.load_run(self.root, "writer")
-        prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
-        self.assertIn(f"Run `python3 {self.root}/src/report.py --to /w/run.jsonl outcome <file>`.", prompt)
+    def test_the_report_command_quotes_its_paths(self):
+        self.assertEqual(compose.report_command("/s", PARAMS), "python3 /s/report.py --to /w/run.jsonl")
         spaced = replace(PARAMS, workdir="/my w")
         self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/run.jsonl'")
         self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
-    def test_guide_principles_and_role_text_name_the_clients_paths(self):
-        self.write({"team/principles.md": "# Principles\n\nRun `{{scripts}}/x.py`; tasks in `{{tasks}}`.\n",
-                    "team/roles/writer.md": WRITER + "\nKnow `{{methods}}` and `{{tasks}}/short-note.md`.\n"})
+    def test_texts_keep_the_names_and_parameters_give_the_clients_paths(self):
+        self.write({"team/principles.md": "# Principles\n\nRun `<scripts>/x.py`; tasks in `<tasks>`.\n",
+                    "team/roles/writer.md": WRITER + "\nKnow `<methods>` and `<tasks>/short-note.md`.\n"})
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, PARAMS, client=Plain(methods="/m", tasks="/t"))
-        self.assertIn(f"Run `{self.root}/src/x.py`; tasks in `/t`.", prompt)
-        self.assertIn("Know `/m` and `/t/short-note.md`.", prompt)
-        self.assertIn("files in `/t`.", prompt)
+        self.assertIn("Run `<scripts>/x.py`; tasks in `<tasks>`.", prompt)
+        self.assertIn("Know `<methods>` and `<tasks>/short-note.md`.", prompt)
+        self.assertEqual(parameters(prompt), {"<Workdir>": "`/w`", "<scripts>": f"`{self.root}/src`", "<tasks>": "`/t`",
+                                              "<methods>": "`/m`"})
 
     def test_load_then_render_with_another_output(self):
         run = compose.load_run(self.root, "editor")
@@ -460,6 +473,12 @@ class Prompt(Fake):
         self.write({"team/roles/writer.md": WRITER + "\nUse {{tool}}.\n"})
         self.fails("unfilled placeholder {{tool}}")
 
+    def test_a_run_value_placeholder_is_gone(self):
+        for name in ("scripts", "tasks", "methods", "gate", "repo", "branch", "dir", "host", "report"):
+            with self.subTest(name=name):
+                self.write({"team/roles/writer.md": WRITER + f"\nUse `{{{{{name}}}}}`.\n"})
+                self.fails(f"unfilled placeholder {{{{{name}}}}} in roles/writer.md")
+
 
 class Parameters(Fake):
     GITHUB = FILES["output/destinations/github.md"]
@@ -468,17 +487,43 @@ class Parameters(Fake):
         self.assertEqual(list(parameters(self.compose()[0]).items()), [
             ("<Workdir>", "`/w`"), ("<scripts>", f"`{self.root}/src`"), ("<tasks>", f"`{self.root}/team/tasks`")])
 
-    def test_report_only_with_params_and_a_report_handover(self):
-        run = compose.load_run(self.root, "writer")
-        prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
-        self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"])
-        self.assertEqual(parameters(prompt)["report"], "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
-        for params in (PARAMS, None):
-            prompt = compose.render(self.root, run, params, client=Plain("Say it back."))
-            self.assertNotIn("report", parameters(prompt), params)
+    def test_the_rule_opens_the_section(self):
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: `/w`\n", self.compose()[0])
 
-    def test_methods_used_by_its_placeholder_in_the_role(self):
-        self.write({"team/roles/writer.md": WRITER + "\nKnow `{{methods}}`.\n"})
+    def test_report_only_with_params_and_a_handover_using_it_in_code(self):
+        run = compose.load_run(self.root, "writer")
+        for handover in ("Run `report outcome <file>`.", "Report through `report`."):
+            prompt = compose.render(self.root, run, PARAMS, client=Plain(handover))
+            self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"], handover)
+            self.assertEqual(parameters(prompt)["report"], "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
+            self.assertIn(f"## Return\n\n{handover}\n", prompt)
+        for handover in ("Say it back.", "Send your report; `report.py` gets it."):
+            for params in (PARAMS, None):
+                prompt = compose.render(self.root, run, params, client=Plain(handover))
+                self.assertNotIn("report", parameters(prompt), (handover, params))
+
+    def test_a_handover_using_report_needs_params(self):
+        run = compose.load_run(self.root, "writer")
+        with self.assertRaises(compose.ConfigError) as cm:
+            compose.render(self.root, run, client=Plain("Run `report progress x`."))
+        self.assertTrue(str(cm.exception).startswith("report is used in handover but Parameters doesn't define it ("))
+
+    def test_workdir_used_needs_params_or_the_clients_inline_workdir(self):
+        self.write({"team/principles.md": "# Principles\n\nTemp files go in `<Workdir>/tmp/`.\n"})
+        run = compose.load_run(self.root, "writer")
+        with self.assertRaises(compose.ConfigError) as cm:
+            compose.render(self.root, run, client=Plain())
+        self.assertTrue(str(cm.exception).startswith(
+            "<Workdir> is used in principles.md but Parameters doesn't define it ("))
+        prompt = compose.render(self.root, run, client=Plain(inline_workdir="a temp dir"))
+        self.assertEqual(parameters(prompt)["<Workdir>"], "a temp dir")
+
+    def test_a_task_file_using_a_name_its_run_cannot_define(self):
+        self.write({"team/tasks/long-note.md": "# Long Note\n\nOpen `<out-repo>`.\n"})
+        self.fails("<out-repo> is used in tasks/long-note.md but Parameters doesn't define it (output.repo is not set)")
+
+    def test_methods_used_by_name_in_the_role(self):
+        self.write({"team/roles/writer.md": WRITER + "\nKnow `<methods>`.\n"})
         names = parameters(self.compose()[0])
         self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>"])
         self.assertEqual(names["<methods>"], f"`{self.root}/team/methods`")
@@ -495,14 +540,14 @@ class Parameters(Fake):
         names = parameters(self.compose()[0])
         self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>"])
         self.write({"team/tasks/long-note.md": "# Long Note\n\nFollow `{{methods}}/m.md`.\n"})
-        self.assertIn("<gate>", parameters(self.compose()[0]))
+        self.assertNotIn("<gate>", parameters(self.compose()[0]))
 
     def test_github_output_its_used_keys(self):
         names = parameters(self.compose("editor")[0])
         self.assertEqual(list(names.items())[3:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")])
 
     def test_an_unset_host_is_github_com(self):
-        self.write({"output/destinations/github.md": self.GITHUB + "Clone `{{host|github.com}}/{{repo}}`.\n"})
+        self.write({"output/destinations/github.md": self.GITHUB + "Clone `<out-host>/<out-repo>`.\n"})
         self.assertEqual(parameters(self.compose("editor")[0])["<out-host>"], "`github.com`")
         layer = {"roles": {"editor": {"output": {"type": "github", "repo": "o/d", "branch": "b", "host": "ghe.x"}}}}
         self.assertEqual(parameters(self.compose("editor", layers=[layer])[0])["<out-host>"], "`ghe.x`")
@@ -534,12 +579,17 @@ class Deliverable(Fake):
             with self.subTest(out=out):
                 self.assertEqual(compose.RunParams(input="x", out=out, workdir=wd).deliverable, want)
 
-    def test_a_destination_names_it(self):
+    def test_a_destination_names_it_under_the_workdirs_name(self):
         self.write(self.DEST)
         prompt, _ = self.compose()
-        self.assertIn("Keep it local.\nWrite it to `/w/out.md`.\n", prompt)
+        self.assertIn("Keep it local.\nWrite it to `<Workdir>/out.md`.\n", prompt)
         prompt, _ = self.compose(out="/elsewhere/out.md")
-        self.assertIn("Write it to `/w/tmp/deliverable.md`.", prompt)
+        self.assertIn("Write it to `<Workdir>/tmp/deliverable.md`.", prompt)
+        wd = os.path.join(os.path.realpath(self.root), "wd")
+        os.makedirs(wd)
+        os.symlink(wd, os.path.join(self.root, "via"))
+        prompt, _ = self.compose(workdir=os.path.join(self.root, "via"), out=os.path.join(wd, "sub", "out.md"))
+        self.assertIn("Write it to `<Workdir>/sub/out.md`.", prompt)
 
     def test_without_params_its_lines_are_dropped(self):
         self.write(self.DEST)
@@ -613,7 +663,20 @@ REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkou
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
 PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
-        f"that task's file, `{TASKS}/<task>.md`, and follow its steps in order.")
+        "that task's file, `<tasks>/<task>.md`, and follow its steps in order.")
+COMMANDS_RULE = ("- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
+                 "command (no `cd`, pipe, redirect or `&&`).")
+RETURN = """Report through `report`, never in a reply:
+
+- **Progress:** at each `[agent-pm-progress:<name>] …` line in your steps, before calling the next tool, run `report progress <name> <your report>`, e.g. `report progress start <what that line asks you to report>`.
+- **Outcome:** as your last action, after everything else is done and any background work you started has finished, run `report outcome --status <done|needs_input|failed> --title <one line> --summary <text> [--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`: `--question` and `--file` once per item; `--deliverable` a file holding the deliverable, which is read as its text. If it fails, fix it and run it again."""
+
+
+def claude_prompt(role, task=None):
+    """The claude client's prompt for `role` with RUN, and its run."""
+    claude = clients.get("claude", CORE)
+    run = compose.load_run(CORE, role, task, layers=[claude.config])
+    return compose.render(CORE, run, RUN, client=claude), run
 
 
 class GenericNames(unittest.TestCase):
@@ -707,10 +770,10 @@ class RealCore(unittest.TestCase):
         for dest in ("local", "orchestrator"):
             run = replace(compose.load_run(CORE, "researcher"), output={"type": dest})
             with_params = compose.render(CORE, run, PARAMS, client=Plain())
-            self.assertEqual(with_params.count("`/w/out.md`"), 1, dest)
-            self.assertIn("Write the deliverable to `/w/out.md` and return that file as the outcome's `deliverable`",
-                          with_params, dest)
-            without = compose.render(CORE, run, client=Plain())
+            self.assertEqual(with_params.count("`<Workdir>/out.md`"), 1, dest)
+            self.assertIn("Write the deliverable to `<Workdir>/out.md` and return that file as the outcome's "
+                          "`deliverable`", with_params, dest)
+            without = compose.render(CORE, run, client=Plain(inline_workdir="a temp dir"))
             self.assertNotIn("Write the deliverable to", without, dest)
             self.assertIn("Put the deliverable in the outcome's `deliverable`", without, dest)
             self.assertIn("Leave `url` empty.", without, dest)
@@ -726,7 +789,7 @@ class RealCore(unittest.TestCase):
             prompt, run = composed(role, task)
             g = guide(prompt)
             self.assertTrue(g.startswith("# Guide\n"), task)
-            self.assertIn(f"`{TASKS}/<task>.md`", g, task)
+            self.assertIn("`<tasks>/<task>.md`", g, task)
             self.assertIn(f"[{run.role_title} rules](#{compose.anchor(run.role_title)}) > your task file's rules", g)
             self.assertEqual(prompt.count("On conflict:"), 1, task)
             self.assertIn("On conflict:", g, task)
@@ -797,8 +860,10 @@ class RealCore(unittest.TestCase):
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
+        self.assertEqual(parameters(prompt)["<methods>"], f"`{os.path.join(CORE, 'team', 'methods')}`")
         for name in METHOD_NAMES:
-            self.assertIn(f"`{os.path.join(CORE, 'team', 'methods', name)}.md`", prompt)
+            self.assertTrue(os.path.isfile(os.path.join(CORE, "team", "methods", f"{name}.md")), name)
+            self.assertIn(f"`<methods>/{name}.md`", prompt)
         for phrase in ("No such tool → follow the deep-research method (Researcher › Methods).",
                        "per the ultracode method (Researcher › Methods)", "No Workflow tool → follow that method.",
                        "Before the second, the brake (Researcher › Methods).",
@@ -811,12 +876,46 @@ class RealCore(unittest.TestCase):
         for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
             self.assertNotIn(word, text, word)
 
-    def test_pre_approved_commands_match_the_prompt(self):
+    def test_names_written_as_their_values_each_pre_approved_command_starts_a_command(self):
+        scripts = os.path.join(CORE, "src")
+        report = compose.report_command(scripts, RUN)
         for role in ROLES:
-            prompt, run = composed(role)
+            prompt, run = claude_prompt(role)
+            prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = compose.fill(cmd, {"scripts": os.path.join(CORE, "src"), "workdir": "<Workdir>"}, role).removesuffix(" *")
+                cmd = compose.fill(cmd, {"scripts": scripts, "workdir": RUN.workdir}, role).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
+            self.assertIn(f"Report through `{report}`, never in a reply", prompt, role)
+            self.assertIn(f"`{report} progress <name> <your report>`", prompt, role)
+            self.assertIn(f"`{report} outcome --status", prompt, role)
+
+    def test_a_claude_prompt_defines_each_run_value_once_under_the_rule(self):
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            prompt, _ = claude_prompt(role, task)
+            for value in ("report.py", RUN.workdir, os.path.join(CORE, "src"), compose.RULE):
+                self.assertEqual(prompt.count(value), 1, (role, task, value))
+            self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
+
+    def test_a_claude_prompts_return_is_the_report_text(self):
+        for role in ROLES:
+            self.assertIn(f"\n## Return\n\n{RETURN}\n\n# Input\n", claude_prompt(role)[0], role)
+
+    def test_a_skill_prompt_has_the_rule_once_and_no_report(self):
+        skill = clients.get("skill", CORE)
+        for role in ROLES:
+            prompt = compose.render(CORE, compose.load_run(CORE, role, layers=[skill.config]), client=skill)
+            self.assertEqual(prompt.count(compose.RULE), 1, role)
+            self.assertNotIn(compose.REPORT, parameters(prompt), role)
+
+    def test_text_holds_only_the_placeholders_compose_fills_and_no_client_the_report_one(self):
+        inline = {"role", "role_anchor", "task", "language", "deliverable"}
+        for d in ("team", "output"):
+            for path in glob.glob(os.path.join(CORE, d, "**", "*.md"), recursive=True):
+                with open(path) as f:
+                    self.assertLessEqual(set(re.findall(r"\{\{(\w+)", f.read())), inline, path)
+        for path in glob.glob(os.path.join(CORE, "src", "clients", "*.py")):
+            with open(path) as f:
+                self.assertNotIn("{{report}}", f.read(), path)
 
     def test_every_repo_py_command_takes_the_inputs_checkout(self):
         found = {}
@@ -889,7 +988,7 @@ class RealCore(unittest.TestCase):
         for role in ROLES:
             with open(os.path.join(CORE, "team", "roles", f"{role}.md")) as f:
                 text = f.read() + "".join(task_text(t) for t in compose.index(CORE, role))
-            if "{{methods}}" in text:
+            if "<methods>" in text:
                 named.append(role)
                 self.assertIn("{{methods}}", compose.load_run(CORE, role, layers=[claude]).read, role)
         self.assertEqual(named, ["researcher"])
@@ -927,16 +1026,20 @@ class RealCore(unittest.TestCase):
     def test_every_researcher_run_names_the_gate_default_none(self):
         gate = "python3 /u/usage.py --below 80"
         for task in (None, "deep-research", "light-research"):
-            self.assertIn("the gate is `none`", composed("researcher", task)[0], task)
+            prompt = composed("researcher", task)[0]
+            self.assertIn("the gate is `<gate>`", prompt, task)
+            self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
             run = compose.load_run(CORE, "researcher", task, layers=[{"gate": gate}])
-            self.assertIn(f"the gate is `{gate}`", compose.render(CORE, run, PARAMS, client=Plain()), task)
+            self.assertEqual(parameters(compose.render(CORE, run, PARAMS, client=Plain()))["<gate>"], f"`{gate}`", task)
 
     def test_github_host_defaults_and_overrides(self):
-        run = compose.load_run(CORE, "researcher")
-        self.assertIn("https://github.com/ophis/private_docs/blob/main/", compose.render(CORE, run, client=Plain()))
-        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), client=Plain())
-        self.assertIn("gh repo clone ghe.example.com/ophis/private_docs", prompt)
-        self.assertIn("https://ghe.example.com/ophis/private_docs/blob/main/", prompt)
+        prompt, run = composed("researcher")
+        self.assertIn("gh repo clone <out-host>/<out-repo> <pub>", prompt)
+        self.assertIn("https://<out-host>/<out-repo>/blob/<out-branch>/<path>", prompt)
+        self.assertEqual(parameters(prompt)["<out-host>"], "`github.com`")
+        prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), PARAMS,
+                                client=Plain())
+        self.assertEqual(parameters(prompt)["<out-host>"], "`ghe.example.com`")
 
 
 METHOD_NAMES = ("deep-research", "ultracode")

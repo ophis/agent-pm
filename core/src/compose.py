@@ -3,9 +3,9 @@ templates + output + input into its prompt; the agent run reads its task's file 
 (drive.py).
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task; none → the guide's default text) and
-{{language}} (unset → each line holding it is dropped); guide, principles and role text get {{scripts}} (this dir, or
-the client's path to it), {{methods}} (team/methods/, likewise), {{tasks}} (team/tasks/, likewise) and {{gate}}; a
-destination gets its output values and {{deliverable}} (no params → each line holding it is dropped).
+{{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its path in the
+workdir> (no params → each line holding it is dropped). Every other run value is a PARAMETERS name, its value given once
+in # Parameters.
 """
 import json
 import os
@@ -35,11 +35,17 @@ OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index: its lines - `<task>`: <text>
 INDEX_LINE = re.compile(r"^- `([\w-]+)`: (.+)$", re.M)
-METHOD = re.compile(r"(?:\{\{methods\}\}|<methods>)/([\w-]+)\.md")   # a method file named in a text
-# The # Parameters section's names, in order, each with its placeholder (None: none); which a prompt gets: _parameters.
-PARAMETERS = {"<Workdir>": None, "<scripts>": "scripts", "<tasks>": "tasks", "<methods>": "methods", "<gate>": "gate",
-              "<out-repo>": "repo", "<out-branch>": "branch", "<out-dir>": "dir", "<out-host>": "host", "report": None}
-REPORT = "report"   # the handover's placeholder for the report command
+METHOD = re.compile(r"<methods>/([\w-]+)\.md")   # a method file named in a text
+REPORT = "report"   # the report command's Parameters name
+# The # Parameters section's names, in order: name → (the regex a text uses it by, its value's source in _parameters).
+PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", "scripts"),
+              "<tasks>": ("<tasks>", "tasks"), "<methods>": ("<methods>", "methods"), "<gate>": ("<gate>", "gate"),
+              "<out-repo>": ("<out-repo>", "output.repo"), "<out-branch>": ("<out-branch>", "output.branch"),
+              "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
+              REPORT: (r"`report[` ]", REPORT)}   # only a code span starting with it: prose says "report" too
+RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
+        "value and written out in full, no name or shell variable left: pre-approved commands match on their exact "
+        "text and each shell call starts fresh, so anything else waits on a permission prompt.")
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
@@ -185,19 +191,18 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
     """The agent run's prompt for `client`: the guide, then # Parameters (_parameters); its Output section ends with the
-    client's handover as Output › Return ({{report}} filled when params are given); last, # Input: the input when params
-    are given, else the client's inline_input ("" → no section)."""
+    client's handover as Output › Return; last, # Input: the input when params are given, else the client's
+    inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}`"} if run.task else {}
-    paths = {"scripts": client.scripts_path(root), "methods": client.methods_path(root),
-             "tasks": client.tasks_path(root), "gate": run.gate or "none"}
     rel = f"roles/{run.role}.md"
     guide, principles, role = _read(text, "guide.md"), _read(text, "principles.md"), _read(text, rel)
     if not run.language:
         principles = _without(principles, "{{language}}")
-    parts = [fill(guide, names | paths, "guide.md"), fill(principles, names | paths, "principles.md"),
-             fill(role, paths, rel)]
+    texts = {"guide.md": fill(guide, names, "guide.md"), "principles.md": fill(principles, names, "principles.md"),
+             rel: fill(role, {}, rel)}
+    parts = list(texts.values())
     for name in run.templates:
         rel = f"templates/{name}.md"
         body = _read(text, rel)
@@ -206,17 +211,18 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     output, dest = os.path.join(root, OUTPUT), f"destinations/{run.output['type']}.md"
     if not os.path.isfile(os.path.join(output, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
-    about, destination, values = _read(output, "output.md"), _read(output, dest), run.output
+    destination, values = _read(output, dest), {}
     if params:
-        values = values | {"deliverable": params.deliverable}
+        inside = os.path.relpath(os.path.realpath(params.deliverable), os.path.realpath(params.workdir))
+        values = {"deliverable": f"<Workdir>/{inside}"}
     else:
         destination = _without(destination, "{{deliverable}}")
-    parts.append(fill(about, {}, "output.md") + "\n" + fill(destination, values, dest))
+    texts |= {"output.md": fill(_read(output, "output.md"), {}, "output.md"), dest: fill(destination, values, dest)}
+    parts.append(texts["output.md"] + "\n" + texts[dest])
     if handover := client.handover():
-        report = {REPORT: report_command(paths["scripts"], params)} if params else {}
-        parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
-    used = _used(root, run.role, [guide, principles, role, about, destination])
-    parts.insert(1, _parameters(run, params, client, paths, used, bool(params) and REPORT in _keys(handover)))
+        texts["handover"] = fill(handover, {}, "handover")
+        parts.append(f"## Return\n\n{texts['handover'].strip()}\n")
+    parts.insert(1, _parameters(root, run, params, client, texts))
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
     given = params.input.strip() if params else client.inline_input
     return prompt + (f"\n# Input\n\n{given}\n" if params or given else "")
@@ -270,31 +276,31 @@ def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
         raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
-def _parameters(run: RunConfig, params: RunParams | None, client: PromptClient, paths: Mapping, used: set[str],
-                report: bool) -> str:
-    """The # Parameters section, values as inline code: <Workdir> (params' workdir, else the client's inline_workdir as
-    prose; "" → no line), <scripts>, <tasks>, each other name with a placeholder in `used`, and `report` if
-    `report`."""
-    known = {"host": "github.com"} | run.output | paths
-    values = {"<Workdir>": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
-              "report": _code(f"python3 <scripts>/report.py --to <Workdir>/{CHANNEL}") if report else ""}
-    for name, key in PARAMETERS.items():
-        if key and name in used | {"<scripts>", "<tasks>"}:
-            if key not in known:
-                raise ConfigError(f"{name} is used but output.{key} is not set")
-            values[name] = _code(str(known[key]))
-    return "# Parameters\n\n" + "".join(f"- `{name}`: {values[name]}\n" for name in PARAMETERS if values.get(name))
-
-
-def _used(root: str, role: str, texts: list[str]) -> set[str]:
-    """The PARAMETERS names that `texts`, the role's task files or the method files they name hold, by name or by
-    placeholder."""
+def _parameters(root: str, run: RunConfig, params: RunParams | None, client: PromptClient,
+                texts: Mapping[str, str]) -> str:
+    """The # Parameters section: RULE, then each PARAMETERS name that `texts` ({label: text}), the role's task files or
+    the method files these name use, plus <Workdir>, <scripts> and <tasks> even unused, each with its value as inline
+    code (<Workdir> without params: the client's inline_workdir, prose). A used name without a value raises ConfigError
+    naming the first text using it."""
     text = os.path.join(root, TEXT)
-    texts = texts + [_read(text, f"tasks/{t}.md") for t in index(root, role)]
-    named = {f"methods/{m}.md" for t in texts for m in METHOD.findall(t)}
-    texts += [_read(text, rel) for rel in named if os.path.isfile(os.path.join(text, rel))]
-    keys = set().union(*map(_keys, texts))
-    return {name for name, key in PARAMETERS.items() if key in keys or any(name in t for t in texts)}
+    texts = dict(texts) | {f"tasks/{t}.md": _read(text, f"tasks/{t}.md") for t in index(root, run.role)}
+    named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
+    texts |= {rel: _read(text, rel) for rel in named if os.path.isfile(os.path.join(text, rel))}
+    values = {"workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
+              "scripts": _code(client.scripts_path(root)), "tasks": _code(client.tasks_path(root)),
+              "methods": _code(client.methods_path(root)), "gate": _code(run.gate or "none"),
+              REPORT: _code(f"python3 <scripts>/report.py --to <Workdir>/{CHANNEL}") if params else ""}
+    values |= {f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()}
+    unset = {"workdir": "no run params and the client has no inline_workdir", REPORT: "no run params"}
+    lines = []
+    for name, (use, source) in PARAMETERS.items():
+        where = next((label for label, t in texts.items() if re.search(use, t)), None)
+        if where and not values.get(source):
+            raise ConfigError(f"{name} is used in {where} but Parameters doesn't define it "
+                              f"({unset.get(source, f'{source} is not set')})")
+        if values.get(source) and (where or name in ("<Workdir>", "<scripts>", "<tasks>")):
+            lines.append(f"- `{name}`: {values[source]}\n")
+    return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
 
 
 def _read(root: str, rel: str) -> str:
@@ -326,8 +332,3 @@ def _code(value: str) -> str:
     """`value` as Markdown inline code."""
     f, pad = _fence(value, 1), " " if "`" in value else ""
     return f"{f}{pad}{value}{pad}{f}"
-
-
-def _keys(text: str) -> set[str]:
-    """The names of the placeholders in `text`."""
-    return {m.group(1) for m in PLACEHOLDER.finditer(text)}

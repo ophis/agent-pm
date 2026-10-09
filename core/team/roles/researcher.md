@@ -26,8 +26,8 @@ Read the input; decide its type (Type and target). Too vague → `needs_input`, 
 
 ## Methods
 
-- Read-only: the **deep-research method** `{{methods}}/deep-research.md`, the **ultracode method** `{{methods}}/ultracode.md`.
-- **Brake**, before a second round: the gate is `{{gate}}`; unless `none`, run it. Nonzero exit → skip that round, its output under Gaps.
+- Read-only: the **deep-research method** `<methods>/deep-research.md`, the **ultracode method** `<methods>/ultracode.md`.
+- **Brake**, before a second round: the gate is `<gate>`; unless `none`, run it. Nonzero exit → skip that round, its output under Gaps.
 
 ## Failure
 

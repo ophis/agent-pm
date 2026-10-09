@@ -114,7 +114,7 @@ class Claude(Base):
     def test_the_prompt_names_the_file_the_agent_writes_the_deliverable_to(self):
         elsewhere = os.path.join(self.tmp.name, "elsewhere", "out.md")
         for layers in ([{"output": {"type": "local"}}], [{"output": {"type": "orchestrator"}}]):
-            for params, want in (({}, f"{self.work}/out.md"), ({"out": elsewhere}, f"{self.work}/tmp/deliverable.md")):
+            for params, want in (({}, "<Workdir>/out.md"), ({"out": elsewhere}, "<Workdir>/tmp/deliverable.md")):
                 with self.subTest(layers=layers, params=params):
                     launch = self.plan(client="claude", repo=self.repo, layers=layers, **params)
                     self.assertIn(f"Write the deliverable to `{want}` and return that file as the outcome's "
@@ -131,9 +131,8 @@ class Claude(Base):
             "--add-dir", TASKS, "--add-dir", METHODS,
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn(f"## Return\n\nReport through `{self.report()}`", launch.argv[2])
-        self.assertIn(f"`{self.report()} progress start <what that line asks you to report>`", launch.argv[2])
-        self.assertIn(f"`{self.report()} outcome --status <done|needs_input|failed> --title", launch.argv[2])
+        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n", launch.argv[2])
+        self.assertIn("## Return\n\nReport through `report`, never in a reply:", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
@@ -149,14 +148,15 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--allowedTools"):], [
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`", argv[2])
+        self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] "
+                      "<repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
         argv = self.plan("researcher", "deep-research", client="claude", repo=self.repo,
                          layers=[{"gate": gate}]).argv
         self.assertEqual(argv[argv.index("--allowedTools"):][-1], f"Bash({gate})")
-        self.assertIn(f"the gate is `{gate}`", argv[2])
+        self.assertIn(f"\n- `<gate>`: `{gate}`\n", argv[2])
 
     def test_every_run_reads_the_tasks_dir_a_researchers_the_methods_dir_too(self):
         for role, task, dirs in (("researcher", None, [TASKS, METHODS]), ("researcher", "deep-research", [TASKS, METHODS]),
@@ -169,11 +169,11 @@ class Claude(Base):
         prompts = [self.plan("researcher", "deep-research", client="claude").argv[2]]
         self.plan("researcher", "deep-research")
         prompts.append(Recorder.seen[-1]["prompt"])
-        for name in ("deep-research", "ultracode"):
-            path = os.path.join(CORE, "team", "methods", f"{name}.md")
-            self.assertTrue(os.path.isfile(path), path)
-            for prompt in prompts:
-                self.assertIn(f"`{path}`", prompt)
+        for prompt in prompts:
+            self.assertIn(f"\n- `<methods>`: `{METHODS}`\n", prompt)
+            for name in ("deep-research", "ultracode"):
+                self.assertTrue(os.path.isfile(os.path.join(METHODS, f"{name}.md")), name)
+                self.assertIn(f"`<methods>/{name}.md`", prompt)
 
     def test_interactive_is_argv_without_the_headless_flags(self):
         for role, task in (("researcher", "light-research"), ("engineer", "build")):
@@ -517,7 +517,6 @@ class Cwd(Base):
                 work = os.path.join(os.getcwd(), "work")
                 self.assertIn(f"\n- `<Workdir>`: `{work}`\n", launch.argv[2])
                 self.assertTrue(launch.argv[2].endswith("\n# Input\n\nwork/input.md\n"))
-                self.assertIn(f"--to {work}/run.jsonl", launch.argv[2])
 
 
 class Skill(Base):
@@ -533,15 +532,16 @@ class Skill(Base):
     def test_prints_the_prompt_with_this_cores_paths(self):
         text = self.text("pm")
         self.assertTrue(text.startswith("# Guide"))
-        self.assertIn(f"`python3 {CORE}/src/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`",
-                      text)
+        self.assertIn(f"\n- `<scripts>`: `{CORE}/src`\n", text)
+        self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] "
+                      "<repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
 
     def test_parameters_and_input_replace_the_tail(self):
         text = self.text("pm")
-        self.assertIn("\n# Parameters\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the start and reused "
-                      "for this invocation\n- `<scripts>`: ", text)
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
+                      "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
         self.assertTrue(text.endswith("\n# Input\n\nGiven with this prompt.\n"))
         for tail in ("\n---\n\nInput:", "Workdir: "):
@@ -549,10 +549,10 @@ class Skill(Base):
 
     def test_a_researcher_names_core_methods(self):
         text = self.text("researcher")
+        self.assertIn(f"\n- `<methods>`: `{METHODS}`\n", text)
         for name in ("deep-research", "ultracode"):
-            path = os.path.join(CORE, "team", "methods", f"{name}.md")
-            self.assertTrue(os.path.isfile(path), path)
-            self.assertIn(f"`{path}`", text)
+            self.assertTrue(os.path.isfile(os.path.join(METHODS, f"{name}.md")), name)
+            self.assertIn(f"`<methods>/{name}.md`", text)
 
     def test_document_roles_return_to_the_orchestrator(self):
         for role, task in (("researcher", None), ("researcher", "light-research"), ("pm", None), ("dummy-tester", None)):
@@ -777,8 +777,8 @@ class Handover(unittest.TestCase):
 
     def test_claude_reports_through_the_report_command_outcome_last(self):
         text = claude().handover()
-        self.assertIn("{{report}} progress <name>", text)
-        self.assertIn("{{report}} outcome --status", text)
+        self.assertIn("`report progress <name>", text)
+        self.assertIn("`report outcome --status", text)
         self.assertIn("last action", text)
         self.assertNotIn("structured output", text)
 

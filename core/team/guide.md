@@ -9,6 +9,6 @@ You are the {{role}} role. The sections below:
 - **Output**: what to return, where to deliver it and how to report progress.
 - **Input**: the last section; everything after its heading is the input text, verbatim (it may contain `#` or `---`).
 
-**Your task**: {{task|pick it from your charter's Tasks section by the input; unsure → the default it names}}. Read only that task's file, `{{tasks}}/<task>.md`, and follow its steps in order. Your start progress report names the task and why.
+**Your task**: {{task|pick it from your charter's Tasks section by the input; unsure → the default it names}}. Read only that task's file, `<tasks>/<task>.md`, and follow its steps in order. Your start progress report names the task and why.
 
 On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task file's rules.

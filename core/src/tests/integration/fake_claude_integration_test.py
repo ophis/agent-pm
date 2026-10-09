@@ -50,6 +50,17 @@ class Case(unittest.TestCase):
         return json.dumps({"hooks": {e: v if v else [{"hooks": [{"type": "command", "command": record}]}]
                                      for e, v in entries.items()}})
 
+    def prompt(self, workdir: str = "", report: bool = True) -> str:
+        """A prompt as compose writes it: # Parameters defines <Workdir>, <scripts> (the dir of the tests' stub
+        report.py) and, with `report`, the `report` line; Output › Return says `report progress …` either way."""
+        def code(value: str) -> str:
+            return f"`` {value} ``" if "`" in value else f"`{value}`"
+        lines = [f"- `<Workdir>`: {code(workdir or self.root)}", f"- `<scripts>`: {code(self.root)}"]
+        if report:
+            lines.append("- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
+        return ("# Parameters\n\nEach name below stands for its value.\n\n" + "\n".join(lines)
+                + "\n\n# Output\n\n## Return\n\nReport with `report progress <name> <your report>`.\n")
+
     def run_fake(self, *args, stdin: str = "") -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, FAKE, *args], cwd=self.proj, env=self.env, input=stdin,
                               capture_output=True, text=True, timeout=60)
@@ -148,6 +159,8 @@ class Interactive(Case):
 
 
 class Reports(Case):
+    STEP = {"kind": "progress", "name": "n", "text": "t"}
+
     def setUp(self):
         super().setUp()
         self.stub = os.path.join(self.root, "report.py")
@@ -156,27 +169,41 @@ class Reports(Case):
             f.write(f"import json, sys\nwith open({self.calls!r}, 'a') as f:\n"
                     f"    f.write(json.dumps(sys.argv[1:]) + '\\n')\n")
 
-    def test_command_from_the_first_prompt_naming_one(self):
-        self.scene(turns=[[{"kind": "progress", "name": "n", "text": "t"}]] * 2)
-        res = self.run_fake("no command here", *SESSION, stdin=f"`python3 {self.stub} --to one`\n"
-                            f"`python3 {self.stub} --to two`\n")
-        self.assertEqual(res.returncode, 0, res.stderr)
+    def called(self) -> list[list[str]]:
         with open(self.calls) as f:
-            self.assertEqual([json.loads(line) for line in f], [["--to", "one", "progress", "n", "t"]] * 2)
+            return [json.loads(line) for line in f]
 
-    def test_a_command_naming_parameters_is_skipped(self):
-        self.scene(steps=[{"kind": "progress", "name": "n", "text": "t"}])
-        prompt = f"`python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n`python3 {self.stub} --to one`"
-        res = self.run_fake("-p", prompt, *SESSION)
+    def test_command_from_the_prompts_parameters(self):
+        self.scene(steps=[self.STEP])
+        res = self.run_fake("-p", self.prompt(), *SESSION)
         self.assertEqual(res.returncode, 0, res.stderr)
-        with open(self.calls) as f:
-            self.assertEqual([json.loads(line) for line in f], [["--to", "one", "progress", "n", "t"]])
+        self.assertEqual(self.called(), [["--to", f"{self.root}/run.jsonl", "progress", "n", "t"]])
 
-    def test_report_step_without_a_command_fails(self):
-        self.scene(turns=[[{"kind": "progress", "name": "n", "text": "t"}]])
-        res = self.run_fake("no command here", *SESSION, stdin="nor here\n")
-        self.assertEqual(res.returncode, 1)
-        self.assertIn("report command", res.stderr)
+    def test_a_value_holding_a_backtick_is_read_as_compose_writes_it(self):
+        workdir = f"{self.root}/w`x"
+        self.scene(steps=[self.STEP])
+        res = self.run_fake("-p", self.prompt(workdir), *SESSION)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(self.called(), [["--to", f"{workdir}/run.jsonl", "progress", "n", "t"]])
+
+    def test_command_serves_later_turns(self):
+        self.scene(steps=[self.STEP], turns=[[self.STEP]])
+        res = self.run_fake(self.prompt(), *SESSION, stdin="a later turn\n")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(self.called(), [["--to", f"{self.root}/run.jsonl", "progress", "n", "t"]] * 2)
+
+    def test_report_step_without_a_report_line_fails(self):
+        self.scene(steps=[self.STEP])
+        old_form = f"`python3 {self.stub} --to one`\n"
+        for name, prompt in {"no Parameters": "no command here\n" + old_form,
+                             "no report line": self.prompt(report=False) + old_form,
+                             "a line past Parameters": self.prompt(report=False)
+                             + f"\n# Input\n\n- `report`: `python3 {self.stub} --to one`\n"}.items():
+            with self.subTest(name):
+                res = self.run_fake("-p", prompt, *SESSION)
+                self.assertEqual(res.returncode, 1)
+                self.assertIn("report command", res.stderr)
+                self.assertFalse(os.path.exists(self.calls))
 
 
 class Files(Case):
@@ -349,7 +376,7 @@ class Gate(Case):
         with open(stub, "w") as f:
             f.write(f"open({calls!r}, 'a').close()\n")
         self.scene(steps=[{"kind": "progress", "name": "n", "text": "t"}], gate=self.gate)
-        proc = self.parked(f"`python3 {stub} --to x`", *SESSION, "--settings", self.settings(UserPromptSubmit=[]))
+        proc = self.parked(self.prompt(), *SESSION, "--settings", self.settings(UserPromptSubmit=[]))
         self.assertEqual((self.fired(), os.path.exists(calls)), ([], False))
         self.open_gate()
         proc.communicate("", timeout=30)
