@@ -31,3 +31,20 @@ jobs:
       - name: Tmux skill script tests
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         run: python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
+
+  integration:
+    name: Integration tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Core integration tests
+        run: python3 -m unittest discover -s core/src/tests/integration -p "*_integration_test.py"
