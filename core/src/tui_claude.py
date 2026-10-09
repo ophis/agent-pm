@@ -576,9 +576,9 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
                layout: Cell) -> list[Slot]:
     """The main grid's cells, in order. A node (a session whose @pane is a window pane but the manager; two claiming
     one: the lower session id) sits in its @opener's node; nodes whose @opener is gone form an orphan group, in the
-    cell the current layout shows them in; the rest, and what main does not reach, sit in main. Siblings by pane id,
-    an orphan group where the layout has it; manual panes last. sessions: each live session's (id, name, @opener,
-    @pane), fullmatched, "" when unset; layout's leaves: panes."""
+    cell the current layout shows them in; the rest, and what main does not reach (a group whole), sit in main.
+    Siblings by pane id, an orphan group where the layout has it; manual panes last. sessions: each live session's
+    (id, name, @opener, @pane), fullmatched, "" when unset; layout's leaves: panes."""
     owner = {}
     for _, name, opener, pane in sorted(sessions):
         if pane in panes and pane != manager and pane not in owner:
@@ -624,7 +624,7 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
         found = [k for k, up in parent.items() if up == key and k not in reached]
         reached.update(found)
         todo += found
-    parent.update((k, None) for k in list(parent) if k not in reached)
+    parent.update((k, None) for k in list(parent) if k not in reached and parent[k] not in spans)
 
     def first(key) -> int:
         return min(rank[p] for p in under(key))

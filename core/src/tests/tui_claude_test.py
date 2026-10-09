@@ -1585,6 +1585,21 @@ class GridTree(unittest.TestCase):
         self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4"]),
                          [slot("%1"), slot("%2"), slot("%3"), slot("%4")])
 
+    def test_an_orphan_group_main_does_not_reach_goes_main_whole(self):
+        # a (%1) and lead (%2) open each other; the orphans of gone c1 (%3, %4) sit right of a, or of x (%5, a's)
+        cycle = [(2, "a", "lead", "%1"), (3, "lead", "a", "%2"), (4, "k1", "c1", "%3"), (5, "k2", "c1", "%4")]
+        for rows, panes, layout, want in (
+                (cycle, ["%0", "%1", "%2", "%3", "%4"],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39x12,121,0,3,39x11,121,13,4]},"
+                 "80x23,80,25,2]}",
+                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2")]),
+                ([*cycle, (6, "x", "a", "%5")], ["%0", "%1", "%2", "%3", "%4", "%5"],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39x8,121,0,3,39x7,121,9,4]},"
+                 "80x15,80,17,1,80x15,80,33,2]}",
+                 [slot(None, slot("%3"), slot("%4")), slot("%1"), slot("%2"), slot("%5")])):
+            with self.subTest(panes=panes):
+                self.assertEqual(self.tree(rows, panes, layout), want)
+
     def test_orphans_take_the_killed_parents_main_cell(self):
         # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
         layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}"
