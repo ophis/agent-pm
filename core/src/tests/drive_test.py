@@ -569,8 +569,8 @@ class Skill(Base):
             self.assertNotIn("publish, post or save it nowhere", text, task)
 
     def test_the_engineers_resume_stays(self):
-        self.assertIn("\n## Resume\n\nRun [Engineer › Repo](#repo) again, then [Engineer › Merge](#merge)",
-                      self.text("engineer"))
+        self.assertIn("\n- **Resume**: run [Engineer › Repo](#repo) steps 1–2 again, then "
+                      "[Engineer › Repo › Merge](#repo)", self.text("engineer"))
 
     def test_every_run_renders(self):
         for role, task in (("researcher", None), ("researcher", "deep-research"), ("pm", None), ("engineer", None),

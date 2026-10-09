@@ -983,10 +983,10 @@ class References(unittest.TestCase):
         return [e for e in reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
 
     def test_a_link_to_a_path_of_the_prompt_and_a_task_file_reference_pass(self):
-        for text in ("[Engineer › Merge](#merge), then", "[Engineer › Repo](#repo) step 1",
+        for text in ("[Engineer › Repo › Merge](#repo), then", "[Engineer › Repo](#repo) step 1",
                      "[Principles](#principles)", "[Principles › Work › Worktree](#work)",
                      "[Engineer › Finish › Failure](#finish)", "[Output › Return](#return)",
-                     "([Engineer › Standards](#standards)' rule)",
+                     "([Engineer › Rules](#rules)' rule)",
                      "(`<tasks>/<task>.md` › Steps › Which build picks the build)", "`<tasks>/build.md` › Steps",
                      "[docs](https://example.com/a)", "[A › B](https://example.com/a)",
                      "`Engineer › Repo` and ``a ` › b``",
@@ -994,8 +994,8 @@ class References(unittest.TestCase):
             self.assertEqual(self.errors(text), [], text)
 
     def test_a_wrong_reference_is_an_error(self):
-        for text in ("[Engineer › Nope](#nope)", "Engineer › Repo", "[Engineer › Repo](#merge)",
-                     "[x](../roles/engineer.md#merge)", "[x]()", "[Principles › Worktree](#work)",
+        for text in ("[Engineer › Nope](#nope)", "Engineer › Repo", "[Engineer › Repo](#finish)",
+                     "[x](../roles/engineer.md#repo)", "[x]()", "[Principles › Worktree](#work)",
                      "[Engineer › Repo step 1](#repo)", "[Engineer › Repo](#repo) › Merge",
                      "`<tasks>/<task>.md` › Steps › Nope", "`<tasks>/<task>.md` › Steps › Which builds",
                      "`<tasks>/<task>.md` › Steps › Which build › Nope", "`<tasks>/<task>.md` › Nope",
@@ -1306,27 +1306,40 @@ class RealCore(unittest.TestCase):
 
     def test_builds_wait_for_the_prs_checks(self):
         for task in ("build", "light-build"):
-            checks = section(composed("engineer", task)[0], "Checks")
+            done = item(section(composed("engineer", task)[0], "Finish"), "Done")
             for literal in ("`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                             "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                             "`git -C <worktree> push -u origin <branch>`", "3 fixes", "20 minutes",
                             "[Engineer › Finish › Failure](#finish)"):
-                self.assertIn(literal, checks, task)
+                self.assertIn(literal, done, task)
 
     def test_builds_merge_the_base_branch_before_autopilot_at_resume_and_before_the_pr(self):
         prompt, _ = composed("engineer")
-        self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", section(prompt, "Repo"))
-        merge = section(prompt, "Merge")
+        repo = section(prompt, "Repo")
+        self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", repo)
+        merge = item(repo, "Merge")
         for literal in ("[Engineer › Repo](#repo) step 1", "`git -C <worktree> status`", "a merge in progress",
                         "`git -C <worktree> merge --no-edit origin/<base>`", "`git -C <worktree> merge --abort`"):
             self.assertIn(literal, merge)
-        for where in ("Autopilot", "Finish", "Resume"):
-            self.assertIn("[Engineer › Merge](#merge)", section(prompt, where), where)
+        for where, text in (("Autopilot", section(prompt, "Autopilot")), ("Finish", section(prompt, "Finish")),
+                            ("Repo › Resume", item(repo, "Resume"))):
+            self.assertIn("[Engineer › Repo › Merge](#repo)", text, where)
         self.assertIn("`origin/<base>`", section(prompt, "Autopilot"))
         for literal in ("--head <branch> --base <base> --title", "/compare/<base>...<branch>?expand=1"):
             self.assertIn(literal, prompt)
         for task in ("build", "light-build"):
-            self.assertIn("[Engineer › Resume](#resume).", task_text(task), task)
+            self.assertIn("[Engineer › Repo › Resume](#repo).", task_text(task), task)
+
+    def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
+        with open(os.path.join(CORE, "team", "roles", "engineer.md")) as f:
+            charter = f.read()
+        heads = [path[1] for _, path, _, heading in compose.outline(charter) if heading and len(path) == 2]
+        self.assertEqual(heads, ["Tasks", "Rules", "Input processing", "Repo", "Autopilot", "Finish"])
+        lines = ("Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
+                 "or branch.", "Commits merged from `origin/<base>` are not this build's work.",
+                 "Skip S8; keep the commits. After <your task's push points>, run exactly "
+                 "`git -C <worktree> push -u origin <branch>`.")
+        self.assertIn("\nAdd verbatim:\n\n```\n" + "\n".join(lines) + "\n```\n", section(charter, "Autopilot"))
 
     def test_light_builds_cutoff_skips_merge_commits(self):
         self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`", task_text("light-build"))
@@ -1432,6 +1445,12 @@ def rule(text, name):
 
 def section(text, name):
     m = re.search(rf"^## {name}\n(.*?)(?=^#)", text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def item(text, name):
+    """The top-level bold item `- **name**` of `text`, up to the next top-level item."""
+    m = re.search(rf"^- \*\*{re.escape(name)}\*\*(.*?)(?=^- |\Z)", text, re.M | re.S)
     return m.group(1) if m else ""
 
 

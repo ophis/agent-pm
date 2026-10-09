@@ -24,4 +24,4 @@ Build the requirement with `/autopilot:light-build`, then open a pull request.
 
 ## Resume
 
-[Engineer › Resume](#resume).
+[Engineer › Repo › Resume](#repo).
