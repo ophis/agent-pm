@@ -1,9 +1,10 @@
-"""Composer: resolves a role + task's run config and compiles principles + role + task + templates + output into its
-prompt. A module for the driver (drive.py).
+"""Composer: resolves a role's run config and compiles guide + principles + role (with its task index) + templates +
+output into its prompt; the agent run reads its task's file itself. A module for the driver (drive.py).
 
-Principles get {{role}}, {{task}}, their anchors and {{language}} (unset → each line holding it is dropped); principles,
-role and task text get {{scripts}} (this dir, or the client's path to it), {{methods}} (team/methods/, likewise) and
-{{gate}}; a destination gets its output values.
+Guide and principles get {{role}}, its anchor, {{task}} (the named task; none → the guide's default text) and
+{{language}} (unset → each line holding it is dropped); guide, principles and role text get {{scripts}} (this dir, or
+the client's path to it), {{methods}} (team/methods/, likewise), {{tasks}} (team/tasks/, likewise) and {{gate}}; a
+destination gets its output values.
 """
 import json
 import os
@@ -28,15 +29,16 @@ EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
                       "cwd"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line"}
-ROLE_KEYS = RUN_KEYS | {"default_task", "tasks"}
+OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
-FRONTMATTER = re.compile(r"---\n(.*?)\n---\n+", re.S)
+INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index: its lines - `<task>`: <text>
+INDEX_LINE = re.compile(r"^- `([\w-]+)`: (.+)$", re.M)
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
-PROGRESS_MARK = re.compile(rf"^\s*(?:[-*]\s+)?\[{PROGRESS}:([\w-]+)\]", re.M)
 CHANNEL = ".report.jsonl"
 RESUME = ("Resumed agent run after an interruption. These rules and the input are current; either may have changed since this "
-          "session started, so re-read the input.\n\n")
+          "session started, so re-read the input. Continue the task this session already picked or was given; never "
+          "pick it again.\n\n")
 
 
 class ConfigError(Exception):
@@ -47,14 +49,15 @@ class PromptClient(Protocol):
     """The part of a Client (clients/base.py) that render() uses; compose cannot import Client (base.py imports compose)."""
     def scripts_path(self, root: str) -> str: ...
     def methods_path(self, root: str) -> str: ...
+    def tasks_path(self, root: str) -> str: ...
     def handover(self) -> str: ...
 
 
 @dataclass(frozen=True, kw_only=True)
 class RunConfig:
-    """A role + task's resolved config; checked on creation and on dataclasses.replace."""
+    """A role's resolved config; checked on creation and on dataclasses.replace."""
     role: str
-    task: str
+    task: str = ""   # the named task; "" → the agent run picks one from the role's index
     tier: int
     effort: Effort
     output: dict
@@ -67,9 +70,6 @@ class RunConfig:
     show: str | None = None
     cwd: str = ""   # "" → the caller's default (drive.place)
     role_title: str = ""
-    task_title: str = ""
-    task_description: str = ""   # the task file's frontmatter `description`; "" without one
-    progress: list[str] = field(default_factory=list)   # the task's progress point names, in order
 
     def __post_init__(self):
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
@@ -112,50 +112,71 @@ class RunParams:
         return os.path.join(os.path.abspath(self.workdir), CHANNEL)
 
 
-def tui_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
+def tui_session(role: str, sid: str, prefix: str | None = None) -> str:
     """The name of the tui runner's tmux session for an agent run."""
-    return f"{prefix or f'{role}-{task}'}-{sid[:8]}"
+    return f"{prefix or role}-{sid[:8]}"
 
 
-def lookup(layer: Mapping, role: str, task: str, key: str):
-    """`key` in one config layer: roles.<role>.tasks.<task> > roles.<role> > the top; None if unset."""
-    r = layer.get("roles", {}).get(role, {})
-    for table in (r.get("tasks", {}).get(task, {}), r, layer):
+def lookup(layer: Mapping, role: str, key: str):
+    """`key` in one config layer: roles.<role> > the top; None if unset."""
+    for table in (layer.get("roles", {}).get(role, {}), layer):
         if key in table:
             return table[key]
     return None
 
 
+def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
+    """Raises ConfigError when role table [<prefix>roles.<role>] holds a key of the task-level config this one replaced,
+    naming the table its run keys now go in."""
+    if old := sorted(OLD_KEYS & set(table)):
+        raise ConfigError(f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
+                          f"run keys in [{prefix}roles.{role}] (a run without a task picks one)")
+
+
+def index(root: str, role: str) -> dict[str, str]:
+    """{task: its line} of the role's task index, team/roles/<role>.md › Tasks, in order: the only list of its tasks."""
+    rel = f"roles/{role}.md"
+    m = INDEX.search(_read(os.path.join(root, TEXT), rel))
+    if not (tasks := dict(INDEX_LINE.findall(m.group(1))) if m else {}):
+        raise ConfigError(f"{rel}: no task index (a ## Tasks section of - `<task>`: … lines)")
+    for t in tasks:
+        if not os.path.isfile(os.path.join(root, TEXT, "tasks", f"{t}.md")):
+            raise ConfigError(f"{rel} lists {t!r} without tasks/{t}.md")
+    return tasks
+
+
 def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = ()) -> RunConfig:
-    """The run config for role/task from config.toml with repo.LOCAL on top, each later layer (same layout)
-    replacing the run keys it sets. That config must be valid on its own; each layer is checked again once applied."""
+    """The run config for `role` from config.toml with repo.LOCAL on top, each later layer (same layout) replacing the
+    run keys it sets; `task`, when named, must be in the role's index. That config must be valid on its own; each layer
+    is checked again once applied."""
     cfg = repo.read_config(os.path.join(root, CONFIG))
-    task = _check(cfg, role, task)
-    values = _run_keys(cfg, role, task)
-    run = RunConfig(role=role, task=task, tier=values.pop("tier", None), effort=values.pop("effort", None),
+    _check(cfg, role)
+    values = _run_keys(cfg, role)
+    run = RunConfig(role=role, task=task or "", tier=values.pop("tier", None), effort=values.pop("effort", None),
                     output=values.pop("output", {}), **values)
     for layer in layers:
-        run = replace(run, **_run_keys(layer, role, task))
-    role_rel, task_rel = _rule_files(role, task)
-    role_md = _read(os.path.join(root, TEXT), role_rel)
-    description, task_md = _task(os.path.join(root, TEXT), task_rel)
-    return replace(run, role_title=_title(role_md, role_rel), task_title=_title(task_md, task_rel),
-                   task_description=description, progress=list(dict.fromkeys(PROGRESS_MARK.findall(task_md))))
+        run = replace(run, **_run_keys(layer, role))
+    tasks = index(root, role)
+    if task and task not in tasks:
+        raise ConfigError(f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
+    rel = f"roles/{role}.md"
+    return replace(run, role_title=_title(_read(os.path.join(root, TEXT), rel), rel))
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
     """The agent run's prompt for `client`: its Output section ends with the client's handover as Output › Return
     ({{report}} filled when params are given), then the Workdir/Input tail when params are given."""
     text = os.path.join(root, TEXT)
-    names = {"role": run.role_title, "task": run.task_title}
-    names |= {"role_anchor": anchor(run.role_title), "task_anchor": anchor(run.task_title), "language": run.language}
-    paths = {"scripts": client.scripts_path(root), "methods": client.methods_path(root), "gate": run.gate or "none"}
+    names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
+    names |= {"task": f"`{run.task}`"} if run.task else {}
+    paths = {"scripts": client.scripts_path(root), "methods": client.methods_path(root),
+             "tasks": client.tasks_path(root), "gate": run.gate or "none"}
     principles = _read(text, "principles.md")
     if not run.language:
         principles = "".join(line for line in principles.splitlines(True) if "{{language}}" not in line)
-    parts = [fill(_read(text, "guide.md"), names, "guide.md"), fill(principles, names | paths, "principles.md")]
-    role_rel, task_rel = _rule_files(run.role, run.task)
-    parts += [fill(_read(text, role_rel), paths, role_rel), fill(_task(text, task_rel)[1], paths, task_rel)]
+    rel = f"roles/{run.role}.md"
+    parts = [fill(_read(text, "guide.md"), names | paths, "guide.md"), fill(principles, names | paths, "principles.md"),
+             fill(_read(text, rel), paths, rel)]
     for name in run.templates:
         rel = f"templates/{name}.md"
         body = _read(text, rel)
@@ -205,36 +226,26 @@ def anchor(heading: str) -> str:
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
-def _check(cfg: Mapping, role: str, task: str | None) -> str:
-    """The task to run (the role's default when None), once the config's keys, role and task are valid."""
+def _check(cfg: Mapping, role: str) -> None:
+    """Raises ConfigError unless the config's keys, its client's role tables included, are valid and it has `role`."""
     _check_keys(cfg, GLOBAL_KEYS, "the global table")
-    roles = cfg.get("roles", {})
-    if role not in roles:
+    for name, client in cfg.get("clients", {}).items():
+        for r, table in client.get("roles", {}).items():
+            check_old_keys(table, r, f"clients.{name}.")
+    for r, table in cfg.get("roles", {}).items():
+        check_old_keys(table, r)
+        _check_keys(table, RUN_KEYS, f"roles.{r}")
+    if role not in cfg.get("roles", {}):
         raise ConfigError(f"unknown role {role!r}")
-    r = roles[role]
-    _check_keys(r, ROLE_KEYS, f"roles.{role}")
-    tasks = r.get("tasks", {})
-    default = r.get("default_task")
-    if default is not None and default not in tasks:
-        raise ConfigError(f"default_task {default!r} is not one of {role}'s tasks ({', '.join(tasks)})")
-    task = task or default
-    if task not in tasks:
-        raise ConfigError(f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
-    _check_keys(tasks[task], RUN_KEYS, f"roles.{role}.tasks.{task}")
-    return task
 
 
-def _run_keys(layer: Mapping, role: str, task: str) -> dict:
-    return {k: v for k in RUN_KEYS if (v := lookup(layer, role, task, k)) is not None}
+def _run_keys(layer: Mapping, role: str) -> dict:
+    return {k: v for k in RUN_KEYS if (v := lookup(layer, role, k)) is not None}
 
 
 def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed):
         raise ConfigError(f"unknown key {extra[0]!r} in {where}")
-
-
-def _rule_files(role: str, task: str) -> tuple[str, str]:
-    return f"roles/{role}.md", f"tasks/{task}.md"
 
 
 def _read(root: str, rel: str) -> str:
@@ -243,21 +254,6 @@ def _read(root: str, rel: str) -> str:
         raise ConfigError(f"missing file {rel}")
     with open(path) as f:
         return f.read().strip() + "\n"
-
-
-def _task(root: str, rel: str) -> tuple[str, str]:
-    """(description, body) of a task file (its frontmatter: core/CLAUDE.md › Rules)."""
-    text = _read(root, rel)
-    if not (m := FRONTMATTER.match(text)):
-        return "", text
-    key, _, value = m.group(1).partition(": ")
-    try:
-        description = json.loads(value) if key == "description" and "\n" not in m.group(1) else None
-    except ValueError:
-        description = None
-    if not isinstance(description, str):
-        raise ConfigError(f'{rel}: frontmatter must be one line, description: "<JSON string>"')
-    return description, text[m.end():]
 
 
 def _title(text: str, rel: str) -> str:

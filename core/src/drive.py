@@ -10,7 +10,7 @@ drive.py --client skill --role ROLE [--task TASK]
 (start's sinks) a run shows its text and progress on stderr; every run leaves the record <workdir>/run.json (Record).
 --runner, --split, --split-from, --prefix, --events and --detach: core/CLAUDE.md › Rules and
 core/CLAUDE.md › An agent run's command.
-The skill client starts nothing: it prints the role/task's prompt on stdout for the calling Claude Code conversation to
+The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
 follow (the act-as skill), its paths this core's.
 Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
 "driver", the driver session's name) and changes nothing.
@@ -94,14 +94,14 @@ def bind(entry: str, repo: str | None) -> str | None:
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, cwd: str | None = None,
-           project: bool = False) -> Access:
-    """The agent run's Access, `{{methods}}` in read/write entries and `{{scripts}}` and `{{workdir}}` in commands
-    filled, then the report command and the gate (used verbatim) pre-approved too; the workdir is the first dir when
-    `cwd` (default the workdir) is another."""
+def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, tasks: str,
+           cwd: str | None = None, project: bool = False) -> Access:
+    """The agent run's Access: the `tasks` dir, then the read/write entries, `{{methods}}` filled; `{{scripts}}` and
+    `{{workdir}}` in commands filled, then the report command and the gate (used verbatim) pre-approved too; the workdir
+    is the first dir when `cwd` (default the workdir) is another."""
     workdir = os.path.abspath(params.workdir)
     cwd = cwd or workdir
-    dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
+    dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks]
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, {"methods": methods}, key), repo)
@@ -161,14 +161,14 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     run = load_run(root, role, task, layers=[client.config, *layers])
     here, project = place(root, run, params, cwd)
     prompt = render(root, run, params, client=client)
-    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root), cwd=here,
-                 project=project)
+    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
+                 tasks=client.tasks_path(root), cwd=here, project=project)
     launch = client.launch(prompt, run, params=params, access=acc)
     return replace(launch, project=project, status_line=status_line(root)), run
 
 
 def inline(root: str, client: Client, role: str, task: str | None = None) -> str:
-    """The prompt an inline client (skill) gives for role/task; raises ConfigError."""
+    """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     run = load_run(root, role, task, layers=[client.config])
@@ -429,10 +429,10 @@ class Tail:
 TUI_SESSION = re.compile(r"(?P<prefix>[A-Za-z0-9_-]+)-[0-9a-f]{8}")
 
 
-def driver_session(role: str, task: str, sid: str, prefix: str | None = None) -> str:
+def driver_session(role: str, sid: str, prefix: str | None = None) -> str:
     """The name of a detached driver's tmux session (drive.py --detach): tui_session's, then `-drive`, so never a
     TUI_SESSION."""
-    return f"{tui_session(role, task, sid, prefix)}-drive"
+    return f"{tui_session(role, sid, prefix)}-drive"
 
 
 @dataclass(frozen=True)
@@ -514,7 +514,7 @@ class Tui:
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
                  events: str | None = None, status_line: bool = False):
         self.run, self.layout, self.events, self.status_line = run, layout or Layout(), events, status_line
-        self.name = tui_session(run.role, run.task, params.sid, params.prefix)
+        self.name = tui_session(run.role, params.sid, params.prefix)
         self.rc, self.outcome, self.nudged, self.stops, self.gave_up = 0, False, False, 0, False
         self.started, self.since = False, 0.0
 
@@ -666,9 +666,9 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     text and the progress it reports to the channel as they come; then checks the last outcome it reported, saves the
     deliverable to params.out where the destination says so, and hands the outcome on too. Only reports made after
     this call began count. The Record holds the session, its progress and the checked outcome; `begun` is called once
-    its first write is done, before the host starts. A done or failed new run whose task marks `start` but never reported it gets a stderr line
-    and a `missing` event first. The tui runner names its session tui_session(…, params.prefix) and appends its state
-    events to the `events` file. Raises ConfigError, before anything starts, when the client lacks the runner's command
+    its first write is done, before the host starts. A done or failed new run that never reported `start` gets a stderr
+    line and a `missing` event first. The tui runner names its session tui_session(…, params.prefix) and appends its
+    state events to the `events` file. Raises ConfigError, before anything starts, when the client lacks the runner's command
     or the layout, params.prefix or events is one the runner can't take (check_layout, check_naming); a RunnerError
     stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
@@ -746,7 +746,7 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         if run.output["type"] == "local":
             outcome = replace(outcome, url=str(out))
     # A resumed session reported its start before the interruption.
-    if outcome.status != "needs_input" and "start" in run.progress and "start" not in seen and not params.resume:
+    if outcome.status != "needs_input" and "start" not in seen and not params.resume:
         print("drive.py: missing progress mark: start", file=sys.stderr)
         for sink in sinks:
             sink(Event("missing", name="start"))
@@ -773,7 +773,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--split", choices=tui_claude.SPLITS,
                     help="the tui runner's split (default: stacked with the panes of the same opener)")
     ap.add_argument("--split-from", metavar="SESSION", help="split the pane showing this tmux session")
-    ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>-<task>)")
+    ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>)")
     ap.add_argument("--events", metavar="FILE", help="the tui runner appends the session's state events to FILE; with "
                                                      "--detach, the driver its outcome")
     ap.add_argument("--detach", action="store_true",
@@ -829,7 +829,7 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
             launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
             cmd = command(launch, a.runner, client)
             check_layout(a.runner, layout)
-            driver = driver_session(run.role, run.task, params.sid, params.prefix)
+            driver = driver_session(run.role, params.sid, params.prefix)
             if a.detach and not tui_claude.NAME.fullmatch(driver):
                 raise ConfigError(f"driver session {driver!r}: want {tui_claude.NAME.pattern}")
         else:
@@ -887,7 +887,7 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
         return 3
     print(f"drive.py: driver session {driver}: {tui_claude.attach_command(driver)}", file=sys.stderr)
     if a.runner == "tui":
-        tui = tui_session(run.role, run.task, params.sid, params.prefix)
+        tui = tui_session(run.role, params.sid, params.prefix)
         print(f"drive.py: tui session {tui}: {tui_claude.attach_command(tui)}", file=sys.stderr)
     return 0
 

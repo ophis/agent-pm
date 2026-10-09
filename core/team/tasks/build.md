@@ -1,7 +1,3 @@
----
-description: "Build a PRD into a pull request on its target repo with autopilot:build: spec, plan, implementation, verification and review. Use when an approved PRD is ready to implement."
----
-
 # Build
 
 Build the PRD with `autopilot:build`, then open a pull request.

@@ -73,7 +73,7 @@ class ClaudeClient(Client):
                 json.dumps(PLUGINS), *tail]
         stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
         hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
-        interactive = ["claude", prompt, *head, "--name", tui_session(run.role, run.task, params.sid, params.prefix),
+        interactive = ["claude", prompt, *head, "--name", tui_session(run.role, params.sid, params.prefix),
                        "--settings", json.dumps({**PLUGINS, **hook}), *tail]
         return Launch(argv, dict(c.get("env", {})), cwd=cwd, interactive=interactive,
                       transcript=transcript(cwd, params.sid), resume=resume(cwd, params.sid, workdir))
