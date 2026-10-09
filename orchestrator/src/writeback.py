@@ -183,7 +183,7 @@ def _finish(ctx, o):
     else:
         lead, text, state = task.failed, o.summary, "in_review" if ctx.resume else task.failed_new
     body = say(lead, text)
-    if url and o.status != "needs_input":
+    if url and (o.status == "failed" or o.status == "done" and task.kind != "build"):  # a done build's PR: attached only
         body += f"\n\n{url}"
     if task.approve and o.status == "done":
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
