@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
+import hashlib
 import itertools
 import json
 import os
@@ -57,6 +59,8 @@ GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{wind
 GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
 GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
 HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
+TILE_WAIT = 5   # seconds _GridLock.lock waits for another holder, trying every TILE_POLL
+TILE_POLL = 0.05
 LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
 LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -629,6 +633,84 @@ def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> 
     swaps = [a for source, target in _swaps(panes, [c.pane for c in _leaves(want)])
              for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")]
     _tmux_ok([*swaps, "select-layout", "-t", window, _render_layout(want)], proc)
+
+
+def _lock_name(socket: str, window: str) -> str:
+    """Grid window `window`'s lock file name, beside its tmux server's socket: .tui-grid-<h>-<n>.lock, <h> the first
+    12 hex digits of the socket path's SHA-256, <n> the window's number."""
+    return f".tui-grid-{hashlib.sha256(socket.encode()).hexdigest()[:12]}-{window[1:]}.lock"
+
+
+class _GridLock:
+    """Grid window `window`'s lock file (_lock_name) in its tmux server's socket dir, open till close (a context
+    manager). The socket path must be absolute; the dir and the file must pass _private_fd."""
+
+    def __init__(self, socket: str, window: str):
+        if not os.path.isabs(socket):
+            raise TuiError(f"grid lock {socket}: not an absolute path")
+        self._window = window
+        folder = os.path.dirname(socket)
+        self._path = os.path.join(folder, _lock_name(socket, window))
+        dir_fd = _private_fd(folder, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            self._fd = _private_fd(self._path, os.O_RDWR, dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def __enter__(self) -> _GridLock:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        os.close(self._fd)
+
+    def try_lock(self) -> bool:
+        """Whether it took the lock (flock), held till unlock or close; False while another open of it holds it."""
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        except OSError as e:
+            raise TuiError(f"grid lock {self._path}: {e.strerror}") from e
+        return True
+
+    def lock(self) -> None:
+        """try_lock every TILE_POLL s until it takes the lock; not within TILE_WAIT s: TuiError."""
+        end = time.monotonic() + TILE_WAIT
+        while not self.try_lock():
+            if time.monotonic() >= end:
+                raise TuiError(f"grid {self._window}: busy")
+            time.sleep(TILE_POLL)
+
+    def unlock(self) -> None:
+        fcntl.flock(self._fd, fcntl.LOCK_UN)
+
+
+def _private_fd(path: str, flags: int, dir_fd: int | None = None) -> int:
+    """path opened with flags, never through a symlink: a dir (no dir_fd), which must be yours, writable by no one else;
+    else a file in dir_fd, created 0600 and opened without blocking (a FIFO reaches the check), which must be a regular
+    file of yours open to no one else. TuiError when not, or on an OSError."""
+    file = dir_fd is not None
+    flags |= os.O_NOFOLLOW | os.O_CLOEXEC | (os.O_CREAT | os.O_NONBLOCK if file else 0)
+    try:
+        fd = os.open(os.path.basename(path) if file else path, flags, 0o600, dir_fd=dir_fd)
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            raise
+    except OSError as e:
+        raise TuiError(f"grid lock {path}: {e.strerror}") from e
+    if not (stat.S_ISREG if file else stat.S_ISDIR)(st.st_mode) or st.st_uid != os.getuid():
+        why = f"not a {'regular file' if file else 'directory'} owned by you"
+    elif st.st_mode & (0o077 if file else 0o022):
+        why = f"not private (mode {stat.S_IMODE(st.st_mode):04o})"
+    else:
+        return fd
+    os.close(fd)
+    raise TuiError(f"grid lock {path}: {why}")
 
 
 def _checksum(body: str) -> str:
