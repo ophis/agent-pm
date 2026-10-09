@@ -92,9 +92,12 @@ class Live(unittest.TestCase):
         n, _, event = head.partition(" ")
         return int(n), event, content.removesuffix("\n")
 
-    def wait_event(self, name: str, kind: str, count: int = 1, timeout: float = live_tmux.TIMEOUT) -> list[str]:
-        """The events file's lines once `count` of them are `HH:MM:SS <name> <kind>`."""
+    def wait_event(self, name: str, kind: str, count: int = 1, timeout: float = live_tmux.TIMEOUT,
+                   poke=None) -> list[str]:
+        """The events file's lines once `count` of them are `HH:MM:SS <name> <kind>`; `poke()` before each look."""
         def check():
+            if poke:
+                poke()
             lines = live_tmux.events(self.events)
             return lines if sum(is_event(line, name, kind) for line in lines) >= count else None
 
@@ -104,7 +107,8 @@ class Live(unittest.TestCase):
             raise AssertionError(f"{e}\n{self.diagnose(name)}") from None
 
     def diagnose(self, name: str) -> str:
-        """`name`'s pane state and pane hooks, and the events file: what a failed event wait needs."""
+        """`name`'s pane state and hooks, the processes of the server and of `name`'s fakes, and the events file: what
+        a failed event wait needs."""
         pane = self.server.tmux("display-message", "-p", "-t", f"={name}:",
                                 "pid #{pane_pid} dead #{pane_dead} status #{pane_dead_status} "
                                 "signal #{pane_dead_signal} @state #{@state}")
@@ -112,15 +116,9 @@ class Live(unittest.TestCase):
         server = self.server.tmux("display-message", "-p", "#{pid}").stdout.strip()
         pids = [server, *(str(e["pid"]) for e in self.calls(name))]
         ps = subprocess.run(["ps", "-o", "pid,ppid,stat,comm", "-p", ",".join(pids)], capture_output=True, text=True)
-        procs = []
-        for pid in pids:
-            with contextlib.suppress(OSError):
-                with open(f"/proc/{pid}/status") as f:
-                    procs.append(pid + " " + " ".join(line.strip() for line in f
-                                                      if line.startswith(("State", "PPid", "Sig"))))
         return "\n".join([f"pane: {pane.stdout.strip()}{pane.stderr.strip()}",
                           f"hooks: {hooks.stdout.strip()}{hooks.stderr.strip()}",
-                          f"server {server}, fakes {pids[1:]}:", ps.stdout.strip(), *procs,
+                          f"server {server}, fakes {pids[1:]}:", ps.stdout.strip(),
                           "events:", *live_tmux.events(self.events)])
 
     def calls(self, name: str) -> list[dict]:
@@ -208,7 +206,10 @@ class Lifecycle(Live):
         pane = self.server.pane_of("w1")
         cell = self.server.panes(f"={MANAGER}:")[pane]
         os.kill(self.calls("w1")[-1]["pid"], signal.SIGTERM)
-        _, dead = self.wait_event("w1", "dead")
+        live_tmux.wait(lambda: self.display("w1", "#{pane_dead}") == "1", what="w1's pane dead")
+        # tmux on Linux (CI: 3.4) can leave the dead pane's process unreaped, so no pane-died, until another child of
+        # the server exits: a no-op job is one.
+        _, dead = self.wait_event("w1", "dead", poke=lambda: self.server.tmux("run-shell", "-b", "true"))
         self.assertTrue(is_event(dead, "w1", "dead"), dead)
         self.assertEqual(self.server.option("w1", "@state"), "dead")
         state, sig = self.display("w1", "#{pane_dead} #{pane_dead_signal}").split(" ")
