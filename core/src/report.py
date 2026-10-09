@@ -14,7 +14,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from drive import STATUSES, append_line  # noqa: E402
+from drive import STATUSES, append_line, stamp  # noqa: E402
 
 
 def parse(argv: list[str]) -> argparse.Namespace:
@@ -63,7 +63,7 @@ def main(argv: list[str]) -> int:
                 with open(a.deliverable) as f:
                     data["deliverable"] = f.read()
             line = {"kind": "outcome", "outcome": data}
-        append_line(a.to, json.dumps(line, ensure_ascii=False) + "\n")
+        append_line(a.to, json.dumps({"ts": stamp(), **line}, ensure_ascii=False) + "\n")
     except (OSError, UnicodeDecodeError) as e:
         print(f"report.py: {e}", file=sys.stderr)
         return 1

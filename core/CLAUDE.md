@@ -5,7 +5,7 @@ The portable core pack: `src/compose.py` compiles `team/` text (`guide.md` opens
 ## Commands
 
 ```bash
-python3 core/src/drive.py --role R [--task T] --input X --out O --workdir W [--runner tui …] --dry-run   # the agent run's argv, cwd and env; starts nothing
+python3 core/src/drive.py --role R [--task T] --input TEXT --out O --workdir W [--runner tui …] --dry-run   # the agent run's argv, cwd and env; starts nothing
 python3 core/src/drive.py --client skill --role R [--task T]   # the prompt /agent-pm:act-as follows
 python3 core/src/tui_claude.py --help                          # host claude in tmux: start, send, read, show
 ```

@@ -25,8 +25,8 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 ## Architecture
 
 - `router.py`, a tick: hours check → live tmux sessions vs `max_runs` → Recover dead In Progress agent runs → usage gate (5-hour usage ≥ 90% or a weekly limit full → skip) → resume, or claim a ready Todo issue → `outer`, in-process (an exception is logged; the tick goes on). At most one agent run per tick. `--issue ID`: README › Operating.
-- `router.outer`: validate → read the issue → a role of `config.TASKS` kind `build` (engineer): `target.check` (Invalid on a new agent run → `writeback.bounce`, no agent run) → `inputs.gather` + `render` → `<work_dir>/work/<ID>/input.md` → tmux driver session `agent-pm-<role>-<ID>` running `run.py`, cwd `<work_dir>/work/<ID>/`. Any failure starts nothing. `--tui` passes the inner `--opener` and only the user's `--split`/`--split-from`/`--events`, never a derived `--split-from`.
-- `run.py`, the inner: `attended.close` → `drive.plan` (`config.layers`, the overlay) + `drive.start` (sinks: terminal, project log, `writeback.sink`; `begun` posts the session comment) → `end` lines in `runs.log` and the project log → `writeback.finish`. No valid outcome → stays In Progress; Recover resumes it. `config.run_config` mirrors those layers for validation (`runnable`, `docs`).
+- `router.outer`: validate → read the issue → a role of `config.TASKS` kind `build` (engineer): `target.check` (Invalid on a new agent run → `writeback.bounce`, no agent run) → `inputs.gather` + `render` → `drive.detach`: tmux driver session `agent-pm-<role>-<ID>` running `run.py --input <text>` (the argv through the handover file), cwd `<work_dir>/work/<ID>/`. Any failure starts nothing. `--tui` passes the inner `--opener` and only the user's `--split`/`--split-from`/`--events`, never a derived `--split-from`.
+- `run.py`, the inner: `attended.close` → `drive.plan` (`config.layers`, the overlay) + `drive.start` (sinks: terminal, `writeback.sink`; `begun` posts the session comment) → `end` event in `orchestrator.jsonl` → `writeback.finish`. No valid outcome → stays In Progress; Recover resumes it. `config.run_config` mirrors those layers for validation (`runnable`, `docs`).
 - `attended.py` owns the TUI session name `<role>-<ID>-<sid[:8]>`: `prefix` its only builder, `ISSUE_TUI` with `drive.TUI_SESSION` its only matcher. An issue's TUI sessions are the live tmux sessions so named, nothing recorded; the inner and prune `close` them (no resume beside an old `claude`). The driver session is the issue's live agent run (`router.live_sessions`: no second one starts) and holds a `max_runs` slot while its driver runs; a TUI session is neither.
 - Write-back: `<work_dir>/work/<ID>/writeback.json` ledgers each step per session, so a resume repeats none; a failed step leaves the issue In Progress.
 - `sessions.py`: one `Run <sid> · …` comment per session, posted with `harness_key` (`isMe` marks it); a resume edits it, a new claim adds one. A write is one try; a failure only logs `registry-error`. `issues.read_issue` and promote drop these comments. One stuck at `running` with no `agent-pm-<role>-<ID>` tmux session was killed: `tmux ls` is the truth.
@@ -35,7 +35,8 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 - Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `repo`, `report` or `tui_claude`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` first.
 - Identity: write-back and bounce act as the role's `account`, the rest as the harness account (README › Setup). Only Keychain service names travel in env, argv, logs and prompts, never keys. As the same macOS user, an agent run could read Keychain items: no enforced boundary.
 - No move changes an assignee; every move to In Review (write-back, bounce or harness) also subscribes each `human_members` email.
-- State between ticks: only `<work_dir>/logs/runs.log` (Recover resumes a session only while its `role=` is the assignee's; the session keeps its task) and Linear history, never session comments. A resume also needs `writeback.json`, `run.json` and the transcript (`config.transcript`).
+- Logs: `linear.log` is the only writer of `<work_dir>/logs/orchestrator.jsonl` (README › Operating).
+- State between ticks: only `<work_dir>/logs/runs.jsonl` (Recover resumes a session only while its `role` is the assignee's; the session keeps its task) and Linear history, never session comments. A resume also needs `writeback.json`, `run.jsonl` and the transcript (`config.transcript`).
 
 ## Roles, tasks, rules
 
@@ -56,7 +57,7 @@ A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also nee
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
 - Tmux targets: `core/skills/tmux/SKILL.md` › Gotchas. The code targets only with `=<name>`: the router reads `list-sessions` and names via `new-session -s`; `attended.close` kills by exact target (`tui_claude.kill`).
-- Keep `<work_dir>/logs` (README › Operating). The plists are installed as copies (README › Setup).
+- Keep `<work_dir>/logs/runs.jsonl` (README › Operating). The plists are installed as copies (README › Setup).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
 ## Agent skills

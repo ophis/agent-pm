@@ -1,10 +1,12 @@
 import io
 import json
 import os
+import plistlib
 import re
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
@@ -152,45 +154,7 @@ class LinearGql(unittest.TestCase):
         self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {})
 
 
-class Lines(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-        self.path = os.path.join(self.dir, "sub", "p.log")
-
-    def read(self):
-        with open(self.path, encoding="utf-8") as f:
-            return f.read()
-
-    def test_stamp_is_local_time_in_the_stamp_format(self):
-        self.assertEqual(linear.STAMP, "%Y-%m-%d %H:%M:%S")
-        self.assertRegex(linear.stamp(), r"\A\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\Z")
-
-    def test_append_creates_the_directory_and_returns_the_stamped_line(self):
-        with mock.patch.object(linear, "stamp", return_value="2026-10-04 01:02:03"):
-            self.assertEqual(linear.append(self.path, "end TASK-7"), "2026-10-04 01:02:03 end TASK-7")
-            linear.append(self.path, "next")
-        self.assertEqual(self.read(), "2026-10-04 01:02:03 end TASK-7\n2026-10-04 01:02:03 next\n")
-
-    def test_append_refuses_a_symlink(self):
-        os.makedirs(os.path.dirname(self.path))
-        os.symlink(os.path.join(self.dir, "elsewhere"), self.path)
-        with self.assertRaises(OSError):
-            linear.append(self.path, "x")
-        self.assertFalse(os.path.exists(os.path.join(self.dir, "elsewhere")))
-
-    def test_append_refuses_a_fifo(self):
-        os.makedirs(os.path.dirname(self.path))
-        os.mkfifo(self.path)
-        with self.assertRaises(OSError):
-            linear.append(self.path, "x")
-
-    def test_append_replaces_a_lone_surrogate(self):
-        out = linear.append(self.path, "a\udc80b")
-        self.assertTrue(out.endswith(" a?b"), out)
-        self.assertTrue(self.read().endswith(" a?b\n"))
-
+class Helpers(unittest.TestCase):
     def test_issue_id_is_unanchored(self):
         self.assertEqual(re.findall(linear.ISSUE_ID, "see ENG-12, PM-3."), ["ENG-12", "PM-3"])
         for bad in ("task-7", "7-ENG", "ENG-", "ENG-7 "):
@@ -200,6 +164,159 @@ class Lines(unittest.TestCase):
         self.assertEqual(linear.one_line("a\n\n  b\tc "), "a b c")
         self.assertEqual(linear.one_line(RuntimeError("two\nlines")), "RuntimeError: two lines")
         self.assertEqual(linear.one_line(SystemExit("api error")), "SystemExit: api error")
+
+
+class Stderr(io.StringIO):
+    """sys.stderr: a terminal or not; fail: the OSError each write raises (a gone tmux pane's EIO)."""
+    def __init__(self, tty=False, fail=None):
+        super().__init__()
+        self.tty, self.fail = tty, fail
+
+    def isatty(self):
+        return self.tty
+
+    def write(self, s):
+        if self.fail:
+            raise self.fail
+        return super().write(s)
+
+
+class Log(unittest.TestCase):
+    """linear.log: the one writer of <LOGS_DIR>/orchestrator.jsonl."""
+    TS = "2026-10-09T00:26:33-04:00"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        self.logs = os.path.join(self.tmp, "logs")
+        self.path = os.path.join(self.logs, "orchestrator.jsonl")
+        p = mock.patch.object(config, "LOGS_DIR", self.logs)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def log(self, *args, tty=False, fail=None, **kw):
+        """linear.log(*args, **kw) at TS; returns its stderr."""
+        err = Stderr(tty, fail)
+        with mock.patch.object(sys, "stderr", err), mock.patch.object(linear.drive, "stamp", return_value=self.TS):
+            linear.log(*args, **kw)
+        return err.getvalue()
+
+    def text(self):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return ""
+
+    def lines(self):
+        return [json.loads(line) for line in self.text().splitlines()]
+
+    def test_line_shape_and_key_order(self):
+        self.assertEqual(self.log("router", "claim", "TASK-1", role="pm", task=None), "")
+        self.log("prune", "prune-skip", entry="TASK-1/src/o/n", reason="not a clone é")
+        self.assertEqual(self.text(), f'{{"ts": "{self.TS}", "src": "router", "kind": "claim", "issue": "TASK-1", '
+                                      '"role": "pm"}\n'
+                                      f'{{"ts": "{self.TS}", "src": "prune", "kind": "prune-skip", '
+                                      '"entry": "TASK-1/src/o/n", "reason": "not a clone é"}\n')
+
+    def test_the_file_is_0600_in_logs_dir_resolved_per_call(self):
+        self.log("run", "end", "TASK-1", sid="s", exit=0)
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        other = os.path.join(self.tmp, "other")
+        with mock.patch.object(config, "LOGS_DIR", other):
+            self.log("run", "end", "TASK-2", sid="s", exit=0)
+        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
+        with open(os.path.join(other, "orchestrator.jsonl")) as f:
+            self.assertEqual(json.loads(f.read())["issue"], "TASK-2")
+
+    def test_an_oserror_from_the_file_never_raises(self):
+        os.makedirs(self.logs)
+        os.symlink(os.path.join(self.tmp, "elsewhere"), self.path)
+        self.assertEqual(self.log("run", "end", "TASK-1", tty=True), self.json("run", "end", "TASK-1"))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "elsewhere")))
+        file = os.path.join(self.tmp, "file")
+        open(file, "w").close()
+        with mock.patch.object(config, "LOGS_DIR", os.path.join(file, "logs")):
+            self.log("run", "end", "TASK-1")
+
+    def json(self, src, kind, issue=None, **fields):
+        """The stderr copy of a line."""
+        line = {"ts": self.TS, "src": src, "kind": kind, **({"issue": issue} if issue else {}), **fields}
+        return json.dumps(line, ensure_ascii=False) + "\n"
+
+    def test_an_oserror_from_stderr_never_raises(self):
+        for dry in (False, True):
+            self.log("router", "skip", tty=True, dry=dry, fail=OSError(5, "Input/output error"), reason="x")
+        self.assertEqual(len(self.lines()), 1)
+
+    def test_a_stderr_copy_only_on_a_terminal_or_dry_and_printable(self):
+        self.assertEqual(self.log("run", "tui-error", "TASK-1", msg="a"), "")
+        self.assertEqual(self.log("run", "tui-error", "TASK-1", tty=True, msg="a\x9b2Jb"),
+                         self.json("run", "tui-error", "TASK-1", msg="a2Jb"))
+        self.assertEqual(self.lines()[-1]["msg"], "a\x9b2Jb")
+        self.assertEqual(self.log("router", "pick", "TASK-2", dry=True, queue=1), self.json("router", "pick", "TASK-2", queue=1))
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_dry_writes_nothing(self):
+        self.log("promote", "promote", "DR-1", dry=True, role="pm")
+        self.assertFalse(os.path.exists(self.logs))
+
+    def test_once_dedups_on_src_kind_issue_entry_and_reason(self):
+        base = dict(src="router", kind="usage-skip", issue=None, mode="new", reason="blocked by usage", usage="five_hour=0.95")
+        cases = [({}, True), ({"usage": "five_hour=0.97", "mode": "resume"}, False), ({"reason": "other"}, True),
+                 ({"issue": "TASK-1"}, True), ({"src": "promote"}, True), ({"kind": "blocked"}, True),
+                 ({"entry": "TASK-1/tmp"}, True), ({}, False), ({"issue": "TASK-1"}, False)]
+        for change, written in cases:
+            with self.subTest(change=change):
+                before = len(self.lines())
+                kw = {**base, **change}
+                self.log(kw.pop("src"), kw.pop("kind"), kw.pop("issue"), once=True, **kw)
+                self.assertEqual(len(self.lines()) - before, int(written))
+        self.log("router", "usage-skip", mode="new", reason="blocked by usage", usage="x")
+        self.assertEqual(len(self.lines()), 7)
+
+    def test_once_reads_the_last_24_hours_of_the_file(self):
+        now = datetime.now().astimezone()
+        recent, old = (now - timedelta(hours=h) for h in (23, 25))
+        os.makedirs(self.logs)
+        lines = [{"ts": recent.isoformat(), "src": "router", "kind": "blocked", "issue": "TASK-1", "by": ["TASK-7"]},
+                 {"ts": old.isoformat(), "src": "router", "kind": "blocked", "issue": "TASK-2", "by": ["TASK-7"]},
+                 {"ts": recent.isoformat(), "src": "prune", "kind": "prune-skip", "entry": "TASK-3/tmp", "reason": "r"}]
+        junk = ["router.py: crash", "[1]", '"x"', "{", json.dumps({"src": "router", "kind": "blocked", "issue": "TASK-4"}),
+                json.dumps({"ts": "yesterday", "src": "router", "kind": "blocked", "issue": "TASK-5"}),
+                json.dumps({"ts": "9999-12-31T23:59:59-05:00", "src": "router", "kind": "blocked", "issue": "TASK-6"}),
+                json.dumps({"ts": now.replace(tzinfo=None).isoformat(), "src": "router", "kind": "blocked", "issue": "TASK-7"})]
+        with open(self.path, "w") as f:
+            f.write("".join(json.dumps(d) + "\n" for d in lines) + "".join(j + "\n" for j in junk))
+        for issue in ("TASK-1", "TASK-2", "TASK-4", "TASK-5", "TASK-6", "TASK-7"):
+            self.log("router", "blocked", issue, once=True, by=["TASK-8"])
+        self.log("prune", "prune-skip", once=True, entry="TASK-3/tmp", reason="r")
+        self.assertEqual([json.loads(line)["issue"] for line in self.text().splitlines()[len(lines) + len(junk):]],
+                         ["TASK-2", "TASK-4", "TASK-5", "TASK-7"])
+
+    def test_a_dry_run_ignores_once(self):
+        self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
+        for _ in range(2):
+            self.assertEqual(self.log("router", "blocked", "TASK-1", once=True, dry=True, by=["TASK-7"]),
+                             self.json("router", "blocked", "TASK-1", by=["TASK-7"]))
+        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
+
+    def test_once_keeps_a_cache_per_log_path(self):
+        other = os.path.join(self.tmp, "other")
+        for logs, written in ((self.logs, 1), (other, 1), (self.logs, 0), (other, 0)):
+            with mock.patch.object(config, "LOGS_DIR", logs):
+                path = os.path.join(logs, "orchestrator.jsonl")
+                before = len(open(path).read().splitlines()) if os.path.exists(path) else 0
+                self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
+                self.assertEqual(len(open(path).read().splitlines()) - before, written, logs)
+
+    def test_the_plists_send_launchd_output_to_the_log(self):
+        for job in ("router", "promote"):
+            with open(os.path.join(config.ROOT, "orchestrator", f"com.ophis.agent-pm.{job}.plist"), "rb") as f:
+                plist = plistlib.load(f)
+            self.assertEqual({plist["StandardOutPath"], plist["StandardErrorPath"]},
+                             {"/Users/francis/.agent-pm/logs/orchestrator.jsonl"}, job)
 
 
 IN_PROGRESS, IN_REVIEW, TODO = STATES["in_progress"], STATES["in_review"], STATES["todo"]

@@ -1,5 +1,5 @@
 """Write-back: a core agent run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the engineering bounce before an agent run."""
+and the engineering bounce before an agent run; each step logged (linear.log, src writeback)."""
 import fcntl
 import hashlib
 import json
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import LOCAL, TASKS  # noqa: E402
-from linear import append, call, comment, move, one_line, reraise_signal, subscribe  # noqa: E402
+from linear import call, comment, log, move, one_line, reraise_signal, subscribe  # noqa: E402
 import drive  # noqa: E402
 from issues import Issue  # noqa: E402
 from target import MAPPED  # noqa: E402
@@ -42,7 +42,6 @@ class Context:
     resume: bool
     project: str | None
     workdir: str
-    plog: str
     gql: Callable[..., dict]          # role account (service=role.key)
     humans: tuple[str, ...]           # human_members, config order
     states: dict[str, str]            # logical → state id
@@ -66,18 +65,15 @@ def approve_line(repo):
             "to use another repo, comment** `Repo: <owner>/<name>` **first.**")
 
 
-def _log(ctx, line):
-    try:
-        append(ctx.plog, line)
-    except OSError:
-        pass
+def _error(ctx, step, e):
+    log("writeback", "step-error", ctx.ident, sid=ctx.sid, step=step, error=one_line(e))
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
     """linear.move from frm to to (logical states); a skip, the issue in neither, is logged."""
     now = move(ctx.gql, issue, ctx.states[to], ctx.states[frm])
     if now not in (None, ctx.states[to]):
-        _log(ctx, f"writeback-skip {ident}: move to {to}: issue is {now}")
+        log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
 
 def _ledger(ctx):
@@ -103,9 +99,9 @@ def _step(ctx, step, call):
         drive.save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (Exception, SystemExit) as e:
         reraise_signal(e)
-        _log(ctx, f"writeback-error {ctx.ident}: {step}: {one_line(e)}")
+        _error(ctx, step, e)
         return e
-    _log(ctx, f"writeback {ctx.ident}: {step}")
+    log("writeback", "step", ctx.ident, sid=ctx.sid, step=step)
     return None
 
 
@@ -125,7 +121,7 @@ def sink(ctx) -> drive.Sink:
                       lambda: comment(ctx.gql, ctx.issue_id, f"Progress ({event.name}): {event.text}"))
         except (Exception, SystemExit) as e:
             reraise_signal(e)
-            _log(ctx, f"writeback-error {ctx.ident}: sink: {one_line(e)}")
+            _error(ctx, "sink", e)
     return handle
 
 
@@ -156,18 +152,19 @@ def _url(ctx, url):
         return url
     if ctx.target and url.lower().startswith(f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()):
         return url
-    _log(ctx, f"writeback-skip {ctx.ident}: url not on {'/'.join(ctx.target) if ctx.target else 'a target repo'}")
+    log("writeback", "skip", ctx.ident, reason=f"url not on {'/'.join(ctx.target) if ctx.target else 'a target repo'}")
     return ""
 
 
 def finish(ctx, outcome: drive.Outcome) -> bool:
     """Phase 3: the outcome as comments, title, attachment and state; steps ledgered per sid, stopping at the first
     error. True once every step is done (a file post or subscribe failure is noted in the comment instead); logs,
-    never raises: a signal SystemExit stops the steps and returns False, so the runner still posts its end lines."""
+    never raises: a signal SystemExit stops the steps and returns False, so the runner still posts the session
+    comment's end."""
     try:
         return _finish(ctx, outcome)
     except (Exception, SystemExit) as e:
-        _log(ctx, f"writeback-error {ctx.ident}: finish: {one_line(e)}")
+        _error(ctx, "finish", e)
         return False
 
 
@@ -192,7 +189,7 @@ def _finish(ctx, o):
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
     except (Exception, SystemExit) as e:
         reraise_signal(e)
-        _log(ctx, f"writeback-error {ctx.ident}: read: {one_line(e)}")
+        _error(ctx, "read", e)
         return False
 
     if task.files and o.status != "needs_input":

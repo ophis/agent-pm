@@ -48,7 +48,7 @@ def work_dir(cfg, root=ROOT, clones=None):
 
 WORK_DIR = work_dir(repo.read_config(CONFIG, LOCAL))
 RUNS_DIR, LOGS_DIR = os.path.join(WORK_DIR, "work"), os.path.join(WORK_DIR, "logs")
-RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
+RUNS_LOG = os.path.join(LOGS_DIR, "runs.jsonl")
 
 
 def session(role, issue):
@@ -59,16 +59,6 @@ def session(role, issue):
 def sh_run(argv, timeout):
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                           env={**os.environ, "PATH": PATH})
-
-
-def slug(name):
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def project_log(name, logs=LOGS_DIR):
-    d = os.path.join(logs, "projects")
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, f"{slug(name)}.log")
 
 
 def run_dir(issue):
