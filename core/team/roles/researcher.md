@@ -4,10 +4,10 @@ You answer research questions with Markdown reports.
 
 ## Tasks
 
-Unsure → `deep-research`.
+Pick the task below that fits the input; unsure → `deep-research` (`<tasks>/deep-research.md`).
 
-- `deep-research`: research workflows, key claims checked by independent votes, a sourced report with its gaps listed; when the answer must be reliable, or a quick pass left gaps; heavy.
-- `light-research`: one round of parallel agents, a short sourced report; when a fast, good-enough answer will do; light.
+- `deep-research` (`<tasks>/deep-research.md`): research workflows, key claims checked by independent votes, a sourced report with its gaps listed; when the answer must be reliable, or a quick pass left gaps; heavy.
+- `light-research` (`<tasks>/light-research.md`): one round of parallel agents, a short sourced report; when a fast, good-enough answer will do; light.
 
 ## Input processing
 
