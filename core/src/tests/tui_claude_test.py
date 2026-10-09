@@ -1,5 +1,6 @@
 import ast
 import io
+import itertools
 import json
 import os
 import re
@@ -47,6 +48,10 @@ SOCK = "/tmp/s p"
 # $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before the printed `tmux attach`
 PREFIXES = (({}, ""), ({"TUI_ATTACH_PREFIX": " \t"}, ""),
             ({"TUI_ATTACH_PREFIX": " docker exec -it box "}, "docker exec -it box "))
+# tmux 3.7c #{window_layout}: 3 panes after select-layout main-vertical; 5 tiled, then pane 1 split -h
+MAIN_VERTICAL = "7f31,160x48,0,0{80x48,0,0,0,79x48,81,0[79x24,81,0,1,79x23,81,25,2]}"
+TILED_SPLIT = ("9a18,160x48,0,0[160x15,0,0{79x15,0,0,0,40x15,80,0,1,39x15,121,0,5},"
+               "160x15,0,16{79x15,0,16,2,80x15,80,16,3},160x16,0,32,4]")
 
 
 def done(argv, rc=0, out="", err=""):
@@ -1399,6 +1404,280 @@ class Opener(unittest.TestCase):
         self.assertTrue(tui_claude.ITERM_ID.fullmatch("6D7E-8F"))
         for value in ("", "a_b", "a:b", "%1", "a b"):
             self.assertFalse(tui_claude.ITERM_ID.fullmatch(value), value)
+
+
+def slot(pane, *children):
+    return tui_claude.Slot(pane, children)
+
+
+def body(cell):
+    return tui_claude._render_layout(cell).split(",", 1)[1]
+
+
+def grid(cells, per_column=3, width=160, height=48, manager_width=79):
+    """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
+    if isinstance(cells, int):
+        cells = [slot(f"%{i}") for i in range(1, cells + 1)]
+    return tui_claude._grid_layout(cells, width=width, height=height, manager="%0", manager_width=manager_width,
+                                   per_column=per_column)
+
+
+class GridLayout(unittest.TestCase):
+    """Window 160x48, manager %0 79 wide."""
+
+    def tiles(self, cell):
+        """Each container's children tile it exactly, one-cell borders between them."""
+        if cell.kind == tui_claude.LEAF:
+            return
+        self.assertGreaterEqual(len(cell.children), 2)
+        across = cell.kind == tui_claude.LEFT_RIGHT
+        at = cell.x if across else cell.y
+        for child in cell.children:
+            if across:
+                self.assertEqual((child.x, child.y, child.h), (at, cell.y, cell.h))
+            else:
+                self.assertEqual((child.y, child.x, child.w), (at, cell.x, cell.w))
+            at += (child.w if across else child.h) + 1
+            self.tiles(child)
+        self.assertEqual(at - 1, cell.x + cell.w if across else cell.y + cell.h)
+
+    def check(self, root, n, per_column, width=160, height=48):
+        """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights, each +-1."""
+        self.tiles(root)
+        self.assertEqual((root.kind, root.w, root.h, root.x, root.y), (tui_claude.LEFT_RIGHT, width, height, 0, 0))
+        manager, area = root.children
+        self.assertEqual((manager.pane, manager.h), ("%0", height))
+        c = -(-n // per_column)
+        if c > 1:
+            self.assertEqual(area.kind, tui_claude.LEFT_RIGHT)
+        columns = list(area.children) if c > 1 else [area]
+        self.assertEqual(len(columns), c)
+        self.assertLessEqual(max(col.w for col in columns) - min(col.w for col in columns), 1)
+        for j, column in enumerate(columns):
+            cells = list(column.children) if column.kind == tui_claude.TOP_BOTTOM else [column]
+            self.assertEqual([cell.pane for cell in cells],
+                             [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))])
+            self.assertLessEqual(max(cell.h for cell in cells) - min(cell.h for cell in cells), 1)
+
+    def test_fr3_per_column_3(self):
+        for n, want in ((1, "160x48,0,0{79x48,0,0,0,80x48,80,0,1}"),
+                        (2, "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,2]}"),
+                        (4, "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,40x15,80,33,3],"
+                            "39x48,121,0,4}}"),
+                        (7, "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,26x15,80,33,3],"
+                            "26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],26x48,134,0,7}}")):
+            with self.subTest(n=n):
+                root = grid(n)
+                self.assertEqual(body(root), want)
+                self.check(root, n, 3)
+
+    def test_fr3_any_count(self):
+        for per_column in (1, 2, 3, 4):
+            for n in range(1, 13):
+                with self.subTest(per_column=per_column, n=n):
+                    self.check(grid(n, per_column), n, per_column)
+
+    def test_per_column_2_three_cells(self):
+        self.assertEqual(body(grid(3, 2)),
+                         "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2],39x48,121,0,3}}")
+
+    def test_manager_width_kept(self):
+        for width in (1, 30, 100):
+            with self.subTest(width=width):
+                root = grid(4, manager_width=width)
+                self.assertEqual(root.children[0], tui_claude.Cell(width, 48, 0, 0, "%0"))
+                self.check(root, 4, 3)
+
+    def test_compress_when_too_wide(self):
+        root = grid(7, manager_width=158)
+        self.assertEqual(root.children[0].w, 154)
+        self.assertEqual([col.w for col in root.children[1].children], [1, 1, 1])
+        self.check(root, 7, 3)
+        self.assertEqual(body(grid([slot("%1", slot("%2"))], manager_width=200)),
+                         "160x48,0,0{156x48,0,0,0,3x48,157,0{1x48,157,0,1,1x48,159,0,2}}")
+        self.assertEqual(grid([slot("%1", slot("%2", slot("%3")))], manager_width=200).children[0].w, 152)
+
+    def test_infeasible(self):
+        self.assertEqual(grid(7, width=7).children[0].w, 1)
+        self.assertIsNone(grid(7, width=6))
+        self.assertIsNotNone(grid(3, height=5))
+        self.assertIsNone(grid(3, height=4))
+        self.assertIsNone(grid([slot("%1", slot("%2"), slot("%3"))], height=2))
+        self.assertIsNone(grid(1, manager_width=0))
+
+    def test_root_is_the_manager_then_the_columns(self):
+        root = grid(4)
+        self.assertEqual([c.kind for c in (root, *root.children)],
+                         [tui_claude.LEFT_RIGHT, tui_claude.LEAF, tui_claude.LEFT_RIGHT])
+        self.assertEqual([c.kind for c in root.children[1].children], [tui_claude.TOP_BOTTOM, tui_claude.LEAF])
+
+    def test_sub_workers_right_half_equal_heights(self):
+        root = grid([slot("%1"), slot("%2", slot("%3"), slot("%4")), slot("%5")])
+        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
+                                     "39x15,121,17[39x7,121,17,3,39x7,121,25,4]},80x15,80,33,5]}")
+        self.tiles(root)
+
+    def test_grandchild_halves_the_childs_cell(self):
+        root = grid([slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")])
+        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
+                                     "39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},"
+                                     "80x15,80,33,5]}")
+        self.tiles(root)
+
+    def test_orphan_group_stacks_full_width(self):
+        root = grid([slot("%1"), slot(None, slot("%3", slot("%6")), slot("%4")), slot("%5")])
+        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17{"
+                                     "40x7,80,17,3,39x7,121,17,6},80x7,80,25,4],80x15,80,33,5]}")
+        self.tiles(root)
+
+    def test_one_child_or_cell_no_container(self):
+        self.assertEqual(body(grid([slot(None, slot("%3"))])), "160x48,0,0{79x48,0,0,0,80x48,80,0,3}")
+        self.assertEqual(body(grid([slot("%1", slot("%2"))])),
+                         "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0,2}}")
+
+    def test_leaves_depth_first(self):
+        root = grid([slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")])
+        self.assertEqual([leaf.pane for leaf in tui_claude._leaves(root)],
+                         ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"])
+
+
+class GridTree(unittest.TestCase):
+    """Manager %0, its session mgr; rows: (session id, name, @opener, @pane)."""
+    MGR = (1, "mgr", "", "")
+
+    def tree(self, rows, panes, layout=None):
+        if layout is None:
+            layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
+        else:
+            layout = tui_claude._parse_layout(layout)
+        return tui_claude._grid_tree("%0", panes, [self.MGR, *rows], layout)
+
+    def test_nodes_by_pane_id_then_manual_panes(self):
+        rows = [(2, "a", "mgr", "%10"), (3, "b", "mgr", "%2"), (4, "c", "", "%9")]
+        self.assertEqual(self.tree(rows, ["%0", "%10", "%5", "%2", "%9", "%3"]),
+                         [slot("%2"), slot("%9"), slot("%10"), slot("%3"), slot("%5")])
+
+    def test_a_closed_pane_keeps_the_rest_in_order(self):
+        panes = ["%0", "%1", "%3", "%4", "%5", "%6", "%7"]
+        rows = [(i + 1, f"w{i}", "mgr", f"%{i}") for i in (1, 3, 4, 5, 6, 7)]
+        cells = self.tree(rows, panes)
+        self.assertEqual(cells, [slot(p) for p in panes[1:]])
+        self.assertEqual([[c.pane for c in col.children] for col in grid(cells).children[1].children],
+                         [["%1", "%3", "%4"], ["%5", "%6", "%7"]])
+
+    def test_sub_workers_in_their_parents_cell(self):
+        rows = [(2, "w1", "mgr", "%1"), (3, "w2", "mgr", "%2"), (4, "a", "w2", "%3"), (5, "b", "w2", "%4"),
+                (6, "w3", "mgr", "%5"), (7, "c", "a", "%6")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5", "%6"]),
+                         [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")])
+
+    def test_openers_that_are_no_node_of_the_window(self):
+        rows = [(2, "x", "mgr", "%77"), (3, "y", "x", "%1"), (4, "z", "mgr", "%0"), (5, "v", "z", "%2"),
+                (6, "u", "", "%3")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%1"), slot("%2"), slot("%3")])
+
+    def test_duplicate_pane_claims_the_lower_session_id_owns(self):
+        rows = [(5, "x", "mgr", "%1"), (3, "y", "mgr", "%1"), (6, "z", "x", "%2"), (7, "w", "y", "%3")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%1", slot("%3")), slot("%2")])
+
+    def test_opener_cycle_goes_main(self):
+        rows = [(2, "a", "b", "%1"), (3, "b", "a", "%2"), (4, "c", "a", "%3"), (5, "d", "d", "%4")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4"]),
+                         [slot("%1"), slot("%2"), slot("%3"), slot("%4")])
+
+    def test_orphans_take_the_killed_parents_main_cell(self):
+        # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
+        layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}"
+        rows = [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
+                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3")])
+
+    def test_orphans_take_the_killed_parents_sub_cell(self):
+        # w1 (%1) has children c (%2, killed; its children a %4, b %5) and d (%3)
+        layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,4,"
+                  "39x11,121,13,5],39x23,121,25,3]}}")
+        rows = [(2, "w1", "mgr", "%1"), (4, "d", "w1", "%3"), (5, "a", "c", "%4"), (6, "b", "c", "%5")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
+                         [slot("%1", slot(None, slot("%4"), slot("%5")), slot("%3"))])
+
+    def test_orphans_skip_a_manual_panes_cell(self):
+        layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
+                  "39x7,121,25,5]},80x15,80,33,3]}")
+        rows = [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5", "%9"], layout),
+                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3"), slot("%9")])
+
+    def test_orphans_spanning_main_cells_dissolve(self):
+        # the manager's session renamed from old to mgr
+        for panes, per_column in ((["%0", "%1", "%2", "%3"], 3), (["%0", "%1", "%2", "%3"], 2), (["%0", "%1"], 3)):
+            with self.subTest(panes=panes, per_column=per_column):
+                layout = grid([slot(p) for p in panes[1:]], per_column)
+                rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
+                self.assertEqual(self.tree(rows, panes, tui_claude._render_layout(layout)),
+                                 [slot(p) for p in panes[1:]])
+
+
+class Swaps(unittest.TestCase):
+    def test_none_when_in_order(self):
+        self.assertEqual(tui_claude._swaps(["%0", "%1", "%2"], ["%0", "%1", "%2"]), [])
+
+    def test_example(self):
+        self.assertEqual(tui_claude._swaps(["%0", "%1", "%2", "%3"], ["%0", "%3", "%1", "%2"]),
+                         [("%3", "%1"), ("%1", "%2")])
+
+    def test_every_order_of_four_correct_and_minimal(self):
+        have = ["%0", "%1", "%2", "%3"]
+        for want in itertools.permutations(have):
+            with self.subTest(want=want):
+                swaps = tui_claude._swaps(have, list(want))
+                order = list(have)
+                for source, target in swaps:
+                    i, j = order.index(source), order.index(target)
+                    order[i], order[j] = order[j], order[i]
+                self.assertEqual(order, list(want))
+                seen, cycles = set(), 0
+                for start in have:
+                    cycles += start not in seen
+                    while start not in seen:
+                        seen.add(start)
+                        start = want[have.index(start)]
+                self.assertEqual(len(swaps), len(have) - cycles)
+
+
+class LayoutString(unittest.TestCase):
+    def test_constants(self):
+        self.assertEqual((tui_claude.PER_COLUMN, tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN,
+                          tui_claude.GRID_HOOKS),
+                         (3, "@grid-manager", "@grid-per-column",
+                          ("pane-exited", "window-resized", "window-layout-changed")))
+        self.assertTrue(tui_claude.WINDOW.fullmatch("@12"))
+        for value in ("@", "%1", "@1a", "1"):
+            self.assertFalse(tui_claude.WINDOW.fullmatch(value), value)
+
+    def test_checksum_of_tmux_samples(self):
+        for sample in (MAIN_VERTICAL, TILED_SPLIT):
+            csum, text = sample.split(",", 1)
+            self.assertEqual(tui_claude._checksum(text), csum)
+
+    def test_parse(self):
+        Cell, lr, tb = tui_claude.Cell, tui_claude.LEFT_RIGHT, tui_claude.TOP_BOTTOM
+        want = Cell(160, 48, 0, 0, kind=lr, children=(
+            Cell(80, 48, 0, 0, "%0"),
+            Cell(79, 48, 81, 0, kind=tb, children=(Cell(79, 24, 81, 0, "%1"), Cell(79, 23, 81, 25, "%2")))))
+        self.assertEqual(tui_claude._parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(tui_claude._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+
+    def test_round_trip(self):
+        for sample in (MAIN_VERTICAL, TILED_SPLIT):
+            self.assertEqual(tui_claude._render_layout(tui_claude._parse_layout(sample)), sample)
+
+    def test_malformed(self):
+        text = MAIN_VERTICAL.split(",", 1)[1]
+        for bad in ("", "7f31", "7f31,", "0000," + text, "7F31," + text, text[:-1], text + "}", text + ",1x1,0,0,9",
+                    text.replace("]", "}"), "160x48,0,0", "160x48,0,0{}", "160x48,0,0,%0",
+                    "160x48,0,0[1x1,0,0,1x1,0,2,2]", "160x48,0,0,1\n"):
+            with self.subTest(bad=bad):
+                self.assertIsNone(tui_claude._parse_layout(bad))
 
 
 class Cli(unittest.TestCase):

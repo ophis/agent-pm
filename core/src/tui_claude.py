@@ -46,6 +46,13 @@ BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
+WINDOW = re.compile(r"@[0-9]+")
+PER_COLUMN = 3   # worker panes per grid column
+GRID_MANAGER = "@grid-manager"   # a grid window's options: its manager pane, and N
+GRID_PER_COLUMN = "@grid-per-column"
+GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
+LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
+LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
 # before osascript, whose script needs iTerm2 installed; -a includes ancestors (the caller usually runs inside iTerm2)
 PGREP = ["pgrep", "-a", "-x", "iTerm2"]
@@ -109,6 +116,25 @@ class Anchor(NamedTuple):
     pane: str | None = None
     socket: str | None = None
     session: str | None = None
+
+
+class Cell(NamedTuple):
+    """A window layout cell as tmux dumps it: w x h at x, y; a LEAF shows pane (%N), a LEFT_RIGHT or TOP_BOTTOM
+    container holds children."""
+    w: int
+    h: int
+    x: int
+    y: int
+    pane: str | None = None
+    kind: str = LEAF
+    children: tuple[Cell, ...] = ()
+
+
+class Slot(NamedTuple):
+    """A grid cell's content: a pane and the slots stacked right of it, or (pane None) an orphan group's members,
+    stacked."""
+    pane: str | None
+    children: tuple[Slot, ...] = ()
 
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
@@ -478,6 +504,199 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
         except TuiError as e:
             print(f"tui: show: {key}: {e}", file=sys.stderr)
             return
+
+
+def _checksum(body: str) -> str:
+    csum = 0
+    for byte in body.encode():
+        csum = ((csum >> 1) + ((csum & 1) << 15) + byte) & 0xFFFF
+    return f"{csum:04x}"
+
+
+def _parse_layout(text: str) -> Cell | None:
+    """The cell tree of a layout string, `<checksum>,<body>` (a checksum that must match) or a body; None when
+    malformed."""
+    csum, sep, body = text.partition(",")
+    if sep and re.fullmatch(r"[0-9a-f]{4}", csum):
+        if _checksum(body) != csum:
+            return None
+        text = body
+    try:
+        cell, end = _parse_cell(text, 0)
+    except ValueError:
+        return None
+    return cell if end == len(text) else None
+
+
+def _parse_cell(text: str, at: int) -> tuple[Cell, int]:
+    m = LAYOUT_CELL.match(text, at)
+    if m is None:
+        raise ValueError(at)
+    w, h, x, y = (int(v) for v in m.group(1, 2, 3, 4))
+    if m.group(5) is not None:
+        return Cell(w, h, x, y, f"%{m.group(5)}"), m.end()
+    kind = LEFT_RIGHT if m.group(6) == "{" else TOP_BOTTOM
+    at, children = m.end(), []
+    while True:
+        child, at = _parse_cell(text, at)
+        children.append(child)
+        if text.startswith(kind[1], at):
+            return Cell(w, h, x, y, kind=kind, children=tuple(children)), at + 1
+        if not text.startswith(",", at):
+            raise ValueError(at)
+        at += 1
+
+
+def _render_layout(cell: Cell) -> str:
+    """`<checksum>,<body>`, as select-layout takes it."""
+    body = _body(cell)
+    return f"{_checksum(body)},{body}"
+
+
+def _body(c: Cell) -> str:
+    head = f"{c.w}x{c.h},{c.x},{c.y}"
+    if c.kind == LEAF:
+        return f"{head},{c.pane[1:]}"
+    return head + c.kind[0] + ",".join(_body(child) for child in c.children) + c.kind[1]
+
+
+def _leaves(cell: Cell) -> list[Cell]:
+    """Depth first: the order select-layout gives them to the panes, by pane index."""
+    return [cell] if cell.kind == LEAF else [leaf for child in cell.children for leaf in _leaves(child)]
+
+
+def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
+    """Each leaf's pane: the cells from the root down to the leaf, depth first."""
+    if cell.kind == LEAF:
+        return {cell.pane: [*above, cell]}
+    return {pane: path for child in cell.children for pane, path in _paths(child, (*above, cell)).items()}
+
+
+def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, str, str]],
+               layout: Cell) -> list[Slot]:
+    """The main grid's cells, in order. A node (a session whose @pane is a window pane but the manager; two claiming
+    one: the lower session id) sits in its @opener's node; nodes whose @opener is gone form an orphan group, in the
+    cell the current layout shows them in; the rest, and what main does not reach, sit in main. Siblings by pane id,
+    an orphan group where the layout has it; manual panes last. sessions: each live session's (id, name, @opener,
+    @pane), fullmatched, "" when unset; layout's leaves: panes."""
+    owner = {}
+    for _, name, opener, pane in sorted(sessions):
+        if pane in panes and pane != manager and pane not in owner:
+            owner[pane] = name, opener
+    node = {name: pane for pane, (name, _) in owner.items()}
+    names = {row[1] for row in sessions}
+    parent = {}   # a node's pane, or an orphan group's name -> its parent's; None: main
+    for pane, (_, opener) in owner.items():
+        if opener in node:
+            parent[pane] = node[opener]
+        else:   # a gone opener: its orphan group
+            parent[pane] = opener if opener and opener not in names else None
+
+    def under(key) -> list[str]:
+        return [*([key] if key in owner else []), *(p for k, up in parent.items() if up == key for p in under(k))]
+
+    paths = _paths(layout)
+    rank = {pane: i for i, pane in enumerate(paths)}
+    columns = (layout.children[1] if layout.kind == LEFT_RIGHT and len(layout.children) == 2
+               and layout.children[0].pane == manager else layout)
+    groups = sorted({up for up in parent.values() if up is not None and up not in owner})
+    spans = {q: set(under(q)) for q in groups}
+    for q in groups:
+        path = paths[min(spans[q])]
+        for pane in spans[q]:
+            path = [a for a, b in zip(path, paths[pane]) if a is b]
+        if path[-1] is layout or path[-1] is columns:
+            parent.update((k, None) for k, up in list(parent.items()) if up == q)
+            continue
+        parent[q] = None
+        for cell in reversed(path):
+            head = cell.children[0] if cell.kind == LEFT_RIGHT else None
+            if head is None or head.kind != LEAF or head.pane in spans[q]:
+                continue
+            if head.pane == manager:
+                break
+            if head.pane in owner:
+                parent[q] = head.pane
+                break
+    reached, todo = set(), [None]
+    while todo:
+        key = todo.pop()
+        found = [k for k, up in parent.items() if up == key and k not in reached]
+        reached.update(found)
+        todo += found
+    parent.update((k, None) for k in list(parent) if k not in reached)
+
+    def first(key) -> int:
+        return min(rank[p] for p in under(key))
+
+    def slots(key) -> list[Slot]:
+        live = sorted((k for k, up in parent.items() if up == key and k in owner), key=lambda p: int(p[1:]))
+        order = list(live)
+        for q in sorted((k for k, up in parent.items() if up == key and k not in owner), key=first):
+            later = next((k for k in live if first(k) > first(q)), None)
+            order.insert(len(order) if later is None else order.index(later), q)
+        return [Slot(k if k in owner else None, tuple(slots(k))) for k in order]
+
+    manual = sorted((p for p in panes if p != manager and p not in owner), key=lambda p: int(p[1:]))
+    return [*slots(None), *(Slot(p) for p in manual)]
+
+
+def _grid_layout(cells: list[Slot], *, width: int, height: int, manager: str, manager_width: int,
+                 per_column: int) -> Cell | None:
+    """The grid window's layout: the manager left, full height, manager_width wide but narrowed till the columns fit;
+    cells (at least one) in columns of per_column, top down, then right. None when it does not fit."""
+    columns = tuple(Slot(None, tuple(cells[i:i + per_column])) for i in range(0, len(cells), per_column))
+    c = len(columns)
+    mw = min(manager_width, width - 1 - (c * max(_min_width(s) for s in cells) + c - 1))
+    if mw < 1:
+        return None
+    root = Cell(width, height, 0, 0, kind=LEFT_RIGHT, children=(
+        Cell(mw, height, 0, 0, manager), _line(columns, LEFT_RIGHT, width - mw - 1, height, mw + 1, 0)))
+    return root if all(leaf.h >= 1 for leaf in _leaves(root)) else None
+
+
+def _min_width(s: Slot) -> int:
+    if not s.children:
+        return 1
+    least = max(_min_width(child) for child in s.children)
+    return least if s.pane is None else 2 * least + 1
+
+
+def _place(s: Slot, w: int, h: int, x: int, y: int) -> Cell:
+    """A pane with children: it takes the left half, they stack in the right; an orphan group's members stack."""
+    if not s.children:
+        return Cell(w, h, x, y, s.pane)
+    if s.pane is None:
+        return _line(s.children, TOP_BOTTOM, w, h, x, y)
+    left = w // 2
+    return Cell(w, h, x, y, kind=LEFT_RIGHT, children=(
+        Cell(left, h, x, y, s.pane), _line(s.children, TOP_BOTTOM, w - left - 1, h, x + left + 1, y)))
+
+
+def _line(slots: tuple[Slot, ...], kind: str, w: int, h: int, x: int, y: int) -> Cell:
+    """slots side by side (LEFT_RIGHT) or stacked, equal sizes, the remainder to the first; one: its own cell."""
+    if len(slots) == 1:
+        return _place(slots[0], w, h, x, y)
+    across = kind == LEFT_RIGHT
+    size, extra = divmod((w if across else h) - len(slots) + 1, len(slots))
+    children, at = [], x if across else y
+    for i, s in enumerate(slots):
+        n = size + (i < extra)
+        children.append(_place(s, n, h, at, y) if across else _place(s, w, n, x, at))
+        at += n + 1
+    return Cell(w, h, x, y, kind=kind, children=tuple(children))
+
+
+def _swaps(have: list[str], want: list[str]) -> list[tuple[str, str]]:
+    """The fewest (source, target) swap-pane pairs turning pane index order have into want: each puts want's next
+    pane in place."""
+    have, swaps = list(have), []
+    for i, pane in enumerate(want):
+        if have[i] != pane:
+            j = have.index(pane)
+            swaps.append((pane, have[i]))
+            have[i], have[j] = pane, have[i]
+    return swaps
 
 
 def main(argv: list[str] | None = None) -> int:
