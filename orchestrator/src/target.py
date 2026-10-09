@@ -122,7 +122,7 @@ def _branches(ident, o, n, run, work):
                    "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
         if res.returncode != 0:
             return Transient(f"git branch --list: {err_text(res)}")
-        read_only = {f"{ident}-{t}" for t, task in TASKS.items() if task.kind != "build"}
+        read_only = {f"{ident}-{t}" for r, spec in TASKS.items() if spec.kind != "build" for t in config.role_tasks(r)}
         if local := [b for b in res.stdout.split() if b not in read_only]:
             return local
     res = run(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",

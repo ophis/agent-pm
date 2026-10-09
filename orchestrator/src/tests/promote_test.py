@@ -369,10 +369,10 @@ class TestScopeAndConfig(Base):
         self.assertEqual((child["projectId"], child["assigneeId"], child["title"]), ("p-dr", "u-engineer", "ENG: Title DR-1"))
         self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X")
 
-    def test_child_titles_from_tasks(self):
+    def test_child_titles_from_the_roles_tasks_entries(self):
         self.config = self.write_config(PM_NEXT)
         self.ready(role="pm", title="DES: Title DR-1")
-        tasks = {"product-design": config.Task("design", prefix="DES"), "build": config.Task("build", prefix="BLD")}
+        tasks = {"pm": config.Task("design", prefix="DES"), "engineer": config.Task("build", prefix="BLD")}
         with mock.patch.dict(config.TASKS, tasks):
             self.run_main()
         (child,) = self.fake.children.values()
