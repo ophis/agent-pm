@@ -340,7 +340,7 @@ class Gate(Case):
         q = shlex.quote
         parent = subprocess.Popen(["sh", "-c", f"{q(sys.executable)} {q(FAKE)} hello --session-id {SID} "
                                                f"</dev/null >/dev/null 2>{q(err)} & wait"], cwd=self.proj, env=self.env)
-        self.addCleanup(parent.wait)
+        self.addCleanup(lambda: (parent.kill(), parent.wait()))
         wait(lambda: os.path.isfile(self.log))
         parent.kill()
 
