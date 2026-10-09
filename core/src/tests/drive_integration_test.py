@@ -198,10 +198,12 @@ class Interrupt(Integration):
             time.sleep(0.05)
         (call,) = self.calls()
         os.kill(proc.pid, signal.SIGINT)
-        out, err = proc.communicate(timeout=30)
-        self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)
+        proc.wait(timeout=30)
+        # Before communicate(): the fake shares drive's stderr pipe, which would wait for it to die by any path.
         with self.assertRaises(ProcessLookupError):
             os.kill(call["pid"], 0)
+        out, err = proc.communicate()
+        self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)
         rec = self.record()
         self.assertIsInstance(rec["sessions"][0]["ended"], str)
         self.assertIsNone(rec["outcome"])
