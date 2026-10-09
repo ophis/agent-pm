@@ -2,9 +2,11 @@
 against real tmux: Server (its socket and env, a control-mode client that shows a session, readers), events, wait and
 assert_grid. Stdlib only, importing no core module."""
 import os
+import resource
 import select
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +20,7 @@ IDLE = ("cat", "-")
 TIMEOUT = 10   # seconds
 POLL = 0.05   # seconds
 SOCKET_MAX = 100   # bytes; sun_path holds 104 (macOS), 108 (Linux)
+HEADROOM = 256   # processes
 PANES = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}"
 
 
@@ -55,9 +58,20 @@ class Server:
         return {"PATH": self.path, "HOME": self.home, "PYTHONUTF8": "1", "TMUX_TMPDIR": self.root, **extra}
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
-        """Starts the server, its global env env(), with session `manager` idle in a width x height window."""
+        """Starts the server, its global env env(), with session `manager` idle in a width x height window; it and its
+        jobs capped (RLIMIT_NPROC) at the user's processes (threads on Linux, which RLIMIT_NPROC counts there) plus
+        HEADROOM, so a fork loop cannot take the host."""
         self.size = width, height
-        self._out("-f", "/dev/null", "new-session", "-d", "-s", manager, "-x", str(width), "-y", str(height), *IDLE)
+        _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        uid = str(os.getuid())
+        ps = (["ps", "-L", "-U", uid, "-o", "lwp="] if sys.platform.startswith("linux")
+              else ["ps", "-U", uid, "-o", "pid="])
+        cap = len(subprocess.run(ps, capture_output=True, text=True, check=True).stdout.split()) + HEADROOM
+        cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
+        subprocess.run([self.program, "-u", "-S", self.socket, "-f", "/dev/null", "new-session", "-d", "-s", manager,
+                        "-x", str(width), "-y", str(height), *IDLE], env=self.env(), stdin=subprocess.DEVNULL,
+                       timeout=TIMEOUT, check=True,
+                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
 
     def attach(self, session: str) -> None:
         """Shows `session` in a control-mode client in a pty (a tty tui_claude counts, no iTerm2 path), sized as
