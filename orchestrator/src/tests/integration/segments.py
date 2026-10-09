@@ -26,6 +26,8 @@ SESSION = re.compile(r"(running|done|interrupted) · ")
 HARNESS_TEXTS = {router.CAP_COMMENT: "cap", router.INTERRUPTED: "interrupted"}
 RESEARCH = ("Session registries in agent harnesses", "How do agent harnesses keep track of their sessions?")
 INSTRUCTIONS = "Write the PRD for a session registry."
+REPORT = "# Session registries in agent harnesses\n\nEach harness names a tmux session after its run."
+BUILD = "Build the session registry."
 
 
 @dataclass
@@ -397,7 +399,8 @@ class Segment(Flow):
         return first["message"]["content"]
 
     def section(self, prompt, heading):
-        """prompt's `## <heading>` section body, up to the next `## ` line; fails without one."""
+        """prompt's `## <heading>` section body, up to the next `## ` line, a fenced one too: no text a test publishes
+        or reports may hold one. Fails without the section."""
         if m := re.search(rf"^## {re.escape(heading)}\n\n(.*?)(?=^## |\Z)", prompt, re.M | re.S):
             return m[1]
         self.fail(f"no `## {heading}` section in the prompt:\n{prompt}")
@@ -422,3 +425,39 @@ class Segment(Flow):
     def researcher_to_pm(self, labels=(), task=None):
         """researcher_ready, then researcher_done. Returns the pm child's ID."""
         return self.researcher_done(self.researcher_ready(labels), task)
+
+    def pm_ready(self):
+        """Steps 1-3: `seed: backlog` seeds a Done research issue (RESEARCH) with its report (REPORT) published and
+        attached, and a pm Backlog issue handed off from it in promote's form (Source the report, Instructions
+        INSTRUCTIONS), both tracked; the pm issue is not claimed, then moved to Todo by the human. Returns its ID."""
+        with self.step("seed: backlog"):
+            src = self.fake.issue(RESEARCH[0], state="done", assignee=self.ids[ACCOUNTS["researcher"]],
+                                  project=PROJECT, description=RESEARCH[1])
+            path = f"{RESEARCH_DIR}{datetime.now(timezone.utc):%Y-%m-%d}-{src['identifier']}-session-registries.md"
+            report = {"url": self.doc_url(path), "title": RESEARCH[0]}
+            self.publish(path, REPORT)
+            with self.fake.lock:
+                src["attachments"].append(dict(report))
+                name = self.fake.users[self.ids[HUMAN]]["name"]
+            self.track(src["identifier"], attachments=[report])
+            ident = self.backlog_issue("pm", f"{config.TASKS['pm'].prefix}: {RESEARCH[0]}", "\n\n".join([
+                f"Handoff from {src['identifier']}: {src['url']}", f"## Source\n- {RESEARCH[0]}: {report['url']}",
+                f"## Instructions\n{name}, {fake_linear.stamp()}:\n{INSTRUCTIONS}"]))
+        self.backlog_not_claimed(ident)
+        self.human_move(ident, "todo", "human: to todo")
+        return ident
+
+    def pm_done(self, ident, url=None):
+        """Of the Todo pm issue ident: a claimed run done (its report's url `url`, else a new PRD), the human's handoff
+        (BUILD), promote. Returns the engineer child's ID."""
+        self.claim(ident, "pm", self.script("pm", "done", ident, url))
+        self.agent_run()
+        self.handoff(ident, BUILD)
+        return self.promote(ident, "pm", "engineer")
+
+    def pm_to_engineer(self, start=None):
+        """pm_done of start, a pm start (assert_pm_start), else of pm_ready's issue. Returns the engineer child's ID."""
+        if start is None:
+            return self.pm_done(self.pm_ready())
+        self.assert_pm_start(start)
+        return self.pm_done(start)
