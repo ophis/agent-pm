@@ -47,5 +47,4 @@ For the rest of this session you are the commander: you coordinate, and workers,
 
 - Commit or push only when asked; comment on or merge a PR only with explicit consent. Merges are squash merges unless the user says otherwise.
 - Before an experiment, read the docs, then the source.
-- Write no backward-compatibility code: renames and format changes go new-only.
 - Size reviews to the change: config-only gets none, small code a light check, a feature a full panel.
