@@ -1855,6 +1855,17 @@ class GridTree(unittest.TestCase):
                 self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
                                  [slot("%1"), orphans, slot("%5")])
 
+    def test_two_orphan_groups_beside_a_one_pane_first_column_stay_main(self):
+        # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved first
+        groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
+        layout = tui_claude._render_layout(grid([slot("%1"), *groups], 1))
+        for p1, p2 in (("p", "q"), ("q", "p")):
+            with self.subTest(p1=p1, p2=p2):
+                rows = [(2, "a", "mgr", "%1"), (4, "c1", p1, "%3"), (5, "c2", p1, "%4"), (7, "d1", p2, "%6"),
+                        (8, "d2", p2, "%7")]
+                self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%6", "%7"], layout),
+                                 [slot("%1"), *groups])
+
     def test_orphans_skip_a_manual_panes_cell(self):
         layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
                   "39x7,121,25,5]},80x15,80,33,3]}")
