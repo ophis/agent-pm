@@ -35,6 +35,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol, get_args
 from urllib.parse import unquote, urlsplit
@@ -200,13 +201,17 @@ def save(path: str | Path, text: str) -> None:
 
 
 def append_line(path: str | Path, text: str) -> None:
-    """Appends to `path`, refusing a symlink or anything but a regular file (a FIFO would block)."""
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    """Appends `text` to `path` (created 0600) in one write, refusing a symlink or anything but a regular file (a FIFO
+    would block)."""
+    data = memoryview(text.encode())
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        while data:
+            data = data[os.write(fd, data):]
+    finally:
         os.close(fd)
-        raise OSError(errno.EINVAL, "not a regular file", str(path))
-    with os.fdopen(fd, "a") as f:
-        f.write(text)
 
 
 def printable(text: str) -> str:
@@ -315,7 +320,8 @@ def terminal(log=sys.stderr) -> Sink:
 
 
 def stamp() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    """Now, local, as ISO 8601 with offset, to the second."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def record(workdir: str) -> dict:

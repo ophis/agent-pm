@@ -1,4 +1,5 @@
 import dataclasses
+import errno
 import io
 import json
 import os
@@ -14,6 +15,7 @@ import time
 import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
@@ -777,11 +779,15 @@ class Report(Base):
                 code = e.code
         return code, out.getvalue() + err.getvalue()
 
-    def lines(self):
+    def raw(self):
         if not os.path.exists(self.channel):
             return []
         with open(self.channel) as f:
             return [json.loads(line) for line in f]
+
+    def lines(self):
+        """The lines without their `ts`."""
+        return [{k: v for k, v in line.items() if k != "ts"} for line in self.raw()]
 
     def stop_line(self, stdin, *argv):
         """The one line `report.py stop ARGV` appends with `stdin` as sys.stdin."""
@@ -818,6 +824,23 @@ class Report(Base):
         for pending in ("true", "-1", '"2"', "1.5"):
             with self.subTest(pending=pending):
                 self.assertEqual(drive.report_event('{"kind": "stop", "pending": %s}' % pending), clients.Event("stop"))
+
+    def test_every_line_starts_with_an_iso_ts_with_offset_then_the_kind(self):
+        doc = os.path.join(self.work, "doc.md")
+        with open(doc, "w") as f:
+            f.write("# Doc\n")
+        self.assertEqual(self.report("progress", "start", "go")[0], 0)
+        self.assertEqual(self.report("outcome", "--status", "done", "--title", "T", "--summary", "S",
+                                     "--deliverable", doc)[0], 0)
+        with unittest.mock.patch("sys.stdin", io.StringIO("")):
+            self.assertEqual(self.report("stop")[0], 0)
+        lines = self.raw()
+        self.assertEqual([list(line)[:2] for line in lines],
+                         [["ts", "kind"]] * 3)
+        self.assertEqual([line["kind"] for line in lines], ["progress", "outcome", "stop"])
+        for line in lines:
+            self.assertIsNotNone(datetime.fromisoformat(line["ts"]).utcoffset(), line["ts"])
+        self.assertEqual(lines[1]["outcome"]["deliverable"], "# Doc\n")
 
     def test_progress_appends_one_line(self):
         self.assertEqual(self.report("progress", "round-1", "2", "rounds,", "cap 80"), (0, "report.py: progress reported\n"))
@@ -1926,6 +1949,70 @@ class Sinks(unittest.TestCase):
         sink(clients.Event("outcome", outcome=DONE))
         sink(clients.Event("missing", name="start"))
         self.assertEqual(log.getvalue(), "a]52;c;ZXZpbA==b\tc\nProgress (round): x[2J\n")
+
+
+class Stamp(unittest.TestCase):
+    def test_is_local_iso_8601_with_offset_in_seconds(self):
+        text = drive.stamp()
+        self.assertRegex(text, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
+        self.assertIsNotNone(datetime.fromisoformat(text).utcoffset())
+
+
+class AppendLine(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.path = os.path.join(self.dir, "f.jsonl")
+
+    def content(self):
+        with open(self.path, "rb") as f:
+            return f.read()
+
+    def test_a_megabyte_line_is_one_os_write(self):
+        line = "x" * 1_000_000 + "\n"
+        with unittest.mock.patch.object(os, "write", wraps=os.write) as write:
+            drive.append_line(self.path, line)
+        self.assertEqual((write.call_count, self.content()), (1, line.encode()))
+
+    def test_a_short_write_continues_with_the_rest(self):
+        real = os.write
+        with unittest.mock.patch.object(os, "write", side_effect=lambda fd, data: real(fd, bytes(data[:3]))) as write:
+            drive.append_line(self.path, "héllo wörld\n")
+        self.assertEqual((write.call_count, self.content()), (5, "héllo wörld\n".encode()))
+
+    def test_appends_after_what_is_there_and_an_empty_text_creates_the_file(self):
+        drive.append_line(self.path, "")
+        drive.append_line(self.path, "one\n")
+        drive.append_line(self.path, "two\n")
+        self.assertEqual(self.content(), b"one\ntwo\n")
+
+    def test_created_owner_only(self):
+        drive.append_line(self.path, "x\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+
+    def test_a_symlink_is_refused(self):
+        target = os.path.join(self.dir, "target")
+        with open(target, "w") as f:
+            f.write("keep\n")
+        os.symlink(target, self.path)
+        with self.assertRaises(OSError):
+            drive.append_line(self.path, "x\n")
+        with open(target) as f:
+            self.assertEqual(f.read(), "keep\n")
+
+    def test_a_fifo_is_refused_even_with_a_reader(self):
+        os.mkfifo(self.path)
+        reader = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        with self.assertRaises(OSError) as e:
+            drive.append_line(self.path, "x\n")
+        self.assertEqual(e.exception.errno, errno.EINVAL)
+
+    def test_an_unencodable_text_creates_nothing(self):
+        with self.assertRaises(UnicodeEncodeError):
+            drive.append_line(self.path, "a\udc80b")
+        self.assertFalse(os.path.exists(self.path))
 
 
 class Save(unittest.TestCase):
