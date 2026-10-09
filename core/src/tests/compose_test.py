@@ -480,6 +480,71 @@ class Prompt(Fake):
                 self.fails(f"unfilled placeholder {{{{{name}}}}} in roles/writer.md")
 
 
+def own_text(prompt):
+    """`prompt` up to and including its # Input heading line: the input text, always last, is dropped."""
+    return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
+
+
+class Anchors(Fake):
+    def anchors(self, prompt):
+        return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
+
+    def test_a_prompt_without_a_repeated_heading_has_no_id_line(self):
+        for task in (None, "long-note"):
+            self.assertNotIn("<a id", self.compose(task=task)[0], task)
+
+    def test_a_repeated_heading_gets_its_top_level_titles_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        prompt, _ = self.compose()
+        self.assertEqual(prompt.count("<a id"), 1)
+        self.assertIn('\n## Style\n\n- `draft`: not a task.\n', prompt)
+        self.assertIn('\n<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+        anchors = self.anchors(prompt)
+        self.assertEqual(len(anchors), len(set(anchors)))
+        self.assertIn("output-style", anchors)
+
+    def test_a_third_repeat_gets_a_suffix_on_the_qualified_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n",
+                    "output/destinations/local.md": "## Style\n\nKeep it local.\n"})
+        prompt, _ = self.compose()
+        self.assertIn('<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+        self.assertIn('<a id="output-style-2"></a>\n## Style\n\nKeep it local.\n', prompt)
+        anchors = self.anchors(prompt)
+        self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_a_role_heading_input_makes_the_input_heading_input_2(self):
+        self.write({"team/roles/writer.md": WRITER + "\n## Input\n\nWhat you get.\n"})
+        prompt, _ = self.compose()
+        self.assertEqual(prompt.count("<a id"), 1)
+        self.assertTrue(prompt.endswith('\n<a id="input-2"></a>\n# Input\n\nResearch X.\n'))
+        self.assertEqual(self.anchors(prompt).count("input"), 1)
+
+    def test_the_input_text_is_verbatim_whatever_it_repeats(self):
+        given = "## Style\n\n## Style\n\n# Input\n\n```\n## Style\n```\n"
+        prompt, _ = self.compose(input=given)
+        self.assertEqual(prompt.count("<a id"), 0)
+        self.assertTrue(prompt.endswith(f"\n# Input\n\n{given}"))
+
+    def test_a_heading_in_a_fenced_template_is_no_repeat(self):
+        self.write({"team/templates/note.md": "# Output\n\n## Style\n"})
+        prompt, _ = self.compose()
+        self.assertIn("```markdown\n# Output\n\n## Style\n```", prompt)
+        self.assertNotIn("<a id", prompt)
+
+    def test_without_an_input_section_the_whole_prompt_is_walked(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, None, client=Plain())
+        self.assertNotIn("# Input", prompt)
+        self.assertIn('\n<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+
+    def test_a_handover_heading_repeating_one_is_made_unique_too(self):
+        self.write({"team/roles/writer.md": WRITER + "\n## Return\n\nBack.\n"})
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, PARAMS, client=Plain("Say it back."))
+        self.assertIn('\n<a id="output-return"></a>\n## Return\n\nSay it back.\n', prompt)
+
+
 class Parameters(Fake):
     GITHUB = FILES["output/destinations/github.md"]
 
@@ -622,6 +687,77 @@ class Anchor(unittest.TestCase):
     def test_github_style(self):
         self.assertEqual(compose.anchor("Light Research"), "light-research")
         self.assertEqual(compose.anchor("Template: `x.md`"), "template-xmd")
+
+
+OUTLINED = """\
+# Role
+
+<a id="custom"></a>
+## Steps
+- **Which build:** x
+1. **Done.** y
+   * **Nested**: z
+text **not** an item
+```text
+# Fenced
+**Fenced item**
+```
+~~~
+## Also fenced
+~~~
+### Deep
+**Item**
+## Other
+**Other item**
+"""
+
+
+class Outline(unittest.TestCase):
+    def test_unfenced_skips_fences_by_char_and_length(self):
+        text = "a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng"
+        self.assertEqual(compose.unfenced(text), [(0, "a"), (12, "e")])
+
+    def test_two_backticks_are_no_fence(self):
+        self.assertEqual(compose.unfenced("``\nx"), [(0, "``"), (1, "x")])
+
+    def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
+        steps = ("Role", "Steps")
+        self.assertEqual(compose.outline(OUTLINED), [
+            (0, ("Role",), "role", True),
+            (3, steps, "custom", True),
+            (4, steps + ("Which build",), "custom", False),
+            (5, steps + ("Done",), "custom", False),
+            (6, steps + ("Nested",), "custom", False),
+            (15, steps + ("Deep",), "deep", True),
+            (16, steps + ("Deep", "Item"), "deep", False),
+            (17, ("Role", "Other"), "other", True),
+            (18, ("Role", "Other", "Other item"), "other", False)])
+
+    def test_a_skipped_level_nests_under_the_last_shallower_heading(self):
+        paths = [path for _, path, _, _ in compose.outline("# A\n### B\n## C\n### D\n# E\n")]
+        self.assertEqual(paths, [("A",), ("A", "B"), ("A", "C"), ("A", "C", "D"), ("E",)])
+
+    def test_only_a_heading_of_one_to_six_hashes_and_a_space_at_the_line_start(self):
+        text = "#No space\n####### seven\n # indented\n#\n###### Six\n"
+        self.assertEqual(compose.outline(text), [(4, ("Six",), "six", True)])
+
+    def test_an_explicit_id_is_the_whole_previous_unfenced_line(self):
+        cases = {'<a id="x"></a>\n## H': "x", 'a <a id="x"></a>\n## H': "h", '<a id="x"></a>\n\n## H': "h",
+                 '```\n<a id="x"></a>\n```\n## H': "h"}
+        for text, want in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual([a for _, _, a, h in compose.outline(text) if h], [want])
+
+    def test_a_bold_item_before_any_heading_has_no_anchor(self):
+        self.assertEqual(compose.outline("**X:** y\n"), [(0, ("X",), "", False)])
+
+    def test_a_bold_item_opens_its_line(self):
+        for line in ("**X** y", "- **X**", "* **X.**", "12. **X:**", "  - **X**", "**X**: y"):
+            with self.subTest(line=line):
+                self.assertEqual([path for _, path, _, _ in compose.outline(f"# T\n{line}\n")][1:], [("T", "X")])
+        for line in ("a **X**", "-**X**", "**X", "- a **X**"):
+            with self.subTest(line=line):
+                self.assertEqual(len(compose.outline(f"# T\n{line}\n")), 1)
 
 
 with open(os.path.join(CORE, compose.CONFIG), "rb") as _f:
