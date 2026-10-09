@@ -8,6 +8,13 @@ import unittest
 import fake_gh
 
 REPO = {"full_name": "acme/widgets", "default_branch": "main", "permissions": {"push": True}}
+RAW = "Accept: application/vnd.github.raw+json"
+PRD = "Product Design/2026-10-09-prd.md"
+CONTENTS = {"acme/docs": {
+    "main": {"Research/2026-10-09-TASK-7-x.md": "# R\nbody\n", "Research/2026-10-08-TASK-6-y.md": "older",
+             "Research/notes/deep.md": "deep", PRD: "caf\u00e9\r\nlast line, no newline", "README.md": "readme"},
+    "feature/x": {"Research/only-here.md": "on a branch"}},
+    "acme/other": {"main": {"a.md": "other repo"}}}
 
 
 class Case(unittest.TestCase):
@@ -91,6 +98,105 @@ class Shim(Case):
         res = self.gh("api", "repos/acme/widgets", env=env)
         self.assertEqual((res.returncode, res.stdout), (1, ""))
         self.assertIn(f"fake_gh.py: {fake_gh.ENV} is unset", res.stderr)
+
+
+class Contents(Case):
+    def setUp(self):
+        super().setUp()
+        self.write({"repos": {"acme/widgets": REPO}, "contents": CONTENTS})
+
+    def listing(self, *argv):
+        res = self.gh("api", *argv)
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+        return json.loads(res.stdout)
+
+    def test_a_dir_is_a_sorted_list_of_its_direct_entries(self):
+        want = [{"name": "2026-10-08-TASK-6-y.md", "path": "Research/2026-10-08-TASK-6-y.md", "type": "file"},
+                {"name": "2026-10-09-TASK-7-x.md", "path": "Research/2026-10-09-TASK-7-x.md", "type": "file"},
+                {"name": "notes", "path": "Research/notes", "type": "dir"}]
+        self.assertEqual(self.listing("repos/acme/docs/contents/Research?ref=main"), want)
+        self.assertEqual(self.listing("repos/acme/docs/contents/Research/notes?ref=main"),
+                         [{"name": "deep.md", "path": "Research/notes/deep.md", "type": "file"}])
+
+    def test_a_dir_with_raw_is_the_same_list(self):
+        url = "repos/acme/docs/contents/Research?ref=main"
+        self.assertEqual(self.listing("-H", RAW, url), self.listing(url))
+
+    def test_raw_prints_the_file_verbatim(self):
+        url = "repos/acme/docs/contents/Product%20Design/2026-10-09-prd.md?ref=main"
+        res = subprocess.run(["gh", "api", "-H", RAW, url], env=self.env, capture_output=True, timeout=30)
+        text = CONTENTS["acme/docs"]["main"][PRD]
+        self.assertEqual((res.returncode, res.stderr, res.stdout), (0, b"", text.encode()))
+
+    def test_a_file_without_the_header_is_its_entry(self):
+        self.assertEqual(self.listing("repos/acme/docs/contents/Product%20Design/2026-10-09-prd.md?ref=main"),
+                         {"name": "2026-10-09-prd.md", "path": PRD, "type": "file"})
+        self.assertEqual(self.listing("repos/acme/docs/contents/README.md?ref=main"),
+                         {"name": "README.md", "path": "README.md", "type": "file"})
+
+    def test_a_quoted_path_and_ref_are_decoded(self):
+        self.assertEqual(self.listing("repos/acme/docs/contents/Product%20Design?ref=main"),
+                         [{"name": "2026-10-09-prd.md", "path": PRD, "type": "file"}])
+        res = self.gh("api", "-H", RAW, "repos/acme/docs/contents/Research/only-here.md?ref=feature%2Fx")
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "on a branch", ""))
+
+    def test_repos_is_unchanged_beside_contents(self):
+        self.assertEqual(self.gh("api", "repos/acme/widgets").stdout, json.dumps(REPO) + "\n")
+        res = self.gh("api", "-H", RAW, "repos/acme/other/contents/a.md?ref=main")
+        self.assertEqual((res.returncode, res.stdout), (0, "other repo"))
+
+    def test_a_missing_path_branch_or_repo_is_a_404_on_stderr(self):
+        docs = "repos/acme/docs/contents/"
+        for url in (docs + "Nope?ref=main", docs + "Research/missing.md?ref=main", docs + "Resear?ref=main",
+                    docs + "Research/?ref=main", docs + "README.md?ref=other", docs + "Research/only-here.md?ref=main",
+                    docs + "README.md?ref=feature/x", "repos/acme/nope/contents/README.md?ref=main",
+                    "repos/Acme/docs/contents/README.md?ref=main", "repos/acme/widgets/contents/README.md?ref=main"):
+            for argv in (("api", url), ("api", "-H", RAW, url)):
+                with self.subTest(argv):
+                    res = self.gh(*argv)
+                    self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", "gh: Not Found (HTTP 404)\n"))
+
+    def test_no_contents_key_is_a_404_for_every_path(self):
+        self.write({"repos": {"acme/widgets": REPO}})
+        res = self.gh("api", "repos/acme/docs/contents/README.md?ref=main")
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", "gh: Not Found (HTTP 404)\n"))
+
+    def test_any_other_argv_is_a_usage_error(self):
+        docs = "repos/acme/docs/contents"
+        url = f"{docs}/README.md?ref=main"
+        for argv in (("api", "-H", "Accept: application/json", url), ("api", "-H", RAW.lower(), url),
+                     ("api", "-H", RAW), ("api", "-H", url), ("api", "-H", RAW, "-H", RAW, url),
+                     ("api", url, "-H", RAW), ("api", "--header", RAW, url), ("api", "-H", RAW, "repos/acme/widgets"),
+                     ("api", f"{docs}/README.md"), ("api", f"{docs}/README.md?ref="),
+                     ("api", f"{docs}/README.md?branch=main"), ("api", f"{docs}/?ref=main"),
+                     ("api", f"{docs}?ref=main"), ("api", f"{docs}/README.md?ref=a?b"),
+                     ("api", url, "--jq", ".name"), ("api", url, url)):
+            with self.subTest(argv):
+                res = self.gh(*argv)
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("fake_gh.py:", res.stderr)
+                self.assertNotIn("HTTP", res.stderr)
+
+    def test_a_bad_contents_shape_or_another_key_is_an_error(self):
+        path = {"main": {"a.md": "x"}}
+        for name, scenario in {"a list": {"contents": []}, "a repo not an object": {"contents": {"acme/docs": 1}},
+                               "a branch not an object": {"contents": {"acme/docs": {"main": []}}},
+                               "a text not a string": {"contents": {"acme/docs": {"main": {"a.md": 5}}}},
+                               "a null text": {"contents": {"acme/docs": {"main": {"a.md": None}}}},
+                               "another key": {"contents": {"acme/docs": path}, "orgs": {}}}.items():
+            self.write({"repos": {"acme/widgets": REPO}, **scenario})
+            for argv in (("api", "repos/acme/docs/contents/a.md?ref=main"), ("api", "repos/acme/widgets")):
+                with self.subTest(name, argv=argv):
+                    res = self.gh(*argv)
+                    self.assertEqual((res.returncode, res.stdout), (1, ""))
+                    self.assertIn("fake_gh.py:", res.stderr)
+                    self.assertNotIn("HTTP", res.stderr)
+
+    def test_repos_stays_required(self):
+        self.write({"contents": CONTENTS})
+        res = self.gh("api", "repos/acme/docs/contents/README.md?ref=main")
+        self.assertEqual((res.returncode, res.stdout), (1, ""))
+        self.assertIn("fake_gh.py:", res.stderr)
 
 
 class Bare(Case):
