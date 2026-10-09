@@ -1414,6 +1414,11 @@ def body(cell):
     return tui_claude._render_layout(cell).split(",", 1)[1]
 
 
+def dump(text):
+    """A layout body as #{window_layout} prints it, with its checksum."""
+    return f"{tui_claude._checksum(text)},{text}"
+
+
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
@@ -1695,6 +1700,131 @@ class LayoutString(unittest.TestCase):
                 self.assertIsNone(tui_claude._parse_layout(bad))
 
 
+class Tile(unittest.TestCase):
+    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>."""
+    READ = ["tmux", "display-message", "-p", "-t", "@3",
+            "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
+            "#{@grid-per-column}"]
+    PANES = ["tmux", "list-panes", "-t", "@3", "-F", "#{pane_id}"]
+    TEARDOWN = ["tmux",
+                "set-hook", "-u", "-w", "-t", "@3", "pane-exited", ";",
+                "set-hook", "-u", "-w", "-t", "@3", "window-resized", ";",
+                "set-hook", "-u", "-w", "-t", "@3", "window-layout-changed", ";",
+                "set-option", "-u", "-w", "-t", "@3", "@grid-manager", ";",
+                "set-option", "-u", "-w", "-t", "@3", "@grid-per-column"]
+    THREE = "0a6c,160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,2,80x15,80,33,3]}"
+    W3 = [("$2", "w1", "mgr", "%1"), ("$3", "w2", "mgr", "%2"), ("$4", "w3", "mgr", "%3")]
+    # the manager 100 wide; a sub-worker of w1 below it: tile puts it right of w1
+    WIDE = ("8b77,160x48,0,0{100x48,0,0,0,59x48,101,0[59x24,101,0,1,59x23,101,25,2]}", ["%0", "%1", "%2"],
+            [("$2", "w1", "mgr", "%1"), ("$3", "a", "w1", "%2")])
+
+    def tile(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), **kw):
+        """tile @3 given what tmux prints; rows: (session id, name, @opener, @pane) besides mgr's. Returns the fake."""
+        rows = [("$1", "mgr", "", ""), *rows]
+        fake = Tmux(fail=fail, results={
+            "display-message": (0, "\t".join((*map(str, size), zoomed, layout, manager, n)) + "\n", ""),
+            "list-panes": (0, "".join(f"{p}\n" for p in panes), ""),
+            "list-sessions": (0, "".join("\t".join((*row, SOCK)) + "\n" for row in rows), "")})
+        tui_claude.tile("@3", proc=fake, **kw)
+        return fake
+
+    def test_swaps_then_select_layout_in_one_tmux_command(self):
+        # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second column
+        layout = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
+        fake = self.tile(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3)
+        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS, [
+            "tmux", "swap-pane", "-d", "-s", "%2", "-t", "%4", ";", "swap-pane", "-d", "-s", "%3", "-t", "%4", ";",
+            "select-layout", "-t", "@3", "ac6e,160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,"
+                                         "40x15,80,17,2,40x15,80,33,3],39x48,121,0,4}}"]])
+
+    def test_the_managers_width_kept_no_swap_when_in_order(self):
+        fake = self.tile(*self.WIDE)
+        self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3",
+                                           "e37e,160x48,0,0{100x48,0,0,0,59x48,101,0{29x48,101,0,1,29x48,131,0,2}}"]])
+
+    def test_no_op_when_the_layouts_cells_match(self):
+        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
+        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+
+    def test_zoomed_or_no_grid_window_only_reads_it(self):
+        for kw in ({"zoomed": "1"}, {"manager": ""}):
+            with self.subTest(**kw):
+                fake = self.tile(*self.WIDE, **kw)
+                self.assertEqual(fake.calls, [self.READ])
+
+    def test_teardown_when_the_manager_is_gone_invalid_or_alone(self):
+        for manager, layout, panes in (
+                ("%0", dump("160x48,0,0[160x16,0,0,1,160x15,0,17,2,160x15,0,33,3]"), ["%1", "%2", "%3"]),
+                ("0", self.THREE, ["%0", "%1", "%2", "%3"]),
+                ("%0;", self.THREE, ["%0", "%1", "%2", "%3"]),
+                ("%0", dump("160x48,0,0,0"), ["%0"])):
+            with self.subTest(manager=manager, panes=panes):
+                fake = self.tile(layout, panes, self.W3, manager=manager)
+                self.assertEqual(fake.calls, [self.READ, self.PANES, self.TEARDOWN])
+
+    def test_nothing_changed_when_the_layout_is_unreadable_or_not_the_windows_panes(self):
+        four = ["%0", "%1", "%2", "%3"]
+        for layout, panes in (("bogus", four), (self.THREE[:-1], four), ("0000" + self.THREE[4:], four),
+                              (self.THREE, four[:3]), (self.THREE, [*four, "%4"]), (self.THREE, [*four[:3], "%5"]),
+                              (dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,1]}"), four[:2])):
+            with self.subTest(layout=layout, panes=panes):
+                fake = self.tile(layout, panes, self.W3)
+                self.assertEqual(fake.calls, [self.READ, self.PANES])
+
+    def test_too_small_nothing_changed(self):
+        # three cells side by side, 4 high: a column of three needs 5
+        layout = dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}")
+        fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
+        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+
+    def test_duplicate_pane_claims_the_lower_session_id_owns(self):
+        rows = [("$5", "x", "mgr", "%1"), ("$3", "y", "mgr", "%1"), ("$6", "z", "x", "%2"), ("$7", "w", "y", "%3")]
+        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], rows)
+        self.assertEqual(fake.calls[3:], [[
+            "tmux", "swap-pane", "-d", "-s", "%3", "-t", "%2", ";", "select-layout", "-t", "@3",
+            "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0,3},80x23,80,25,2]}"]])
+
+    def test_session_fields_read_back_only_after_a_fullmatch(self):
+        # a row with a bad id or name is skipped (its pane a manual pane); an @opener that is no opener is unset
+        rows = [("$2", "w1", "mgr", "%1"), ("2", "w2", "mgr", "%2"), ("$4", "w 4", "mgr", "%4"),
+                ("$5", "w5", "w1", "%3"), ("$6", "w6", "%1", "%5")]
+        panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
+        fake = self.tile(tui_claude._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6")
+        cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
+        self.assertEqual(fake.calls[3][-1], tui_claude._render_layout(grid(cells, 6)))
+
+    def test_per_column_argument_else_the_window_option_else_the_default(self):
+        panes = ["%0", "%1", "%2", "%3", "%4"]
+        rows = [(f"${i + 1}", f"w{i}", "mgr", f"%{i}") for i in range(1, 5)]
+        for n, kw, per_column in (("2", {}, 2), ("9999", {}, 9999), ("1", {"per_column": 2}, 2),
+                                  ("2", {"per_column": 3}, None), ("", {}, None), ("0", {}, None), ("02", {}, None),
+                                  ("10000", {}, None), ("2 ", {}, None), ("x", {}, None)):
+            with self.subTest(n=n, **kw):
+                fake = self.tile(tui_claude._render_layout(grid(4)), panes, rows, n=n, **kw)
+                want = tui_claude._render_layout(grid(4, per_column)) if per_column else None
+                self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3", want]] if want else [])
+
+    def test_bad_window_or_per_column_raises_before_tmux(self):
+        cases = [("3", {}, "invalid window id '3': want @[0-9]+"),
+                 *((window, {}, "invalid window id") for window in ("@3;", "%3", "@", " @3")),
+                 ("@3", {"per_column": 0}, "per_column must be an int from 1 to 9999, not 0"),
+                 *(("@3", {"per_column": n}, "per_column") for n in (10000, True, "3", 2.0))]
+        for window, kw, error in cases:
+            with self.subTest(window=window, **kw):
+                fake = Tmux()
+                with self.assertRaisesRegex(tui_claude.TuiError, "^" + re.escape(error)):
+                    tui_claude.tile(window, proc=fake, **kw)
+                self.assertEqual(fake.calls, [])
+
+    def test_a_tmux_failure_raises(self):
+        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
+            self.tile(*self.WIDE, fail=("select-layout",))
+        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
+            self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
+        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
+            tui_claude.tile("@3", proc=Tmux(fail=("display-message",)))
+
+
 class Cli(unittest.TestCase):
     def main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -1744,7 +1874,7 @@ class Cli(unittest.TestCase):
     def test_help(self):
         rc, out, _ = self.main("-h")
         self.assertEqual(rc, 0)
-        self.assertIn("{start,send,read,show}", out)
+        self.assertIn("{start,send,read,show,tile}", out)
         self.assertIn("$TUI_ATTACH_PREFIX", out)
         rc, out, _ = self.main("start", "-h")
         self.assertEqual(rc, 0)
@@ -1770,10 +1900,19 @@ class Cli(unittest.TestCase):
         self.main("show", "s")
         self.assertEqual(show.call_args, unittest.mock.call("s", None, split=None, split_from=None))
 
+    def test_tile(self):
+        real, fake = tui_claude.tile, Tmux()
+        tile = self.patch("tile", return_value=None)
+        self.assertEqual(self.main("tile", "@3"), (0, "", ""))
+        tile.assert_called_once_with("@3")
+        tile.side_effect = lambda window: real(window, proc=fake)
+        self.assertEqual(self.main("tile", "3"), (1, "", "tui: invalid window id '3': want @[0-9]+\n"))
+        self.assertEqual(fake.calls, [])
+
     def test_exit_1(self):
-        for name in ("start", "send", "read"):
+        for name in ("start", "send", "read", "tile"):
             self.patch(name, side_effect=tui_claude.TuiError("tmux: boom"))
-        for argv in ("start a -- cmd", "send s hi", "read s"):
+        for argv in ("start a -- cmd", "send s hi", "read s", "tile @3"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split()), (1, "", "tui: tmux: boom\n"))
         status, show = self.patch("status", return_value=None), self.patch("show", return_value="boom")
@@ -1783,10 +1922,10 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.main("show", "s")[0], 1)
 
     def test_exit_2(self):
-        called = [self.patch(n) for n in ("start", "send", "read", "show", "status")]
+        called = [self.patch(n) for n in ("start", "send", "read", "show", "status", "tile")]
         for argv in ((), ("bogus",), ("send", "s"), ("send", "a b", "x"), ("read", "s", "--lines", "0"),
                      ("read", "s", "--lines", "x"), ("read", "s", "--lines", "-1"), ("show", "--split", "up", "s"),
-                     ("show", "--split-from", "a b", "s")):
+                     ("show", "--split-from", "a b", "s"), ("tile",), ("tile", "@3", "@4")):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv)[0], 2)
         for mock in called:

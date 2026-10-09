@@ -51,6 +51,8 @@ PER_COLUMN = 3   # worker panes per grid column
 GRID_MANAGER = "@grid-manager"   # a grid window's options: its manager pane, and N
 GRID_PER_COLUMN = "@grid-per-column"
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
+GRID_WINDOW = ("#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t"
+               f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}")
 LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
 LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -506,6 +508,45 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
             return
 
 
+def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> None:
+    """Lay out grid window `window` (@N): the manager left at its current width, _grid_tree's cells in columns of
+    per_column (default: the window's @grid-per-column, else PER_COLUMN). Nothing changes when the window is zoomed,
+    no grid window, already so laid out or too small, or its layout is unreadable or not its panes'; with its manager
+    gone or alone, the grid is torn down (hooks, options)."""
+    if not WINDOW.fullmatch(window):
+        raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
+    _per_column(per_column)
+    fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t")
+    if len(fields) != 6 or fields[2] != "0" or not fields[4]:   # unreadable, zoomed, or no grid window
+        return
+    width, height, _, layout, manager, n = fields
+    panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
+    current = _parse_layout(layout)
+    if current is None or sorted(leaf.pane for leaf in _leaves(current)) != sorted(panes):
+        return
+    if manager not in panes or len(panes) == 1:
+        args = ["-u", "-w", "-t", window]
+        _tmux_ok([*(a for hook in GRID_HOOKS for a in ("set-hook", *args, hook, ";")),
+                  "set-option", *args, GRID_MANAGER, ";", "set-option", *args, GRID_PER_COLUMN], proc)
+        return
+    sessions = []
+    for f in (line.split("\t") for line in _tmux_ok(["list-sessions", "-F", SESSIONS], proc).stdout.split("\n")):
+        if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
+            sessions.append((int(f[0][1:]), f[1], f[2] if OPENER.fullmatch(f[2]) else "",
+                             f[3] if PANE.fullmatch(f[3]) else ""))
+    if per_column is None:
+        per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
+    leaves = _leaves(current)
+    want = _grid_layout(_grid_tree(manager, panes, sessions, current), width=int(width), height=int(height),
+                        manager=manager, manager_width=next(c.w for c in leaves if c.pane == manager),
+                        per_column=per_column)
+    if want is None or _leaves(want) == leaves:
+        return
+    swaps = [a for source, target in _swaps(panes, [c.pane for c in _leaves(want)])
+             for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")]
+    _tmux_ok([*swaps, "select-layout", "-t", window, _render_layout(want)], proc)
+
+
 def _checksum(body: str) -> str:
     csum = 0
     for byte in body.encode():
@@ -722,6 +763,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("show", help="show a running session")
     _show_options(p)
     p.add_argument("session", type=_session_arg)
+    p = sub.add_parser("tile", help="lay out a grid window's panes (its hooks run this)")
+    p.add_argument("window", help="its id, @N")
     argv = sys.argv[1:] if argv is None else list(argv)
     command = None
     if argv[:1] == ["start"] and "--" in argv:   # argparse < 3.13 drops a later -- from a nargs list
@@ -740,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
             send(a.session, a.text)
         elif a.cmd == "read":
             print(read(a.session, a.lines))
+        elif a.cmd == "tile":
+            tile(a.window)
         else:
             if status(a.session) is None:
                 raise TuiError(f"no session {a.session}")
@@ -757,6 +802,12 @@ def _layout(split: str | None, split_from: str | None, opener: str | None = None
         _name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value")
+
+
+def _per_column(per_column: int | None) -> None:
+    if per_column is not None and (isinstance(per_column, bool) or not isinstance(per_column, int)
+                                   or not 1 <= per_column <= 9999):
+        raise TuiError(f"per_column must be an int from 1 to 9999, not {per_column!r}")
 
 
 def _run(session: str, template: str, proc) -> str | None:
