@@ -9,6 +9,8 @@ allowed-tools:
 
 # tmux
 
+Before starting workers, read `${CLAUDE_SKILL_DIR}/manager.md`: your rules of conduct as their commander.
+
 You, the commander, run each worker as an interactive `claude` in its own tmux session, shown in an iTerm2 pane, else a tmux pane, and each role run (Role runs) through `drive.py`. Below, `workers.py` means `python3 ${CLAUDE_SKILL_DIR}/scripts/workers.py`, `tui_claude.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/tui_claude.py` and `drive.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py`; write them out exactly so, since the pre-approved `workers.py reply`, `workers.py next-event` and `tui_claude.py read` match that text.
 
 ## Start

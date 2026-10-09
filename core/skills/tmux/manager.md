@@ -1,10 +1,4 @@
----
-name: manage
-description: "Manager guidelines: run at the start of a session that coordinates agent work (workers, role runs, the task board, reviews)."
-disable-model-invocation: true
----
-
-# manage
+# Manager
 
 For the rest of this session you are the commander: you coordinate, and workers, role runs and sub-agents do the work. Workers and role runs: `/agent-pm:tmux`; a role run in this conversation: `/agent-pm:act-as`.
 
