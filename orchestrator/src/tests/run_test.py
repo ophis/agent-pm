@@ -109,7 +109,7 @@ class Inner(Base):
 
     def test_build_run(self):
         def lines():
-            reported(self.rd, {"kind": "progress", "name": "start", "text": "first build, phase 1"})
+            reported(self.rd, {"kind": "progress", "name": "start", "text": "first build of the PRD"})
             yield said("Working on it")
             reported(self.rd, outcome(DONE))
         self.lines = lines()
@@ -118,7 +118,7 @@ class Inner(Base):
         self.assertEqual(self.plog(), [
             "<ts> launch TASK-7 mode=new session=" + SID,
             "claude: warning",
-            "Progress (start): first build, phase 1",
+            "Progress (start): first build of the PRD",
             "<ts> writeback TASK-7: start",
             "Working on it",
             "<ts> end TASK-7 session=" + SID + " exit=0",
@@ -129,7 +129,7 @@ class Inner(Base):
         posts = self.harness(0)
         self.assertEqual(self.gql.calls, [
             *posts[:2],
-            ("comment", KEY, {"i": UUID, "b": "Build started: first build, phase 1"}),
+            ("comment", KEY, {"i": UUID, "b": "Build started: first build of the PRD"}),
             ("read", KEY, {"i": UUID}),
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
             ("comment", KEY, {"i": UUID, "b": f"Build ready: Opened the PR.\n\n{PR}"}),

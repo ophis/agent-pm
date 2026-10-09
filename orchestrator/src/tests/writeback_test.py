@@ -152,7 +152,7 @@ class SayAndApprove(Base):
     def test_say(self):
         self.assertEqual(writeback.say("", "just text"), "just text")
         self.assertEqual(writeback.say("Build started:", ""), "Build started")
-        self.assertEqual(writeback.say("Build started:", "first build, phase 1"), "Build started: first build, phase 1")
+        self.assertEqual(writeback.say("Build started:", "first build of the PRD"), "Build started: first build of the PRD")
         self.assertEqual(writeback.say("Build ready:", "a\nb"), "Build ready:\na\nb")
 
     def test_approve_line(self):
@@ -491,10 +491,10 @@ class Sink(Base):
     def test_start_once_per_sid(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
-        start = drive.Event("progress", text="first build, phase 1", name="start")
+        start = drive.Event("progress", text="first build of the PRD", name="start")
         writeback.sink(ctx)(start)
         writeback.sink(ctx)(start)
-        self.assertEqual(gql.calls, [comment("Build started: first build, phase 1")])
+        self.assertEqual(gql.calls, [comment("Build started: first build of the PRD")])
         self.assertEqual(self.ledger(ctx), {SID: ["start"]})
         self.assertEqual(self.lines(), [f"writeback {ID}: start"])
         writeback.sink(replace(ctx, sid=OTHER_SID))(start)

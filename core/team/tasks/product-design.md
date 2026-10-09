@@ -1,5 +1,5 @@
 ---
-description: "Turn a product request, notes or research reports into a reviewed PRD: problem, scope, requirements and phased delivery. Use when an idea needs to become a buildable spec before engineering."
+description: "Turn a product request, notes or research reports into a reviewed PRD: problem, goals, users, user flow and requirements. Use when an idea needs to become a buildable spec before engineering."
 ---
 
 # Product Design
