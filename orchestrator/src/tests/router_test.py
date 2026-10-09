@@ -1760,7 +1760,7 @@ class TuiTick(Base):
 
     def test_a_bad_default_events_file_exits_2_before_any_linear_call(self):
         events = self.events_of("mgr")
-        os.makedirs(os.path.dirname(events))
+        os.makedirs(os.path.dirname(events), mode=0o700)
         os.symlink(os.path.join(self.agent_pm, "elsewhere"), events)
         self.in_tmux()
         for argv in (("--tui", "--now"), ("--issue", "TASK-1", "--tui")):
