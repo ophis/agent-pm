@@ -42,9 +42,9 @@ class Server:
         case.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         os.mkdir(os.path.join(self.root, f"tmux-{os.getuid()}"), 0o700)
         self.socket = os.path.join(self.root, f"tmux-{os.getuid()}", "default")
-        bin_dir = os.path.join(self.root, "bin")
-        os.mkdir(bin_dir)
-        self.path = fake_claude.install(bin_dir, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin")
+        self.bin = os.path.join(self.root, "bin")   # PATH's first dir: the fake's shims; a caller may add its own
+        os.mkdir(self.bin)
+        self.path = fake_claude.install(self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin")
         case.addCleanup(self._close_clients)
         case.addCleanup(self._kill)
         if len(os.fsencode(self.socket)) > SOCKET_MAX:
