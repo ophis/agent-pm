@@ -431,7 +431,7 @@ class ContainerTest(WorkerCase):
             shown = [(c[3][1:-1], c[5]) for c in fake.calls if c[1:3] == ["set-option", "-t"] and c[4] == "@pane"]
             return "".join(f"${i}\t{name}\tcmd\t{pane}\t{sock}\n" for i, (name, pane) in enumerate(shown, 1))
         fake = Fake(results={"display-message": lambda argv: "cmd\n", "list-sessions": sessions,
-                             "list-clients": lambda argv: f"100 /dev/pts/1 %0 {sock}\n",
+                             "list-clients": lambda argv: f"100 /dev/pts/1 %0 0 {sock}\n",
                              "list-panes": lambda argv: "%0\n%5\n" if argv[-1] == "#{pane_id}" else "0 /dev/pts/0 %0\n",
                              "split-window": lambda argv: next(new)})
         fake.oserror = lambda argv: argv[0] == "pgrep"
@@ -910,7 +910,7 @@ class MainTest(WorkerCase):
         sock = "/tmp/tmux-1/default"
         tmux = os.path.join(self.bin, "tmux")
         executable(tmux, "#!/bin/sh\n")
-        fake = Fake(results={"list-clients": lambda argv: f"100 /dev/ttys009 %9 {sock}\n" if argv[3] == "=x" else "",
+        fake = Fake(results={"list-clients": lambda argv: f"100 /dev/ttys009 %9 0 {sock}\n" if argv[3] == "=x" else "",
                              "split-window": lambda argv: "%10\n"})
         fake.oserror = lambda argv: argv[0] == "pgrep"
         rc, _, err = self.run_main(["start", "w1", "--events", self.events, "--cwd", self.dir, "--split-from", "x",

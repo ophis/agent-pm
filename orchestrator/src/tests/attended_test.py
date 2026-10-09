@@ -17,7 +17,7 @@ NO_SERVER = (1, "no server running on /private/tmp/tmux-501/default\n")
 class Tmux:
     """Fake tmux: `live` sessions answer status, list-sessions (none: no server) and kill-session, which fails for
     `fail` ones; `listing` (rc, stderr) replaces list-sessions' answer."""
-    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 /tmp/s\n", listing=None):
+    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 0 /tmp/s\n", listing=None):
         self.live, self.fail, self.own, self.clients, self.listing = dict.fromkeys(live), set(fail), own, clients, listing
         self.calls = []
 

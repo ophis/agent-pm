@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tui_claude  # noqa: E402
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
-CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{socket_path}"
+CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
 TMUX_KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
@@ -388,8 +388,7 @@ class Start(unittest.TestCase):
         with environ(**Container.ENV), which():
             self.start(fake, template=None)
         self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE, "display-message",
-                                           "list-sessions", "list-clients", "list-panes", "pgrep", "split-window",
-                                           "set-option", "set-option"])
+                                           "list-sessions", "list-clients", "split-window", "set-option", "set-option"])
         self.assertEqual(fake.calls[-3], split_window("-h", "%0", Container.SOCK))
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
@@ -850,7 +849,9 @@ class Pane(unittest.TestCase):
             return tui_claude.show("s", proc=fake, **kw)
 
     def clients(self, *rows):
-        return 0, "".join(f"{at} {tty} {pane} {SOCK}\n" for at, tty, pane in rows)
+        """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
+        rows = [(*r, "0") if len(r) == 3 else r for r in rows]
+        return 0, "".join(f"{at} {tty} {pane} {control} {SOCK}\n" for at, tty, pane, control in rows)
 
     def test_anchor_by_iterm_session_id(self):
         for split in ("right", "below"):
@@ -896,6 +897,8 @@ class Pane(unittest.TestCase):
     def test_anchor(self):
         own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
         shown = self.clients((5, "/dev/ttys004", "%9"))
+        control = self.clients((5, "/dev/ttys004", "%9", "1"))
+        mixed = self.clients((5, "/dev/ttys004", "%9"), (3, "/dev/ttys006", "%8", "1"))
         nested = panes(("0", "/dev/ttys001", "%1"), ("0", "/dev/ttys004", "%5"))
         cases = [(ITERM, {}, None, tui_claude.Anchor(("id", ["ABC"]))),
                  (INSIDE, {**own, "list-clients": shown}, None,
@@ -905,8 +908,13 @@ class Pane(unittest.TestCase):
                  (INSIDE, own, None, tui_claude.Anchor(("id", ["ABC"]))),
                  ({}, {"list-clients": shown}, "b", tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
                  ({}, {"list-clients": shown, "list-panes": nested}, "b", tui_claude.Anchor(None, "%5", SOCK, "b")),
-                 ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk /s\n" + shown[1])}, "b",
-                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))]
+                 ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk 0 /s\n7 /dev/ttys005 %7 /s\n"
+                                           "7 /dev/ttys005 %7 2 /s\n" + shown[1])}, "b",
+                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
+                 (INSIDE, {**own, "list-clients": control, "list-panes": nested}, None,
+                  tui_claude.Anchor(None, "%3", SOCK, "own")),
+                 ({}, {"list-clients": control, "list-panes": nested}, "b", tui_claude.Anchor(None, "%9", SOCK, "b")),
+                 ({}, {"list-clients": mixed}, "b", tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))]
         for env, results, split_from, want in cases:
             with self.subTest(env=env, results=results, split_from=split_from), environ(**env):
                 self.assertEqual(tui_claude.anchor(split_from, proc=Tmux(results=results)), want)
@@ -975,12 +983,41 @@ class Pane(unittest.TestCase):
         self.assertIsNone(self.show(nested, {}, split_from="b"))
         self.assertEqual(nested.calls, [clients_of("b"), HOSTS, split_window("-h", "%5"), *record(None, "%10")])
 
+    def test_control_mode_client_gets_a_tmux_split_of_own_pane(self):
+        # iTerm2's tmux -CC: the control-mode client's tty is the hidden gateway tab's; iTerm2 draws the tmux split
+        clients = self.clients((300, "/dev/ttys009", "%1", "1"), (100, "/dev/ttys001", "%2"))
+        for split, flag, head in ((None, "-h", [OWN, SESSIONS]), ("right", "-h", [OWN]), ("below", "-v", [OWN])):
+            with self.subTest(split=split):
+                fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients,
+                                     "split-window": (0, "%10\n")})
+                self.assertIsNone(self.show(fake, INSIDE, split=split))
+                self.assertEqual(fake.calls, [*head, clients_of("own"), split_window(flag, "%3"),
+                                              *record("own", "%10")])
+                self.assertEqual(self.stderr.getvalue(), ATTACH)
+
+    def test_split_from_a_session_only_a_control_mode_client_shows(self):
+        clients = self.clients((5, "/dev/ttys009", "%9", "1"))
+        for env, head, opener in (({}, [], None), (INSIDE, [OWN], "own")):
+            with self.subTest(env=env):
+                fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients,
+                                     "split-window": (0, "%10\n")})
+                self.assertIsNone(self.show(fake, env, split_from="b", split="below"))
+                self.assertEqual(fake.calls, [*head, clients_of("b"), split_window("-v", "%9"), *record(opener, "%10")])
+
+    def test_control_mode_ttys_are_never_iterm2_anchors(self):
+        fake = Tmux(results={"display-message": (0, "own\n"), "osascript": (0, "ok NEW\n"),
+                             "list-clients": self.clients((300, "/dev/ttys003", "%2"), (200, "/dev/ttys009", "%1", "1"),
+                                                          (100, "/dev/ttys001", "%1"))})
+        self.assertIsNone(self.show(fake, INSIDE))
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("own"), HOSTS, PGREP,
+                                      osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys001"), *record("own", "NEW")])
+
     def test_tmux_split_failures(self):
         clients = self.clients((5, "/dev/ttys004", "%9"))
         fake = Tmux(results={"list-clients": clients, "pgrep": (1,), "split-window": (1, "", "no space for new pane\n")})
         self.assertEqual(self.show(fake, {}, split_from="b"), "tmux: no space for new pane")
         self.assertNotIn("set-option", fake.commands())
-        fake = Tmux(results={"list-clients": (0, "5 /dev/ttys004 %9 /tmp/#s\n"), "pgrep": (1,)})
+        fake = Tmux(results={"list-clients": (0, "5 /dev/ttys004 %9 0 /tmp/#s\n"), "pgrep": (1,)})
         self.assertEqual(self.show(fake, {}, split_from="b"), "tmux would misread '/tmp/#s'" + WATCH)
         self.assertNotIn("split-window", fake.commands())
 
@@ -1080,7 +1117,7 @@ class Stack(unittest.TestCase):
     rows, for the tty format); pgrep finds no iTerm2 unless told; a tmux split prints %99."""
     NONE = (0, "no iTerm2 pane shows the anchor\n")
 
-    def fake(self, rows=(), live=(), own="cmd", clients=f"5 /dev/ttys004 %9 {SOCK}\n", hosts=(), **results):
+    def fake(self, rows=(), live=(), own="cmd", clients=f"5 /dev/ttys004 %9 0 {SOCK}\n", hosts=(), **results):
         def list_panes(argv):
             return (0, "".join(p + "\n" for p in live)) if argv[-1] == "#{pane_id}" else panes(*hosts)(argv)
         return Tmux(results={"display-message": (0, own + "\n"),
@@ -1266,8 +1303,8 @@ class Stack(unittest.TestCase):
 
 class Container(unittest.TestCase):
     """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0), shown by a client on
-    /dev/pts/1 (iTerm2's tmux -CC through docker exec -it); no iTerm2 and no iTerm2 variables. pgrep finds nothing:
-    procps, busybox's usage error, or none installed."""
+    /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode; else a plain docker exec -it tmux attach); no
+    iTerm2 and no iTerm2 variables. pgrep finds nothing: procps, busybox's usage error, or none installed."""
     SOCK = "/tmp/tmux-0/default"
     ENV = {"TMUX": f"{SOCK},42,0", "TMUX_PANE": "%0", "PATH": "/usr/local/bin:/usr/bin:/bin"}
     OWN = ["tmux", "display-message", "-p", "-t", "%0", "#{session_name}"]
@@ -1275,14 +1312,15 @@ class Container(unittest.TestCase):
               (2, "", "pgrep: invalid option -- 'a'\n"), FileNotFoundError(2, "No such file or directory", "pgrep"))
 
     @classmethod
-    def fake(cls, pgrep, rows=()):
+    def fake(cls, pgrep, rows=(), control="1"):
         def list_panes(argv):
             if argv[-1] == "#{pane_id}":
                 return 0, "%0\n%5\n"
             return panes(("0", "/dev/pts/0", "%0"), ("0", "/dev/pts/2", "%5"))(argv)
         return Tmux(results={"display-message": (0, "cmd\n"), "list-panes": list_panes, "pgrep": pgrep,
                              "list-sessions": (0, "".join("\t".join(r) + "\n" for r in rows)),
-                             "list-clients": (0, f"100 /dev/pts/1 %0 {cls.SOCK}\n"), "split-window": (0, "%6\n")})
+                             "list-clients": (0, f"100 /dev/pts/1 %0 {control} {cls.SOCK}\n"),
+                             "split-window": (0, "%6\n")})
 
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
@@ -1290,9 +1328,14 @@ class Container(unittest.TestCase):
             return tui_claude.show("s", proc=fake)
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
+        fake = self.fake(self.PGREPS[0])
+        self.assertIsNone(self.show(fake))
+        self.assertEqual(fake.calls, [self.OWN, SESSIONS, clients_of("cmd"), split_window("-h", "%0", self.SOCK),
+                                      *record("cmd", "%6")])
+        self.assertEqual(self.stderr.getvalue(), ATTACH)
         for pgrep in self.PGREPS:
             with self.subTest(pgrep=pgrep):
-                fake = self.fake(pgrep)
+                fake = self.fake(pgrep, control="0")
                 self.assertIsNone(self.show(fake))
                 self.assertEqual(fake.calls, [self.OWN, SESSIONS, clients_of("cmd"), HOSTS, PGREP,
                                               split_window("-h", "%0", self.SOCK), *record("cmd", "%6")])
