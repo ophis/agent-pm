@@ -25,7 +25,9 @@ explicit extension.
          files, deliverable}}: the fake runs it as report.py's subcommand, through the report command, the first
          backticked `python3 <path>/report.py --to <channel>` in the turn prompts so far (none: exit 1). A failing
          call's stderr goes to the fake's; it goes on. {"kind": "hook", "event": E} runs E's hooks now (E a non-empty
-         string). Any other step: exit 1.
+         string). {"kind": "write", "path": P, "text": T} writes string T to file P (made or replaced), as the Write
+         tool; {"kind": "read", "path": P} is a text step of P's text, as the Read tool; P a non-empty string, relative
+         to the cwd. A failing write or read: a stderr line; it goes on. Any other step: exit 1.
   turns  a list of step lists; default []. Interactive mode's second turn on. A non-list or a non-list entry: exit 1.
   exit   the exit code after the turns; default 0.
   hang   true: after the steps, sleep until killed; default false. It exits by itself once orphaned or after HANG_CAP s.
@@ -58,7 +60,8 @@ ENV = "FAKE_CLAUDE_SCENARIO"
 HANG_CAP = 120   # seconds
 DEFAULTS = {"steps": [], "turns": [], "exit": 0, "hang": False, "log": None, "gate": None}
 REPORTS = {"progress": {"kind", "name", "text"}, "outcome": {"kind", "outcome"}}
-STEPS = {**REPORTS, "hook": {"kind", "event"}}
+FILES = {"write": {"kind", "path", "text"}, "read": {"kind", "path"}}
+STEPS = {**REPORTS, **FILES, "hook": {"kind", "event"}}
 FIELDS = ("status", "title", "summary", "questions", "url", "files", "deliverable")
 REPORT_TIMEOUT = 30   # seconds
 HOOK_TIMEOUT = 60   # seconds
@@ -94,6 +97,9 @@ def check(where: str, steps) -> None:
             if extra := sorted(set(step["outcome"]) - set(FIELDS)):
                 sys.exit(f"fake_claude.py: outcome key {extra[0]!r}: report.py can't carry it")
         if kind == "hook" and not (isinstance(step["event"], str) and step["event"]):
+            sys.exit(f"fake_claude.py: bad step {step!r}")
+        if kind in FILES and not (isinstance(step["path"], str) and step["path"]
+                                  and isinstance(step.get("text", ""), str)):
             sys.exit(f"fake_claude.py: bad step {step!r}")
 
 
@@ -191,6 +197,20 @@ def report(command: list[str], step: dict) -> None:
             os.unlink(deliverable)
 
 
+def file_step(step: dict) -> str | None:
+    """Runs a write or read step; returns a read's text, else None."""
+    try:
+        if step["kind"] == "write":
+            with open(step["path"], "w", encoding="utf-8") as f:
+                f.write(step["text"])
+            return None
+        with open(step["path"], encoding="utf-8") as f:
+            return f.read()
+    except (OSError, ValueError) as e:
+        print(f"fake_claude.py: {step['kind']}: {e}", file=sys.stderr, flush=True)
+        return None
+
+
 def run_hooks(hooks, event: str, payload: dict) -> None:
     """Runs `event`'s command hooks from the --settings `hooks` object, `payload` as JSON on their stdin."""
     entries = hooks.get(event) if isinstance(hooks, dict) else None
@@ -278,6 +298,14 @@ def main(argv: list[str]) -> int:
 
     prompts, command = [], None
 
+    def speak(text: str) -> None:
+        content = [{"type": "text", "text": text}]
+        keep("assistant", content)
+        if stream:
+            say({"type": "assistant", "message": {"role": "assistant", "content": content}, "session_id": sid})
+        else:
+            print(text, flush=True)
+
     def turn(prompt: str, steps: list, stop: bool = True) -> None:
         nonlocal command
         prompts.append(prompt)
@@ -285,14 +313,12 @@ def main(argv: list[str]) -> int:
         keep("user", prompt)
         for step in steps:
             if isinstance(step, str):
-                content = [{"type": "text", "text": step}]
-                keep("assistant", content)
-                if stream:
-                    say({"type": "assistant", "message": {"role": "assistant", "content": content}, "session_id": sid})
-                else:
-                    print(step, flush=True)
+                speak(step)
             elif step["kind"] == "hook":
                 hook(step["event"])
+            elif step["kind"] in FILES:
+                if (text := file_step(step)) is not None:
+                    speak(text)
             else:
                 command = command or report_command(prompts)
                 if command is None:

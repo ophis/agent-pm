@@ -20,6 +20,8 @@ DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "
 
 
 class Integration(unittest.TestCase):
+    ROLE = "dummy-tester"
+
     def setUp(self):
         hermetic.home(self)
         home = os.environ["HOME"]
@@ -36,7 +38,7 @@ class Integration(unittest.TestCase):
         self.transcript = clients.claude.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
 
     def argv(self, *extra) -> list[str]:
-        return [sys.executable, DRIVE, "--role", "dummy-tester", "--input", "Hello.", "--out", self.out, "--workdir",
+        return [sys.executable, DRIVE, "--role", self.ROLE, "--input", "Hello.", "--out", self.out, "--workdir",
                 self.work, "--sid", SID, *extra]
 
     def scene(self, steps, **scenario) -> None:
@@ -48,6 +50,40 @@ class Integration(unittest.TestCase):
         self.scene(steps, **scenario)
         return subprocess.run(self.argv(*extra), cwd=cwd or self.proj, env=self.env, stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, timeout=60)
+
+    def popen(self, *extra) -> subprocess.Popen:
+        """drive.py in its own session and process group, killed with its agents when the test ends."""
+        # A suite started in the background inherits SIGINT ignored; drive.py installs no handler of its own.
+        proc = subprocess.Popen(self.argv(*extra), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        self.addCleanup(self.reap, proc)
+        return proc
+
+    def reap(self, proc: subprocess.Popen) -> None:
+        try:
+            pids = [call["pid"] for call in self.calls()]
+        except (OSError, ValueError):
+            pids = []
+        for kill, target in [(os.killpg, proc.pid)] + [(os.kill, pid) for pid in pids]:
+            try:
+                kill(target, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        proc.wait()
+        proc.stdout.close()
+        proc.stderr.close()
+
+    def until(self, proc: subprocess.Popen, check, what: str) -> None:
+        """Returns once check() holds; fails naming `what` once `proc` (popen's) ends first or 30 s pass."""
+        deadline = time.monotonic() + 30
+        while not check():
+            if proc.poll() is not None or time.monotonic() > deadline:
+                if proc.returncode is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                out, err = proc.communicate()
+                self.fail(f"drive.py never {what} (rc {proc.returncode}):\n{out}{err}")
+            time.sleep(0.05)
 
     def events(self) -> list[dict]:
         """The run's record, <workdir>/run.jsonl, one dict per line."""
@@ -174,29 +210,6 @@ class Resume(Integration):
 
 
 class Interrupt(Integration):
-    def popen(self) -> subprocess.Popen:
-        """drive.py in its own session and process group, killed with its agents when the test ends."""
-        # A suite started in the background inherits SIGINT ignored; drive.py installs no handler of its own.
-        proc = subprocess.Popen(self.argv(), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
-        self.addCleanup(self.reap, proc)
-        return proc
-
-    def reap(self, proc: subprocess.Popen) -> None:
-        try:
-            pids = [call["pid"] for call in self.calls()]
-        except (OSError, ValueError):
-            pids = []
-        for kill, target in [(os.killpg, proc.pid)] + [(os.kill, pid) for pid in pids]:
-            try:
-                kill(target, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        proc.wait()
-        proc.stdout.close()
-        proc.stderr.close()
-
     def started(self) -> bool:
         try:
             return "start" in [e.get("name") for e in self.events() if e["kind"] == "progress"]
@@ -206,14 +219,7 @@ class Interrupt(Integration):
     def test_interrupt_kills_a_hung_agent(self):
         self.scene([progress("start", "waiting")], hang=True)
         proc = self.popen()
-        deadline = time.monotonic() + 30
-        while not self.started():
-            if proc.poll() is not None or time.monotonic() > deadline:
-                if proc.returncode is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                out, err = proc.communicate()
-                self.fail(f"drive.py never reported the start (rc {proc.returncode}):\n{out}{err}")
-            time.sleep(0.05)
+        self.until(proc, self.started, "reported the start")
         (call,) = self.calls()
         os.kill(proc.pid, signal.SIGINT)
         proc.wait(timeout=30)

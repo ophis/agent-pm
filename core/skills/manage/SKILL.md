@@ -1,6 +1,12 @@
-# Manager
+---
+name: manage
+description: "Your guidelines for this session as the commander of workers, role runs and sub-agents; run it in your commander session (e.g. ctmux's)."
+disable-model-invocation: true
+---
 
-For the rest of this session you are the commander: you coordinate, and workers, role runs and sub-agents do the work. Workers and role runs: `SKILL.md`; a role run in this conversation: `/agent-pm:act-as`.
+# manage
+
+For the rest of this session you are the commander: you coordinate, and workers, role runs and sub-agents do the work. Workers and role runs: `/agent-pm:tmux`; a role run in this conversation: `/agent-pm:act-as`.
 
 ## The user
 
@@ -25,9 +31,9 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - A role run is tui (a visible pane) unless the user asks for headless.
 - Message a worker with the text alone, no sender label.
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
-- Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `SKILL.md` › Direct › Stop. Close a pane only by killing its tmux session.
+- Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `/agent-pm:tmux` › Direct › Stop. Close a pane only by killing its tmux session.
 - Kill your own live-test sessions as soon as the test ends.
-- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `SKILL.md` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.jsonl`, transcripts).
+- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `/agent-pm:tmux` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.jsonl`, transcripts).
 - Pull the default branch only while `tmux ls` shows no `agent-pm-*` driver session: a scheduled router may have started one.
 
 ## Babysitting
