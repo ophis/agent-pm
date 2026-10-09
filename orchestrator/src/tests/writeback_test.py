@@ -105,8 +105,21 @@ def expect(*, body, state, files=(), title=None, subscribe=True, attach=None, at
     return calls + [reread(), move(state)]
 
 
+class ProcFcntl:
+    """fcntl.F_GETPATH is macOS's: on Linux (CI) writeback's fd path comes from /proc."""
+    F_GETPATH = None
+
+    @staticmethod
+    def fcntl(fd, cmd, arg):
+        return os.fsencode(os.readlink(f"/proc/self/fd/{fd}"))
+
+
 class Base(unittest.TestCase):
     def setUp(self):
+        if not hasattr(writeback.fcntl, "F_GETPATH"):
+            patch = mock.patch.object(writeback, "fcntl", ProcFcntl)
+            patch.start()
+            self.addCleanup(patch.stop)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
         self.plog = os.path.join(self.tmp, "project.log")
