@@ -8,11 +8,14 @@ Agent pipeline on a Linear board (README). `core/` runs one role, on a task give
 python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"
 python3 -m unittest discover -s core/src/tests -p "*_test.py"
 python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
+python3 -m unittest discover -s core/src/tests/integration -p "*_integration_test.py"
 claude --plugin-dir core                                  # this checkout's plugin as agent-pm@inline; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
 ```
 
-CI (`.github/workflows/test.yml`) runs the three suites on Ubuntu, Python 3.11, for each PR and push to `main`: a test must pass on Linux too.
+CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (the three suites) and Integration tests (each suite's `integration/`); a test must pass on Linux too.
+
+Integration tests (real processes end to end) go in a suite's `integration/` as `<x>_integration_test.py`, with no `__init__.py` (the unit discovery then skips them). A new such dir gets a step in the Integration tests job (guarded like the unit job's later steps) and a line in Commands.
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 

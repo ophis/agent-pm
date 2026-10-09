@@ -136,7 +136,7 @@ class Inner(Base):
             ("comment", KEY, {"i": UUID, "b": f"Build started: {pick}"}),
             ("read", KEY, {"i": UUID}),
             ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
-            ("comment", KEY, {"i": UUID, "b": f"Build ready: Opened the PR.\n\n{PR}"}),
+            ("comment", KEY, {"i": UUID, "b": "Build ready: Opened the PR."}),
             ("attach", KEY, {"i": UUID, "u": PR, "t": "TASK-7: Session registry"}),
             ("reread", KEY, {"i": UUID}),
             ("state", KEY, {"i": UUID, "s": STATES["in_review"]}),

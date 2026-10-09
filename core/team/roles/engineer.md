@@ -55,6 +55,15 @@ Engineer › Merge, then run your task's `autopilot` skill with a requirement co
 - **Done**, once the build converges: Engineer › Merge, then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` including how to verify.
 - **Failure** (build stopped or capped, or an action denied): `git -C <worktree> push -u origin <branch>` unless the push was denied; `status: failed`; `summary` the failing tests or checks, blockers or denied action; `url` `https://<host>/<owner>/<name>/tree/<branch>`.
 
+## Checks
+
+After Output › Destination opened or updated a PR, before reporting the outcome:
+1. `gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`.
+   - `no checks reported` → rerun it once a minute later (a just-pushed commit may have none yet); again → no checks.
+2. All pass, or no checks → report the outcome.
+3. A check fails, fewer than 3 fixes so far → `gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`, `<run-id>` from the check's link (`…/actions/runs/<run-id>/…`); fix (Engineer › Standards, Engineer › Boundaries), commit, `git -C <worktree> push -u origin <branch>`, then step 1.
+4. A check fails after 3 fixes, or a wait reaches 20 minutes (`--watch` has no timeout) → Engineer › Finish › Failure, `summary` naming the failing or pending checks, `url` the PR's URL.
+
 ## Resume
 
 Run Engineer › Repo again, then Engineer › Merge, then do only what's left, using this session's history (your task's Which build picks the build). Never re-create a branch or PR.
