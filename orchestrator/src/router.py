@@ -15,6 +15,8 @@ assigned to role accounts, then starts it through the outer; each step: CLAUDE.m
 Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none.
 """
 import argparse
+import contextlib
+import fcntl
 import functools
 import json
 import os
@@ -50,6 +52,7 @@ PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format"
          "--setting-sources", "user", "--strict-mcp-config"]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
+BUSY = "another router is running"
 USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] "
          "[--tui [--split right|below] [--split-from SESSION] [--events FILE]] | --brake")
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
@@ -535,6 +538,23 @@ def begin(mode, issue, sid, role, task, opts, runs):
                               split_from=opts["split_from"], events=opts["events"])
 
 
+@contextlib.contextmanager
+def lock(runs, dry):
+    """One router at a time: yields True holding <runs' dir>/router.lock (flock; the OS frees it if the process dies),
+    or False while another router holds it. A dry run takes none: True."""
+    if dry:
+        yield True
+        return
+    os.makedirs(os.path.dirname(runs), exist_ok=True)
+    with open(os.path.join(os.path.dirname(runs), "router.lock"), "a") as f:  # not inherited by children (PEP 446)
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            free = True
+        except BlockingIOError:
+            free = False
+        yield free
+
+
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
     """One launchd tick; start(outer's arguments) starts the agent run. Returns the exit code. An idle tick (outside
     hours, every role full, nothing to do) logs nothing, a dry run still prints the first two; the plan is logged
@@ -545,76 +565,86 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
         if not dry:
             return 0
         say("skip", reason="outside hours")
-    roles = runnable(cfg, root)
-    live = live_sessions(roles, sh)
-    full = full_roles(roles, live)
-    counts = {r: f"{len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids} or None
-    if len(full) == len(roles):
-        if dry:
-            say("skip", reason="all roles full", live=counts)
-        return 0
-    live_ids = {i for ids in live.values() for i in ids}
-    if not dry:
-        try:
-            prune(runs, now)
-        except Exception as e:
-            say("skip", reason="prune failed", error=one_line(e))
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
-    run = board.next_run(board.recover(live_ids), full)
-    kind = run[0] if run else None
-    if not kind and not dry:
-        return 0
-    if dry:
-        if kind:
-            board.plan(run, counts)
-        planned = kind == "resume" or kind == "new" and board.take(full=full) is not None
-        ok, usage = probe(sh)
-        say("usage", usage=usage, planned=planned, allowed=ok)
-        return 0
-    ok, usage = probe(sh)
-    if not ok:
-        say("usage-skip", once=True, mode=kind, reason="blocked by usage", usage=usage)
-        return 0
-    board.plan(run, counts)
-    if kind == "resume":
-        (_, issue, sid), task = run, None
-    else:
-        taken = board.take(full=full)
-        if not taken:
-            say("skip", reason="nothing claimed")
+    with lock(runs, dry) as free:
+        if not free:
+            say("skip", reason=BUSY)
             return 0
-        (issue, task), sid = taken, str(uuid.uuid4())
-    a = begin(kind, issue, sid, board.role(issue), task, opts, runs)
-    try:
-        rc = start(a)
-    except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error; one issue's failure never breaks the tick
-        say("launch-error", a.issue, error=one_line(e))
+        roles = runnable(cfg, root)
+        live = live_sessions(roles, sh)
+        full = full_roles(roles, live)
+        counts = {r: f"{len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids} or None
+        if len(full) == len(roles):
+            if dry:
+                say("skip", reason="all roles full", live=counts)
+            return 0
+        live_ids = {i for ids in live.values() for i in ids}
+        if not dry:
+            try:
+                prune(runs, now)
+            except Exception as e:
+                say("skip", reason="prune failed", error=one_line(e))
+        board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
+        run = board.next_run(board.recover(live_ids), full)
+        kind = run[0] if run else None
+        if not kind and not dry:
+            return 0
+        if dry:
+            if kind:
+                board.plan(run, counts)
+            planned = kind == "resume" or kind == "new" and board.take(full=full) is not None
+            ok, usage = probe(sh)
+            say("usage", usage=usage, planned=planned, allowed=ok)
+            return 0
+        ok, usage = probe(sh)
+        if not ok:
+            say("usage-skip", once=True, mode=kind, reason="blocked by usage", usage=usage)
+            return 0
+        board.plan(run, counts)
+        if kind == "resume":
+            (_, issue, sid), task = run, None
+        else:
+            taken = board.take(full=full)
+            if not taken:
+                say("skip", reason="nothing claimed")
+                return 0
+            (issue, task), sid = taken, str(uuid.uuid4())
+        a = begin(kind, issue, sid, board.role(issue), task, opts, runs)
+        try:
+            rc = start(a)
+        except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error; one issue's failure never breaks the tick
+            say("launch-error", a.issue, error=one_line(e))
+            return 0
+        say("launch", a.issue, exit=rc)
         return 0
-    say("launch", a.issue, exit=rc)
-    return 0
 
 
 def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
-    """router.py --issue ID: refuse a live agent run of the issue (its attach command); In Progress → settle without
-    waiting, then resume; Todo → take, then start (start: as tick's). Returns the exit code."""
+    """router.py --issue ID: nothing while another router runs; refuse a live agent run of the issue (its attach
+    command); In Progress → settle without waiting, then resume; Todo → take, then start (start: as tick's). Returns
+    the exit code."""
     ident, dry = opts["issue"], opts["dry"]
     stop = 0 if dry else 1  # nothing started
-    live = live_sessions(runnable(cfg, root), sh)
-    if role := next((r for r, ids in live.items() if ident in ids), None):
-        print(f"router.py: {ident} has a live agent run: {tui_claude.attach_command(session(role, ident))}", file=sys.stderr)
-        return stop
-    board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
-    if issue := next((i for i in board.issues("in_progress") if i["identifier"] == ident), None):
-        sid = board.current_sid(issue)
-        if not board.settle(issue, sid, wait=False):
+    with lock(runs, dry) as free:
+        if not free:
+            log("router", "skip", ident, reason=BUSY)
+            print(f"router.py: {BUSY}; try again", file=sys.stderr)
             return stop
-        board.plan(("resume", issue, sid))
-        mode, task = "resume", None
-    elif board.is_blocked(ident) or not (taken := board.take(ident)):
-        return stop
-    else:
-        (issue, task), mode, sid = taken, "new", str(uuid.uuid4())
-    return 0 if dry else start(begin(mode, issue, sid, board.role(issue), task, opts, runs))
+        live = live_sessions(runnable(cfg, root), sh)
+        if role := next((r for r, ids in live.items() if ident in ids), None):
+            print(f"router.py: {ident} has a live agent run: {tui_claude.attach_command(session(role, ident))}", file=sys.stderr)
+            return stop
+        board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
+        if issue := next((i for i in board.issues("in_progress") if i["identifier"] == ident), None):
+            sid = board.current_sid(issue)
+            if not board.settle(issue, sid, wait=False):
+                return stop
+            board.plan(("resume", issue, sid))
+            mode, task = "resume", None
+        elif board.is_blocked(ident) or not (taken := board.take(ident)):
+            return stop
+        else:
+            (issue, task), mode, sid = taken, "new", str(uuid.uuid4())
+        return 0 if dry else start(begin(mode, issue, sid, board.role(issue), task, opts, runs))
 
 
 def options(argv):
