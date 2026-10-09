@@ -38,6 +38,10 @@ INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)   # ta
 INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")   # in the index's opening sentence
 METHOD = re.compile(r"<methods>/([\w-]+)\.md")   # a method file named in a text
 REPORT = "report"   # the report command's Parameters name
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+HEADING = re.compile(r"^(#{1,6}) (.+)$")
+BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
+ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
 # The # Parameters section's names, in order: name → (the regex a text uses it by, its value's source in _parameters).
 PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", "scripts"),
               "<tasks>": ("<tasks>", "tasks"), "<methods>": ("<methods>", "methods"), "<gate>": ("<gate>", "gate"),
@@ -204,7 +208,8 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
     """The agent run's prompt for `client`: the guide, then # Parameters (_parameters); its Output section ends with the
     client's handover as Output › Return; last, # Input: the input when params are given, else the client's
-    inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined."""
+    inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined.
+    A repeated heading in the text before the input gets an `<a id>` line (_unique); the input text is verbatim."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
@@ -237,7 +242,9 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     parts.insert(1, _parameters(root, run, params, client, texts))
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
     given = params.input.strip() if params else client.inline_input
-    return prompt + (f"\n# Input\n\n{given}\n" if params or given else "")
+    if params or given:
+        return _unique(prompt + "\n# Input\n") + f"\n{given}\n"
+    return _unique(prompt)
 
 
 def report_command(scripts: str, params: RunParams) -> str:
@@ -264,6 +271,43 @@ def fill(text: str, values: Mapping, where: str) -> str:
 def anchor(heading: str) -> str:
     """GitHub's heading anchor."""
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+
+def unfenced(text: str) -> list[tuple[int, str]]:
+    """(line index, line) of each line of `text` outside fences, fence lines excluded. A fence opens at 3+ backticks or
+    tildes and closes at a line of only that char, as many times or more; one never closed runs to the end."""
+    out, fence = [], None
+    for i, line in enumerate(text.split("\n")):
+        shut = line.strip()
+        if fence:
+            if len(shut) >= fence[1] and shut == fence[0] * len(shut):
+                fence = None
+        elif m := FENCE.match(line):
+            fence = (m[1][0], len(m[1]))
+        else:
+            out.append((i, line))
+    return out
+
+
+def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
+    """(line index, path, anchor, is_heading) of each heading and bold item of `text` outside fences, in order. A
+    heading's path is its ancestors' titles then its own, its anchor the `<a id>` line right before it, else
+    `anchor(title)`; a bold item (`**name**` opening its line after a list marker, `name` less a trailing `:` or `.`)
+    has its section's path plus its name and its section's anchor."""
+    out, stack, section, last = [], [], "", (-2, "")
+    for i, line in unfenced(text):
+        if m := HEADING.match(line):
+            level, title = len(m[1]), m[2].strip()
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, title))
+            explicit = ANCHOR_LINE.fullmatch(last[1]) if last[0] == i - 1 else None
+            section = explicit[1] if explicit else anchor(title)
+            out.append((i, tuple(t for _, t in stack), section, True))
+        elif m := BOLD_ITEM.match(line):
+            out.append((i, tuple(t for _, t in stack) + (re.sub(r"[:.]$", "", m[1]),), section, False))
+        last = (i, line)
+    return out
 
 
 def _check(cfg: Mapping, role: str) -> None:
@@ -313,6 +357,27 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
         if values.get(source) and (where or name in ("<Workdir>", "<scripts>", "<tasks>")):
             lines.append(f"- `{name}`: {values[source]}\n")
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
+
+
+def _unique(text: str) -> str:
+    """`text` with an `<a id>` line before each heading whose anchor an earlier heading has, its id the anchor of
+    "<top-level title> <title>" (a top-level heading: of its title), then -2, -3, ... until free."""
+    lines, taken, top, ids = text.split("\n"), set(), "", {}
+    for i, path, own, heading in outline(text):
+        if not heading:
+            continue
+        title, first = path[-1], lines[i].startswith("# ")
+        top = title if first else top
+        if own in taken:
+            base = anchor(title if first else f"{top} {title}")
+            own, n = base, 2
+            while own in taken:
+                own, n = f"{base}-{n}", n + 1
+            ids[i] = own
+        taken.add(own)
+    for i, id_ in reversed(ids.items()):
+        lines.insert(i, f'<a id="{id_}"></a>')
+    return "\n".join(lines)
 
 
 def _read(root: str, rel: str) -> str:
