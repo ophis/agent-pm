@@ -52,6 +52,15 @@ def _jsonl(path):
         return []
 
 
+def _tail(path):
+    """A file's last TAIL lines as they are; none while it is missing."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read().splitlines()[-TAIL:]
+    except FileNotFoundError:
+        return []
+
+
 class Flow(unittest.TestCase):
     """A HOME of the test's own, LOCAL and core's fixture its local configs; the fake Linear seeded with the team, the
     task label group, the harness, role (HARNESS, KEYS) and human users, served and named by AGENT_PM_LINEAR; a private
@@ -88,8 +97,13 @@ class Flow(unittest.TestCase):
         res = subprocess.run([sys.executable, "-c", GUARD, SRC, *SHIMS], cwd=self.home, env=self.env(),
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
         want = {n: os.path.join(self.server.bin, n) for n in SHIMS}
-        if res.returncode != 0 or json.loads(res.stdout) != want:
-            self.fail(f"guard: config.PATH must find {want}; got {res.stdout.strip() or res.stderr.strip()}")
+        try:
+            found = json.loads(res.stdout) if res.returncode == 0 else None
+        except ValueError:
+            found = None
+        if found != want:
+            self.fail(f"guard: config.PATH must find {want}; exit {res.returncode}, stdout {res.stdout.strip()!r}, "
+                      f"stderr {res.stderr.strip()!r}")
 
     def env(self):
         """The env of every process the flow starts: live_tmux.Server.env() plus the seams' and the fakes'."""
@@ -120,9 +134,10 @@ class Flow(unittest.TestCase):
     def live(self, session):
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
-    def wait_end(self, sid, ident, role="engineer", timeout=TIMEOUT):
-        """Returns once orchestrator.jsonl has run.py's end event for sid and the driver session is gone; a timeout
-        fails with the tails of orchestrator.jsonl and the run's run.jsonl."""
+    def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
+        """Returns once orchestrator.jsonl has `ends` run.py end events for sid (a resume keeps its sid; a killed run.py
+        logs none) and the driver session is gone; a timeout fails with the tails of orchestrator.jsonl and the run's
+        run.jsonl."""
         driver = self.driver(role, ident)
 
         def ended():
@@ -131,14 +146,14 @@ class Flow(unittest.TestCase):
             except ValueError:   # a line half appended
                 return False
             end = ("run", "end", sid)
-            return any((e["src"], e["kind"], e.get("sid")) == end for e in events) and not self.live(driver)
+            return sum((e["src"], e["kind"], e.get("sid")) == end for e in events) >= ends and not self.live(driver)
         try:
-            live_tmux.wait(ended, timeout, f"run.py's end of {sid} and {driver} gone")
-        except AssertionError as timeout_error:
-            said = [f"{e['src']} {run_fixtures.show(e)}" for e in self.logged()]
-            record = [json.dumps(d, ensure_ascii=False) for d in _jsonl(os.path.join(self.workdir(ident), "run.jsonl"))]
-            tails = "\n".join(["orchestrator.jsonl:", *said[-TAIL:], "run.jsonl:", *record[-TAIL:]])
-            raise self.failureException(f"{timeout_error}\n{tails}") from None
+            live_tmux.wait(ended, timeout, f"run.py's end #{ends} of {sid} and {driver} gone")
+            return
+        except AssertionError as e:
+            timed_out = str(e)
+        self.fail("\n".join([timed_out, "orchestrator.jsonl:", *_tail(os.path.join(self.logs, "orchestrator.jsonl")),
+                             "run.jsonl:", *_tail(os.path.join(self.workdir(ident), "run.jsonl"))]))
 
     def workdir(self, ident):
         return os.path.join(self.apm, "work", ident)
@@ -180,6 +195,16 @@ class Flow(unittest.TestCase):
     def problems(self):
         """(op, account, result) of each request not answered ok."""
         return [(r.op, r.account, r.result) for r in self.requests() if r.result != "ok"]
+
+    def attachments(self, ident):
+        """The issue's attachments, {url, title} each, oldest first."""
+        with self.fake.lock:
+            return [dict(a) for a in self.fake.find(ident)["attachments"]]
+
+    def subscribers(self, ident):
+        """The issue's subscribers' emails, in subscribe order."""
+        with self.fake.lock:
+            return list(self.fake.find(ident)["subscribers"])
 
     def email(self, uid):
         return uid and self.fake.users[uid]["email"]

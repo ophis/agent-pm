@@ -17,7 +17,7 @@ STARTED, READY = "Building the session registry.", "Added the session registry."
 START = {"kind": "progress", "name": "start", "text": STARTED}
 DONE = {"kind": "outcome", "outcome": {"status": "done", "title": "Session registry", "summary": READY, "url": PR}}
 LEDGER = ["start", "comment", f"attach:{PR}", "move:in_review"]
-# The harness reads the board, claims and keeps the session comment; the engineer account writes back.
+ATTACHMENT = {"url": PR, "title": "Session registry"}
 HARNESS_OPS = {"linear.Q_TEAM", "linear.Q_TASK_GROUP", "linear.Q_USER", "router.issues", "router.issues+relations",
                "router.Q_RECHECK", "linear.M_STATE", "issues.Q_ISSUE", "sessions.Q_FIND", "linear.M_COMMENT",
                "sessions.M_UPDATE"}
@@ -49,8 +49,8 @@ class Router(Flow):
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertRegex(session, rf"^Run {sid} · done · .* · exit 0\n")
         self.assertEqual(rest, [(ENGINEER, f"Build started: {STARTED}"), (ENGINEER, f"Build ready: {READY}")])
-        self.assertEqual(self.fake.find(ID)["attachments"], [{"url": PR, "title": "Session registry"}])
-        self.assertEqual(self.fake.find(ID)["subscribers"], [HUMAN])
+        self.assertEqual(self.attachments(ID), [ATTACHMENT])
+        self.assertEqual(self.subscribers(ID), [HUMAN])
         self.assertEqual(self.ledger(ID), {sid: LEDGER})
         [running] = [v["b"] for v in self.sent("linear.M_COMMENT", HARNESS_EMAIL)]
         self.assertTrue(running.startswith(f"Run {sid} · running · "), running)
@@ -93,7 +93,7 @@ class Router(Flow):
 
         self.scene(steps=[START, DONE])
         self.assertEqual(self.claim("resume"), sid)
-        self.wait_end(sid, ID)
+        self.wait_end(sid, ID, ends=1)
         self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)])
         first, second = (c["argv"] for c in self.calls())
         self.assertEqual(first[first.index("--session-id") + 1], sid)
@@ -112,13 +112,14 @@ class Router(Flow):
         self.assertEqual(self.state(ID), "in_progress")
         self.assertEqual(self.ledger(ID), {sid: LEDGER[:3]})
         self.assertEqual(self.comments(ID)[-1], (ENGINEER, f"Build ready: {READY}"))
+        self.assertEqual(self.attachments(ID), [ATTACHMENT])
         [error] = [e for e in self.logged() if e["kind"] == "step-error"]
         self.assertEqual((error["src"], error["issue"], error["sid"], error["step"]),
                          ("writeback", ID, sid, "move:in_review"))
         self.assertIn("503", error["error"])
 
         self.assertEqual(self.claim("resume"), sid)
-        self.wait_end(sid, ID)
+        self.wait_end(sid, ID, ends=2)
         self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)])
         self.assert_built(sid)
         ready = [v for v in self.sent("linear.M_COMMENT", ENGINEER) if v["b"].startswith("Build ready")]
