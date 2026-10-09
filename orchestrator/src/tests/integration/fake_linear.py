@@ -60,9 +60,10 @@ class Problem(Exception):
 
 @dataclass
 class Request:
-    """A request-log entry. op: the op, or the query text when unknown; account: the caller's email, None for a bad key;
-    result: ok, a failure kind (error also for the model's own GraphQL error), unknown or unauthorized."""
-    op: str
+    """A request-log entry. op: the op, the query text when unknown, None for a bad body (HTTP 400); account: the
+    caller's email, None for a bad key; result: ok, a failure kind (error also for a GraphQL error of the call's own and
+    for a bad body), unknown or unauthorized."""
+    op: str | None
     account: str | None
     variables: dict
     result: str
@@ -78,12 +79,13 @@ class _Failure:
 
 
 def stamp(t=None):
-    """t (a datetime, an ISO 8601 string; default now) in Linear's form, 2026-10-09T07:30:41.062Z."""
+    """t (a datetime, an ISO 8601 string; UTC unless it carries an offset; default now) in Linear's form,
+    2026-10-09T07:30:41.062Z."""
     if t is None:
         t = datetime.now(timezone.utc)
     elif isinstance(t, str):
         t = datetime.fromisoformat(t.replace("Z", "+00:00"))
-    t = t.astimezone(timezone.utc)
+    t = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
     return t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}Z"
 
 
@@ -206,9 +208,13 @@ class FakeLinear:
             if project:
                 self.projects[project["id"]] = project["name"]
             at = stamp(created)
-            return self._add(id or str(uuid.uuid4()), identifier, title=title, description=description,
-                             priority=priority, state=STATES[state], assignee=assignee, project=project and dict(project),
-                             labels=list(labels), createdAt=at, updatedAt=stamp(updated) if updated else at)
+            try:
+                return self._add(id or str(uuid.uuid4()), identifier, title=title, description=description,
+                                 priority=priority, state=STATES[state], assignee=assignee,
+                                 project=project and dict(project), labels=list(labels), createdAt=at,
+                                 updatedAt=stamp(updated) if updated else at)
+            except Problem as e:
+                raise ValueError(str(e)) from None
 
     def comment(self, issue, user, body, *, at=None):
         """Adds a comment by user (an id; None: an integration's); returns its id."""
@@ -231,21 +237,27 @@ class FakeLinear:
         """The next `times` calls of op (with account's key only, an email, when given) fail as kind: error (GraphQL
         errors: linear_gql raises SystemExit), unsuccessful (a mutation's success: false: linear.call raises
         RuntimeError), 503 (urllib.error.HTTPError), all three changing nothing; hang (applied, answered after seconds:
-        a shorter client timeout raises TimeoutError). ValueError for an unknown op or kind, or unsuccessful on a query."""
-        if op not in OPS or kind not in KINDS or (kind == "unsuccessful" and not texts()[op].startswith("mutation")):
-            raise ValueError(f"fail({op!r}, {kind!r}): an unknown op or kind, or unsuccessful on a query")
+        a shorter client timeout raises TimeoutError). ValueError for an unknown op or kind, unsuccessful on a query,
+        times under 1, or an account of no seeded user with a key."""
         with self.lock:
+            if (op not in OPS or kind not in KINDS or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
+                    or times < 1 or (account is not None and not any(
+                        u["service"] and u["email"].lower() == account.lower() for u in self.users.values()))):
+                raise ValueError(f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse")
             self.failures.append(_Failure(op, kind, account, times, seconds))
 
     def answer(self, query, variables, key):
-        """(HTTP status, JSON body, delay in seconds) of one request, logged; serve() and __call__ both send it."""
-        variables = variables or {}
+        """(HTTP status, JSON body, delay in seconds) of one request, logged; serve() and __call__ both send it. A query
+        not a string or variables neither None nor an object: HTTP 400; any exception of the op: a GraphQL error."""
         with self.lock:
-            op, caller = self.ops.get(query), next((u for u in self.users.values()
-                                                    if u["service"] and _key(u["service"]) == key), None)
+            caller = next((u for u in self.users.values() if u["service"] and _key(u["service"]) == key), None)
+            account = caller and caller["email"]
+            if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
+                return self._log(None, account, {}, "error", 400,
+                                 _errors("fake: bad request: not a query string and a variables object"))
+            variables, op = variables or {}, self.ops.get(query)
             if caller is None:
                 return self._log(op or query, None, variables, "unauthorized", 401, _errors("fake: unauthorized"))
-            account = caller["email"]
             if op is None:
                 return self._log(query, account, variables, "unknown", 200, _errors("fake: unknown query"))
             failure = self._failure(op, account)
@@ -253,16 +265,17 @@ class FakeLinear:
             if kind in ("error", "503"):
                 return self._log(op, account, variables, kind, int(kind) if kind == "503" else 200,
                                  _errors(f"fake: {op}: injected {kind}"))
-            sel = selection(query)
-            if kind == "unsuccessful":
-                top = next(iter(sel))
-                return self._log(op, account, variables, kind, 200,
-                                 {"data": {top: {f: False if f == "success" else None for f in sel[top]}}})
             try:
-                data = project(OPS[op](self, caller, variables), sel, op)
-            except Problem as e:
-                return self._log(op, account, variables, "error", 200, _errors(str(e)))
-            return self._log(op, account, variables, kind, 200, {"data": data}, failure.seconds if failure else 0)
+                sel = selection(query)
+                if kind == "unsuccessful":
+                    top = next(iter(sel))
+                    data = {top: {f: False if f == "success" else None for f in sel[top]}}
+                else:
+                    data = project(OPS[op](self, caller, variables), sel, op)
+            except Exception as e:  # the model's Problem, or the call's own (a missing variable: KeyError)
+                message = str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
+                return self._log(op, account, variables, "error", 200, _errors(message))
+            return self._log(op, account, variables, kind, 200, {"data": data}, failure.seconds if kind == "hang" else 0)
 
     def __call__(self, query, *, timeout=30, service=None, **variables):
         """linear_gql in process: answer() raised as linear_gql raises it."""
@@ -481,6 +494,8 @@ class FakeLinear:
         return {"issueRelationCreate": {"success": True}}
 
 
+# _teams, _find, _handoff, _child and _finished hard-code their query's filter and page size: a changed filter in the
+# text still dispatches here, so change the handler with it.
 OPS = {
     "linear.M_COMMENT": FakeLinear._comment_create,
     "linear.M_STATE": FakeLinear._set_state,
@@ -522,7 +537,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/graphql":
             return self._send(404, _errors("fake: not found"))
-        req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        try:
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        except ValueError:
+            req = None
+        req = req if isinstance(req, dict) else {}
         status, body, delay = self.server.fake.answer(req.get("query"), req.get("variables"),
                                                       self.headers.get("Authorization"))
         if delay and self.server.closing.wait(delay):

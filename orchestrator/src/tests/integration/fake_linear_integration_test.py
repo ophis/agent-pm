@@ -43,11 +43,35 @@ class Table(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "a.X, b.Y"):
             fake_linear.index({"a.X": "q", "b.Y": "q"})
 
-    def test_fail_refuses_an_unknown_op_or_kind_and_unsuccessful_on_a_query(self):
+    def test_fail_refuses_a_misuse(self):
         fake = fake_linear.FakeLinear()
-        for args in (("linear.M_NOPE", "error"), ("linear.M_STATE", "500"), ("linear.Q_ISSUE_STATE", "unsuccessful")):
-            with self.subTest(args), self.assertRaises(ValueError):
-                fake.fail(*args)
+        fake.user("engineer@agents.test", "Engineer", "linear-api-key-engineer")
+        fake.user("me@x.com", "Me")
+        for args, kw in ((("linear.M_NOPE", "error"), {}), (("linear.M_STATE", "500"), {}),
+                         (("linear.Q_ISSUE_STATE", "unsuccessful"), {}), (("linear.M_STATE", "error"), {"times": 0}),
+                         (("linear.M_STATE", "error"), {"account": "nobody@agents.test"}),
+                         (("linear.M_STATE", "error"), {"account": "me@x.com"})):
+            with self.subTest(args, **kw), self.assertRaises(ValueError):
+                fake.fail(*args, **kw)
+        fake.fail("linear.M_STATE", "error", account="Engineer@agents.test")
+
+    def test_seeding_refuses_a_used_or_malformed_issue_id(self):
+        fake = fake_linear.FakeLinear()
+        uid = fake.issue(identifier="TASK-7")["id"]
+        for kw in ({"identifier": "TASK-7"}, {"id": uid}, {"identifier": "OTHER-1"}):
+            with self.subTest(**kw), self.assertRaises(ValueError):
+                fake.issue(**kw)
+
+    def test_a_time_without_an_offset_is_utc(self):
+        tz = mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"})
+        self.addCleanup(time.tzset)
+        tz.start()
+        self.addCleanup(tz.stop)
+        time.tzset()
+        for t in (datetime(2026, 10, 9, 7, 30, 41, 62000), "2026-10-09T07:30:41.062", "2026-10-09T07:30:41.062Z",
+                  "2026-10-09T16:30:41.062+09:00", datetime(2026, 10, 9, 16, 30, 41, 62999, timezone(timedelta(hours=9)))):
+            with self.subTest(t):
+                self.assertEqual(fake_linear.stamp(t), "2026-10-09T07:30:41.062Z")
 
 
 class Served(unittest.TestCase):
@@ -174,6 +198,25 @@ class Served(unittest.TestCase):
             self.assertEqual(cm.exception.code, code)
         self.assertEqual(self.fake.requests, [])
 
+    def test_a_bad_call_is_a_logged_error(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.gql(linear.Q_ISSUE_STATE)
+        self.assertIn("fake: linear.Q_ISSUE_STATE: KeyError: 'i'", cm.exception.code)
+        with self.assertRaises(SystemExit) as cm:
+            self.gql(prune.Q_FINISHED, t=TEAM, s=None, a=[self.engineer], c=None)
+        self.assertIn("fake: prune.Q_FINISHED: TypeError: ", cm.exception.code)
+        self.assertEqual(self.log(), [("linear.Q_ISSUE_STATE", HARNESS_EMAIL, "error"),
+                                      ("prune.Q_FINISHED", HARNESS_EMAIL, "error")])
+
+    def test_a_bad_body_is_a_logged_400(self):
+        send, key = urllib.request.build_opener(urllib.request.ProxyHandler({})).open, self.fake.keys()[HARNESS]
+        for body in (b"not json", b"[]", b'{"variables": {}}', b'{"query": "q", "variables": []}'):
+            with self.subTest(body), self.assertRaises(urllib.error.HTTPError) as cm:
+                send(urllib.request.Request(self.url, body, {"Authorization": key}), timeout=5)
+            cm.exception.close()
+            self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(self.fake.requests, [fake_linear.Request(None, HARNESS_EMAIL, {}, "error")] * 4)
+
     def test_finished_issues_page(self):
         finished = [self.fake.issue(f"Finished {n}", state=("done", "canceled")[n % 2], assignee=self.engineer)["identifier"]
                     for n in range(51)]
@@ -253,6 +296,31 @@ class Served(unittest.TestCase):
         self.assertEqual([n["identifier"] for n in self.gql(router.q_issues(), f=flt)["issues"]["nodes"]], ["TASK-7"])
         self.assertEqual((task["attachments"], task["subscribers"], task["archived"]),
                          ([{"url": PR, "title": "PR"}], ["Me@X.com"], False))
+
+    def test_the_promote_and_prune_reads(self):
+        created, handed, said, done = (f"2026-10-0{d}T07:00:00.000Z" for d in (5, 6, 7, 8))
+        src = self.fake.issue("Research", identifier="TASK-9", state="in_review", assignee=self.engineer, project=PROJECT,
+                              priority=2, created=created)
+        self.fake.move("TASK-9", "handoff", actor=self.human, at=handed)
+        self.fake.comment("TASK-9", self.human, "Build it.", at=said)
+        linear.call(self.eng, writeback.M_ATTACH, "attachmentLinkURL", i="TASK-9", u=PR, t="PR")
+        linear.call(self.gql, promote.M_RELATE, "issueRelationCreate",
+                    **{"in": {"type": "related", "issueId": "TASK-7", "relatedIssueId": "TASK-9"}})
+        self.assertEqual(self.gql(promote.Q_HANDOFF, t=TEAM, s=STATES["handoff"], a=[self.engineer])["issues"]["nodes"],
+                         [{"id": src["id"], "identifier": "TASK-9", "url": src["url"], "title": "Research", "priority": 2,
+                           "createdAt": created, "project": PROJECT, "assignee": {"id": self.engineer},
+                           "attachments": {"nodes": [{"title": "PR", "url": PR}]}}])
+        self.assertEqual(self.gql(promote.Q_DETAIL, i=src["id"])["issue"], {
+            "state": {"id": STATES["handoff"]},
+            "history": {"nodes": [{"createdAt": handed, "actorId": self.human, "fromStateId": STATES["in_review"],
+                                   "toStateId": STATES["handoff"]}]},
+            "comments": {"nodes": [{"body": "Build it.", "createdAt": said,
+                                    "user": {"email": "Me@X.com", "name": "Me", "isMe": False}}]},
+            "relations": {"nodes": []}, "inverseRelations": {"nodes": [{"issue": {"id": self.fake.find("TASK-7")["id"]}}]}})
+        self.fake.move("TASK-9", "done", actor=self.harness, at=done)
+        finished = self.gql(prune.Q_ISSUE, i="TASK-9")["issue"]
+        self.assertEqual(finished["state"], {"id": STATES["done"]})
+        self.assertEqual(linear.last_move(finished["history"]["nodes"], {STATES["done"]}), linear.parse_time(done))
 
 
 if __name__ == "__main__":
