@@ -2,9 +2,9 @@
 
 Build the PRD with `autopilot:build`, then open a pull request.
 
-## Input
+## Input processing
 
-Engineer › Input, the requirement being the PRD (a path or its text).
+Engineer › Input processing, the requirement being the PRD (a path or its text).
 
 ## Steps
 

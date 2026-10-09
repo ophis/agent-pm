@@ -9,7 +9,7 @@ Unsure → `deep-research`.
 - `deep-research`: research workflows, key claims checked by independent votes, a sourced report with its gaps listed; when the answer must be reliable, or a quick pass left gaps; heavy.
 - `light-research`: one round of parallel agents, a short sourced report; when a fast, good-enough answer will do; light.
 
-## Input
+## Input processing
 
 Read the input; decide its type (Type and target). Too vague → `needs_input`, stop.
 
