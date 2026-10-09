@@ -108,6 +108,18 @@ class PmToEngineer(Segment):
         self.assertEqual([e["issue"] for e in self.logged() if (e["src"], e["kind"]) == ("run", "no-outcome")],
                          [ident])
 
+    def test_b6_an_attended_run_that_gives_up_is_resumed_headless(self):
+        """B6: router.py --tui --split-from MANAGER's run gives up after drive.STOP_LIMIT stops without an outcome, its
+        TUI session left running, the issue still In Progress; a headless router.py --issue resumes its session (run.py
+        closes that TUI session first), which ends in review; handoff, promote."""
+        ident = self.pm_ready()
+        sid = self.claim(ident, "pm", self.script("pm", "give_up", ident), tui=True)
+        self.agent_run()
+        self.resume(ident, "pm", sid, self.script("pm", "done", ident))
+        self.agent_run()
+        self.handoff(ident, BUILD)
+        self.promote(ident, "pm", "engineer")
+
     def test_b7_a_lost_transcript_starts_a_new_session(self):
         """B7: a run ends without an outcome and its transcript is lost: router.py --issue cannot resume it, comments
         router.INTERRUPTED and moves the issue back to Todo (a recover event); pm_done's claim is a new session."""

@@ -12,6 +12,8 @@ from typing import NamedTuple
 
 import hermetic  # noqa: F401  (first: config reads HOME at import)
 import config
+import attended
+import drive
 import linear
 import router
 import sessions
@@ -59,13 +61,14 @@ class Script(NamedTuple):
 
 
 class Pending(NamedTuple):
-    """A claimed or resumed agent run parked at its gate."""
+    """A claimed or resumed agent run parked at its gate; tui, an attended run's TUI session, else None."""
     ident: str
     role: str
     sid: str
     script: Script
     gate: str
     resumed: bool
+    tui: str | None
 
 
 class Segment(Flow):
@@ -74,7 +77,7 @@ class Segment(Flow):
 
     def setUp(self):
         super().setUp()
-        self.want, self.want_runs, self.want_problems, self.texts = {}, [], [], {}
+        self.want, self.want_runs, self.want_problems, self.texts, self.tuis = {}, [], [], {}, {}
         self.n_steps = self.n_scripts = self.n_gates = 0
         self.pending = None
 
@@ -178,13 +181,14 @@ class Segment(Flow):
 
     def script(self, role, outcome, ident, url=None):
         """The Script of the next agent run of ident (runs counted per test: its texts and title carry the ordinal):
-        a start mark, then the outcome's report; none and give_up report nothing, give_up's later turn stops twice. A
-        done report's url is `url`, else a new report of the role's docs dir."""
+        a start mark, then the outcome's report; none and give_up report nothing. give_up's later turn (the nudge's)
+        stops drive.STOP_LIMIT - 1 times; its end's stop makes the limit. A done report's url is `url`, else a new
+        report of the role's docs dir."""
         self.n_scripts += 1
         n = self.n_scripts
         steps = [{"kind": "progress", "name": "start", "text": f"Starting run #{n}."}]
         if outcome in ("none", "give_up"):
-            return Script(outcome, steps, [[STOP, STOP]] if outcome == "give_up" else [], {})
+            return Script(outcome, steps, [[STOP] * (drive.STOP_LIMIT - 1)] if outcome == "give_up" else [], {})
         report = {"status": outcome, "title": f"Session registry run {n}", "summary": f"Summary #{n}."}
         if outcome == "done":
             report["url"] = url or self.doc_url(f"{DIRS[role]}{datetime.now(timezone.utc):%Y-%m-%d}-{ident}-run-{n}.md")
@@ -193,17 +197,21 @@ class Segment(Flow):
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
         return Script(outcome, [*steps, {"kind": "outcome", "outcome": report}], [], {text: TEXT_KINDS[outcome]})
 
-    def launch(self, ident, role, script, resumed, *argv):
-        """router.py --issue ident argv, script's scene held at a fresh gate: exit 0, one runs.jsonl line added; waits
-        for the fake claude's log line; registers the texts, makes the run pending. Returns (that line, the fake's
-        argv, the events logged meanwhile)."""
+    def launch(self, ident, role, script, resumed, tui=False):
+        """router.py --issue ident, script's scene held at a fresh gate; tui: attended (--tui --split-from MANAGER), a
+        control-mode client showing MANAGER (attached once). Exit 0, one runs.jsonl line added; waits for the fake
+        claude's log line, by when run.py has closed the TUI session a tui run of ident left open (one tui-closed
+        event, that session gone), else logged no tui- event. Registers the texts, makes the run pending. Returns (that
+        line, the fake's argv, the events logged meanwhile)."""
         if self.pending:
             self.fail(f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first")
+        if tui and not self.server.clients:
+            self.server.attach(MANAGER)
         self.n_gates += 1
         gate = os.path.join(self.server.root, f"gate-{self.n_gates}")
         self.scene(steps=script.steps, turns=script.turns, gate=gate)
         calls, events, runs = len(self.calls()), len(self.logged()), len(self.runs())
-        res = self.router("--issue", ident, *argv)
+        res = self.router("--issue", ident, *(("--tui", "--split-from", MANAGER) if tui else ()))
         if res.returncode != 0:
             self.fail(f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}")
         added = self.runs()[runs:]
@@ -216,14 +224,22 @@ class Segment(Flow):
             except ValueError:   # a line half appended
                 return None
         call = live_tmux.wait(started, TIMEOUT, "the fake claude's start")[0]
+        logged, left = self.logged()[events:], self.tuis.pop(ident, None)
+        self.assertEqual([(e["src"], e["kind"], e.get("session")) for e in logged
+                          if e.get("issue") == ident and e["kind"].startswith("tui-")],
+                         [("run", "tui-closed", left)] if left else [])
+        if left:
+            self.assertFalse(self.live(left), f"{left} still live")
         self.texts.update(script.texts)
-        self.pending = Pending(ident, role, line["sid"], script, gate, resumed)
-        return line, call["argv"], self.logged()[events:]
+        self.pending = Pending(ident, role, line["sid"], script, gate, resumed,
+                               f"{attended.prefix(role, ident)}-{line['sid'][:8]}" if tui else None)
+        return line, call["argv"], logged
 
     def agent_run(self):
-        """Step `run: …` (RUN_STEPS) of the pending run: opens its gate, waits for its end, then expects its
-        write-back (config.TASKS): a session comment done; a start comment and ledger step once per sid; an outcome's
-        comment, title, attachment, subscriber and move."""
+        """Step `run: …` (RUN_STEPS) of the pending run: opens its gate, waits for its end; a tui run's TUI session is
+        left with its claude running (launch checks the next run closes it). Then expects its write-back
+        (config.TASKS): a session comment done; a start comment and ledger step once per sid; an outcome's comment,
+        title, attachment, subscriber and move."""
         p = self.pending
         if p is None:
             self.fail("agent_run() without a pending claim or resume")
@@ -232,6 +248,11 @@ class Segment(Flow):
                 pass
             self.wait_end(p.sid, p.ident, sum(line[2] == p.sid for line in self.want_runs), p.role)
             self.pending = None
+            if p.tui:
+                shown = self.server.tmux("display-message", "-p", "-t", f"={p.tui}:", "#{pane_dead}")
+                self.assertEqual(shown.stdout, "0\n", f"TUI session {p.tui} not running: exit {shown.returncode}, "
+                                                      f"{shown.stderr.strip()!r}")
+                self.tuis[p.ident] = p.tui
             want, task, account, report = self.want[p.ident], config.TASKS[p.role], ACCOUNTS[p.role], p.script.report
             self.expect_session(p.ident, p.sid, "done")
             first = "start" not in want.ledger.get(p.sid, [])
@@ -307,10 +328,9 @@ class Segment(Flow):
     def claim(self, ident, role, script, task=None, tui=False):
         """Step `router: claim` of the Todo issue ident with script (agent_run() runs it): a new sid's start line, the
         claim event's task `task`, no transient event; In Progress by the harness; its session comment running.
-        tui: attended, split from MANAGER. Returns the sid."""
+        tui: attended (launch). Returns the sid."""
         with self.step("router: claim"):
-            line, argv, events = self.launch(ident, role, script, False,
-                                             *(("--tui", "--split-from", MANAGER) if tui else ()))
+            line, argv, events = self.launch(ident, role, script, False, tui)
             sid = line["sid"]
             self.assertEqual((line["kind"], line["issue"], line["role"]), ("start", ident, role))
             self.assertNotIn(sid, self.sids())
