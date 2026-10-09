@@ -1,4 +1,5 @@
 import ast
+import errno
 import io
 import itertools
 import json
@@ -11,9 +12,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
-from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, contextmanager, nullcontext, redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tui_claude  # noqa: E402
@@ -80,16 +82,34 @@ def grid_read(pane):
 
 
 def grid_set(window, manager, n=3, hooks=True):
-    """The one tmux call setting a grid window's options and, with hooks, its three hooks."""
-    hook = f"run-shell -b '{PY} -I {SCRIPT} tile {window} >/dev/null 2>&1 || true'"
+    """The one tmux call setting a grid window's options, unsetting @grid-busy and, with hooks, setting its three
+    hooks: each starts a no-wait tile unless @grid-busy is the window."""
+    hook = (f"if-shell -F '#{{==:#{{@grid-busy}},{window}}}' '' "
+            f"\"run-shell -b '{PY} -I {SCRIPT} tile --no-wait {window} >/dev/null 2>&1 || true'\"")
     return ["tmux", "set-option", "-w", "-t", window, "@grid-manager", manager, ";",
-            "set-option", "-w", "-t", window, "@grid-per-column", str(n),
+            "set-option", "-w", "-t", window, "@grid-per-column", str(n), ";",
+            "set-option", "-u", "-w", "-t", window, "@grid-busy",
             *(a for h in ("pane-exited", "window-resized", "window-layout-changed") if hooks
               for a in (";", "set-hook", "-w", "-t", window, h, hook))]
 
 
 def environ(**values):
     return unittest.mock.patch.dict(os.environ, values, clear=True)
+
+
+def clock(test, on_sleep=lambda n: None):
+    """time.monotonic and time.sleep patched for test, the clock at 1000 s: a sleep advances it, then calls
+    on_sleep(sleeps so far). Returns the slept seconds."""
+    now, slept = [1000.0], []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+        on_sleep(len(slept))
+
+    test.enterContext(unittest.mock.patch("time.monotonic", side_effect=lambda: now[0]))
+    test.enterContext(unittest.mock.patch("time.sleep", side_effect=sleep))
+    return slept
 
 
 def which(tmux=TMUX):
@@ -1968,7 +1988,9 @@ class LayoutString(unittest.TestCase):
 
 
 class Tile(unittest.TestCase):
-    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>."""
+    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The server's socket is in a
+    private temp dir; the clock (clock()) at 1000 s, i.e. 1000000 ms."""
+    SOCKET = ["tmux", "display-message", "-p", "-t", "@3", "#{socket_path}"]
     READ = ["tmux", "display-message", "-p", "-t", "@3",
             "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
             "#{@grid-per-column}\t#{@grid-tiles}"]
@@ -1981,57 +2003,159 @@ class Tile(unittest.TestCase):
                 "set-option", "-u", "-w", "-t", "@3", "@grid-per-column", ";",
                 "set-option", "-u", "-w", "-t", "@3", "@grid-tiles", ";",
                 "set-option", "-u", "-w", "-t", "@3", "@grid-busy"]
+    UNMUTE = ["tmux", "set-option", "-u", "-w", "-t", "@3", "@grid-busy"]
     THREE = "0a6c,160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,2,80x15,80,33,3]}"
     W3 = [("$2", "w1", "mgr", "%1"), ("$3", "w2", "mgr", "%2"), ("$4", "w3", "mgr", "%3")]
     # the manager 100 wide; a sub-worker of w1 below it: tile puts it right of w1
     WIDE = ("8b77,160x48,0,0{100x48,0,0,0,59x48,101,0[59x24,101,0,1,59x23,101,25,2]}", ["%0", "%1", "%2"],
             [("$2", "w1", "mgr", "%1"), ("$3", "a", "w1", "%2")])
+    WIDE_SENT = ["tmux", "select-layout", "-t", "@3",
+                 "e37e,160x48,0,0{100x48,0,0,0,59x48,101,0{29x48,101,0,1,29x48,131,0,2}}"]
 
-    def fake(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), tiles=""):
-        """A tmux printing these for @3; rows: (session id, name, @opener, @pane) besides mgr's."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        os.chmod(self.root, 0o700)
+        self.sock = os.path.join(self.root, "default")
+        clock(self)
+
+    def fake(self, layout, panes, rows=(), manager="%0", n="", zoomed="0", size=(160, 48), fail=(), tiles="",
+             sock=None, message=(0,), **results):
+        """A tmux printing these for @3, its socket self.sock unless sock, `message` the result of another
+        display-message; rows: (session id, name, @opener, @pane) besides mgr's."""
         rows = [("$1", "mgr", "", ""), *rows]
+        printed = {self.SOCKET[-1]: (0, f"{self.sock if sock is None else sock}\n"),
+                   self.READ[-1]: (0, "\t".join((*map(str, size), zoomed, layout, manager, n, tiles)) + "\n")}
         return Tmux(fail=fail, results={
-            "display-message": (0, "\t".join((*map(str, size), zoomed, layout, manager, n, tiles)) + "\n", ""),
+            "display-message": lambda argv: printed.get(argv[-1], message),
             "list-panes": (0, "".join(f"{p}\n" for p in panes), ""),
-            "list-sessions": (0, "".join("\t".join((*row, SOCK)) + "\n" for row in rows), "")})
+            "list-sessions": (0, "".join("\t".join((*row, SOCK)) + "\n" for row in rows), ""), **results})
 
-    def tile(self, *args, per_column=None, **kw):
+    def tile(self, *args, per_column=None, wait=True, **kw):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(*args, **kw)
-        tui_claude.tile("@3", per_column=per_column, proc=fake)
+        tui_claude.tile("@3", per_column=per_column, wait=wait, proc=fake)
         return fake
 
-    def test_swaps_then_select_layout_in_one_tmux_command(self):
+    def applied(self, send, times="1000000"):
+        """The two tmux calls of a re-tile sending `send` (a tmux call of swap-panes, then select-layout): @grid-tiles
+        set to times and @grid-busy to @3 before it in one command, then @grid-busy unset."""
+        return [["tmux", "set-option", "-w", "-t", "@3", "@grid-tiles", times, ";",
+                 "set-option", "-w", "-t", "@3", "@grid-busy", "@3", ";", *send[1:]], self.UNMUTE]
+
+    def test_swaps_and_select_layout_sent_muted_then_unmuted(self):
         # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second column
         layout = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
         fake = self.tile(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3)
-        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS, [
-            "tmux", "swap-pane", "-d", "-s", "%2", "-t", "%4", ";", "swap-pane", "-d", "-s", "%3", "-t", "%4", ";",
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, [
+            "tmux", "set-option", "-w", "-t", "@3", "@grid-tiles", "1000000", ";",
+            "set-option", "-w", "-t", "@3", "@grid-busy", "@3", ";",
+            "swap-pane", "-d", "-s", "%2", "-t", "%4", ";", "swap-pane", "-d", "-s", "%3", "-t", "%4", ";",
             "select-layout", "-t", "@3", "ac6e,160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,"
-                                         "40x15,80,17,2,40x15,80,33,3],39x48,121,0,4}}"]])
+                                         "40x15,80,17,2,40x15,80,33,3],39x48,121,0,4}}"],
+            ["tmux", "set-option", "-u", "-w", "-t", "@3", "@grid-busy"]])
 
     def test_the_managers_width_kept_no_swap_when_in_order(self):
         fake = self.tile(*self.WIDE)
-        self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3",
-                                           "e37e,160x48,0,0{100x48,0,0,0,59x48,101,0{29x48,101,0,1,29x48,131,0,2}}"]])
+        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
+
+    def test_a_hook_run_returns_at_once_while_another_tile_holds_the_lock(self):
+        holder = self.enterContext(tui_claude._GridLock(self.sock, "@3"))
+        holder.try_lock()
+        fake = self.tile(*self.WIDE, wait=False)
+        self.assertEqual(fake.calls, [self.SOCKET])
+        holder.unlock()
+        fake = self.tile(*self.WIDE, wait=False)
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)])
+
+    def test_an_explicit_tile_waits_for_the_lock_then_tiles(self):
+        holder = self.enterContext(tui_claude._GridLock(self.sock, "@3"))
+        holder.try_lock()
+        fake, seen = self.fake(*self.WIDE), []
+
+        def release(sleeps):
+            seen.append(list(fake.calls))
+            if sleeps == 3:
+                holder.unlock()
+
+        slept = clock(self, release)
+        tui_claude.tile("@3", proc=fake)
+        self.assertEqual(slept, [tui_claude.TILE_POLL] * 3)
+        self.assertEqual(seen, [[self.SOCKET]] * 3)
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS,
+                                      *self.applied(self.WIDE_SENT, str(int(time.monotonic() * 1000)))])
+
+    def test_an_explicit_tile_gives_up_after_tile_wait(self):
+        self.enterContext(tui_claude._GridLock(self.sock, "@3")).try_lock()
+        fake = self.fake(*self.WIDE)
+        with self.assertRaisesRegex(tui_claude.TuiError, "^grid @3: busy$"):
+            tui_claude.tile("@3", proc=fake)
+        self.assertEqual(fake.calls, [self.SOCKET])
+
+    def test_a_refused_or_busy_lock_raises_before_the_pass_and_grid_up_returns_it(self):
+        shared = os.path.join(self.root, "shared")
+        os.mkdir(shared)
+        os.chmod(shared, 0o770)
+        for sock, want in ((os.path.join(shared, "default"), f"grid lock {shared}: not private (mode 0770)"),
+                           ("default", "grid lock default: not an absolute path"),
+                           ("", "grid lock : not an absolute path"),
+                           (None, "grid @3: busy")):
+            with self.subTest(sock=sock), ExitStack() as stack:
+                if sock is None:
+                    stack.enter_context(tui_claude._GridLock(self.sock, "@3")).try_lock()
+                fake = self.fake(*self.WIDE, sock=sock)
+                with self.assertRaisesRegex(tui_claude.TuiError, f"^{re.escape(want)}$"):
+                    tui_claude.tile("@3", proc=fake)
+                self.assertEqual(fake.calls, [self.SOCKET])
+                fake = self.fake(*self.WIDE, sock=sock)
+                with unittest.mock.patch.object(sys, "executable", PY), \
+                        unittest.mock.patch.object(tui_claude, "__file__", SCRIPT):
+                    self.assertEqual(tui_claude._grid_up("@3", "%0", 3, fake), want)
+                self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
+
+    def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
+        # now 1000000 ms: the window is 970001..1000000; junk, stale and future times are dropped
+        junk = ["x", "-999999", "+999999", "999999.0", "1e6", "\uff19\uff19\uff19", "0000000000999999", ""]
+        tiles = " ".join([*["970000", "5", "0"] * 50, *junk, "970001", "1000001", "999999999999999",
+                          "000000000999998", "999999\t1000000"])
+        fake = self.tile(*self.WIDE, tiles=tiles)
+        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT, "970001 999998 999999 1000000 1000000"))
+        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3, tiles=tiles)
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+
+    def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
+        self.assertEqual((tui_claude.TILE_LIMIT, tui_claude.TILE_WINDOW), (100, 30))
+        line = "tui: grid @3: auto re-tiling stopped: 101 re-tiles in 30 s; the next worker that opens rebuilds it"
+        recent = [str(970001 + i * 299) for i in range(100)]
+        for message in ((0,), (1, "", "no client\n"), OSError("gone")):
+            with self.subTest(message=message):
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    fake = self.tile(*self.WIDE, tiles=" ".join(recent), message=message)
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.TEARDOWN,
+                                              ["tmux", "display-message", "-d", "10000", "-t", "@3", line]])
+                self.assertEqual(err.getvalue(), line + "\n")
+        fake = self.tile(*self.WIDE, tiles=" ".join(recent[1:]))
+        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT, " ".join([*recent[1:], "1000000"])))
 
     def test_a_window_split_top_bottom_before_the_grid(self):
         # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
         fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
         want = tui_claude._render_layout(grid([slot("%2"), slot("%1")]))
-        self.assertEqual(fake.calls[3:], [["tmux", "swap-pane", "-d", "-s", "%2", "-t", "%1", ";",
-                                           "select-layout", "-t", "@3", want]])
+        self.assertEqual(fake.calls[4:], self.applied(["tmux", "swap-pane", "-d", "-s", "%2", "-t", "%1", ";",
+                                                       "select-layout", "-t", "@3", want]))
         self.assertEqual(want.split(",", 1)[1], "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,2,80x23,80,25,1]}")
 
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
-        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
         # the target's cells in another tree: a pass over the target would move them, but none follows a no-op
         layout = dump("200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}")
         rows = [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")]
         fake = self.tile(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
-        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_a_state_needing_several_passes_gets_its_fixed_point_at_once(self):
         # 200x50, orphans of gone openers in an old layout: 2 and 3 passes each, a pass over the result sends nothing
@@ -2045,11 +2169,11 @@ class Tile(unittest.TestCase):
                  "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151,0,3},100x24,100,26,1]}")):
             with self.subTest(n=n):
                 fake = self.tile(dump(layout), panes, rows, n=n, size=(200, 50))
-                self.assertEqual(fake.calls[3:], [["tmux", "swap-pane", "-d", "-s", swap[0], "-t", swap[1], ";",
-                                                   "select-layout", "-t", "@3", dump(want)]])
+                self.assertEqual(fake.calls[4:], self.applied(["tmux", "swap-pane", "-d", "-s", swap[0], "-t", swap[1],
+                                                               ";", "select-layout", "-t", "@3", dump(want)]))
                 after = [leaf.pane for leaf in tui_claude._leaves(tui_claude._parse_layout(want))]
                 fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
-                self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
         split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
@@ -2068,15 +2192,15 @@ class Tile(unittest.TestCase):
         # FR-12: w2's claude exited (its session and dead pane stay), its host pane %2 attaches on; w1 (%1) closed
         layout = dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x32,80,0,2,80x15,80,33,3]}")
         fake = self.tile(layout, ["%0", "%2", "%3"], self.W3[1:])
-        self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3",
-                                           tui_claude._render_layout(grid([slot("%2"), slot("%3")]))]])
+        self.assertEqual(fake.calls[4:], self.applied(["tmux", "select-layout", "-t", "@3",
+                                                       tui_claude._render_layout(grid([slot("%2"), slot("%3")]))]))
         self.assertNotIn("pane_dead", repr(fake.calls))
 
     def test_zoomed_or_no_grid_window_only_reads_it(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
             with self.subTest(**kw):
                 fake = self.tile(*self.WIDE, **kw)
-                self.assertEqual(fake.calls, [self.READ])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ])
 
     def test_teardown_when_the_manager_is_gone_invalid_or_alone(self):
         for manager, layout, panes in (
@@ -2086,7 +2210,7 @@ class Tile(unittest.TestCase):
                 ("%0", dump("160x48,0,0,0"), ["%0"])):
             with self.subTest(manager=manager, panes=panes):
                 fake = self.tile(layout, panes, self.W3, manager=manager)
-                self.assertEqual(fake.calls, [self.READ, self.PANES, self.TEARDOWN])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN])
 
     def test_nothing_changed_when_the_layout_is_unreadable_or_not_the_windows_panes(self):
         four = ["%0", "%1", "%2", "%3"]
@@ -2095,13 +2219,13 @@ class Tile(unittest.TestCase):
                               (dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,1]}"), four[:2])):
             with self.subTest(layout=layout, panes=panes):
                 fake = self.tile(layout, panes, self.W3)
-                self.assertEqual(fake.calls, [self.READ, self.PANES])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
 
     def test_too_small_nothing_changed(self):
         # three cells side by side, 4 high: a column of three needs 5
         layout = dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}")
         fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
-        self.assertEqual(fake.calls, [self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
         layout = dump("116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x3,52,4{32x3,52,4,4,"
@@ -2109,18 +2233,18 @@ class Tile(unittest.TestCase):
         rows = [("$2", "w1", "mgr", "%1"), ("$3", "w2", "old1", "%2"), ("$4", "w3", "mgr", "%3"),
                 ("$5", "w4", "w2", "%4"), ("$6", "w5", "old1", "%5"), ("$7", "w6", "mgr", "%6")]
         fake = self.tile(layout, ["%0", "%3", "%1", "%4", "%5", "%6", "%2"], rows, n="4", size=(116, 11))
-        self.assertEqual(fake.calls[3:], [[
+        self.assertEqual(fake.calls[4:], self.applied([
             "tmux", "swap-pane", "-d", "-s", "%1", "-t", "%3", ";", "swap-pane", "-d", "-s", "%2", "-t", "%3", ";",
             "swap-pane", "-d", "-s", "%3", "-t", "%5", ";", "swap-pane", "-d", "-s", "%5", "-t", "%6", ";",
             "select-layout", "-t", "@3", "6fdc,116x11,0,0{51x11,0,0,0,64x11,52,0{32x11,52,0[32x2,52,0,1,32x2,52,3{"
-                                         "16x2,52,3,2,15x2,69,3,4},32x2,52,6,3,32x2,52,9,5],31x11,85,0,6}}"]])
+                                         "16x2,52,3,2,15x2,69,3,4},32x2,52,6,3,32x2,52,9,5],31x11,85,0,6}}"]))
 
     def test_duplicate_pane_claims_the_lower_session_id_owns(self):
         rows = [("$5", "x", "mgr", "%1"), ("$3", "y", "mgr", "%1"), ("$6", "z", "x", "%2"), ("$7", "w", "y", "%3")]
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], rows)
-        self.assertEqual(fake.calls[3:], [[
+        self.assertEqual(fake.calls[4:], self.applied([
             "tmux", "swap-pane", "-d", "-s", "%3", "-t", "%2", ";", "select-layout", "-t", "@3",
-            "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0,3},80x23,80,25,2]}"]])
+            "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0,3},80x23,80,25,2]}"]))
 
     def test_session_fields_read_back_only_after_a_fullmatch(self):
         # a row with a bad id or name is skipped (its pane a manual pane); an @opener that is no opener is unset
@@ -2129,7 +2253,7 @@ class Tile(unittest.TestCase):
         panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
         fake = self.tile(tui_claude._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6")
         cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
-        self.assertEqual(fake.calls[3][-1], tui_claude._render_layout(grid(cells, 6)))
+        self.assertEqual(fake.calls[4][-1], tui_claude._render_layout(grid(cells, 6)))
 
     def test_per_column_argument_else_the_window_option_else_the_default(self):
         panes = ["%0", "%1", "%2", "%3", "%4"]
@@ -2140,7 +2264,8 @@ class Tile(unittest.TestCase):
             with self.subTest(n=n, **kw):
                 fake = self.tile(tui_claude._render_layout(grid(4)), panes, rows, n=n, **kw)
                 want = tui_claude._render_layout(grid(4, per_column)) if per_column else None
-                self.assertEqual(fake.calls[3:], [["tmux", "select-layout", "-t", "@3", want]] if want else [])
+                self.assertEqual(fake.calls[4:],
+                                 self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [])
 
     def test_bad_window_or_per_column_raises_before_tmux(self):
         cases = [("3", {}, "invalid window id '3': want @[0-9]+"),
@@ -2155,8 +2280,14 @@ class Tile(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
+        # a failed re-tile: @grid-busy unset all the same, the lock freed
+        fail = {"set-option": lambda argv: (1, "", "boom\n") if "@grid-tiles" in argv else (0,)}
+        fake = self.fake(*self.WIDE, **fail)
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
-            self.tile(*self.WIDE, fail=("select-layout",))
+            tui_claude.tile("@3", proc=fake)
+        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
+        with tui_claude._GridLock(self.sock, "@3") as other:
+            self.assertTrue(other.try_lock())
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
@@ -2212,20 +2343,6 @@ class GridLock(unittest.TestCase):
 
     def open(self, window="@3"):
         return self.enterContext(tui_claude._GridLock(self.sock, window))
-
-    def clock(self, on_sleep=lambda n: None):
-        """time.monotonic and time.sleep patched: a sleep advances the clock, then calls on_sleep(sleeps so far).
-        Returns the slept seconds."""
-        now, slept = [1000.0], []
-
-        def sleep(seconds):
-            slept.append(seconds)
-            now[0] += seconds
-            on_sleep(len(slept))
-
-        self.enterContext(unittest.mock.patch("time.monotonic", side_effect=lambda: now[0]))
-        self.enterContext(unittest.mock.patch("time.sleep", side_effect=sleep))
-        return slept
 
     def test_name(self):
         self.assertEqual(tui_claude._lock_name("/tmp/tmux-501/default", "@12"), ".tui-grid-cad2a7b76af0-12.lock")
@@ -2302,8 +2419,22 @@ class GridLock(unittest.TestCase):
             self.assertTrue(a.try_lock())
         self.assertTrue(self.open().try_lock())
 
+    def test_a_second_close_closes_nothing(self):
+        a = tui_claude._GridLock(self.sock, "@3")
+        a.close()
+        b = self.open()   # takes a's fd number
+        a.close()
+        self.assertTrue(b.try_lock())
+
+    def test_unlock_failure_raises(self):
+        a = self.open()
+        a.try_lock()
+        with unittest.mock.patch("fcntl.flock", side_effect=OSError(errno.ENOLCK, "No locks available")), \
+                self.assertRaisesRegex(tui_claude.TuiError, f"^grid lock {re.escape(self.path)}: No locks available$"):
+            a.unlock()
+
     def test_lock_takes_a_free_lock_at_once(self):
-        slept = self.clock()
+        slept = clock(self)
         a = self.open()
         a.lock()
         self.assertEqual(slept, [])
@@ -2317,7 +2448,7 @@ class GridLock(unittest.TestCase):
             if sleeps == 3:
                 holder.unlock()
 
-        slept = self.clock(on_sleep=release)
+        slept = clock(self, on_sleep=release)
         a = self.open()
         a.lock()
         self.assertEqual(slept, [tui_claude.TILE_POLL] * 3)
@@ -2325,7 +2456,7 @@ class GridLock(unittest.TestCase):
 
     def test_lock_gives_up_after_tile_wait(self):
         self.open().try_lock()
-        slept = self.clock()
+        slept = clock(self)
         with self.assertRaisesRegex(tui_claude.TuiError, "^grid @3: busy$"):
             self.open().lock()
         self.assertEqual(set(slept), {tui_claude.TILE_POLL})
@@ -2436,8 +2567,10 @@ class Cli(unittest.TestCase):
         real, fake = tui_claude.tile, Tmux()
         tile = self.patch("tile", return_value=None)
         self.assertEqual(self.main("tile", "@3"), (0, "", ""))
-        tile.assert_called_once_with("@3")
-        tile.side_effect = lambda window: real(window, proc=fake)
+        self.assertEqual(self.main("tile", "--no-wait", "@3"), (0, "", ""))
+        self.assertEqual(tile.call_args_list,
+                         [unittest.mock.call("@3", wait=True), unittest.mock.call("@3", wait=False)])
+        tile.side_effect = lambda window, wait: real(window, wait=wait, proc=fake)
         self.assertEqual(self.main("tile", "3"), (1, "", "tui: invalid window id '3': want @[0-9]+\n"))
         self.assertEqual(fake.calls, [])
 
@@ -2457,7 +2590,7 @@ class Cli(unittest.TestCase):
         called = [self.patch(n) for n in ("start", "send", "read", "show", "status", "tile")]
         for argv in ((), ("bogus",), ("send", "s"), ("send", "a b", "x"), ("read", "s", "--lines", "0"),
                      ("read", "s", "--lines", "x"), ("read", "s", "--lines", "-1"), ("show", "--split", "up", "s"),
-                     ("show", "--split-from", "a b", "s"), ("tile",), ("tile", "@3", "@4")):
+                     ("show", "--split-from", "a b", "s"), ("tile",), ("tile", "--no-wait"), ("tile", "@3", "@4")):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv)[0], 2)
         for mock in called:

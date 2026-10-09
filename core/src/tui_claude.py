@@ -63,6 +63,8 @@ GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\
 HOOK_PATH = re.compile(r"[A-Za-z0-9_./@+-]+")   # a path tmux and sh take verbatim in a grid hook
 TILE_WAIT = 5   # seconds _GridLock.lock waits for another holder, trying every TILE_POLL
 TILE_POLL = 0.05
+TILE_LIMIT = 100   # re-tiles of a grid window within TILE_WINDOW seconds; one more stops its auto re-tiling (tile)
+TILE_WINDOW = 30
 SETTLE_ITERATIONS = 3
 LEAF, LEFT_RIGHT, TOP_BOTTOM = "", "{}", "[]"   # a layout cell's kind; a container's are its brackets
 LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]))")
@@ -499,16 +501,19 @@ def _window(pane: str, manager: str | None, proc) -> tuple[str, str | None, dict
 
 
 def _grid_up(window: str, manager: str, per_column: int, proc) -> str | None:
-    """Set window's grid options and hooks (none, with a notice, when tmux would misread a path in them), then tile
-    it. None or the failure."""
+    """Set window's grid options and hooks (none, with a notice, when tmux would misread a path in them) and unset a
+    stale @grid-busy, then tile it. A hook starts a no-wait tile unless @grid-busy is the window. None or the
+    failure."""
     args = ["set-option", "-w", "-t", window, GRID_MANAGER, manager, ";",
-            "set-option", "-w", "-t", window, GRID_PER_COLUMN, str(per_column)]
+            "set-option", "-w", "-t", window, GRID_PER_COLUMN, str(per_column), ";",
+            "set-option", "-u", "-w", "-t", window, GRID_BUSY]
     paths = (sys.executable or "", os.path.abspath(__file__))
     bad = [p for p in paths if not HOOK_PATH.fullmatch(p)]
     if bad:
         print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
     else:
-        hook = f"run-shell -b '{paths[0]} -I {paths[1]} tile {window} >/dev/null 2>&1 || true'"
+        hook = (f"if-shell -F '#{{==:#{{{GRID_BUSY}}},{window}}}' '' "
+                f"\"run-shell -b '{paths[0]} -I {paths[1]} tile --no-wait {window} >/dev/null 2>&1 || true'\"")
         args += [a for name in GRID_HOOKS for a in (";", "set-hook", "-w", "-t", window, name, hook)]
     try:
         _tmux_ok(args, proc)
@@ -607,25 +612,52 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
             return
 
 
-def tile(window: str, *, per_column: int | None = None, proc=subprocess.run) -> None:
-    """Lay out grid window `window` (@N): _grid_pass's swaps and layout, sent in one tmux command."""
+def tile(window: str, *, per_column: int | None = None, wait: bool = True, proc=subprocess.run) -> None:
+    """Lay out grid window `window` (@N) holding its _GridLock (wait: lock; else, as the grid's hooks do, return at once
+    while another tile holds it): _grid_pass's swaps and layout, sent in one tmux command that first sets @grid-busy to
+    the window, then a second command unsets it. tmux runs a command's hooks after it, so the grid's hooks start no tile
+    for this re-tile. The breaker: @grid-tiles keeps the re-tiles' times (monotonic ms) of the last TILE_WINDOW s; more
+    than TILE_LIMIT with this one: nothing applied, the grid torn down (_grid_down) and a notice shown and printed."""
     if not WINDOW.fullmatch(window):
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     _per_column(per_column)
-    found = _grid_pass(window, per_column, proc)
-    if found is not None:
-        swaps, layout, _ = found
-        _tmux_ok([*(a for source, target in swaps for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")),
-                  "select-layout", "-t", window, _render_layout(layout)], proc)
+    socket = _tmux_ok(["display-message", "-p", "-t", window, "#{socket_path}"], proc).stdout.rstrip("\n")
+    with _GridLock(socket, window) as lock:
+        if wait:
+            lock.lock()
+        elif not lock.try_lock():
+            return
+        found = _grid_pass(window, per_column, proc)
+        if found is None:
+            return
+        swaps, layout, tiles = found
+        now = int(time.monotonic() * 1000)
+        times = [t for t in (int(s) for s in tiles.split() if re.fullmatch(r"[0-9]{1,15}", s))
+                 if now - TILE_WINDOW * 1000 < t <= now] + [now]
+        if len(times) > TILE_LIMIT:
+            _grid_down(window, proc)
+            line = (f"tui: grid {window}: auto re-tiling stopped: {len(times)} re-tiles in {TILE_WINDOW} s; the next "
+                    "worker that opens rebuilds it")
+            with contextlib.suppress(TuiError):
+                _tmux(["display-message", "-d", "10000", "-t", window, line], proc)
+            print(line, file=sys.stderr)
+            return
+        try:
+            _tmux_ok(["set-option", "-w", "-t", window, GRID_TILES, " ".join(map(str, times)), ";",
+                      "set-option", "-w", "-t", window, GRID_BUSY, window, ";",
+                      *(a for source, target in swaps for a in ("swap-pane", "-d", "-s", source, "-t", target, ";")),
+                      "select-layout", "-t", window, _render_layout(layout)], proc)
+        finally:
+            _tmux_ok(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
 
 
 def _grid_pass(window: str, per_column: int | None, proc) -> tuple[list[tuple[str, str]], Cell, str] | None:
     """A pass over grid window `window`: what to send (the swap-pane pairs, the layout) and its @grid-tiles as read;
     None for nothing. The layout: the manager left at its current width, _grid_tree's cells in columns of per_column
     (None: the window's @grid-per-column, else PER_COLUMN), as successive passes would leave it (_fixed_point).
-    Nothing when the window is zoomed, no grid window, already so laid out or too small, or its layout is unreadable
-    or not its panes'; with its manager gone or alone, the grid is torn down (_grid_down)."""
-    fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t")
+    Nothing when the window is zoomed, no grid window, already so laid out or too small for a first pass, or its layout
+    is unreadable or not its panes'; with its manager gone or alone, the grid is torn down (_grid_down)."""
+    fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t", 6)
     if len(fields) != 7 or fields[2] != "0" or not fields[4]:
         return None
     width, height, _, layout, manager, n, tiles = fields
@@ -702,7 +734,9 @@ class _GridLock:
         self.close()
 
     def close(self) -> None:
-        os.close(self._fd)
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1
 
     def try_lock(self) -> bool:
         """Whether it took the lock (flock), held till unlock or close; False while another open of it holds it."""
@@ -723,7 +757,10 @@ class _GridLock:
             time.sleep(TILE_POLL)
 
     def unlock(self) -> None:
-        fcntl.flock(self._fd, fcntl.LOCK_UN)
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        except OSError as e:
+            raise TuiError(f"grid lock {self._path}: {e.strerror}") from e
 
 
 def _private_fd(path: str, flags: int, dir_fd: int | None = None) -> int:
@@ -984,6 +1021,8 @@ def main(argv: list[str] | None = None) -> int:
     _show_options(p)
     p.add_argument("session", type=_session_arg)
     p = sub.add_parser("tile", help="lay out a grid window's panes (its hooks run this)")
+    p.add_argument("--no-wait", action="store_true",
+                   help="return at once while another tile lays the window out (the hooks pass it)")
     p.add_argument("window", help="its id, @N")
     argv = sys.argv[1:] if argv is None else list(argv)
     command = None
@@ -1004,7 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "read":
             print(read(a.session, a.lines))
         elif a.cmd == "tile":
-            tile(a.window)
+            tile(a.window, wait=not a.no_wait)
         else:
             if status(a.session) is None:
                 raise TuiError(f"no session {a.session}")
