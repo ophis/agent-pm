@@ -171,7 +171,7 @@ class Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.tdir = os.path.join(self.tmp.name, "transcripts")
         os.makedirs(self.tdir)
-        self.log = os.path.join(self.tmp.name, "runs.log")
+        self.log = os.path.join(self.tmp.name, "runs.jsonl")
         self.lines = []
         self.hist = {}
         self.names = {}
@@ -208,10 +208,14 @@ class Base(unittest.TestCase):
         self.add("start", ident, sid, minutes_ago, role)
         self.touch(ident, sid, 40)
 
+    def row(self, kind, ident, sid, role="researcher", **ago):
+        """A runs.jsonl line `ago` before NOW, its ts at a fixed UTC-4 offset."""
+        ts = (NOW - timedelta(**ago)).astimezone(timezone(timedelta(hours=-4))).isoformat(timespec="seconds")
+        return json.dumps({"ts": ts, "kind": kind, "issue": ident, "sid": self.sid(sid), "role": role})
+
     def add(self, kind, ident, sid, minutes_ago, role="researcher"):
-        """A runs.log line."""
-        ts = (NOW - timedelta(minutes=minutes_ago)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        self.lines.append(f"{ts} {kind} {ident} session={self.sid(sid)} role={role}")
+        """A runs.jsonl line."""
+        self.lines.append(self.row(kind, ident, sid, role, minutes=minutes_ago))
 
     def touch(self, ident, sid, minutes_ago, sub=None):
         """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
@@ -224,7 +228,7 @@ class Base(unittest.TestCase):
         os.utime(p, (t, t))
 
     def board(self, fake, use, dry=False):
-        """use(Board) over runs.log lines; the logged messages land in self.err."""
+        """use(Board) over runs.jsonl lines; the logged messages land in self.err."""
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + "\n")
         err = io.StringIO()
@@ -269,6 +273,12 @@ class Base(unittest.TestCase):
             self.state = self.unmap(f.read())
         return rc
 
+    def last_run(self):
+        """(kind, issue, sid, role) of the last runs.jsonl line `tick` left, after checking its keys."""
+        entry = json.loads(self.state.splitlines()[-1])
+        self.assertEqual(list(entry), ["ts", "kind", "issue", "sid", "role"])
+        return entry["kind"], entry["issue"], entry["sid"], entry["role"]
+
     def launched(self):
         (launch,) = self.sh.launches()
         return launch.issue
@@ -285,32 +295,36 @@ class ParseAndLiveness(Base):
     def test_missing_log_is_empty(self):
         self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])
 
-    def test_parse_role(self):
+    def write_lines(self, lines):
+        with open(self.log, "w") as f:
+            f.write("".join(line + "\n" for line in lines))
+
+    def test_parse_log_is_utc_entries_in_file_order(self):
         self.add("start", "TASK-1", "a", 60, "researcher")
         self.add("start", "TASK-2", "b", 50, "pm")
         self.add("resume", "TASK-1", "a", 40, "pm-lead")
-        old = (NOW - timedelta(minutes=30)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        self.lines += [f"{old} start TASK-4 session={self.sid('d')} task=deep-research",
-                       "2026-09-26 23:00:00 resume TASK-3 session=c n=1 role=x extra",
-                       "pick: TASK-1 (3 in queue)", "2026-09-26 13:04:05 start --dry-run log=/x.jsonl",
-                       "2026-09-26 20:45:59 skip: queue empty", "recover: TASK-2 (last updated x)",
-                       "2026-09-26 23:00:00 end TASK-1 session=a exit=1"]
-        with open(self.log, "w") as f:
-            f.write("\n".join(self.lines) + "\n")
+        self.write_lines(self.lines)
         entries = router.parse_log(self.log)
-        self.assertEqual([e[1:] for e in entries], [("start", "TASK-1", self.sid("a"), "researcher"),
-                                                    ("start", "TASK-2", self.sid("b"), "pm"),
-                                                    ("resume", "TASK-1", self.sid("a"), "pm-lead"),
-                                                    ("start", "TASK-4", self.sid("d"), None)])
-        self.assertAlmostEqual(entries[0][0].timestamp(), (NOW - timedelta(minutes=60)).timestamp())
+        self.assertEqual(entries, [(NOW - timedelta(minutes=60), "start", "TASK-1", self.sid("a"), "researcher"),
+                                   (NOW - timedelta(minutes=50), "start", "TASK-2", self.sid("b"), "pm"),
+                                   (NOW - timedelta(minutes=40), "resume", "TASK-1", self.sid("a"), "pm-lead")])
+        self.assertEqual({e[0].utcoffset() for e in entries}, {timedelta(0)})
 
-    def test_a_line_without_role_is_ignored(self):
-        self.add("start", "TASK-1", "a", 60)
-        ts = (NOW - timedelta(minutes=30)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        self.lines += [f"{ts} start TASK-2 session={self.sid('b')}", f"{ts} resume TASK-1 session={self.sid('a')}"]
-        with open(self.log, "w") as f:
-            f.write("\n".join(self.lines) + "\n")
-        self.assertEqual([e[1:] for e in router.parse_log(self.log)], [("start", "TASK-1", self.sid("a"), "researcher")])
+    def test_parse_log_skips_what_is_not_a_complete_start_or_resume_line(self):
+        good = json.loads(self.row("start", "TASK-1", "a", minutes=60))
+        bad = ["not json", "", "[]", '"start"', "7", "null", "{",
+               "2026-09-26 23:00:00 start TASK-3 session=c role=x",
+               "2026-09-26 23:00:00 start TASK-4 session=d task=deep-research",
+               json.dumps({k: v for k, v in good.items() if k != "role"}),
+               json.dumps({k: v for k, v in good.items() if k != "ts"}),
+               json.dumps({**good, "role": None}), json.dumps({**good, "role": 3}),
+               json.dumps({**good, "issue": ["TASK-2"]}), json.dumps({**good, "sid": None}),
+               json.dumps({**good, "kind": "end"}), json.dumps({**good, "kind": ["start"]}),
+               json.dumps({**good, "ts": "yesterday"}), json.dumps({**good, "ts": 5}), json.dumps({**good, "ts": None})]
+        self.add("resume", "TASK-9", "z", 30, "pm")
+        self.write_lines([*bad, json.dumps(good), *bad, self.lines[-1]])
+        self.assertEqual([e[1:] for e in router.parse_log(self.log)],
+                         [("start", "TASK-1", self.sid("a"), "researcher"), ("resume", "TASK-9", self.sid("z"), "pm")])
 
     def test_liveness(self):
         s, t = self.sid("s"), self.sid("t")
@@ -650,41 +664,55 @@ class Plan(Base):
 class Prune(Base):
     def write(self, lines):
         with open(self.log, "w") as f:
-            f.write("".join(lines))
+            f.write("".join(line + "\n" for line in lines))
 
-    def stamp(self, **kw):
-        return (NOW - timedelta(**kw)).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    def read(self):
+        with open(self.log) as f:
+            return f.read()
 
-    def test_drops_old_lines(self):
-        self.write(["pick: TASK-1 (3 in queue)\n",
-                    f"{self.stamp(days=8)} start TASK-1 session=a task=x\n",
-                    "recover: TASK-2 (last updated x)\n",
-                    f"{self.stamp(days=6)} skip: queue empty\n",
-                    "plan: new\n",
-                    f"{self.stamp(hours=1)} start TASK-1 session=b task=x\n"])
+    def test_drops_old_and_unparsable_lines(self):
+        keep = [self.row("start", "TASK-1", "b", days=6), self.row("resume", "TASK-1", "b", hours=1),
+                self.row("start", "TASK-2", "c", days=7)]
+        junk = [self.row("start", "TASK-1", "a", days=8), "plain text", "", "[1, 2]", '{"ts": "x"}',
+                self.row("start", "TASK-1", "a", days=7, seconds=1),
+                json.dumps({**json.loads(keep[0]), "ts": "yesterday"}),
+                json.dumps({**json.loads(keep[0]), "kind": "end"})]
+        self.write([junk[0], keep[0], *junk[1:4], keep[1], *junk[4:], keep[2]])
         with mock.patch.object(router.drive.os, "replace", wraps=os.replace) as rep:
             router.prune(self.log, NOW)
         [(src, dst), _] = rep.call_args
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp.name, self.log))
-        with open(self.log) as f:
-            self.assertEqual(f.read(), f"{self.stamp(days=6)} skip: queue empty\nplan: new\n"
-                                       f"{self.stamp(hours=1)} start TASK-1 session=b task=x\n")
-        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.log", "transcripts"])
+        self.assertEqual(self.read(), "".join(line + "\n" for line in keep))
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
+
+    def test_a_line_eight_days_old_is_pruned_and_the_rest_stays(self):
+        keep = self.row("start", "TASK-1", "b", hours=1)
+        self.write([self.row("start", "TASK-8", "old", days=8), keep])
+        router.prune(self.log, NOW)
+        self.assertEqual(self.read(), keep + "\n")
+
+    def test_only_unparsable_lines_dropped_is_still_a_rewrite(self):
+        keep = self.row("start", "TASK-1", "b", hours=1)
+        self.write([keep, "plain text"])
+        router.prune(self.log, NOW)
+        self.assertEqual(self.read(), keep + "\n")
 
     def test_no_temp_left_when_the_rewrite_fails(self):
-        self.write([f"{self.stamp(days=8)} skip: old\n", f"{self.stamp(hours=1)} skip: new\n"])
+        self.write([self.row("start", "TASK-1", "a", days=8), self.row("start", "TASK-1", "b", hours=1)])
         with mock.patch.object(router.drive.os, "replace", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 router.prune(self.log, NOW)
-        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.log", "transcripts"])
-        with open(self.log) as f:
-            self.assertEqual(len(f.readlines()), 2)
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
+        self.assertEqual(len(self.read().splitlines()), 2)
 
     def test_unchanged_file_not_rewritten(self):
-        self.write([f"{self.stamp(days=1)} skip: queue empty\n"])
-        with mock.patch.object(router.drive.os, "replace") as rep:
+        lines = [self.row("start", "TASK-1", "a", days=1), self.row("resume", "TASK-1", "a", minutes=5)]
+        self.write(lines)
+        with mock.patch.object(router.drive.os, "replace") as rep, mock.patch.object(router.drive, "save") as save:
             router.prune(self.log, NOW)
         rep.assert_not_called()
+        save.assert_not_called()
+        self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
     def test_missing_log_is_noop(self):
         router.prune(self.log, NOW)
@@ -971,8 +999,17 @@ class Tick(Base):
         sid = launch.sid
         self.assertEqual(router.RUN, os.path.join(config.ROOT, "orchestrator", "src", "run.py"))
         self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], sid, None, "new"))
-        self.assertRegex(self.state, rf"start TASK-1 session={sid} role=researcher\n$")
+        self.assertEqual(self.last_run(), ("start", "TASK-1", sid, "researcher"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_begin_appends_one_json_line_to_runs_jsonl(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        with mock.patch.object(drive, "stamp", return_value="2026-10-09T00:26:33-04:00"):
+            self.tick(fake, "--now", hour=12)
+        (launch,) = self.sh.launches()
+        self.assertEqual(self.state, '{"ts": "2026-10-09T00:26:33-04:00", "kind": "start", "issue": "TASK-1", '
+                                     f'"sid": "{launch.sid}", "role": "researcher"}}\n')
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
 
     def test_live_sessions_exact_names(self):
         sh = FakeShell(["agent-pm-engineer-TASK-2", "agent-pm-engineer-TASK-10", "agent-pm-researcher-TASK-1", "agent-pm-pm-TASK-6",
@@ -1173,10 +1210,9 @@ class Tick(Base):
         self.resumable("TASK-1", "a", 60)
         self.tick(fake)
         self.assertEqual([c for c in self.sh.calls if c[0] == "claude"], [router.PROBE])
-        self.assertNotIn(" n=", self.state.splitlines()[-1])
         (launch,) = self.sh.launches()
         self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), None, "resume"))
-        self.assertTrue(self.state.endswith("resume TASK-1 session=a role=researcher\n"))
+        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
@@ -1200,11 +1236,7 @@ class Tick(Base):
                 self.assertEqual(self.tick(fake, shell=shell), 0)
                 self.assertEqual(self.said()[-1], f"launch TASK-1 (Deep Research) {end}")
                 (launch,) = self.sh.launches()
-                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", launch.sid, "researcher") + "\n"))
-
-    def test_start_line(self):
-        sid = self.sid("a")
-        self.assertEqual(router.start_line("TASK-1", sid, "researcher"), f"start TASK-1 session={sid} role=researcher")
+                self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher"))
 
     def test_resume_finds_the_transcript_under_the_recorded_cwd(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
@@ -1243,7 +1275,7 @@ class IssueFlag(Base):
         (launch,) = self.sh.launches()
         self.assertEqual(launch, outer_args("TASK-4", IDS[PD], ROLE["engineer"], launch.sid, None, "new"))
         self.assertRegex(launch.sid, config.UUID_RE)
-        self.assertTrue(self.state.endswith(" " + router.start_line("TASK-4", launch.sid, "engineer") + "\n"))
+        self.assertEqual(self.last_run(), ("start", "TASK-4", launch.sid, "engineer"))
         self.assertIn("TASK-8", self.state)
         self.assertEqual(self.sh.calls, [LIST, ("launch", launch)])
         self.assertEqual({i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
@@ -1276,11 +1308,11 @@ class IssueFlag(Base):
         self.assertEqual(self.said(), ["plan: resume TASK-1 session=a"])
         (launch,) = self.sh.launches()
         self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), None, "resume"))
-        self.assertTrue(self.state.endswith(" resume TASK-1 session=a role=researcher\n"))
+        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
         self.assertEqual((fake.mutations, self.probes()), ([], 0))
 
     def nothing_resumable(self):
-        """(name, issue, runs.log lines and transcripts, said, state, comment) per kind of In Progress issue Recover
+        """(name, issue, runs.jsonl lines and transcripts, said, state, comment) per kind of In Progress issue Recover
         settles without resuming; the last two inside Recover's time windows."""
         def capped():
             for m in (390, 380, 370, 360):
@@ -1405,7 +1437,7 @@ class TuiTick(Base):
                 (launch,) = self.sh.launches()
                 self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, None, "new",
                                                     "tui", split, split_from, ev))
-                self.assertTrue(self.state.endswith(" " + router.start_line("TASK-1", launch.sid, "researcher") + "\n"))
+                self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher"))
                 self.assertEqual(self.layout, [mock.call(split, split_from)])
                 self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
                 self.assertEqual(os.path.exists(events), ev is not None)
@@ -1419,7 +1451,7 @@ class TuiTick(Base):
                 self.tui_tick(fake, *argv)
                 (launch,) = self.sh.launches()
                 self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from), ("resume", "tui", "below", None))
-                self.assertTrue(self.state.endswith(" resume TASK-1 session=a role=researcher\n"))
+                self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
 
     def test_dry_run_launches_nothing(self):
         for argv, said in ((("--tui", "--dry-run", "--now"), ["plan: new (1 in queue)", "pick: TASK-1 (1 in queue)"]),
@@ -1501,8 +1533,8 @@ class TaskLabels(Base):
         self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"])
         self.assertIn("claim: TASK-1 bad task label; In Review", self.said())
         self.assertEqual(self.launched(), "TASK-2")
-        self.assertEqual([line.split()[2:4] for line in self.state.splitlines()], [["start", "TASK-2"]])
-        self.assertTrue(self.state.endswith(" role=researcher\n"))
+        self.assertEqual(len(self.state.splitlines()), 1)
+        self.assertEqual(self.last_run(), ("start", "TASK-2", self.sh.launches()[0].sid, "researcher"))
 
     def test_capped_and_bad_label_todo_skipped_for_the_next(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher", priority=1),
@@ -1587,29 +1619,25 @@ class TaskLabels(Base):
         self.tick(fake)
         (launch,) = self.sh.launches()
         self.assertEqual((launch.sid, launch.task, launch.mode), (self.sid("a"), None, "resume"))
-        self.assertTrue(self.state.endswith(" resume TASK-1 session=a role=researcher\n"))
+        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
         self.assertIn("plan: resume TASK-1 session=a", self.said())
 
     def test_fr22_a_logged_role_not_the_assignees_goes_to_review(self):
-        """Another role's line, or an old `task=` line, which logs none."""
-        for role, project, line, logged in (("engineer", PD, " role=researcher", "researcher"),
-                                            ("researcher", DR, " task=deep-research", "none logged")):
-            self.lines, self.hist = [], {}
-            fake = FakeLinear([issue("TASK-1", "In Progress", role, project=project)], self.hist)
-            self.resumable("TASK-1", "a", 60)
-            self.lines[-1] = self.lines[-1].replace(" role=researcher", line)
-            before = self.unmap("\n".join(self.lines) + "\n")
-            self.tick(fake)
-            t = fake.issues["TASK-1"]
-            self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
-                             ("In Review", who(role), [f"The interrupted agent run's role ({logged}) is not the assignee's "
-                                                       f"({role}); needs a look."], ["me@x.com"]), role)
-            self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1"), ("issueUpdate", "TASK-1"),
-                                            ("commentCreate", "TASK-1")], role)
-            self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"], role)
-            self.assertEqual(self.said(), [f"recover: TASK-1 role ({logged}) is not the assignee's ({role}); In Review",
-                                           "plan: nothing to do", "skip: nothing to do"], role)
-            self.assertEqual((self.sh.launches(), self.state), ([], before), role)
+        role = "engineer"
+        fake = FakeLinear([issue("TASK-1", "In Progress", role, project=PD)], self.hist)
+        self.resumable("TASK-1", "a", 60)
+        before = self.unmap("\n".join(self.lines) + "\n")
+        self.tick(fake)
+        t = fake.issues["TASK-1"]
+        self.assertEqual((t["state"], t["assignee"], t["comments"], t["subscribers"]),
+                         ("In Review", who(role), ["The interrupted agent run's role (researcher) is not the "
+                                                   "assignee's (engineer); needs a look."], ["me@x.com"]))
+        self.assertEqual(writes(fake), [("issueSubscribe", "TASK-1"), ("read", "TASK-1"), ("issueUpdate", "TASK-1"),
+                                        ("commentCreate", "TASK-1")])
+        self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"])
+        self.assertEqual(self.said(), ["recover: TASK-1 role (researcher) is not the assignee's (engineer); In Review",
+                                       "plan: nothing to do", "skip: nothing to do"])
+        self.assertEqual((self.sh.launches(), self.state), ([], before))
 
     def test_fr22_every_resumable_issue_is_checked(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", priority=1),
@@ -1629,7 +1657,7 @@ class TaskLabels(Base):
         self.assertIn("claim: TASK-1 role=researcher task=light-research", self.said())
         (launch,) = self.sh.launches()
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
-        self.assertTrue(self.state.endswith(" role=researcher\n"))
+        self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
 
@@ -2015,7 +2043,7 @@ class AttendedEntry(OuterBase):
         self.addCleanup(p.stop)
 
     def sh(self, argv, **kw):
-        """RunBase's, noting runs.log's text when the driver session starts."""
+        """RunBase's, noting runs.jsonl's text when the driver session starts."""
         if argv[1] == "new-session":
             self.at_launch.append(self.read(self.runs))
         return super().sh(argv, **kw)
@@ -2030,6 +2058,17 @@ class AttendedEntry(OuterBase):
 
     def entry(self, *extra):
         return self.main(["--issue", ID, "--tui", *extra])
+
+    def started(self):
+        """The sid of runs.jsonl's one line, the start of ID as engineer; no runs.log beside it."""
+        (line,) = self.read(self.runs).splitlines()
+        record = json.loads(line)
+        datetime.fromisoformat(record.pop("ts"))
+        sid = record.pop("sid")
+        self.assertRegex(sid, config.UUID_RE)
+        self.assertEqual(record, {"kind": "start", "issue": ID, "role": "engineer"})
+        self.assertNotIn("runs.log", os.listdir(os.path.dirname(self.runs)))
+        return sid
 
     def said(self):
         return [TS.sub("", line) for line in self.err.splitlines()]
@@ -2048,10 +2087,7 @@ class AttendedEntry(OuterBase):
                     os.remove(self.runs)
                 self.at_launch = []
                 self.assertEqual(self.entry(*extra), 0)
-                (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
-                sid = line.split(" ")[2].removeprefix("session=")
-                self.assertRegex(sid, config.UUID_RE)
-                self.assertEqual(line, router.start_line(ID, sid, "engineer"))
+                sid = self.started()
                 self.assertEqual(self.at_launch, [self.read(self.runs)])
                 self.assertEqual(self.sh_calls[:-1], [(LIST, {"capture_output": True, "text": True})])
                 self.assertEqual(self.handover(iterm=iterm),
@@ -2065,9 +2101,7 @@ class AttendedEntry(OuterBase):
         self.write(self.config, RUN_CONFIG + f'[task_labels]\nlight-build = "{LIGHT}"\n')
         self.todo["labels"], self.at_launch = [label("Light Build", LIGHT)], []
         self.assertEqual(self.entry("--split-from", "dev"), 0)
-        (line,) = [TS.sub("", x) for x in self.read(self.runs).splitlines()]
-        sid = line.split(" ")[2].removeprefix("session=")
-        self.assertEqual(line, router.start_line(ID, sid, "engineer"))
+        sid = self.started()
         self.assertEqual(self.handover(), inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build", sid=sid),
                                                 "--runner=tui", "--split-from=dev"))
         self.assertIn("claim: TASK-7 role=engineer task=light-build", self.said())

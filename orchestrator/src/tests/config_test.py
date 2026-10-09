@@ -669,7 +669,7 @@ class WorkDir(ConfigFile, unittest.TestCase):
     def test_unset_is_in_home(self):
         work = os.path.realpath(os.path.expanduser("~/.agent-pm"))
         self.assertEqual((config.WORK_DIR, config.RUNS_DIR, config.LOGS_DIR, config.RUNS_LOG),
-                         (work, work + "/work", work + "/logs", work + "/logs/runs.log"))
+                         (work, work + "/work", work + "/logs", work + "/logs/runs.jsonl"))
         home = os.path.realpath(self.dir)
         with mock.patch.dict(os.environ, {"HOME": home}):
             self.assertEqual(config.work_dir({}, os.path.join(home, "repo")), home + "/.agent-pm")

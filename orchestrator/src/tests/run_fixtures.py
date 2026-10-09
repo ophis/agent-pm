@@ -139,13 +139,14 @@ class Base(unittest.TestCase):
         os.symlink(config.CORE, os.path.join(self.root, "core"))
         self.config = os.path.join(self.root, "orchestrator", "config.toml")
         self.write(self.config, CONFIG)
+        self.runs = os.path.join(self.root, "logs", "runs.jsonl")
         for p in (mock.patch.object(config, "RUNS_DIR", os.path.join(self.root, "work")),
-                  mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")), mock.patch.dict(os.environ)):
+                  mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")),
+                  mock.patch.object(config, "RUNS_LOG", self.runs), mock.patch.dict(os.environ)):
             p.start()
             self.addCleanup(p.stop)
         os.environ.pop("TUI_ATTACH_PREFIX", None)
         self.rd = os.path.join(self.root, "work", ID)
-        self.runs = os.path.join(self.root, "logs", "runs.log")
         self.projects = os.path.join(self.tmp, "projects")
         self.gql = Gql(node(comments=[USER_NOTE]))
         self.run = Run(ENG_RUN)

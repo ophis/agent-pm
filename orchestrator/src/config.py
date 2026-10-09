@@ -48,7 +48,7 @@ def work_dir(cfg, root=ROOT, clones=None):
 
 WORK_DIR = work_dir(repo.read_config(CONFIG, LOCAL))
 RUNS_DIR, LOGS_DIR = os.path.join(WORK_DIR, "work"), os.path.join(WORK_DIR, "logs")
-RUNS_LOG = os.path.join(LOGS_DIR, "runs.log")
+RUNS_LOG = os.path.join(LOGS_DIR, "runs.jsonl")
 
 
 def session(role, issue):

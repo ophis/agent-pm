@@ -21,14 +21,14 @@ import attended  # noqa: E402
 import router  # noqa: E402
 import sessions  # noqa: E402
 import writeback  # noqa: E402
-from config import PATH, ROOT, RUNS_LOG, UUID_RE, repo_slug, run_dir  # noqa: E402
+from config import PATH, ROOT, UUID_RE, repo_slug, run_dir  # noqa: E402
 from linear import ISSUE_ID, linear_gql, one_line  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
 
-def inner(a, *, layout, gql, popen, runs, root):
+def inner(a, *, layout, gql, popen, root):
     """In tmux, cwd <work_dir>/work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to the end lines.
     `layout` is the tui runner's, None for headless."""
     os.environ["PATH"] = PATH
@@ -45,9 +45,8 @@ def inner(a, *, layout, gql, popen, runs, root):
         plog = e.plog if isinstance(e, router.Setup) else None
         print(f"run.py: {e.msg if isinstance(e, router.Setup) else e.code if isinstance(e, SystemExit) else one_line(e)}",
               file=sys.stderr)
-        line = f"end {a.issue} session={a.sid} exit=1"
-        for path in (runs, plog) if plog else (runs,):
-            router.append_quiet(path, line)
+        if plog:
+            router.append_quiet(plog, f"end {a.issue} session={a.sid} exit=1")
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
     router.append_quiet(plog, f"launch {a.issue} mode={a.mode} session={a.sid}")
@@ -79,9 +78,7 @@ def inner(a, *, layout, gql, popen, runs, root):
         else:
             router.append_quiet(plog, f"run-error {a.issue}: {one_line(e)}")
     finally:
-        line = f"end {a.issue} session={a.sid} exit={rc}"
-        router.append_quiet(plog, line)
-        router.append_quiet(runs, line)
+        router.append_quiet(plog, f"end {a.issue} session={a.sid} exit={rc}")
         if result and result.outcome:
             writeback.finish(ctx, result.outcome)
         else:
@@ -91,7 +88,7 @@ def inner(a, *, layout, gql, popen, runs, root):
     return 0
 
 
-def main(argv, *, gql=linear_gql, popen=subprocess.Popen, runs=RUNS_LOG, root=ROOT):
+def main(argv, *, gql=linear_gql, popen=subprocess.Popen, root=ROOT):
     ap = argparse.ArgumentParser(prog="run.py")
     for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--input"):
         ap.add_argument(f, required=True)
@@ -119,7 +116,7 @@ def main(argv, *, gql=linear_gql, popen=subprocess.Popen, runs=RUNS_LOG, root=RO
     except compose.ConfigError as e:
         print(f"run.py: {e}", file=sys.stderr)
         return 2
-    return inner(a, layout=layout, gql=gql, popen=popen, runs=runs, root=root)
+    return inner(a, layout=layout, gql=gql, popen=popen, root=root)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402,F401
 from board_ids import STATES  # noqa: E402
-from run_fixtures import (CONFIG, ENGINEER, ID, KEY, RESEARCHER, SID, TS, UUID, Base as RunBase, Gql,  # noqa: E402
+from run_fixtures import (CONFIG, ENGINEER, ID, KEY, RESEARCHER, SID, UUID, Base as RunBase, Gql,  # noqa: E402
                           forwarded, node)
 from attended_test import Tmux  # noqa: E402
 import config  # noqa: E402
@@ -72,7 +72,7 @@ class Base(RunBase):
     def main(self, argv):
         err = io.StringIO()
         with redirect_stderr(err):
-            rc = run.main(argv, gql=self.gql, popen=self.popen, runs=self.runs, root=self.root)
+            rc = run.main(argv, gql=self.gql, popen=self.popen, root=self.root)
         self.err = err.getvalue()
         return rc
 
@@ -102,10 +102,6 @@ class Inner(Base):
         return [find, ("comment", None, {"i": ID, "b": sessions.body(self.rec())}),
                 find, ("comment", None, {"i": ID, "b": sessions.body(self.rec(), rc, NOW)})]
 
-    def end_line(self):
-        (line,) = [x for x in self.read(self.plog_path()).splitlines() if " end " in x]
-        return line
-
     def test_build_run(self):
         """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start
         comment."""
@@ -130,7 +126,7 @@ class Inner(Base):
             "<ts> writeback TASK-7: comment",
             f"<ts> writeback TASK-7: attach:{PR}",
             "<ts> writeback TASK-7: move:in_review"])
-        self.assertEqual(self.read(self.runs), self.end_line() + "\n")
+        self.assertFalse(os.path.exists(self.runs))
         posts = self.harness(0)
         self.assertEqual(self.gql.calls, [
             *posts[:2],
@@ -169,7 +165,7 @@ class Inner(Base):
         self.assertEqual(self.inner(), 0)
         self.assertEqual(self.plog()[-2:], ["<ts> end TASK-7 session=" + SID + " exit=1",
                                             "<ts> no-outcome TASK-7: the client exited 1"])
-        self.assertEqual(self.read(self.runs), self.end_line() + "\n")
+        self.assertFalse(os.path.exists(self.runs))
         self.assertEqual(self.gql.calls, self.harness(1))
 
     def test_sighup_kills_claude(self):
@@ -324,29 +320,25 @@ class Inner(Base):
             "<ts> end TASK-7 session=" + SID + " exit=1", "<ts> no-outcome TASK-7: no result"])
         self.assertEqual(self.gql.calls, self.harness(1))
 
-    def test_step_2_errors_write_the_end_line(self):
+    def test_step_2_errors_write_the_end_line_to_the_project_log_when_the_role_is_known(self):
         cases = [(dict(assignee="x@y.com"), "run.py: 'x@y.com' is not a role account\n", None),
                  (dict(assignee=RESEARCHER, task="build"), "run.py: task 'build' is not one of researcher's "
                   "tasks (deep-research, light-research)\n", "researcher")]
         for kw, err, role in cases:
             with self.subTest(err=err):
-                os.makedirs(os.path.dirname(self.runs), exist_ok=True)
-                open(self.runs, "w").close()
                 self.assertEqual(self.inner(**kw), 1)
                 self.assertEqual(self.err, err)
-                self.assertEqual([TS.sub("<ts> ", x) for x in self.read(self.runs).splitlines()],
-                                 ["<ts> end TASK-7 session=" + SID + " exit=1"])
+                self.assertFalse(os.path.exists(self.runs))
                 if role:
                     self.assertEqual(self.plog(role), ["<ts> end TASK-7 session=" + SID + " exit=1"])
         self.assertEqual((self.gql.calls, self.popen_calls), ([], []))
 
-    def test_config_error_writes_the_end_line(self):
+    def test_config_error_writes_no_runs_line(self):
         os.remove(os.path.join(self.root, "orchestrator", "config.toml"))
         self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
         self.assertEqual(self.inner(), 1)
         self.assertTrue(self.err.startswith("run.py: orchestrator/config.toml: missing harness_key"), self.err)
-        self.assertEqual([TS.sub("<ts> ", x) for x in self.read(self.runs).splitlines()],
-                         ["<ts> end TASK-7 session=" + SID + " exit=1"])
+        self.assertFalse(os.path.exists(self.runs))
 
     def test_bad_uuid_or_target(self):
         for kw in (dict(uuid="nope"), dict(target="a/b/c")):

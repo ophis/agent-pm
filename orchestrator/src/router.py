@@ -32,7 +32,7 @@ import issues  # noqa: E402
 import linear  # noqa: E402
 import target  # noqa: E402
 import writeback  # noqa: E402
-from linear import (ISSUE_ID, STAMP, append, humans, linear_gql, log, one_line, parse_time, role_ids,  # noqa: E402
+from linear import (ISSUE_ID, append, humans, linear_gql, log, one_line, parse_time, role_ids,  # noqa: E402
                     task_group, team)
 import drive  # noqa: E402
 import tui_claude  # noqa: E402
@@ -52,8 +52,6 @@ USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] "
          "[--tui [--split right|below] [--split-from SESSION] [--events FILE]] | --brake")
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
-TS = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\b")
-LINE = re.compile(TS.pattern + r" (start|resume) (\S+) session=(\S+) (?:role=([\w-]+)|task=\S+)$")
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -62,48 +60,36 @@ Q_RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { 
 Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
-def start_line(ident, sid, role, kind="start"):
-    """The runs.log line of a new agent run, or with kind "resume" of a resumed one."""
-    return f"{kind} {ident} session={sid} role={role}"
-
-
-def local_time(s):
-    return datetime.strptime(s, STAMP).astimezone(timezone.utc)
+def parse_line(line):
+    """(utc time, kind, issue, sid, role) of a runs.jsonl start/resume line, else None."""
+    try:
+        d = json.loads(line)
+        if d["kind"] in ("start", "resume") and all(isinstance(d[k], str) for k in ("issue", "sid", "role")):
+            return datetime.fromisoformat(d["ts"]).astimezone(timezone.utc), d["kind"], d["issue"], d["sid"], d["role"]
+    except (ValueError, TypeError, KeyError):
+        pass
 
 
 def parse_log(path):
-    """(time, kind, issue, sid, role) of every start/resume line, in file order; an old `task=` line's role is None.
-    runs.log timestamps are local time."""
+    """parse_line of every line of the runs.jsonl at path that has one, in file order."""
     try:
         with open(path) as f:
             lines = f.readlines()
     except FileNotFoundError:
         return []
-    entries = []
-    for line in lines:
-        m = LINE.match(line)
-        if m:
-            entries.append((local_time(m[1]), m[2], m[3], m[4], m[5]))
-    return entries
+    return [e for line in lines if (e := parse_line(line))]
 
 
 def prune(path, now):
-    """Drop lines older than KEEP; an untimestamped line takes the time of the nearest earlier timestamped one."""
+    """Drops the lines older than KEEP and those parse_log skips; rewrites the file only then."""
     try:
         with open(path) as f:
             lines = f.readlines()
     except FileNotFoundError:
         return
-    keep, ts = [], None
-    for line in lines:
-        m = TS.match(line)
-        if m:
-            ts = local_time(m[1])
-        if ts and ts >= now - KEEP:
-            keep.append(line)
-    if len(keep) == len(lines):
-        return
-    drive.save(path, "".join(keep))
+    keep = [line for line in lines if (e := parse_line(line)) and e[0] >= now - KEEP]
+    if len(keep) < len(lines):
+        drive.save(path, "".join(keep))
 
 
 def latest_sid(entries, issue):
@@ -312,7 +298,7 @@ class Board:
 
     def settle(self, issue, sid, wait=True):
         """Recover's decision for one In Progress issue without a live session, sid its current_sid: True to resume sid,
-        else False, having acted (the attempts cap or a logged role, None too, not the assignee's → In Review; no sid or
+        else False, having acted (the attempts cap or a logged role not the assignee's → In Review; no sid or
         no transcript → Todo). wait (the tick's) leaves the issue alone while its latest transcript changed within
         LIVE, a sid without a transcript until LIVE after its last line, and no sid until STALE after the last update;
         --issue trusts tmux ls."""
@@ -323,10 +309,10 @@ class Board:
             log(f"recover: {ident} reached {CAP} attempts; In Review")
             self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover:")
         elif sid and has_transcript(self.tdir, ident, sid):
-            role, logged = self.role(issue), next((e[4] for e in reversed(self.entries) if e[3] == sid), None)
+            role, logged = self.role(issue), next(e[4] for e in reversed(self.entries) if e[3] == sid)
             if logged == role:
                 return True
-            why = f"role ({logged or 'none logged'}) is not the assignee's ({role})"
+            why = f"role ({logged}) is not the assignee's ({role})"
             log(f"recover: {ident} {why}; In Review")
             self.comment_and_move(issue, f"The interrupted agent run's {why}; needs a look.",
                                   "in_review", "in_progress", "recover:")
@@ -546,9 +532,10 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
 
 
 def begin(mode, issue, sid, role, task, opts, runs):
-    """Logs the agent run's start (mode new) or resume line in runs.log; returns the outer's arguments."""
+    """Appends the agent run's start (mode new) or resume line to runs.jsonl; returns the outer's arguments."""
     ident = issue["identifier"]
-    append(runs, start_line(ident, sid, role, "resume" if mode == "resume" else "start"))
+    os.makedirs(os.path.dirname(runs), exist_ok=True)
+    drive.note(runs, "resume" if mode == "resume" else "start", issue=ident, sid=sid, role=role)
     return argparse.Namespace(issue=ident, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
                               task=task, mode=mode, runner="tui" if opts["tui"] else "headless", split=opts["split"],
                               split_from=opts["split_from"], events=opts["events"])
