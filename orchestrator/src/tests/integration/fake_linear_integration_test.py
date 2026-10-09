@@ -147,14 +147,14 @@ class Served(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "^issueUpdate: success: false$"):
                     linear.move(eng, "TASK-7", STATES["in_review"], STATES["in_progress"])
                 self.fake.fail("linear.M_SUBSCRIBE", "503")
-                with self.assertRaises(urllib.error.HTTPError) as cm:
+                with self.assertRaises(linear.Unavailable) as cm:
                     linear.call(eng, linear.M_SUBSCRIBE, "issueSubscribe", i="TASK-7", e="me@x.com")
-                cm.exception.close()
-                self.assertEqual(cm.exception.code, 503)
+                self.assertEqual(str(cm.exception), "issueSubscribe: HTTP 503")
                 self.fake.fail("linear.Q_ISSUE_STATE", "hang", seconds=3)
                 start = time.monotonic()
-                with self.assertRaises(TimeoutError):
+                with self.assertRaises(linear.Unavailable) as cm:
                     eng(linear.Q_ISSUE_STATE, timeout=1, i="TASK-7")
+                self.assertEqual(str(cm.exception), "issue: TimeoutError: timed out")
                 self.assertLess(time.monotonic() - start, 2.5)
                 self.assertEqual(self.log(), [("linear.M_COMMENT", ENGINEER_EMAIL, "error"),
                                               ("linear.Q_ISSUE_STATE", ENGINEER_EMAIL, "ok"),

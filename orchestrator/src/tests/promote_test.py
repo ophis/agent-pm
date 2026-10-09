@@ -16,6 +16,7 @@ import linear  # noqa: E402
 import promote  # noqa: E402
 import sessions  # noqa: E402
 from run_fixtures import logged, show  # noqa: E402
+from outage import FAILURES, FIELDS, failing  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
@@ -137,14 +138,16 @@ class Base(unittest.TestCase):
             f.write(text)
         return path
 
-    def run_main(self, *argv, pruner=FakePruner):
-        """promote.main; self.out: the events it logged or (dry) copied to stderr, one show() a line."""
+    def run_main(self, *argv, pruner=FakePruner, gql=None):
+        """promote.main with gql (default self.fake); self.out: the events it logged or (dry) copied to stderr, one show()
+        a line; self.err: its stderr."""
         FakePruner.calls.clear()
         before, err, out = len(logged(self.logs)), io.StringIO(), io.StringIO()
         with redirect_stderr(err), redirect_stdout(out):
-            rc = promote.main(list(argv), gql=self.fake, now=NOW, config=self.config, pruner=pruner)
+            rc = promote.main(list(argv), gql=gql or self.fake, now=NOW, config=self.config, pruner=pruner)
         self.assertEqual(out.getvalue(), "")  # launchd's stdout is the log too
-        copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
+        self.err = err.getvalue()
+        copies = [json.loads(line) for line in self.err.splitlines() if line.startswith("{")]
         self.out = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
         return rc
 
@@ -560,6 +563,68 @@ class TestConfigError(Base):
                 events = logged(self.logs)[before:]
                 self.assertEqual([(e["src"], show(e)) for e in events], [("promote", f"config-error reason={reason}")])
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
+
+
+class Outage(Base):
+    """Linear unavailable: promote stops at the first failure, one linear-error a day, exit 1, no bounce, no prune."""
+    def test_a_failure_at_setup_is_one_linear_error_a_day(self):
+        src = self.ready()
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                for said in (f"linear-error op=teams {FIELDS[name]}", ""):
+                    gql = failing(error)
+                    self.assertEqual(self.run_main(gql=gql), 1)
+                    self.assertEqual((self.out, self.err, FakePruner.calls), (said, "", []))
+                    self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})])
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual((self.run_main(), src["state"]), (0, "Done"))
+
+    def test_a_dry_run_prints_it_and_writes_nothing(self):
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                self.assertEqual(self.run_main("--dry-run", gql=failing(error)), 1)
+                self.assertEqual((self.out, len(self.err.splitlines()), FakePruner.calls),
+                                 (f"linear-error op=teams {FIELDS[name]}", 1, []))
+        self.assertFalse(os.path.exists(self.logs))
+
+    def test_a_failure_on_a_later_issue_stops_the_run(self):
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                self.fake = fake = FakeLinear()
+                first, later = self.ready("DR-1", handoff=90), self.ready("DR-2", handoff=90)
+                down = failing(error, gql=fake, ops={"issue"})
+                self.assertEqual(self.run_main(gql=lambda q, **v: (down if v.get("i") == "DR-2" else fake)(q, **v)), 1)
+                self.assertEqual((self.out, self.err, FakePruner.calls), (f"linear-error op=issue {FIELDS[name]}", "", []))
+                self.assertIn((promote.Q_DETAIL, {"i": "DR-1"}), fake.calls)
+                self.assertEqual(down.failed, [(promote.Q_DETAIL, {"i": "DR-2"})])
+                self.assertEqual((first["state"], later["state"], fake.mutations), ("Handoff", "Handoff", []))
+
+    def test_a_failure_mid_promote_past_grace_bounces_nothing_and_the_next_run_promotes_once(self):
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                self.fake = FakeLinear()
+                src = self.ready(handoff=90)
+                gql = failing(error, gql=self.fake, ops={"issueRelationCreate"})
+                self.assertEqual(self.run_main(gql=gql), 1)
+                self.assertEqual((self.out, self.err, FakePruner.calls),
+                                 (f"linear-error op=issueRelationCreate {FIELDS[name]}", "", []))
+                self.assertEqual((src["state"], src["relations"], "posted" in src), ("Handoff", [], False))
+                self.assertEqual((self.run_main(), self.out), (0, "promote DR-1 to=C-1"))
+                (child,) = self.fake.children.values()
+                self.assertEqual((src["state"], src["relations"], src["posted"]), ("Done", [child["id"]], ["Promoted to C-1."]))
+                self.assertEqual([q for q, _ in self.fake.mutations],
+                                 [promote.M_CREATE, promote.M_RELATE, linear.M_STATE, linear.M_COMMENT])
+
+    def test_a_failure_bouncing_a_failed_handoff_stops_the_run(self):
+        for name, error in FAILURES.items():
+            with self.subTest(failure=name):
+                self.fake = FakeLinear()
+                src = self.ready(handoff=90)
+                self.fake.fail[promote.M_CREATE] = "create failed"
+                self.assertEqual(self.run_main(gql=failing(error, gql=self.fake, ops={"issueUpdate"})), 1)
+                self.assertEqual(self.out.splitlines(), ["handoff-error DR-1 error=SystemExit: linear api error: create failed",
+                                                         f"linear-error op=issueUpdate {FIELDS[name]}"])
+                self.assertEqual((src["state"], "posted" in src, self.err, FakePruner.calls), ("Handoff", False, "", []))
 
 
 class TestPath(Base):
