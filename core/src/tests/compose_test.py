@@ -1,13 +1,17 @@
 import glob
+import io
 import os
 import re
+import shlex
 import shutil
 import sys
 import tempfile
 import textwrap
 import tomllib
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import replace
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
@@ -41,14 +45,18 @@ CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 RUN = replace(PARAMS, out="/runs/W-1/out.md", workdir="/runs/W-1")   # a workdir no other prompt text holds
 
-WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\nUnsure → `short-note`.\n\n- `short-note`: a note; most times; light.\n"
-          "- `long-note`: a long note; when asked; heavy.\n\n## Style\n\n- `draft`: not a task.\n")
+INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
+WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +
+          "- `short-note` (`<tasks>/short-note.md`): a note; most times; light.\n"
+          "- `long-note` (`<tasks>/long-note.md`): a long note; when asked; heavy.\n\n"
+          "## Style\n\n- `draft`: not a task.\n")
 FILES = {
     "team/guide.md": ("# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"
                       "On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task's.\n"),
     "team/principles.md": "# Principles\n",
     "team/roles/writer.md": WRITER,
-    "team/roles/editor.md": "# Editor\n\nEdit well.\n\n## Tasks\n\n- `long-note`: a long note; always; heavy.\n",
+    "team/roles/editor.md": ("# Editor\n\nEdit well.\n\n## Tasks\n\n" + INTRO.format("long-note") +
+                             "- `long-note` (`<tasks>/long-note.md`): a long note; always; heavy.\n"),
     "team/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
     "team/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
     "team/templates/note.md": "# Note: [Title]\n",
@@ -205,18 +213,44 @@ class Resolve(Fake):
 
 
 class Index(Fake):
-    def test_the_tasks_section_lists_each_task_and_its_line_in_order(self):
+    def test_the_tasks_section_lists_each_task_and_its_description_in_order(self):
         self.assertEqual(list(compose.index(self.root, "writer").items()),
                          [("short-note", "a note; most times; light."), ("long-note", "a long note; when asked; heavy.")])
         self.assertEqual(list(compose.index(self.root, "editor")), ["long-note"])
 
     def test_no_tasks_section_or_an_empty_one(self):
-        for text in ("# Writer\n\nWrite well.\n", "# Writer\n\n## Tasks\n\nUnsure → `x`.\n\n## Style\n\n- `short-note`: a.\n"):
+        for text in ("# Writer\n\nWrite well.\n", "# Writer\n\n## Tasks\n\n" + INTRO.format("x") +
+                     "## Style\n\n- `short-note` (`<tasks>/short-note.md`): a.\n"):
             with self.subTest(text=text):
                 self.write({"team/roles/writer.md": text})
                 with self.assertRaisesRegex(compose.ConfigError, r"roles/writer\.md: no task index"):
                     compose.index(self.root, "writer")
                 self.fails("roles/writer.md: no task index")
+
+    def test_a_task_path_other_than_its_file(self):
+        line = "- `long-note` (`<tasks>/long-note.md`): "
+        for path, wrong in (("`<tasks>/long.md`", "'<tasks>/long.md'"),
+                            ("`tasks/long-note.md`", "'tasks/long-note.md'"),
+                            ("`<tasks>/short-note.md`", "'<tasks>/short-note.md'"), (None, "''")):
+            with self.subTest(path=path):
+                new = "- `long-note`: " if path is None else f"- `long-note` ({path}): "
+                self.write({"team/roles/writer.md": WRITER.replace(line, new)})
+                msg = f"roles/writer.md: 'long-note' has path {wrong}, not '<tasks>/long-note.md'"
+                with self.assertRaisesRegex(compose.ConfigError, re.escape(msg)):
+                    compose.index(self.root, "writer")
+                self.fails(msg, task="short-note")
+
+    def test_a_default_unlisted_with_a_wrong_path_or_missing(self):
+        intro = INTRO.format("short-note")
+        for new, msg in ((INTRO.format("essay"), "the default 'essay' is not a listed task"),
+                         (intro.replace("`<tasks>/short-note.md`", "`<tasks>/note.md`"),
+                          "'short-note' has path '<tasks>/note.md', not '<tasks>/short-note.md'"),
+                         ("Pick the task below that fits the input.\n\n", "## Tasks opens without its default"),
+                         ("", "## Tasks opens without its default")):
+            with self.subTest(new=new):
+                self.write({"team/roles/writer.md": WRITER.replace(intro, new)})
+                with self.assertRaisesRegex(compose.ConfigError, re.escape(f"roles/writer.md: {msg}")):
+                    compose.index(self.root, "writer")
 
     def test_a_listed_task_without_its_file(self):
         os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
@@ -365,7 +399,8 @@ class Prompt(Fake):
         self.assertIn("On conflict: [Principles](#principles) > [Writer rules](#writer) > your task's.", guide)
         self.assertEqual(prompt.count("On conflict:"), 1)
         prompt, _ = self.compose(task="long-note")
-        self.assertIn("You are Writer. Task: `long-note`; files in", prompt.split("# Principles", 1)[0])
+        self.assertIn("You are Writer. Task: `long-note` (`<tasks>/long-note.md`); files in",
+                      prompt.split("# Principles", 1)[0])
 
     def test_no_task_text_reaches_the_prompt(self):
         for task in (None, "short-note", "long-note"):
@@ -478,6 +513,143 @@ class Prompt(Fake):
             with self.subTest(name=name):
                 self.write({"team/roles/writer.md": WRITER + f"\nUse `{{{{{name}}}}}`.\n"})
                 self.fails(f"unfilled placeholder {{{{{name}}}}} in roles/writer.md")
+
+
+def own_text(prompt):
+    """`prompt` up to and including its # Input heading line: the input text, always last, is dropped."""
+    return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
+
+
+def heading_anchors(prompt):
+    """The anchor of each heading of the prompt's own text, in order."""
+    return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
+
+
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
+TASK_FILE = re.compile(r"`<tasks>/(<task>|[\w-]+)\.md`")
+SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
+
+
+def task_path(after, paths):
+    """The longest of `paths` (tuples of titles) that `after`, the text following a task file's code span, opens with
+    ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
+    best = None
+    for path in paths:
+        want = " › " + " › ".join(path)
+        if after.startswith(want) and not re.match(r"\w", after[len(want):]) and (not best or len(want) > len(best)):
+            best = want
+    return best
+
+
+def reference_errors(own, tasks, methods):
+    """What is wrong with the section references of a prompt's own text `own`, the role's task files `tasks` {task:
+    text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
+    label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
+    `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
+    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task file reference, the code span
+    `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) then ` › ` and a path of each of them, their
+    `# ` title dropped, the longest that matches; (4) no `›` left once those, code spans and links are removed."""
+    outline = compose.outline(own)
+    anchors = {a for _, _, a, _ in outline if a}
+    entries = {}
+    for _, path, a, _ in outline:
+        entries.setdefault(path, set()).add(a)
+    inside = {task: {path[1:] for _, path, _, _ in compose.outline(text) if len(path) > 1}
+              for task, text in tasks.items()}
+    errors = []
+    for label, text in ({"prompt": own} | {f"tasks/{t}.md": x for t, x in tasks.items()} | dict(methods)).items():
+        for _, line in compose.unfenced(text):
+            kept, pos = [], 0
+            for m in CODE_SPAN.finditer(line):
+                kept.append(line[pos:m.start()] + " ")
+                pos = m.end()
+                if not (ref := TASK_FILE.fullmatch(m[0])) or not line.startswith(" › ", pos):
+                    continue
+                names = list(inside) if ref[1] == "<task>" else [ref[1]]
+                found = names and all(n in inside for n in names)
+                best = task_path(line[pos:], set.intersection(*(inside[n] for n in names))) if found else None
+                if not best or line[pos + len(best):].startswith(" › "):
+                    errors.append(f"{label}: no such task file path: {line.strip()}")
+                    pos = len(line)
+                    break
+                pos += len(best)
+            left = "".join(kept) + line[pos:]
+            for t, target in LINK.findall(left):
+                if target.startswith("#"):
+                    if target[1:] not in anchors:
+                        errors.append(f"{label}: no such anchor: [{t}]({target})")
+                    elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
+                        errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
+                elif not SCHEME.match(target):
+                    errors.append(f"{label}: relative link target: [{t}]({target})")
+            if "›" in LINK.sub(" ", left):
+                errors.append(f"{label}: bare reference: {line.strip()}")
+    return errors
+
+
+class Anchors(Fake):
+    def test_a_prompt_without_a_repeated_heading_has_no_id_line(self):
+        for task in (None, "long-note"):
+            self.assertNotIn("<a id", self.compose(task=task)[0], task)
+
+    def test_a_repeated_heading_gets_its_top_level_titles_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        prompt, _ = self.compose()
+        self.assertEqual(prompt.count("<a id"), 1)
+        self.assertIn('\n## Style\n\n- `draft`: not a task.\n', prompt)
+        self.assertIn('\n<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+        anchors = heading_anchors(prompt)
+        self.assertEqual(len(anchors), len(set(anchors)))
+        self.assertIn("output-style", anchors)
+
+    def test_a_third_repeat_gets_a_suffix_on_the_qualified_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n",
+                    "output/destinations/local.md": "## Style\n\nKeep it local.\n"})
+        prompt, _ = self.compose()
+        self.assertIn('<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+        self.assertIn('<a id="output-style-2"></a>\n## Style\n\nKeep it local.\n', prompt)
+        anchors = heading_anchors(prompt)
+        self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_a_link_to_a_repeated_heading_resolves_by_its_qualified_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        own = own_text(self.compose()[0])
+        for text, want in (("[Output › Style](#output-style)", True), ("[Writer › Style](#style)", True),
+                           ("[Output › Style](#style)", False), ("[Writer › Style](#output-style)", False)):
+            self.assertEqual(reference_errors(f"{own}{text}\n", {}, {}) == [], want, text)
+
+    def test_a_role_heading_input_makes_the_input_heading_input_2(self):
+        self.write({"team/roles/writer.md": WRITER + "\n## Input\n\nWhat you get.\n"})
+        prompt, _ = self.compose()
+        self.assertEqual(prompt.count("<a id"), 1)
+        self.assertTrue(prompt.endswith('\n<a id="input-2"></a>\n# Input\n\nResearch X.\n'))
+        self.assertEqual(heading_anchors(prompt).count("input"), 1)
+
+    def test_the_input_text_is_verbatim_whatever_it_repeats(self):
+        given = "## Style\n\n## Style\n\n# Input\n\n```\n## Style\n```\n"
+        prompt, _ = self.compose(input=given)
+        self.assertEqual(prompt.count("<a id"), 0)
+        self.assertTrue(prompt.endswith(f"\n# Input\n\n{given}"))
+
+    def test_a_heading_in_a_fenced_template_is_no_repeat(self):
+        self.write({"team/templates/note.md": "# Output\n\n## Style\n"})
+        prompt, _ = self.compose()
+        self.assertIn("```markdown\n# Output\n\n## Style\n```", prompt)
+        self.assertNotIn("<a id", prompt)
+
+    def test_without_an_input_section_the_whole_prompt_is_walked(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, None, client=Plain())
+        self.assertNotIn("# Input", prompt)
+        self.assertIn('\n<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
+
+    def test_a_handover_heading_repeating_one_is_made_unique_too(self):
+        self.write({"team/roles/writer.md": WRITER + "\n## Return\n\nBack.\n"})
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, PARAMS, client=Plain("Say it back."))
+        self.assertIn('\n<a id="output-return"></a>\n## Return\n\nSay it back.\n', prompt)
 
 
 class Parameters(Fake):
@@ -624,6 +796,77 @@ class Anchor(unittest.TestCase):
         self.assertEqual(compose.anchor("Template: `x.md`"), "template-xmd")
 
 
+OUTLINED = """\
+# Role
+
+<a id="custom"></a>
+## Steps
+- **Which build:** x
+1. **Done.** y
+   * **Nested**: z
+text **not** an item
+```text
+# Fenced
+**Fenced item**
+```
+~~~
+## Also fenced
+~~~
+### Deep
+**Item**
+## Other
+**Other item**
+"""
+
+
+class Outline(unittest.TestCase):
+    def test_unfenced_skips_fences_by_char_and_length(self):
+        text = "a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng"
+        self.assertEqual(compose.unfenced(text), [(0, "a"), (12, "e")])
+
+    def test_two_backticks_are_no_fence(self):
+        self.assertEqual(compose.unfenced("``\nx"), [(0, "``"), (1, "x")])
+
+    def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
+        steps = ("Role", "Steps")
+        self.assertEqual(compose.outline(OUTLINED), [
+            (0, ("Role",), "role", True),
+            (3, steps, "custom", True),
+            (4, steps + ("Which build",), "custom", False),
+            (5, steps + ("Done",), "custom", False),
+            (6, steps + ("Nested",), "custom", False),
+            (15, steps + ("Deep",), "deep", True),
+            (16, steps + ("Deep", "Item"), "deep", False),
+            (17, ("Role", "Other"), "other", True),
+            (18, ("Role", "Other", "Other item"), "other", False)])
+
+    def test_a_skipped_level_nests_under_the_last_shallower_heading(self):
+        paths = [path for _, path, _, _ in compose.outline("# A\n### B\n## C\n### D\n# E\n")]
+        self.assertEqual(paths, [("A",), ("A", "B"), ("A", "C"), ("A", "C", "D"), ("E",)])
+
+    def test_only_a_heading_of_one_to_six_hashes_and_a_space_at_the_line_start(self):
+        text = "#No space\n####### seven\n # indented\n#\n###### Six\n"
+        self.assertEqual(compose.outline(text), [(4, ("Six",), "six", True)])
+
+    def test_an_explicit_id_is_the_whole_previous_unfenced_line(self):
+        cases = {'<a id="x"></a>\n## H': "x", 'a <a id="x"></a>\n## H': "h", '<a id="x"></a>\n\n## H': "h",
+                 '```\n<a id="x"></a>\n```\n## H': "h"}
+        for text, want in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual([a for _, _, a, h in compose.outline(text) if h], [want])
+
+    def test_a_bold_item_before_any_heading_has_no_anchor(self):
+        self.assertEqual(compose.outline("**X:** y\n"), [(0, ("X",), "", False)])
+
+    def test_a_bold_item_opens_its_line(self):
+        for line in ("**X** y", "- **X**", "* **X.**", "12. **X:**", "  - **X**", "**X**: y"):
+            with self.subTest(line=line):
+                self.assertEqual([path for _, path, _, _ in compose.outline(f"# T\n{line}\n")][1:], [("T", "X")])
+        for line in ("a **X**", "-**X**", "**X", "- a **X**"):
+            with self.subTest(line=line):
+                self.assertEqual(len(compose.outline(f"# T\n{line}\n")), 1)
+
+
 with open(os.path.join(CORE, compose.CONFIG), "rb") as _f:
     ROLES = list(tomllib.load(_f)["roles"])
 ALL = [(r, t) for r in ROLES for t in compose.index(CORE, r)]
@@ -650,6 +893,32 @@ def parameter_names(role, task=None, **changes):
     return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
 
 
+TICKET = re.compile(r"TASK-\d+")   # an internal ticket id
+# The format examples shipped core text may hold: core path → its examples, each allowed once.
+TICKET_EXAMPLES = {"team/principles.md": ["(e.g. `TASK-142`)"],
+                   "skills/tmux/SKILL.md": ["`pm-TASK-9-…`", "`pm-TASK-10-…`"]}
+
+
+def tickets(root):
+    """{core path: its ticket ids beyond TICKET_EXAMPLES} of root's shipped text: team/, output/, skills/ (tests aside)
+    and config.toml."""
+    paths = [os.path.join(root, compose.CONFIG)]
+    for d in (compose.TEXT, compose.OUTPUT, "skills"):
+        for top, dirs, files in os.walk(os.path.join(root, d)):
+            dirs[:] = [x for x in dirs if x != "__pycache__"]
+            paths += [os.path.join(top, f) for f in files if not f.endswith("_test.py")]
+    found = {}
+    for path in paths:
+        rel = os.path.relpath(path, root)
+        with open(path, errors="replace") as f:
+            text = f.read()
+        for example in TICKET_EXAMPLES.get(rel, ()):
+            text = text.replace(example, "", 1)
+        if ids := TICKET.findall(text):
+            found[rel] = ids
+    return found
+
+
 GENERIC_NAME = re.compile(r"(?<![/\w])(agent-pm|autopilot):[\w-]+|\bthe [\w-]+ skill\b")
 
 
@@ -662,8 +931,9 @@ REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkou
              "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
-PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
-        "that task's file, `<tasks>/<task>.md`, and follow its steps in order.")
+PICK = ("**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
+        "wins. Read only that task's file, `<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to "
+        "sections of this prompt.")
 COMMANDS_RULE = ("- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
                  "command (no `cd`, pipe, redirect or `&&`).")
 RETURN = """Report through `report`, never in a reply:
@@ -672,11 +942,25 @@ RETURN = """Report through `report`, never in a reply:
 - **Outcome:** as your last action, after everything else is done and any background work you started has finished, run `report outcome --status <done|needs_input|failed> --title <one line> --summary <text> [--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`: `--question` and `--file` once per item; `--deliverable` a file holding the deliverable, which is read as its text. If it fails, fix it and run it again."""
 
 
+def client_prompt(name, role, task=None):
+    """The prompt of the client `name` for `role`, with RUN when that client runs, and its run."""
+    client = clients.get(name, CORE)
+    run = compose.load_run(CORE, role, task, layers=[client.config])
+    return compose.render(CORE, run, RUN if client.runs else None, client=client), run
+
+
 def claude_prompt(role, task=None):
     """The claude client's prompt for `role` with RUN, and its run."""
-    claude = clients.get("claude", CORE)
-    run = compose.load_run(CORE, role, task, layers=[claude.config])
-    return compose.render(CORE, run, RUN, client=claude), run
+    return client_prompt("claude", role, task)
+
+
+def role_sources(role, client="claude"):
+    """What `reference_errors` takes for `role` and `client`: the prompt's own text, the role's task files and the
+    method files these name."""
+    own = own_text(client_prompt(client, role)[0])
+    tasks = {t: task_text(t) for t in compose.index(CORE, role)}
+    named = sorted(set(compose.METHOD.findall(own + "".join(tasks.values()))))
+    return own, tasks, {f"methods/{m}.md": method(m) for m in named}
 
 
 class GenericNames(unittest.TestCase):
@@ -690,6 +974,62 @@ class GenericNames(unittest.TestCase):
 
     def test_slash_commands_and_workflow_names_pass(self):
         self.assertEqual(generic_names("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research"), [])
+
+
+class References(unittest.TestCase):
+    def errors(self, text):
+        """The errors in `text` as a method file beside the real engineer prompt and task files."""
+        own, tasks, methods = role_sources("engineer")
+        return [e for e in reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
+
+    def test_a_link_to_a_path_of_the_prompt_and_a_task_file_reference_pass(self):
+        for text in ("[Engineer › Repo › Merge](#repo), then", "[Engineer › Repo](#repo) step 1",
+                     "[Principles](#principles)", "[Principles › Work › Worktree](#work)",
+                     "[Engineer › Finish › Failure](#finish)", "[Output › Return](#return)",
+                     "([Engineer › Rules](#rules)' rule)",
+                     "(`<tasks>/<task>.md` › Steps › Which build picks the build)", "`<tasks>/build.md` › Steps",
+                     "[docs](https://example.com/a)", "[A › B](https://example.com/a)",
+                     "`Engineer › Repo` and ``a ` › b``",
+                     "```\nEngineer › Repo\n[x](../y.md)\n```"):
+            self.assertEqual(self.errors(text), [], text)
+
+    def test_a_wrong_reference_is_an_error(self):
+        for text in ("[Engineer › Nope](#nope)", "Engineer › Repo", "[Engineer › Repo](#finish)",
+                     "[x](../roles/engineer.md#repo)", "[x]()", "[Principles › Worktree](#work)",
+                     "[Engineer › Repo step 1](#repo)", "[Engineer › Repo](#repo) › Merge",
+                     "`<tasks>/<task>.md` › Steps › Nope", "`<tasks>/<task>.md` › Steps › Which builds",
+                     "`<tasks>/<task>.md` › Steps › Which build › Nope", "`<tasks>/<task>.md` › Nope",
+                     "`<tasks>/nope.md` › Steps", "Which build › Steps",
+                     "```\n```\nEngineer › Repo"):
+            self.assertTrue(self.errors(text), text)
+
+    def test_errors_name_the_file_and_the_offender(self):
+        errors = reference_errors("# R\n\n## S\n\nR › S\n", {"x": "# X\n\n[A](b.md)\n"},
+                                  {"m.md": "[A › B](#nope)\n"})
+        self.assertEqual(errors, ["prompt: bare reference: R › S", "tasks/x.md: relative link target: [A](b.md)",
+                                  "m.md: no such anchor: [A › B](#nope)"])
+
+    def test_a_task_file_path_must_exist_in_each_task_file_named(self):
+        tasks = {"a": "# A\n\n## Steps\n\n1. **Go:** x\n", "b": "# B\n\n## Steps\n"}
+        for text, want in (("`<tasks>/<task>.md` › Steps", True), ("`<tasks>/<task>.md` › Steps › Go", False),
+                           ("`<tasks>/a.md` › Steps › Go", True), ("`<tasks>/b.md` › Steps › Go", False)):
+            self.assertEqual(reference_errors("# R\n", tasks, {"m": text}) == [], want, text)
+
+class Tickets(unittest.TestCase):
+    def test_an_id_beyond_the_examples_is_caught(self):
+        with tempfile.TemporaryDirectory() as root:
+            for rel, text in {"team/roles/x.md": "when asked, e.g. a wording tweak like TASK-300; light.",
+                              "team/principles.md": "the id (e.g. `TASK-142`); twice (e.g. `TASK-142`)",
+                              "output/output.md": "the id (e.g. `TASK-142`)",
+                              "skills/tmux/SKILL.md": "(`pm-TASK-9-…` before `pm-TASK-10-…`)",
+                              "skills/tmux/scripts/x_test.py": "TASK-1", "skills/tmux/scripts/x.py": "# TASK-2",
+                              "config.toml": "# like TASK-7"}.items():
+                os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+                with open(os.path.join(root, rel), "w") as f:
+                    f.write(text)
+            self.assertEqual(tickets(root), {"team/roles/x.md": ["TASK-300"], "team/principles.md": ["TASK-142"],
+                                             "output/output.md": ["TASK-142"], "skills/tmux/scripts/x.py": ["TASK-2"],
+                                             "config.toml": ["TASK-7"]})
 
 
 class RealCore(unittest.TestCase):
@@ -746,16 +1086,27 @@ class RealCore(unittest.TestCase):
         for role, default in defaults.items():
             with open(os.path.join(CORE, "team", "roles", f"{role}.md")) as f:
                 text = f.read()
-            self.assertTrue(text.split("\n## ")[1].startswith(f"Tasks\n\nUnsure → `{default}`.\n\n- `"), role)
+            self.assertTrue(text.split("\n## ")[1].startswith(f"Tasks\n\n{INTRO.format(default)}- `"), role)
             self.assertIn(default, compose.index(CORE, role), role)
-            for line in compose.index(CORE, role).values():
+            for t, line in compose.index(CORE, role).items():
+                self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", text, role)
                 self.assertRegex(line, r"; (light|heavy)\.$", role)
         self.assertEqual(sorted(t for _, t in ALL), sorted(f.removesuffix(".md") for f in os.listdir(TASKS)))
 
-    def test_engineers_index_gives_the_users_examples(self):
+    def test_shipped_text_has_no_ticket_id_but_the_format_examples(self):
+        self.assertEqual(tickets(CORE), {})
+        for rel, examples in TICKET_EXAMPLES.items():
+            with open(os.path.join(CORE, rel)) as f:
+                text = f.read()
+            for example in examples:
+                self.assertEqual(text.count(example), 1, (rel, example))
+
+    def test_engineers_tasks_name_their_skill_by_slash_command(self):
         tasks = compose.index(CORE, "engineer")
-        self.assertIn("e.g. a PRD feature spanning several modules like TASK-227", tasks["build"])
-        self.assertIn("e.g. a template or wording tweak like TASK-226", tasks["light-build"])
+        for t in ("build", "light-build"):
+            self.assertIn(f" with `/autopilot:{t}` (", tasks[t])
+            self.assertIn(f"`/autopilot:{t}`", task_text(t))
+            self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
     def test_task_files_have_no_frontmatter_no_placeholder_and_one_start_mark(self):
         # The start mark: the root CLAUDE.md › Gotchas.
@@ -784,6 +1135,17 @@ class RealCore(unittest.TestCase):
             self.assertNotIn("{{", prompt, (role, task))
             self.assertEqual(run.task, task or "")
 
+    def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
+        for role in ROLES:
+            for client in clients.REGISTRY:
+                self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
+
+    def test_every_prompts_own_headings_have_unique_anchors(self):
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            for client in clients.REGISTRY:
+                anchors = heading_anchors(client_prompt(client, role, task)[0])
+                self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
+
     def test_every_prompt_opens_with_the_guide(self):
         for role, task in [(r, None) for r in ROLES] + ALL:
             prompt, run = composed(role, task)
@@ -806,10 +1168,12 @@ class RealCore(unittest.TestCase):
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
-        self.assertIn("**Your task**: `light-research`. Read only that task's file", named)
+        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`). Read only that task's file",
+                      named)
         self.assertNotIn("pick it from", named)
         picked = guide(composed("researcher")[0])
         self.assertIn(PICK, picked)
+        self.assertNotIn("unsure → the default it names", picked)
         self.assertIn("Your start progress report names the task and why.", picked)
         self.assertNotIn("light-research", picked)
 
@@ -817,7 +1181,7 @@ class RealCore(unittest.TestCase):
         for role, task in [(r, None) for r in ROLES] + ALL:
             prompt, _ = composed(role, task)
             for t, line in compose.index(CORE, role).items():
-                self.assertIn(f"\n- `{t}`: {line}\n", prompt, (role, task))
+                self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", prompt, (role, task))
                 for step in task_text(t).splitlines():
                     if len(step.strip()) >= 30 and not step.startswith("#"):
                         self.assertNotIn(step.strip(), prompt, (role, task, t))
@@ -864,9 +1228,10 @@ class RealCore(unittest.TestCase):
         for name in METHOD_NAMES:
             self.assertTrue(os.path.isfile(os.path.join(CORE, "team", "methods", f"{name}.md")), name)
             self.assertIn(f"`<methods>/{name}.md`", prompt)
-        for phrase in ("No such tool → follow the deep-research method (Researcher › Methods).",
-                       "per the ultracode method (Researcher › Methods)", "No Workflow tool → follow that method.",
-                       "Before the second, the brake (Researcher › Methods).",
+        for phrase in ("No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",
+                       "per the ultracode method ([Researcher › Methods](#methods))",
+                       "No Workflow tool → follow that method.",
+                       "Before the second, the brake ([Researcher › Methods](#methods)).",
                        "No subagents with a round's tools → skip that round, under Gaps."):
             self.assertIn(phrase, task_text("deep-research"))
 
@@ -941,27 +1306,40 @@ class RealCore(unittest.TestCase):
 
     def test_builds_wait_for_the_prs_checks(self):
         for task in ("build", "light-build"):
-            checks = section(composed("engineer", task)[0], "Checks")
+            done = item(section(composed("engineer", task)[0], "Finish"), "Done")
             for literal in ("`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                             "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                             "`git -C <worktree> push -u origin <branch>`", "3 fixes", "20 minutes",
-                            "Engineer › Finish › Failure"):
-                self.assertIn(literal, checks, task)
+                            "[Engineer › Finish › Failure](#finish)"):
+                self.assertIn(literal, done, task)
 
     def test_builds_merge_the_base_branch_before_autopilot_at_resume_and_before_the_pr(self):
         prompt, _ = composed("engineer")
-        self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", section(prompt, "Repo"))
-        merge = section(prompt, "Merge")
-        for literal in ("Engineer › Repo step 1", "`git -C <worktree> status`", "a merge in progress",
+        repo = section(prompt, "Repo")
+        self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", repo)
+        merge = item(repo, "Merge")
+        for literal in ("[Engineer › Repo](#repo) step 1", "`git -C <worktree> status`", "a merge in progress",
                         "`git -C <worktree> merge --no-edit origin/<base>`", "`git -C <worktree> merge --abort`"):
             self.assertIn(literal, merge)
-        for where in ("Autopilot", "Finish", "Resume"):
-            self.assertIn("Engineer › Merge", section(prompt, where), where)
+        for where, text in (("Autopilot", section(prompt, "Autopilot")), ("Finish", section(prompt, "Finish")),
+                            ("Repo › Resume", item(repo, "Resume"))):
+            self.assertIn("[Engineer › Repo › Merge](#repo)", text, where)
         self.assertIn("`origin/<base>`", section(prompt, "Autopilot"))
         for literal in ("--head <branch> --base <base> --title", "/compare/<base>...<branch>?expand=1"):
             self.assertIn(literal, prompt)
         for task in ("build", "light-build"):
-            self.assertIn("Engineer › Resume.", task_text(task), task)
+            self.assertIn("[Engineer › Repo › Resume](#repo).", task_text(task), task)
+
+    def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
+        with open(os.path.join(CORE, "team", "roles", "engineer.md")) as f:
+            charter = f.read()
+        heads = [path[1] for _, path, _, heading in compose.outline(charter) if heading and len(path) == 2]
+        self.assertEqual(heads, ["Tasks", "Rules", "Input processing", "Repo", "Autopilot", "Finish"])
+        lines = ("Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
+                 "or branch.", "Commits merged from `origin/<base>` are not this build's work.",
+                 "Skip S8; keep the commits. After <your task's push points>, run exactly "
+                 "`git -C <worktree> push -u origin <branch>`.")
+        self.assertIn("\nAdd verbatim:\n\n```\n" + "\n".join(lines) + "\n```\n", section(charter, "Autopilot"))
 
     def test_light_builds_cutoff_skips_merge_commits(self):
         self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`", task_text("light-build"))
@@ -1014,6 +1392,17 @@ class RealCore(unittest.TestCase):
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
 
+    def test_the_tmux_skills_role_listing_gives_descriptions_without_paths(self):
+        with open(os.path.join(CORE, "skills", "tmux", "SKILL.md")) as f:
+            cmd = re.search(r"`(python3 -c '.*?' \$\{CLAUDE_SKILL_DIR\}/\.\./\.\./src)`", f.read()).group(1)
+        code, src = shlex.split(cmd.replace("${CLAUDE_SKILL_DIR}", os.path.join(CORE, "skills", "tmux")))[2:]
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["-c", src]), mock.patch.object(sys, "path", list(sys.path)), \
+                redirect_stdout(out):
+            exec(code, {})
+        self.assertIn("\n  build: a PRD into a pull request with `/autopilot:build` (", out.getvalue())
+        self.assertNotIn("<tasks>", out.getvalue())
+
     def test_only_the_user_loads_the_manager_guidelines(self):
         with open(os.path.join(CORE, "skills", "manage", "SKILL.md")) as f:
             front = re.match(r"---\n(.*?)\n---\n", f.read(), re.S)
@@ -1056,6 +1445,12 @@ def rule(text, name):
 
 def section(text, name):
     m = re.search(rf"^## {name}\n(.*?)(?=^#)", text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def item(text, name):
+    """The top-level bold item `- **name**` of `text`, up to the next top-level item."""
+    m = re.search(rf"^- \*\*{re.escape(name)}\*\*(.*?)(?=^- |\Z)", text, re.M | re.S)
     return m.group(1) if m else ""
 
 

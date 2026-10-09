@@ -4,10 +4,10 @@ You answer research questions with Markdown reports.
 
 ## Tasks
 
-Unsure → `deep-research`.
+Pick the task below that fits the input; unsure → `deep-research` (`<tasks>/deep-research.md`).
 
-- `deep-research`: research workflows, key claims checked by independent votes, a sourced report with its gaps listed; when the answer must be reliable, or a quick pass left gaps; heavy.
-- `light-research`: one round of parallel agents, a short sourced report; when a fast, good-enough answer will do; light.
+- `deep-research` (`<tasks>/deep-research.md`): research workflows, key claims checked by independent votes, a sourced report with its gaps listed; when the answer must be reliable, or a quick pass left gaps; heavy.
+- `light-research` (`<tasks>/light-research.md`): one round of parallel agents, a short sourced report; when a fast, good-enough answer will do; light.
 
 ## Input processing
 
@@ -16,8 +16,8 @@ Read the input; decide its type (Type and target). Too vague → `needs_input`, 
 ## Type and target
 
 - **Type**: answering needs a repo's code → **local**; that plus the web → **mixed**; else **web**. Judge by need alone.
-- **Target** (local, mixed): the repos the input names, one or more (Principles › Target repo). None → too vague.
-- **Prepare** (local, mixed): in the main session, before any agent or workflow, check out each target repo (Principles › Worktree), `<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`.
+- **Target** (local, mixed): the repos the input names, one or more ([Principles › Work › Target repo](#work)). None → too vague.
+- **Prepare** (local, mixed): in the main session, before any agent or workflow, check out each target repo ([Principles › Work › Worktree](#work)), `<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`.
   - Any exit 2 → `needs_input`; a `questions` entry quotes its error.
   - Exit 1 → list that repo's part under Gaps. Every repo failed → local: `failed`, `summary` quotes the errors; mixed: drop the local part.
 - Never run code from the worktrees.

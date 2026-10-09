@@ -266,8 +266,8 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         with open(os.path.join(self.root, "core", config.compose.CONFIG), "w") as f:
             f.write(text + real[real.index("\n[clients."):])
 
-    def deep_research_line(self, line):
-        """Replaces the deep-research line of researcher's index in a copy of core's team text."""
+    def researcher_line(self, task, line):
+        """Replaces `task`'s line of researcher's index in a copy of core's team text."""
         team = os.path.join(self.root, "core", "team")
         os.remove(team)
         shutil.copytree(os.path.join(config.CORE, "team"), team)
@@ -275,7 +275,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         with open(path) as f:
             text = f.read()
         with open(path, "w") as f:
-            f.write(re.sub(r"^- `deep-research`: .*\n", line, text, count=1, flags=re.M))
+            f.write(re.sub(rf"^- `{task}` .*\n", line, text, count=1, flags=re.M))
 
     def runs(self, text=PIPELINE):
         return config.runnable(self.load(text), root=self.root)
@@ -286,12 +286,12 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(cm.exception.code, message)
 
     def test_tasks_are_the_roots_index(self):
-        self.deep_research_line("")
+        self.researcher_line("light-research", "")
         self.assertEqual((self.runs()["researcher"].tasks, config.role_tasks("researcher", self.root)),
-                         (("light-research",), ("light-research",)))
+                         (("deep-research",), ("deep-research",)))
 
     def test_an_index_task_without_its_file_stops_the_caller(self):
-        self.deep_research_line("- `ghost`: a task; when; light.\n")
+        self.researcher_line("light-research", "- `ghost` (`<tasks>/ghost.md`): a task; when; light.\n")
         self.fails("core: roles/researcher.md lists 'ghost' without tasks/ghost.md")
 
     def test_overlay_fills_root(self):
