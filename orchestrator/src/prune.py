@@ -37,7 +37,7 @@ from config import CLONES, RUNS_DIR  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
 import tui_claude  # noqa: E402
-from linear import HISTORY, ISSUE_ID, call, last_move, log, one_line  # noqa: E402
+from linear import HISTORY, ISSUE_ID, Unavailable, call, last_move, log, one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -192,6 +192,8 @@ class Pruner:
                 if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
                     break
                 cursor = end
+        except Unavailable:
+            raise
         except (Exception, SystemExit) as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
@@ -207,13 +209,15 @@ class Pruner:
             else:
                 try:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
+                except Unavailable:
+                    raise
                 except (Exception, SystemExit) as e:
                     self.error(ident, error=f"archive: {one_line(e)}")
                     continue
                 self.say("prune-archived", ident)
 
     def run(self):
-        """0, or 3 if anything failed."""
+        """0, or 3 if anything failed; raises the first linear.Unavailable."""
         finished = {self.team.states["done"], self.team.states["canceled"]}
         try:
             idents = [n for n in sorted(os.listdir(self.work))
@@ -229,6 +233,8 @@ class Pruner:
         for ident in idents:
             try:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
+            except Unavailable:
+                raise
             except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
                 self.error(ident, error=f"Linear: {one_line(e)}")
                 continue

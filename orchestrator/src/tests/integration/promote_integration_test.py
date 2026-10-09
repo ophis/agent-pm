@@ -87,8 +87,8 @@ class Promote(Tick):
         self.assertEqual(self.events(), [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
 
     def test_a_failed_move_is_retried_without_a_second_child(self):
-        self.fake.fail("linear.M_STATE", "503", account=HARNESS_EMAIL)
-        failed = [("linear.M_STATE", HARNESS_EMAIL, "503")]
+        self.fake.fail("linear.M_STATE", "error", account=HARNESS_EMAIL)
+        failed = [("linear.M_STATE", HARNESS_EMAIL, "error")]
         self.tick()
         with self.fake.lock:
             self.assertIsNotNone(self.fake.find(self.child), f"no issue {self.child}")
@@ -97,7 +97,7 @@ class Promote(Tick):
         self.assertEqual(self.comments(SOURCE), [(HUMAN, INSTRUCTIONS)])
         [error] = self.events()
         self.assertEqual((error["src"], error["kind"], error["issue"]), ("promote", "handoff-error", SOURCE))
-        self.assertIn("503", error["error"])
+        self.assertIn("linear.M_STATE: injected error", error["error"])
         self.assert_requests(WRITES[:3], failed)
 
         self.tick()
