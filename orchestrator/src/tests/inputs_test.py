@@ -367,7 +367,7 @@ class RenderBuild(unittest.TestCase):
                 note("Bob says more", "2026-09-08T00:00:00.000Z", ("bob@example.com", "Bob")))
 
     def test_golden_direct_issue(self):
-        iss = issue(lines("Build the registry.", "Phase 2 only.", "", "## Comments", "- Ann, t:", "  > quoted"), ident="ENG-7",
+        iss = issue(lines("Build the registry.", "Only the API.", "", "## Comments", "- Ann, t:", "  > quoted"), ident="ENG-7",
                     title="ENG: Session Registry!", notes=self.notes())
         src = inputs.Sources((inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None)
         got = inputs.render(iss, "build", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
@@ -377,7 +377,7 @@ class RenderBuild(unittest.TestCase):
             f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}", "", BUILD_PRECEDENCE, "",
             "## The user's requirements since the last build", "",
             "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\nBob, 2026-09-08T00:00:00.000Z:\nBob says more", "",
-            "## The user's instructions", "", "ENG: Session Registry!", "", "Build the registry.\nPhase 2 only.", "",
+            "## The user's instructions", "", "ENG: Session Registry!", "", "Build the registry.\nOnly the API.", "",
             "## PRD: `Product Design/2026-09-05-PM-9-q.md`", "", fenced("# PRD"), "",
             "## Linked documents (context)", "", "### `Research/r.md`", "", fenced("r"), "",
             "## Earlier comments (context; the user's ones are already built)", "",
@@ -396,7 +396,7 @@ class RenderBuild(unittest.TestCase):
 
     def test_golden_handoff_without_prd(self):
         d = lines("Handoff from PM-9: u", "", "## Source", f"- PRD: {BASE}Product%20Design/p.md", "",
-                  "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build phase 1.", "",
+                  "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.", "",
                   "## Comments", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")
         iss = issue(d, ident="ENG-7", title="ENG: Registry")
         got = inputs.render(iss, "build", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
@@ -404,12 +404,12 @@ class RenderBuild(unittest.TestCase):
             "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: ophis/agent-pm", "Checkout: ENG-7",
             "Branch: ENG-7-session-registry",
             "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
-            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
+            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild the PRD.", "",
             "## PRD", "", "None linked.", "",
             "## Comments on PM-9 (context)", "", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi"))
 
     def test_golden_repo_names_the_local_clone(self):
-        d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build phase 1.")
+        d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.")
         t = target.Target("ophis", "agent-pm", "ENG-7-session-registry", "/x/agent-pm")
         got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "build", inputs.Sources((), None),
                             humans=HUMANS, target=t, docs=DOCS)
@@ -417,7 +417,7 @@ class RenderBuild(unittest.TestCase):
             "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Checkout: ENG-7",
             "Branch: ENG-7-session-registry",
             "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
-            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild phase 1.", "",
+            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild the PRD.", "",
             "## PRD", "", "None linked."))
 
     def test_handoff_prd_and_link_line(self):

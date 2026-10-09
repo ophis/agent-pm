@@ -984,8 +984,8 @@ class Start(Base):
 
     def test_a_multi_line_progress_report_becomes_one_line(self):
         seen = []
-        self.start([progress("start", "new build,\n  phase P1")], sinks=[seen.append])
-        self.assertEqual([(e.name, e.text) for e in seen if e.kind == "progress"], [("start", "new build, phase P1")])
+        self.start([progress("start", "first build\n  of the PRD")], sinks=[seen.append])
+        self.assertEqual([(e.name, e.text) for e in seen if e.kind == "progress"], [("start", "first build of the PRD")])
 
     def test_a_fifo_at_the_channel_is_refused_not_waited_on(self):
         os.makedirs(self.work)

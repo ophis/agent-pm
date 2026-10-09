@@ -574,6 +574,15 @@ class RealCore(unittest.TestCase):
         for task in ("build", "light-build"):
             self.assertIn("`push` false → `failed`", composed("engineer", task)[0], task)
 
+    def test_builds_wait_for_the_prs_checks(self):
+        for task in ("build", "light-build"):
+            checks = section(composed("engineer", task)[0], "Checks")
+            for literal in ("`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
+                            "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
+                            "`git -C <worktree> push -u origin <branch>`", "3 fixes", "20 minutes",
+                            "Engineer › Finish › Failure"):
+                self.assertIn(literal, checks, task)
+
     def test_builds_merge_the_default_branch_before_autopilot_at_resume_and_before_the_pr(self):
         for task in ("build", "light-build"):
             prompt, _ = composed("engineer", task)
