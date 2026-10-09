@@ -164,6 +164,14 @@ class Reports(Case):
         with open(self.calls) as f:
             self.assertEqual([json.loads(line) for line in f], [["--to", "one", "progress", "n", "t"]] * 2)
 
+    def test_a_command_naming_parameters_is_skipped(self):
+        self.scene(steps=[{"kind": "progress", "name": "n", "text": "t"}])
+        prompt = f"`python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n`python3 {self.stub} --to one`"
+        res = self.run_fake("-p", prompt, *SESSION)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        with open(self.calls) as f:
+            self.assertEqual([json.loads(line) for line in f], [["--to", "one", "progress", "n", "t"]])
+
     def test_report_step_without_a_command_fails(self):
         self.scene(turns=[[{"kind": "progress", "name": "n", "text": "t"}]])
         res = self.run_fake("no command here", *SESSION, stdin="nor here\n")

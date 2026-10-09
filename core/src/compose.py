@@ -1,5 +1,6 @@
-"""Composer: resolves a role's run config and compiles guide + principles + role (with its task index) + templates +
-output into its prompt; the agent run reads its task's file itself. A module for the driver (drive.py).
+"""Composer: resolves a role's run config and compiles guide + parameters + principles + role (with its task index) +
+templates + output + input into its prompt; the agent run reads its task's file itself. A module for the driver
+(drive.py).
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task; none → the guide's default text) and
 {{language}} (unset → each line holding it is dropped); guide, principles and role text get {{scripts}} (this dir, or
@@ -34,6 +35,11 @@ OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index: its lines - `<task>`: <text>
 INDEX_LINE = re.compile(r"^- `([\w-]+)`: (.+)$", re.M)
+METHOD = re.compile(r"(?:\{\{methods\}\}|<methods>)/([\w-]+)\.md")   # a method file named in a text
+# The # Parameters section's names, in order, each with its placeholder (None: none); which a prompt gets: _parameters.
+PARAMETERS = {"<Workdir>": None, "<scripts>": "scripts", "<tasks>": "tasks", "<methods>": "methods", "<gate>": "gate",
+              "<out-repo>": "repo", "<out-branch>": "branch", "<out-dir>": "dir", "<out-host>": "host", "report": None}
+REPORT = "report"   # the handover's placeholder for the report command
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
@@ -48,6 +54,9 @@ class ConfigError(Exception):
 
 class PromptClient(Protocol):
     """The part of a Client (clients/base.py) that render() uses; compose cannot import Client (base.py imports compose)."""
+    inline_workdir: str
+    inline_input: str
+
     def scripts_path(self, root: str) -> str: ...
     def methods_path(self, root: str) -> str: ...
     def tasks_path(self, root: str) -> str: ...
@@ -175,19 +184,20 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
-    """The agent run's prompt for `client`: its Output section ends with the client's handover as Output › Return
-    ({{report}} filled when params are given), then the Workdir/Input tail when params are given."""
+    """The agent run's prompt for `client`: the guide, then # Parameters (_parameters); its Output section ends with the
+    client's handover as Output › Return ({{report}} filled when params are given); last, # Input: the input when params
+    are given, else the client's inline_input ("" → no section)."""
     text = os.path.join(root, TEXT)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}`"} if run.task else {}
     paths = {"scripts": client.scripts_path(root), "methods": client.methods_path(root),
              "tasks": client.tasks_path(root), "gate": run.gate or "none"}
-    principles = _read(text, "principles.md")
+    rel = f"roles/{run.role}.md"
+    guide, principles, role = _read(text, "guide.md"), _read(text, "principles.md"), _read(text, rel)
     if not run.language:
         principles = _without(principles, "{{language}}")
-    rel = f"roles/{run.role}.md"
-    parts = [fill(_read(text, "guide.md"), names | paths, "guide.md"), fill(principles, names | paths, "principles.md"),
-             fill(_read(text, rel), paths, rel)]
+    parts = [fill(guide, names | paths, "guide.md"), fill(principles, names | paths, "principles.md"),
+             fill(role, paths, rel)]
     for name in run.templates:
         rel = f"templates/{name}.md"
         body = _read(text, rel)
@@ -196,19 +206,20 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     output, dest = os.path.join(root, OUTPUT), f"destinations/{run.output['type']}.md"
     if not os.path.isfile(os.path.join(output, dest)):
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
-    destination, values = _read(output, dest), run.output
+    about, destination, values = _read(output, "output.md"), _read(output, dest), run.output
     if params:
         values = values | {"deliverable": params.deliverable}
     else:
         destination = _without(destination, "{{deliverable}}")
-    parts.append(fill(_read(output, "output.md"), {}, "output.md") + "\n" + fill(destination, values, dest))
+    parts.append(fill(about, {}, "output.md") + "\n" + fill(destination, values, dest))
     if handover := client.handover():
-        report = {"report": report_command(paths["scripts"], params)} if params else {}
+        report = {REPORT: report_command(paths["scripts"], params)} if params else {}
         parts.append(f"## Return\n\n{fill(handover, report, 'handover').strip()}\n")
+    used = _used(root, run.role, [guide, principles, role, about, destination])
+    parts.insert(1, _parameters(run, params, client, paths, used, bool(params) and REPORT in _keys(handover)))
     prompt = (RESUME if params and params.resume else "") + "\n".join(parts)
-    if params:
-        prompt += f"\n---\n\nWorkdir: {os.path.abspath(params.workdir)}\nInput:\n\n{params.input.strip()}\n"
-    return prompt
+    given = params.input.strip() if params else client.inline_input
+    return prompt + (f"\n# Input\n\n{given}\n" if params or given else "")
 
 
 def report_command(scripts: str, params: RunParams) -> str:
@@ -259,6 +270,33 @@ def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
         raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
+def _parameters(run: RunConfig, params: RunParams | None, client: PromptClient, paths: Mapping, used: set[str],
+                report: bool) -> str:
+    """The # Parameters section, values as inline code: <Workdir> (params' workdir, else the client's inline_workdir as
+    prose; "" → no line), <scripts>, <tasks>, each other name with a placeholder in `used`, and `report` if
+    `report`."""
+    known = {"host": "github.com"} | run.output | paths
+    values = {"<Workdir>": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
+              "report": _code(f"python3 <scripts>/report.py --to <Workdir>/{CHANNEL}") if report else ""}
+    for name, key in PARAMETERS.items():
+        if key and name in used | {"<scripts>", "<tasks>"}:
+            if key not in known:
+                raise ConfigError(f"{name} is used but output.{key} is not set")
+            values[name] = _code(str(known[key]))
+    return "# Parameters\n\n" + "".join(f"- `{name}`: {values[name]}\n" for name in PARAMETERS if values.get(name))
+
+
+def _used(root: str, role: str, texts: list[str]) -> set[str]:
+    """The PARAMETERS names that `texts`, the role's task files or the method files they name hold, by name or by
+    placeholder."""
+    text = os.path.join(root, TEXT)
+    texts = texts + [_read(text, f"tasks/{t}.md") for t in index(root, role)]
+    named = {f"methods/{m}.md" for t in texts for m in METHOD.findall(t)}
+    texts += [_read(text, rel) for rel in named if os.path.isfile(os.path.join(text, rel))]
+    keys = set().union(*map(_keys, texts))
+    return {name for name, key in PARAMETERS.items() if key in keys or any(name in t for t in texts)}
+
+
 def _read(root: str, rel: str) -> str:
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
@@ -279,6 +317,17 @@ def _title(text: str, rel: str) -> str:
     return first[2:].strip()
 
 
-def _fence(text: str) -> str:
-    ticks = max([len(r) for r in re.findall(r"`+", text)] + [2]) + 1
+def _fence(text: str, least: int = 3) -> str:
+    ticks = max([len(r) + 1 for r in re.findall(r"`+", text)] + [least])
     return "`" * ticks
+
+
+def _code(value: str) -> str:
+    """`value` as Markdown inline code."""
+    f, pad = _fence(value, 1), " " if "`" in value else ""
+    return f"{f}{pad}{value}{pad}{f}"
+
+
+def _keys(text: str) -> set[str]:
+    """The names of the placeholders in `text`."""
+    return {m.group(1) for m in PLACEHOLDER.finditer(text)}

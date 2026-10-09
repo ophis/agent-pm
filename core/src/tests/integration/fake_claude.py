@@ -23,11 +23,12 @@ explicit extension.
          an assistant line on stdout, else a plain line. A dict is a report line in drive_test's builder shapes,
          {"kind": "progress", "name", "text"} or {"kind": "outcome", "outcome": {status, title, summary, questions, url,
          files, deliverable}}: the fake runs it as report.py's subcommand, through the report command, the first
-         backticked `python3 <path>/report.py --to <channel>` in the turn prompts so far (none: exit 1). A failing
-         call's stderr goes to the fake's; it goes on. {"kind": "hook", "event": E} runs E's hooks now (E a non-empty
-         string). {"kind": "write", "path": P, "text": T} writes string T to file P (made or replaced), as the Write
-         tool; {"kind": "read", "path": P} is a text step of P's text, as the Read tool; P a non-empty string, relative
-         to the cwd. A failing write or read: a stderr line; it goes on. Any other step: exit 1.
+         backticked `python3 <path>/report.py --to <channel>` holding no `<` in the turn prompts so far (none: exit
+         1). A failing call's stderr goes to the fake's; it goes on. {"kind": "hook", "event": E} runs E's hooks now
+         (E a non-empty string). {"kind": "write", "path": P, "text": T} writes string T to file P (made or
+         replaced), as the Write tool; {"kind": "read", "path": P} is a text step of P's text, as the Read tool; P a
+         non-empty string, relative to the cwd. A failing write or read: a stderr line; it goes on. Any other step:
+         exit 1.
   turns  a list of step lists; default []. Interactive mode's second turn on. A non-list or a non-list entry: exit 1.
   exit   the exit code after the turns; default 0.
   hang   true: after the steps, sleep until killed; default false. It exits by itself once orphaned or after HANG_CAP s.
@@ -157,7 +158,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
 
 
 def report_command(prompts: list[str]) -> list[str] | None:
-    """The first backticked `python3 <path>/report.py --to <channel>` in `prompts`, split."""
+    """The first backticked `python3 <path>/report.py --to <channel>` holding no `<` in `prompts`, split."""
     for prompt in prompts:
         for span in re.findall(r"`([^`]*)`", prompt):
             try:
@@ -165,7 +166,7 @@ def report_command(prompts: list[str]) -> list[str] | None:
             except ValueError:
                 continue
             if (len(words) == 4 and words[0] == "python3" and os.path.basename(words[1]) == "report.py"
-                    and words[2] == "--to"):
+                    and words[2] == "--to" and "<" not in words[1] + words[3]):
                 return words
     return None
 

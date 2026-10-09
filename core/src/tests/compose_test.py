@@ -15,11 +15,14 @@ import clients  # noqa: E402
 import compose  # noqa: E402
 
 class Plain:
-    """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`) and no handover."""
-    def __init__(self, handover="", methods=None, tasks=None):
+    """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
+    workdir or input."""
+    def __init__(self, handover="", methods=None, tasks=None, inline_workdir="", inline_input=""):
         self._handover = handover
         self._methods = methods
         self._tasks = tasks
+        self.inline_workdir = inline_workdir
+        self.inline_input = inline_input
 
     def scripts_path(self, root):
         return os.path.join(os.path.abspath(root), "src")
@@ -73,6 +76,12 @@ type = "github"
 repo = "o/docs"
 branch = "main"
 """
+
+
+def parameters(prompt):
+    """{name: value} of the prompt's # Parameters lines, in order; a line of another shape fails."""
+    section = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
+    return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in section.splitlines())
 
 
 class Fake(unittest.TestCase):
@@ -331,8 +340,8 @@ class Prompt(Fake):
             prompt, _ = self.compose(task=task)
             prose = re.sub(r"```markdown\n.*?\n```\n", "", prompt, flags=re.S)
             heads = [line for line in prose.splitlines() if line.startswith(("# ", "## "))]
-            self.assertEqual(heads, ["# Guide", "# Principles", "# Writer", "## Tasks", "## Style",
-                                     "# Template: `templates/note.md`", "# Output", "## Destination"], task)
+            self.assertEqual(heads, ["# Guide", "# Parameters", "# Principles", "# Writer", "## Tasks", "## Style",
+                                     "# Template: `templates/note.md`", "# Output", "## Destination", "# Input"], task)
 
     def test_the_guide_names_the_task_only_when_one_is_named(self):
         tasks = os.path.join(self.root, "team", "tasks")
@@ -374,19 +383,24 @@ class Prompt(Fake):
         self.addCleanup(os.chdir, here)
         for given in ("input.md", os.path.join(self.root, "input.md")):
             prompt, _ = self.compose(input=given, out="o.md", workdir="wd")
-            tail = prompt.rsplit("\n---\n", 1)[1]
-            self.assertEqual(tail.strip().splitlines(), [f"Workdir: {os.path.abspath('wd')}", "Input:", "", given])
+            self.assertTrue(prompt.endswith(f"\n# Input\n\n{given}\n"), given)
+            self.assertEqual(parameters(prompt)["<Workdir>"], f"`{os.path.abspath('wd')}`")
             self.assertNotIn("question", prompt)
 
-    def test_tail_with_free_text_input(self):
+    def test_input_last_with_free_text(self):
         prompt, _ = self.compose(input="Compare cmux and tmux.\nKeep it short.")
-        tail = prompt.rsplit("\n---\n", 1)[1]
-        self.assertEqual(tail.strip().splitlines(), ["Workdir: /w", "Input:", "", "Compare cmux and tmux.", "Keep it short."])
+        self.assertTrue(prompt.endswith("Keep it local.\n\n# Input\n\nCompare cmux and tmux.\nKeep it short.\n"))
+
+    def test_an_input_with_headings_and_rules_is_verbatim_after_the_one_input_heading(self):
+        given = "# Heading\n\nText.\n\n---\n\n# Input\n\nMore."
+        prompt, _ = self.compose(input=f"\n{given}\n\n")
+        self.assertEqual(prompt.split("\n# Input\n\n", 1)[1], f"{given}\n")
+        self.assertEqual(prompt.count("\n---\n"), 1)
 
     def test_handover_closes_the_output_section(self):
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, PARAMS, client=Plain("Say it back."))
-        body = prompt.rsplit("\n---\n", 1)[0]
+        body = prompt.rsplit("\n# Input\n", 1)[0]
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
     def test_handover_gets_the_report_command(self):
@@ -412,12 +426,20 @@ class Prompt(Fake):
         self.assertIn("Keep it local.", prompt)
         self.assertNotIn("Push to", prompt)
 
-    def test_no_params_no_tail(self):
+    def test_no_params_no_workdir_line_or_input(self):
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, client=Plain())
-        self.assertNotIn("Workdir: ", prompt)
-        self.assertTrue(prompt.rstrip().endswith("Keep it local."))
+        self.assertEqual(list(parameters(prompt)), ["<scripts>", "<tasks>"])
+        self.assertNotIn("# Input", prompt)
+        self.assertTrue(prompt.endswith("Keep it local.\n"))
         self.assertEqual((run.role_title, run.task), ("Writer", ""))
+
+    def test_no_params_the_clients_inline_workdir_and_input(self):
+        run = compose.load_run(self.root, "writer")
+        client = Plain(inline_workdir="the dir `mktemp -d` prints", inline_input="Given with this prompt.")
+        prompt = compose.render(self.root, run, client=client)
+        self.assertEqual(list(parameters(prompt).items())[0], ("<Workdir>", "the dir `mktemp -d` prints"))
+        self.assertTrue(prompt.endswith("Keep it local.\n\n# Input\n\nGiven with this prompt.\n"))
 
     def test_resume_starts_with_resumed_run_and_names_no_task(self):
         self.assertIn("Continue the task this session already picked or was given; never pick it again.", compose.RESUME)
@@ -432,11 +454,68 @@ class Prompt(Fake):
         self.assertNotIn("re-read the input", compose.RESUME)
         prompt, _ = self.compose(resume=True, input="Answers:\n- Use B.")
         self.assertTrue(prompt.startswith(compose.RESUME))
-        self.assertTrue(prompt.endswith("\nInput:\n\nAnswers:\n- Use B.\n"))
+        self.assertTrue(prompt.endswith("\n# Input\n\nAnswers:\n- Use B.\n"))
 
     def test_leftover_placeholder_in_a_rule_file(self):
         self.write({"team/roles/writer.md": WRITER + "\nUse {{tool}}.\n"})
         self.fails("unfilled placeholder {{tool}}")
+
+
+class Parameters(Fake):
+    GITHUB = FILES["output/destinations/github.md"]
+
+    def test_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
+        self.assertEqual(list(parameters(self.compose()[0]).items()), [
+            ("<Workdir>", "`/w`"), ("<scripts>", f"`{self.root}/src`"), ("<tasks>", f"`{self.root}/team/tasks`")])
+
+    def test_report_only_with_params_and_a_report_handover(self):
+        run = compose.load_run(self.root, "writer")
+        prompt = compose.render(self.root, run, PARAMS, client=Plain("Run `{{report}} outcome <file>`."))
+        self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"])
+        self.assertEqual(parameters(prompt)["report"], "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
+        for params in (PARAMS, None):
+            prompt = compose.render(self.root, run, params, client=Plain("Say it back."))
+            self.assertNotIn("report", parameters(prompt), params)
+
+    def test_methods_used_by_its_placeholder_in_the_role(self):
+        self.write({"team/roles/writer.md": WRITER + "\nKnow `{{methods}}`.\n"})
+        names = parameters(self.compose()[0])
+        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>"])
+        self.assertEqual(names["<methods>"], f"`{self.root}/team/methods`")
+
+    def test_gate_used_by_name_in_an_indexed_task_file_only(self):
+        self.write({"team/tasks/short-note.md": "# Short Note\n\nRun `<gate>` first.\n"})
+        self.assertEqual(parameters(self.compose()[0])["<gate>"], "`none`")
+        self.assertEqual(parameters(self.compose(layers=[{"gate": "make gate"}])[0])["<gate>"], "`make gate`")
+        self.assertNotIn("<gate>", parameters(self.compose("editor")[0]))
+
+    def test_gate_used_in_a_method_file_a_text_names(self):
+        self.write({"team/tasks/long-note.md": "# Long Note\n\nFollow `<methods>/m.md`, `<methods>/gone.md`.\n",
+                    "team/methods/m.md": "# M\n\nRun `<gate>`.\n", "team/methods/other.md": "# O\n\n`<out-dir>`\n"})
+        names = parameters(self.compose()[0])
+        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>"])
+        self.write({"team/tasks/long-note.md": "# Long Note\n\nFollow `{{methods}}/m.md`.\n"})
+        self.assertIn("<gate>", parameters(self.compose()[0]))
+
+    def test_github_output_its_used_keys(self):
+        names = parameters(self.compose("editor")[0])
+        self.assertEqual(list(names.items())[3:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")])
+
+    def test_an_unset_host_is_github_com(self):
+        self.write({"output/destinations/github.md": self.GITHUB + "Clone `{{host|github.com}}/{{repo}}`.\n"})
+        self.assertEqual(parameters(self.compose("editor")[0])["<out-host>"], "`github.com`")
+        layer = {"roles": {"editor": {"output": {"type": "github", "repo": "o/d", "branch": "b", "host": "ghe.x"}}}}
+        self.assertEqual(parameters(self.compose("editor", layers=[layer])[0])["<out-host>"], "`ghe.x`")
+
+    def test_another_used_output_key_unset(self):
+        self.write({"output/destinations/github.md": self.GITHUB + "Into `<out-dir>`.\n"})
+        self.fails("output.dir is not set", "editor")
+
+    def test_a_value_holding_backticks_is_inline_code(self):
+        run = compose.load_run(self.root, "editor")
+        prompt = compose.render(self.root, replace(run, output={**run.output, "repo": "o/`d``x"}), PARAMS,
+                                client=Plain())
+        self.assertEqual(parameters(prompt)["<out-repo>"], "``` o/`d``x ```")
 
 
 class Deliverable(Fake):
@@ -513,6 +592,12 @@ def task_text(task):
 
 def guide(prompt):
     return prompt.split("\n# Principles\n", 1)[0]
+
+
+def parameter_names(role, task=None, **changes):
+    """The # Parameters names of the claude client's prompt for `role`, its run changed by `changes`."""
+    run = replace(compose.load_run(CORE, role, task), **changes)
+    return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
 
 
 GENERIC_NAME = re.compile(r"(?<![/\w])(agent-pm|autopilot):[\w-]+|\bthe [\w-]+ skill\b")
@@ -646,6 +731,16 @@ class RealCore(unittest.TestCase):
             self.assertEqual(prompt.count("On conflict:"), 1, task)
             self.assertIn("On conflict:", g, task)
 
+    def test_every_guide_lists_parameters_first_and_input_last(self):
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            g = guide(composed(role, task)[0])
+            items = re.findall(r"^- \*\*.+$", g, re.M)
+            self.assertEqual(items[0], "- **Parameters**: the value of each name this prompt and your task's file use.", (role, task))
+            self.assertEqual(items[-1], "- **Input**: the last section; everything after its heading is the input text, "
+                                        "verbatim (it may contain `#` or `---`).", (role, task))
+            self.assertNotIn("final `---`", g, (role, task))
+            self.assertNotIn("your Workdir and the Input text", g, (role, task))
+
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
         self.assertIn("**Your task**: `light-research`. Read only that task's file", named)
@@ -688,6 +783,17 @@ class RealCore(unittest.TestCase):
             self.assertIn("# Template: `templates/research-report.md`", prompt)
             self.assertIn("`ophis/private_docs`", prompt)
             self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
+
+    def test_each_roles_parameters_follow_what_its_texts_use(self):
+        base, out = ["<Workdir>", "<scripts>", "<tasks>"], ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"]
+        want = {"engineer": [*base, "report"], "pm": [*base, *out, "report"],
+                "researcher": [*base, "<methods>", "<gate>", *out, "report"]}
+        for role, task in [(r, None) for r in want] + [(r, t) for r, t in ALL if r in want]:
+            self.assertEqual(parameter_names(role, task), want[role], (role, task))
+
+    def test_a_local_output_leaves_the_researcher_no_out_parameters(self):
+        self.assertEqual(parameter_names("researcher", output={"type": "local"}),
+                         ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>", "report"])
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")

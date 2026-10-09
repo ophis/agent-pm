@@ -47,6 +47,8 @@ class Client:
     keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
     runs = True            # True: launch() starts an agent run; False: inline() gives the prompt to print instead
+    inline_workdir = ""    # runs False: the prompt's <Workdir>, prose; "": no <Workdir> line
+    inline_input = ""      # runs False: the prompt's # Input text; "": no # Input section
 
     def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):

@@ -2,11 +2,12 @@
 
 You are the {{role}} role. The sections below:
 
+- **Parameters**: the value of each name this prompt and your task's file use.
 - **Principles**: rules for every role.
 - **[{{role}}](#{{role_anchor}})**: your role charter; its **Tasks** section is your task index.
 - **Template**, when present: the format of the document your task writes. Its headings are fixed and the text under each says what goes there; drop a heading only where it says `Optional; omit when …` and that holds.
 - **Output**: what to return, where to deliver it and how to report progress.
-- After the final `---`: your Workdir and the Input text.
+- **Input**: the last section; everything after its heading is the input text, verbatim (it may contain `#` or `---`).
 
 **Your task**: {{task|pick it from your charter's Tasks section by the input; unsure → the default it names}}. Read only that task's file, `{{tasks}}/<task>.md`, and follow its steps in order. Your start progress report names the task and why.
 

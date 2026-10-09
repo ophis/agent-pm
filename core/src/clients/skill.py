@@ -2,8 +2,6 @@
 instead of starting an agent run."""
 from .base import PROGRESS, Client
 
-TAIL = ("\n---\n\nInput: given with this prompt\n"
-        "Workdir: the dir `mktemp -d` prints, run once at the start and reused for this invocation\n")
 REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
           "containing only that line: the mark, then your report")
 
@@ -11,10 +9,12 @@ REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling
 class SkillClient(Client):
     keys = frozenset({"roles"})
     runs = False
+    inline_workdir = "the dir `mktemp -d` prints, run once at the start and reused for this invocation"
+    inline_input = "Given with this prompt."
 
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "
                 f"`deliverable` after the frontmatter instead of in it; write no file for the outcome. {REPORT}.")
 
     def inline(self, prompt: str) -> str:
-        return prompt.rstrip() + "\n" + TAIL
+        return prompt
