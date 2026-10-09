@@ -108,9 +108,9 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
           proc=subprocess.run) -> str:
     """Start worker `name`, record its options on the tmux session; returns the session id.
     `resume` (a session id) resumes that session instead of starting a new one. `split_from` or `split` replaces
-    tui_claude's automatic placement; it defaults the other. Its status line and grid column size: core config's
-    status_line and workers_per_column. A claude that exits within EARLY seconds raises, the session kept (see
-    _early)."""
+    tui_claude's automatic placement outside a tmux grid, which ignores them; it defaults the other. Its status line
+    and grid column size: core config's status_line and workers_per_column. A claude that exits within EARLY seconds
+    raises, the session kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)

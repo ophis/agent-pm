@@ -445,9 +445,9 @@ def driver_session(role: str, task: str, sid: str, prefix: str | None = None) ->
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits, and
-    the opener whose panes it stacks with (tui_claude.OPENER; None: the caller's own). With split and split_from both None
-    the pane goes by the stacking rule (tui_claude.py)."""
+    """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits (both
+    ignored in a tmux grid), and the opener whose panes it is placed with (tui_claude.OPENER; None: the caller's own).
+    With split and split_from both None the pane goes by the grid or stacking rule (tui_claude.open_pane)."""
     split: str | None = None
     split_from: str | None = None
     opener: str | None = None
@@ -780,8 +780,10 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
     ap.add_argument("--split", choices=tui_claude.SPLITS,
-                    help="the tui runner's split (default: stacked with the panes of the same opener)")
-    ap.add_argument("--split-from", metavar="SESSION", help="split the pane showing this tmux session")
+                    help="the tui runner's split, ignored in a tmux grid (default: stacked with the panes of the same "
+                         "opener)")
+    ap.add_argument("--split-from", metavar="SESSION",
+                    help="split the pane showing this tmux session; ignored in a tmux grid")
     ap.add_argument("--prefix", help="the tui session's name before the sid (default: <role>-<task>)")
     ap.add_argument("--events", metavar="FILE", help="the tui runner appends the session's state events to FILE; with "
                                                      "--detach, the driver its outcome")

@@ -26,7 +26,7 @@ from typing import NamedTuple
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 PANE = re.compile(r"%[0-9]+")
 ITERM_ID = re.compile(r"[A-Za-z0-9-]+")   # an iTerm2 session's unique id
-# whose panes stack together: a tmux session, or an iTerm2 pane by its full $ITERM_SESSION_ID (w0t0p0:<unique id>)
+# whose panes are placed together: a tmux session, or an iTerm2 pane by its full $ITERM_SESSION_ID (w0t0p0:<unique id>)
 OPENER = re.compile(rf"{NAME.pattern}|[A-Za-z0-9]+:{ITERM_ID.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
 RUNNING = "running"
