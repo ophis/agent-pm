@@ -10,6 +10,7 @@ python3 -m unittest discover -s core/src/tests -p "*_test.py"
 python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
 python3 -m unittest discover -s core/src/tests/integration -p "*_integration_test.py"
 python3 -m unittest discover -s core/skills/tmux/scripts/integration -p "*_integration_test.py"
+python3 -m unittest discover -s orchestrator/src/tests/integration -p "*_integration_test.py"
 claude --plugin-dir core                                  # this checkout's plugin as agent-pm@inline; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
 ```
