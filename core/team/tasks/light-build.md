@@ -4,12 +4,12 @@ Build the requirement with `autopilot:light-build`, then open a pull request.
 
 ## Input processing
 
-Engineer › Input processing, the requirement being the input's text; a PRD, if given, is context for it.
+[Engineer › Input processing](#input-processing), the requirement being the input's text; a PRD, if given, is context for it.
 
 ## Steps
 
 1. **Read** the input. The user's requirements outrank the requirement, which outranks a PRD.
-2. **Repo** (Engineer › Repo); from status, count only entries after `<branch>`'s latest own commit (`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`).
+2. **Repo** ([Engineer › Repo](#repo)); from status, count only entries after `<branch>`'s latest own commit (`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`).
 3. **Which build:**
    - A light-build state file in `<worktree>` (its `RESUME:` line) → continue it, adding the user's requirements.
    - Else a `pr` (a **finished build**) and a user requirement → a new build of the user's requirements. Review input alone never starts one.
@@ -17,11 +17,11 @@ Engineer › Input processing, the requirement being the input's text; a PRD, if
    - Else → build the requirement.
 4. **Report progress:**
    [agent-pm-progress:start] the build (continue, new or first)
-5. **Build**: `autopilot:light-build` (Engineer › Autopilot), the requirements being the requirement, a PRD if given and the user's requirements; docs line "A state file, if you write one, goes where the repo keeps design docs, else in `docs/.autopilot/`; never `git add -f` it."; push points: S5 and each fix.
+5. **Build**: `autopilot:light-build` ([Engineer › Autopilot](#autopilot)), the requirements being the requirement, a PRD if given and the user's requirements; docs line "A state file, if you write one, goes where the repo keeps design docs, else in `docs/.autopilot/`; never `git add -f` it."; push points: S5 and each fix.
    - **Report progress** at the end of each build step (`S<n>`) you run:
      [agent-pm-progress:step] the step and its result
-6. **Finish** (Engineer › Finish).
+6. **Finish** ([Engineer › Finish](#finish)).
 
 ## Resume
 
-Engineer › Resume.
+[Engineer › Resume](#resume).

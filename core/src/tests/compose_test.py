@@ -485,10 +485,75 @@ def own_text(prompt):
     return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
 
 
-class Anchors(Fake):
-    def anchors(self, prompt):
-        return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
+def heading_anchors(prompt):
+    """The anchor of each heading of the prompt's own text, in order."""
+    return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
 
+
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
+TASK_FILE = re.compile(r"`<tasks>/(<task>|[\w-]+)\.md`")
+SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
+
+
+def task_path(after, paths):
+    """The longest of `paths` (tuples of titles) that `after`, the text following a task file's code span, opens with
+    ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
+    best = None
+    for path in paths:
+        want = " › " + " › ".join(path)
+        if after.startswith(want) and not re.match(r"\w", after[len(want):]) and (not best or len(want) > len(best)):
+            best = want
+    return best
+
+
+def reference_errors(own, tasks, methods):
+    """What is wrong with the section references of a prompt's own text `own`, the role's task files `tasks` {task:
+    text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
+    label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
+    `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
+    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task file reference, the code span
+    `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) then ` › ` and a path of each of them, their
+    `# ` title dropped, the longest that matches; (4) no `›` left once those, code spans and links are removed."""
+    outline = compose.outline(own)
+    anchors = {a for _, _, a, _ in outline if a}
+    entries = {}
+    for _, path, a, _ in outline:
+        entries.setdefault(path, set()).add(a)
+    inside = {task: {path[1:] for _, path, _, _ in compose.outline(text) if len(path) > 1}
+              for task, text in tasks.items()}
+    errors = []
+    for label, text in ({"prompt": own} | {f"tasks/{t}.md": x for t, x in tasks.items()} | dict(methods)).items():
+        for _, line in compose.unfenced(text):
+            kept, pos = [], 0
+            for m in CODE_SPAN.finditer(line):
+                kept.append(line[pos:m.start()] + " ")
+                pos = m.end()
+                if not (ref := TASK_FILE.fullmatch(m[0])) or not line.startswith(" › ", pos):
+                    continue
+                names = list(inside) if ref[1] == "<task>" else [ref[1]]
+                found = names and all(n in inside for n in names)
+                best = task_path(line[pos:], set.intersection(*(inside[n] for n in names))) if found else None
+                if not best or line[pos + len(best):].startswith(" › "):
+                    errors.append(f"{label}: no such task file path: {line.strip()}")
+                    pos = len(line)
+                    break
+                pos += len(best)
+            left = "".join(kept) + line[pos:]
+            for t, target in LINK.findall(left):
+                if target.startswith("#"):
+                    if target[1:] not in anchors:
+                        errors.append(f"{label}: no such anchor: [{t}]({target})")
+                    elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
+                        errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
+                elif not SCHEME.match(target):
+                    errors.append(f"{label}: relative link target: [{t}]({target})")
+            if "›" in LINK.sub(" ", left):
+                errors.append(f"{label}: bare reference: {line.strip()}")
+    return errors
+
+
+class Anchors(Fake):
     def test_a_prompt_without_a_repeated_heading_has_no_id_line(self):
         for task in (None, "long-note"):
             self.assertNotIn("<a id", self.compose(task=task)[0], task)
@@ -499,7 +564,7 @@ class Anchors(Fake):
         self.assertEqual(prompt.count("<a id"), 1)
         self.assertIn('\n## Style\n\n- `draft`: not a task.\n', prompt)
         self.assertIn('\n<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
-        anchors = self.anchors(prompt)
+        anchors = heading_anchors(prompt)
         self.assertEqual(len(anchors), len(set(anchors)))
         self.assertIn("output-style", anchors)
 
@@ -509,15 +574,22 @@ class Anchors(Fake):
         prompt, _ = self.compose()
         self.assertIn('<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
         self.assertIn('<a id="output-style-2"></a>\n## Style\n\nKeep it local.\n', prompt)
-        anchors = self.anchors(prompt)
+        anchors = heading_anchors(prompt)
         self.assertEqual(len(anchors), len(set(anchors)))
+
+    def test_a_link_to_a_repeated_heading_resolves_by_its_qualified_id(self):
+        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        own = own_text(self.compose()[0])
+        for text, want in (("[Output › Style](#output-style)", True), ("[Writer › Style](#style)", True),
+                           ("[Output › Style](#style)", False), ("[Writer › Style](#output-style)", False)):
+            self.assertEqual(reference_errors(f"{own}{text}\n", {}, {}) == [], want, text)
 
     def test_a_role_heading_input_makes_the_input_heading_input_2(self):
         self.write({"team/roles/writer.md": WRITER + "\n## Input\n\nWhat you get.\n"})
         prompt, _ = self.compose()
         self.assertEqual(prompt.count("<a id"), 1)
         self.assertTrue(prompt.endswith('\n<a id="input-2"></a>\n# Input\n\nResearch X.\n'))
-        self.assertEqual(self.anchors(prompt).count("input"), 1)
+        self.assertEqual(heading_anchors(prompt).count("input"), 1)
 
     def test_the_input_text_is_verbatim_whatever_it_repeats(self):
         given = "## Style\n\n## Style\n\n# Input\n\n```\n## Style\n```\n"
@@ -799,7 +871,8 @@ REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkou
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
 PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
-        "that task's file, `<tasks>/<task>.md`, and follow its steps in order.")
+        "that task's file, `<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to sections of this "
+        "prompt.")
 COMMANDS_RULE = ("- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
                  "command (no `cd`, pipe, redirect or `&&`).")
 RETURN = """Report through `report`, never in a reply:
@@ -808,11 +881,25 @@ RETURN = """Report through `report`, never in a reply:
 - **Outcome:** as your last action, after everything else is done and any background work you started has finished, run `report outcome --status <done|needs_input|failed> --title <one line> --summary <text> [--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`: `--question` and `--file` once per item; `--deliverable` a file holding the deliverable, which is read as its text. If it fails, fix it and run it again."""
 
 
+def client_prompt(name, role, task=None):
+    """The prompt of the client `name` for `role`, with RUN when that client runs, and its run."""
+    client = clients.get(name, CORE)
+    run = compose.load_run(CORE, role, task, layers=[client.config])
+    return compose.render(CORE, run, RUN if client.runs else None, client=client), run
+
+
 def claude_prompt(role, task=None):
     """The claude client's prompt for `role` with RUN, and its run."""
-    claude = clients.get("claude", CORE)
-    run = compose.load_run(CORE, role, task, layers=[claude.config])
-    return compose.render(CORE, run, RUN, client=claude), run
+    return client_prompt("claude", role, task)
+
+
+def role_sources(role, client="claude"):
+    """What `reference_errors` takes for `role` and `client`: the prompt's own text, the role's task files and the
+    method files these name."""
+    own = own_text(client_prompt(client, role)[0])
+    tasks = {t: task_text(t) for t in compose.index(CORE, role)}
+    named = sorted(set(compose.METHOD.findall(own + "".join(tasks.values()))))
+    return own, tasks, {f"methods/{m}.md": method(m) for m in named}
 
 
 class GenericNames(unittest.TestCase):
@@ -826,6 +913,46 @@ class GenericNames(unittest.TestCase):
 
     def test_slash_commands_and_workflow_names_pass(self):
         self.assertEqual(generic_names("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research"), [])
+
+
+class References(unittest.TestCase):
+    def errors(self, text):
+        """The errors in `text` as a method file beside the real engineer prompt and task files."""
+        own, tasks, methods = role_sources("engineer")
+        return [e for e in reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
+
+    def test_a_link_to_a_path_of_the_prompt_and_a_task_file_reference_pass(self):
+        for text in ("[Engineer › Merge](#merge), then", "[Engineer › Repo](#repo) step 1",
+                     "[Principles](#principles)", "[Principles › Work › Worktree](#work)",
+                     "[Engineer › Finish › Failure](#finish)", "[Output › Return](#return)",
+                     "([Engineer › Standards](#standards)' rule)",
+                     "(`<tasks>/<task>.md` › Steps › Which build picks the build)", "`<tasks>/build.md` › Steps",
+                     "[docs](https://example.com/a)", "[A › B](https://example.com/a)",
+                     "`Engineer › Repo` and ``a ` › b``",
+                     "```\nEngineer › Repo\n[x](../y.md)\n```"):
+            self.assertEqual(self.errors(text), [], text)
+
+    def test_a_wrong_reference_is_an_error(self):
+        for text in ("[Engineer › Nope](#nope)", "Engineer › Repo", "[Engineer › Repo](#merge)",
+                     "[x](../roles/engineer.md#merge)", "[x]()", "[Principles › Worktree](#work)",
+                     "[Engineer › Repo step 1](#repo)", "[Engineer › Repo](#repo) › Merge",
+                     "`<tasks>/<task>.md` › Steps › Nope", "`<tasks>/<task>.md` › Steps › Which builds",
+                     "`<tasks>/<task>.md` › Steps › Which build › Nope", "`<tasks>/<task>.md` › Nope",
+                     "`<tasks>/nope.md` › Steps", "Which build › Steps",
+                     "```\n```\nEngineer › Repo"):
+            self.assertTrue(self.errors(text), text)
+
+    def test_errors_name_the_file_and_the_offender(self):
+        errors = reference_errors("# R\n\n## S\n\nR › S\n", {"x": "# X\n\n[A](b.md)\n"},
+                                  {"m.md": "[A › B](#nope)\n"})
+        self.assertEqual(errors, ["prompt: bare reference: R › S", "tasks/x.md: relative link target: [A](b.md)",
+                                  "m.md: no such anchor: [A › B](#nope)"])
+
+    def test_a_task_file_path_must_exist_in_each_task_file_named(self):
+        tasks = {"a": "# A\n\n## Steps\n\n1. **Go:** x\n", "b": "# B\n\n## Steps\n"}
+        for text, want in (("`<tasks>/<task>.md` › Steps", True), ("`<tasks>/<task>.md` › Steps › Go", False),
+                           ("`<tasks>/a.md` › Steps › Go", True), ("`<tasks>/b.md` › Steps › Go", False)):
+            self.assertEqual(reference_errors("# R\n", tasks, {"m": text}) == [], want, text)
 
 
 class RealCore(unittest.TestCase):
@@ -920,6 +1047,17 @@ class RealCore(unittest.TestCase):
             self.assertNotIn("{{", prompt, (role, task))
             self.assertEqual(run.task, task or "")
 
+    def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
+        for role in ROLES:
+            for client in clients.REGISTRY:
+                self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
+
+    def test_every_prompts_own_headings_have_unique_anchors(self):
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            for client in clients.REGISTRY:
+                anchors = heading_anchors(client_prompt(client, role, task)[0])
+                self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
+
     def test_every_prompt_opens_with_the_guide(self):
         for role, task in [(r, None) for r in ROLES] + ALL:
             prompt, run = composed(role, task)
@@ -1000,9 +1138,10 @@ class RealCore(unittest.TestCase):
         for name in METHOD_NAMES:
             self.assertTrue(os.path.isfile(os.path.join(CORE, "team", "methods", f"{name}.md")), name)
             self.assertIn(f"`<methods>/{name}.md`", prompt)
-        for phrase in ("No such tool → follow the deep-research method (Researcher › Methods).",
-                       "per the ultracode method (Researcher › Methods)", "No Workflow tool → follow that method.",
-                       "Before the second, the brake (Researcher › Methods).",
+        for phrase in ("No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",
+                       "per the ultracode method ([Researcher › Methods](#methods))",
+                       "No Workflow tool → follow that method.",
+                       "Before the second, the brake ([Researcher › Methods](#methods)).",
                        "No subagents with a round's tools → skip that round, under Gaps."):
             self.assertIn(phrase, task_text("deep-research"))
 
@@ -1081,23 +1220,23 @@ class RealCore(unittest.TestCase):
             for literal in ("`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                             "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                             "`git -C <worktree> push -u origin <branch>`", "3 fixes", "20 minutes",
-                            "Engineer › Finish › Failure"):
+                            "[Engineer › Finish › Failure](#finish)"):
                 self.assertIn(literal, checks, task)
 
     def test_builds_merge_the_base_branch_before_autopilot_at_resume_and_before_the_pr(self):
         prompt, _ = composed("engineer")
         self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", section(prompt, "Repo"))
         merge = section(prompt, "Merge")
-        for literal in ("Engineer › Repo step 1", "`git -C <worktree> status`", "a merge in progress",
+        for literal in ("[Engineer › Repo](#repo) step 1", "`git -C <worktree> status`", "a merge in progress",
                         "`git -C <worktree> merge --no-edit origin/<base>`", "`git -C <worktree> merge --abort`"):
             self.assertIn(literal, merge)
         for where in ("Autopilot", "Finish", "Resume"):
-            self.assertIn("Engineer › Merge", section(prompt, where), where)
+            self.assertIn("[Engineer › Merge](#merge)", section(prompt, where), where)
         self.assertIn("`origin/<base>`", section(prompt, "Autopilot"))
         for literal in ("--head <branch> --base <base> --title", "/compare/<base>...<branch>?expand=1"):
             self.assertIn(literal, prompt)
         for task in ("build", "light-build"):
-            self.assertIn("Engineer › Resume.", task_text(task), task)
+            self.assertIn("[Engineer › Resume](#resume).", task_text(task), task)
 
     def test_light_builds_cutoff_skips_merge_commits(self):
         self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`", task_text("light-build"))
