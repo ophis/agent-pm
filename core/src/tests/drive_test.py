@@ -230,6 +230,13 @@ class Claude(Base):
             self.assertEqual(argv.count("--settings"), 1)
             self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["enabledPlugins"], {plugin: False})
 
+    def test_only_the_tui_pane_has_no_status_line_row(self):
+        launch = self.plan(client="claude")
+        tui = drive.tui_claude.with_hooks(launch.interactive, "/e")
+        for argv, want in ((launch.argv, {}), (launch.interactive, {}), (tui, drive.tui_claude.PANE_SETTINGS)):
+            settings = json.loads(argv[argv.index("--settings") + 1])
+            self.assertEqual({k: settings[k] for k in ("tui", "statusLine") if k in settings}, want)
+
     def test_interactive_resume(self):
         launch = self.plan(client="claude", resume=True)
         self.assertEqual(launch.interactive[2:4], ["--resume", SID])

@@ -96,6 +96,8 @@ class TuiRun(unittest.TestCase):
         self.assertEqual(shown.stdout, f"{TUI} 0\n", shown.stderr)
         self.assertIn("stop", [e["kind"] for e in self.record()])
         (call,) = self.calls()
+        settings = json.loads(call["argv"][call["argv"].index("--settings") + 1])
+        self.assertEqual({k: settings[k] for k in ("tui", "statusLine")}, drive.tui_claude.PANE_SETTINGS)
         users = [line["message"]["content"] for line in self.jsonl(self.transcript) if line["type"] == "user"]
         self.assertEqual(users, [call["argv"][0], drive.NUDGE])
         # drive can exit on the outcome before turn 2's Stop hooks run

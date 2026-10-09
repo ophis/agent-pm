@@ -176,6 +176,18 @@ class StartTest(unittest.TestCase):
                                          split_from=None, per_column=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
+    def test_the_pane_has_no_status_line_row_unless_the_flags_set_one(self):
+        own = {"type": "command", "command": "mine"}
+        for flags, want in (((), tui_claude.PANE_SETTINGS),
+                            (("--settings", json.dumps({"statusLine": own})),
+                             {**tui_claude.PANE_SETTINGS, "statusLine": own})):
+            with self.subTest(flags=flags):
+                fake = Fake()
+                self.start(fake, flags=flags)
+                argv = fake.handover["argv"]
+                settings = json.loads(argv[argv.index("--settings") + 1])
+                self.assertEqual({k: settings[k] for k in ("tui", "statusLine")}, want)
+
     def test_resume(self):
         fake = Fake()
         sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
@@ -625,6 +637,7 @@ class RestartTest(WorkerCase):
         settings = json.loads(words[words.index("--settings") + 1])
         ours = json.loads(tui_claude.hooks(self.events))["hooks"]
         self.assertEqual(settings["model"], "x")
+        self.assertEqual({k: settings[k] for k in ("tui", "statusLine")}, tui_claude.PANE_SETTINGS)
         self.assertEqual(settings["hooks"]["Stop"], [{"hooks": [own]}, *ours["Stop"]])
         self.assertEqual(settings["hooks"]["Notification"], ours["Notification"])
 

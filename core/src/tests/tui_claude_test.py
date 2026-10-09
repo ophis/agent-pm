@@ -32,6 +32,7 @@ TMUX = '/opt/a"b\\c/bin/tmux'   # the script text must never carry it
 ATTACH = "tui: session s: tmux attach -t '=s'\n"
 WATCH = "; watch it with tmux attach -t '=s'"
 MATCHER = "^(?!idle_prompt$)"
+PANE_SETTINGS = {"tui": "default", "statusLine": {"type": "command", "command": "true"}}
 # Claude Code's documented notification types, plus one it sends undocumented
 NOTIFICATIONS = ("permission_prompt", "idle_prompt", "auth_success", "elicitation_dialog", "elicitation_url_dialog",
                  "elicitation_complete", "elicitation_response", "agent_needs_input", "agent_completed",
@@ -613,13 +614,19 @@ class Hooks(unittest.TestCase):
         for events in (None, "/e"):
             with self.subTest(events=events):
                 hooks = json.loads(tui_claude.hooks(events))
-                self.assertEqual(list(hooks), ["hooks"])
+                self.assertEqual(hooks, {**PANE_SETTINGS, "hooks": hooks["hooks"]})
                 self.assertEqual({k: [set(e) for e in v] for k, v in hooks["hooks"].items()},
                                  {"Stop": [{"hooks"}], "PermissionRequest": [{"hooks"}],
                                   "Notification": [{"matcher", "hooks"}], "UserPromptSubmit": [{"hooks"}]})
                 self.assertEqual(hooks["hooks"]["Notification"][0]["matcher"], MATCHER)
                 for entries in hooks["hooks"].values():
                     self.assertEqual([h["type"] for h in entries[0]["hooks"]], ["command"])
+
+    def test_status_line_prints_nothing(self):
+        """So the classic renderer gives it no row; the fullscreen one keeps an empty row."""
+        cmd = json.loads(tui_claude.hooks())["statusLine"]["command"]
+        res = subprocess.run(["/bin/sh", "-c", cmd], input="{}", capture_output=True, text=True, timeout=30)
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
 
     def test_notification_matcher_is_every_type_but_idle_prompt(self):
         """MATCHER is on Claude Code's regex path, where re.search agrees with JavaScript's RegExp.prototype.test."""
@@ -675,12 +682,15 @@ class WithHooks(unittest.TestCase):
     def test_merged_into_settings(self):
         ours = json.loads(tui_claude.hooks("/e"))["hooks"]
         pre = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}]
+        own = {"tui": "fullscreen", "statusLine": {"type": "command", "command": "mine"}}
         for settings, want in (({"model": "m", "hooks": {"Stop": [self.STOP], "PreToolUse": pre}},
-                                {"model": "m", "hooks": {"Stop": [self.STOP, *ours["Stop"]], "PreToolUse": pre,
-                                                         "PermissionRequest": ours["PermissionRequest"],
-                                                         "Notification": ours["Notification"],
-                                                         "UserPromptSubmit": ours["UserPromptSubmit"]}}),
-                               ({"model": "m"}, {"model": "m", "hooks": ours})):
+                                {"model": "m", **PANE_SETTINGS,
+                                 "hooks": {"Stop": [self.STOP, *ours["Stop"]], "PreToolUse": pre,
+                                           "PermissionRequest": ours["PermissionRequest"],
+                                           "Notification": ours["Notification"],
+                                           "UserPromptSubmit": ours["UserPromptSubmit"]}}),
+                               ({"model": "m"}, {"model": "m", **PANE_SETTINGS, "hooks": ours}),
+                               (own, {**own, "hooks": ours})):
             value = json.dumps(settings)
             for inline in (False, True):
                 with self.subTest(settings=settings, inline=inline):

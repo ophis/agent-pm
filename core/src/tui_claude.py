@@ -41,6 +41,9 @@ SPLITS = ("right", "below")
 # every notification type but idle_prompt; a matcher with a character outside [A-Za-z0-9_|, -] is an unanchored
 # JavaScript regex
 MATCHER = "^(?!idle_prompt$)"
+# A configured Claude Code status line keeps its row in the fullscreen renderer even while it prints nothing; in the
+# classic one an empty status line has none.
+PANE_SETTINGS = {"tui": "default", "statusLine": {"type": "command", "command": "true"}}
 DIED = "set-option @state dead"
 # tmux expands run-shell's #{...} when the hook fires; q: shell-quotes the name and @events, so neither runs as code.
 DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
@@ -261,9 +264,10 @@ def _taken(path: str, sleep) -> bool:
 
 
 def hooks(events: str | None = None) -> str:
-    """The --settings JSON: Stop sets the session's @state to done, PermissionRequest and a Notification but idle_prompt
-    to blocked, UserPromptSubmit to working; with events, all but UserPromptSubmit also append
-    `HH:MM:SS <session> done|blocked` to it. Each is a no-op outside tmux."""
+    """The --settings JSON: PANE_SETTINGS (the pane shows no Claude Code status line row) and hooks: Stop sets the
+    session's @state to done, PermissionRequest and a Notification but idle_prompt to blocked, UserPromptSubmit to
+    working; with events, all but UserPromptSubmit also append `HH:MM:SS <session> done|blocked` to it. Each hook is a
+    no-op outside tmux."""
     def entry(word: str, log: bool = True) -> list:
         cmd = f'tmux set-option -t "$TMUX_PANE" @state {word} >/dev/null 2>&1'
         if log and events is not None:
@@ -271,7 +275,7 @@ def hooks(events: str | None = None) -> str:
                    f'>> {shlex.quote(events)}; }}')
         return [{"type": "command", "command": f'[ -n "$TMUX_PANE" ] && {cmd} || true'}]
 
-    return json.dumps({"hooks": {
+    return json.dumps({**PANE_SETTINGS, "hooks": {
         "Stop": [{"hooks": entry("done")}],
         "PermissionRequest": [{"hooks": entry("blocked")}],
         "Notification": [{"matcher": MATCHER, "hooks": entry("blocked")}],
@@ -279,11 +283,13 @@ def hooks(events: str | None = None) -> str:
 
 
 def with_hooks(argv: list[str], events: str | None = None) -> list[str]:
-    """argv with hooks(events) appended to the hook lists of its first --settings JSON before a bare --, else with
-    --settings added after argv[0]."""
+    """argv with hooks(events) merged into its first --settings JSON before a bare --, its hooks appended to that JSON's
+    hook lists and each other key set where that JSON has none; else with --settings hooks(events) added after
+    argv[0]."""
     if not argv:
         raise TuiError("no command")
-    add = json.loads(hooks(events))["hooks"]
+    ours = json.loads(hooks(events))
+    add = ours.pop("hooks")
     for i, arg in enumerate(argv[1:], 1):
         if arg == "--":
             break
@@ -300,6 +306,8 @@ def with_hooks(argv: list[str], events: str | None = None) -> list[str]:
             raise TuiError(f"--settings {value!r}: want a JSON object with a list of hooks per event")
         for e, entries in add.items():
             own[e] = [*own.get(e, []), *entries]
+        for k, v in ours.items():
+            settings.setdefault(k, v)
         return [*argv[:at], prefix + json.dumps(settings), *argv[at + 1:]]
     return [argv[0], "--settings", hooks(events), *argv[1:]]
 
