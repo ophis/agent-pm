@@ -516,6 +516,8 @@ def guide(prompt):
 
 
 LANGUAGE_RULE = "headings and fixed labels included"
+REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>",
+             "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
 PICK = ("**Your task**: pick it from your charter's Tasks section by the input; unsure → the default it names. Read only "
@@ -697,8 +699,8 @@ class RealCore(unittest.TestCase):
             text = prompt + "".join(task_text(t) for t in compose.index(CORE, role))
             cmds = re.findall(r"`python3 \S+/repo\.py (worktree|status) ([^`]*)`", text)
             found[role] = [cmd for cmd, _ in cmds]
-            for _, args in cmds:
-                self.assertEqual(args, "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>", role)
+            for cmd, args in cmds:
+                self.assertEqual(args, REPO_ARGS[cmd], role)
             self.assertEqual(rule(prompt, "Checkout"), [CHECKOUT_RULE], role)
         self.assertEqual(found, {"researcher": ["worktree"], "pm": ["worktree"], "engineer": ["worktree", "status"],
                                  "dummy-tester": ["worktree"]})
@@ -721,15 +723,18 @@ class RealCore(unittest.TestCase):
                             "Engineer › Finish › Failure"):
                 self.assertIn(literal, checks, task)
 
-    def test_builds_merge_the_default_branch_before_autopilot_at_resume_and_before_the_pr(self):
+    def test_builds_merge_the_base_branch_before_autopilot_at_resume_and_before_the_pr(self):
         prompt, _ = composed("engineer")
+        self.assertIn("JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`.", section(prompt, "Repo"))
         merge = section(prompt, "Merge")
         for literal in ("Engineer › Repo step 1", "`git -C <worktree> status`", "a merge in progress",
-                        "`git -C <worktree> merge --no-edit origin/<default>`", "`git -C <worktree> merge --abort`"):
+                        "`git -C <worktree> merge --no-edit origin/<base>`", "`git -C <worktree> merge --abort`"):
             self.assertIn(literal, merge)
         for where in ("Autopilot", "Finish", "Resume"):
             self.assertIn("Engineer › Merge", section(prompt, where), where)
-        self.assertIn("`origin/<default>`", section(prompt, "Autopilot"))
+        self.assertIn("`origin/<base>`", section(prompt, "Autopilot"))
+        for literal in ("--head <branch> --base <base> --title", "/compare/<base>...<branch>?expand=1"):
+            self.assertIn(literal, prompt)
         for task in ("build", "light-build"):
             self.assertIn("Engineer › Resume.", task_text(task), task)
 

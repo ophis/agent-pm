@@ -4,18 +4,19 @@
 repo.py worktree --dir DIR --branch B [--name SLUG] REPO
     prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
     no error
-repo.py status --dir DIR --branch B [--name SLUG] REPO
-    after worktree with the same SLUG: {"pr", "plan_docs", "since", "user", "others"}, `user` and `others` being PR
-    comments and reviews by the user (core config's `users`, else the gh login) and by anyone else since the latest plan
-    doc commit
+repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
+    after worktree with the same SLUG: {"pr", "base", "plan_docs", "since", "user", "others"}, `pr` being B's PR
+    {"number", "url", "state", "baseRefName"} or null, `base` the PR's baseRefName, else BASE, else the default branch,
+    `user` and `others` PR comments and reviews by the user (core config's `users`, else the gh login) and by anyone
+    else since the latest plan doc commit
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
 blobless clone. Symlinks: core/CLAUDE.md › Rules. B: the local B, else tracking origin/B, else new from origin/<default>.
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
-Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), 1 on any other
-failure.
+Exits 2 when REPO, B, SLUG or status's `base` is invalid or unusable (B the default branch or checked out elsewhere), 1
+on any other failure.
 Errors mask URL userinfo.
 """
 import argparse
@@ -399,8 +400,9 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
 
 
 def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
-           users: list[str] | None = None) -> dict:
-    """The branch's PR, plan docs and PR feedback since the latest plan doc commit; raises Invalid or RuntimeError."""
+           users: list[str] | None = None, base_branch: str | None = None) -> dict:
+    """The branch's PR and base (`base_branch` being BASE: module docstring), plan docs and PR feedback since the latest
+    plan doc commit; raises Invalid or RuntimeError."""
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)
@@ -410,10 +412,13 @@ def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: R
     since = git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip() if docs else ""
     login = gh_json(run, ["api", "--hostname", repo.host, "user"]).get("login")
     rows = gh_json(run, ["pr", "list", "--repo", repo.slug, "--head", branch, "--state", "all",
-                         "--json", "number,url,state,isCrossRepository,author", "--limit", "100"])
+                         "--json", "number,url,state,baseRefName,isCrossRepository,author", "--limit", "100"])
     mine = [r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login]
     by_user = {u.lower() for u in users} if users else {login.lower()}
-    pr = {k: mine[0].get(k) for k in ("number", "url", "state")} if mine else None
+    pr = {k: mine[0].get(k) for k in ("number", "url", "state", "baseRefName")} if mine else None
+    onto = pr["baseRefName"] if pr else base_branch if base_branch is not None else info(repo, run=run)[1]
+    if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
+        raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     user, others = [], []
     if pr:
         api = f"repos/{repo.owner}/{repo.name}"
@@ -431,7 +436,8 @@ def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: R
                     if kind == "review_comment":
                         e["path"], e["line"] = c.get("path"), c.get("line") or c.get("original_line")
                     (user if (e["author"] or "").lower() in by_user else others).append(e)
-    return {"pr": pr, "plan_docs": docs, "since": since or None, "user": _oldest_first(user), "others": _oldest_first(others)}
+    return {"pr": pr, "base": onto, "plan_docs": docs, "since": since or None, "user": _oldest_first(user),
+            "others": _oldest_first(others)}
 
 
 def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = CONFIG, temp=None) -> int:
@@ -442,6 +448,8 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("--dir", required=True, action=Once)
         p.add_argument("--branch", required=True, action=Once)
         p.add_argument("--name", action=Once)
+        if cmd == "status":
+            p.add_argument("--base", action=Once)
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
@@ -449,7 +457,7 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         if a.cmd == "worktree":
             r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
         else:
-            r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"))
+            r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"), base_branch=a.base)
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2

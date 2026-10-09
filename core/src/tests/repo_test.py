@@ -594,12 +594,13 @@ class Local(Clone):
 
     def test_status_with_a_local_path(self):
         self.assertEqual(self.worktree()[0], 0)
-        run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')), (["gh", "pr", "list"], ok("[]"))])
+        run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')), (["gh", "pr", "list"], ok("[]")),
+                    info()])
         out, err = io.StringIO(), io.StringIO()
         code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-1-x", self.clone], run=run, out=out, err=err,
                          config=self.none)
         self.assertEqual(code, 0, err.getvalue())
-        self.assertIsNone(json.loads(out.getvalue())["pr"])
+        self.assertEqual({k: json.loads(out.getvalue())[k] for k in ("pr", "base")}, {"pr": None, "base": "main"})
         self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
 
 
@@ -614,7 +615,7 @@ class Local(Clone):
         for argv, want in ((["--name", "TASK-7"], 0), ([], 2)):
             with self.subTest(argv=argv):
                 run = Real([(["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
-                            (["gh", "pr", "list"], ok("[]"))])
+                            (["gh", "pr", "list"], ok("[]")), info()])
                 out, err = io.StringIO(), io.StringIO()
                 code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-7-x", *argv, self.clone], run=run, out=out,
                                  err=err, config=self.none)
@@ -858,14 +859,16 @@ class Status(Base):
                     (["gh", "api", "--hostname", "github.com", "user"], ok(json.dumps({"login": "me"}))),
                     (["gh", "pr", "list"], ok(json.dumps([
                         {"number": 9, "url": "u9", "state": "OPEN", "isCrossRepository": True, "author": {"login": "me"}},
-                        {"number": 7, "url": "u7", "state": "OPEN", "isCrossRepository": False, "author": {"login": "me"}}]))),
+                        {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a", "isCrossRepository": False,
+                         "author": {"login": "me"}}]))),
                     (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
                     (lambda a: a[-1].endswith("/pulls/7/reviews"), ok(json.dumps(reviews))),
                     (lambda a: a[-1].endswith("/pulls/7/comments"), ok("[[]]"))])
         code, out, _ = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run)
         self.assertEqual(code, 0)
         r = json.loads(out)
-        self.assertEqual(r["pr"], {"number": 7, "url": "u7", "state": "OPEN"})
+        self.assertEqual(r["pr"], {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a"})
+        self.assertIn("number,url,state,baseRefName,isCrossRepository,author", next(c for c in run.calls if c[1] == "pr"))
         self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S9"}])
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
@@ -879,7 +882,8 @@ class Status(Base):
             with self.subTest(local=local_text):
                 run = Fake([existing, (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
                             (["gh", "pr", "list"], ok(json.dumps([{"number": 7, "url": "u7", "state": "OPEN",
-                                                                   "isCrossRepository": False, "author": {"login": "me"}}]))),
+                                                                   "baseRefName": "main", "isCrossRepository": False,
+                                                                   "author": {"login": "me"}}]))),
                             (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
                             (lambda a: "--paginate" in a, ok("[[]]"))])
                 with open(config, "w") as f:
@@ -897,13 +901,14 @@ class Status(Base):
     def test_other_branches_plan_docs_and_no_pr(self):
         self.plan_doc(branch="other")
         run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
-                    (["gh", "pr", "list"], ok("[]"))])
+                    (["gh", "pr", "list"], ok("[]")), info()])
         code, out, _ = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run)
-        self.assertEqual((code, json.loads(out)), (0, {"pr": None, "plan_docs": [], "since": None, "user": [], "others": []}))
+        self.assertEqual((code, json.loads(out)),
+                         (0, {"pr": None, "base": "main", "plan_docs": [], "since": None, "user": [], "others": []}))
 
     def test_an_invalid_trusted_dirs_does_not_affect_status(self):
         run = Fake([self.existing(), (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
-                    (["gh", "pr", "list"], ok("[]"))])
+                    (["gh", "pr", "list"], ok("[]")), info()])
         code, _, err = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir], run,
                                  self.config('trusted_dirs = ["a/b"]\n'))
         self.assertEqual(code, 0, err)
@@ -921,6 +926,59 @@ class Status(Base):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))
         self.assertEqual(code, 2)
         self.assertIn("run worktree first", err)
+
+
+class StatusBase(Base):
+    """`base`: the PR's baseRefName, else --base, else the default branch."""
+    REPO_API = ("gh", "api", "--hostname", "github.com", "repos/o/n")
+
+    def setUp(self):
+        super().setUp()
+        self.remote = self.existing()
+
+    def status(self, prs, *argv, default="main"):
+        """(exit code, `base` or stderr, run)."""
+        run = Fake([self.remote, (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}')),
+                    (["gh", "pr", "list"], ok(json.dumps(prs))), (lambda a: "--paginate" in a, ok("[[]]")),
+                    info(default=default)])
+        code, out, err = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir, *argv], run)
+        return code, json.loads(out)["base"] if code == 0 else err, run
+
+    @staticmethod
+    def pr(base):
+        return [{"number": 7, "url": "u7", "state": "OPEN", "baseRefName": base, "isCrossRepository": False,
+                 "author": {"login": "me"}}]
+
+    def test_the_prs_base_beats_the_option(self):
+        code, base, run = self.status(self.pr("TASK-0-a"), "--base", "TASK-0-b")
+        self.assertEqual((code, base), (0, "TASK-0-a"))
+        self.assertFalse(run.ran(*self.REPO_API))
+
+    def test_the_option_beats_the_default(self):
+        code, base, run = self.status([], "--base", "TASK-0-b")
+        self.assertEqual((code, base), (0, "TASK-0-b"))
+        self.assertFalse(run.ran(*self.REPO_API))
+
+    def test_neither_is_the_default(self):
+        code, base, run = self.status([], default="trunk")
+        self.assertEqual((code, base), (0, "trunk"))
+        self.assertTrue(run.ran(*self.REPO_API))
+
+    def test_an_unsafe_base_exits_2(self):
+        for prs, argv, default in ((self.pr("a..b"), [], "main"), (self.pr(None), [], "main"),
+                                   ([], ["--base", "x;rm -rf ~"], "main"), ([], ["--base", ""], "main"), ([], [], "-x")):
+            with self.subTest(prs=prs, argv=argv, default=default):
+                code, err, _ = self.status(prs, *argv, default=default)
+                self.assertEqual(code, 2, err)
+                self.assertIn("unsafe base branch name", err)
+
+    def test_base_is_a_status_option_given_once(self):
+        for cmd, argv, msg in (("status", ["--base", "a", "--base", "b"], "--base given twice"),
+                               ("worktree", ["--base", "a"], "unrecognized arguments")):
+            err = io.StringIO()
+            with self.subTest(cmd=cmd), self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
+                repo.main([cmd, "--dir", self.dir, "--branch", "b", *argv, "o/n"], run=Fake([]), config=self.none)
+            self.assertIn(msg, err.getvalue())
 
 
 if __name__ == "__main__":

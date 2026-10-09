@@ -463,8 +463,9 @@ class Checkout(unittest.TestCase):
                 self.assertIn(f"\nCheckout: {name}\n", prompt)
                 self.assertIn("`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                               "`Checkout:`", prompt)
-                for cmd in ("worktree", "status"):
-                    self.assertIn(f"/repo.py {cmd} --dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>`", prompt)
+                for cmd, base in (("worktree", ""), ("status", "[--base <Base:>] ")):
+                    self.assertIn(f"/repo.py {cmd} --dir <Workdir>/src --branch <branch> [--name <checkout>] {base}<repo>`",
+                                  prompt)
 
 
 if __name__ == "__main__":
