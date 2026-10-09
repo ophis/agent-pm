@@ -697,13 +697,19 @@ def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
     return {pane: path for child in cell.children for pane, path in _paths(child, (*above, cell)).items()}
 
 
+def _natural(name: str) -> list[str | int]:
+    """name's sort key: its text and number chunks, numbers compared as numbers (w2 before w10)."""
+    return [int(c) if i % 2 else c for i, c in enumerate(re.split(r"([0-9]+)", name))]
+
+
 def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, str, str]],
                layout: Cell) -> list[Slot]:
     """The main grid's cells, in order. A node (a session whose @pane is a window pane but the manager; two claiming
     one: the lower session id) sits in its @opener's node; nodes whose @opener is gone form an orphan group, in the
     cell the current layout shows them in; the rest, and what main does not reach (a group whole), sit in main.
-    Siblings by pane id, an orphan group where the layout has it; manual panes last. sessions: each live session's
-    (id, name, @opener, @pane), fullmatched, "" when unset; layout's leaves: panes."""
+    Main's cells by _natural session name (an orphan group: its gone @opener's); other siblings by pane id, an orphan
+    group where the layout has it; manual panes last. sessions: each live session's (id, name, @opener, @pane),
+    fullmatched, "" when unset; layout's leaves: panes."""
     owner = {}
     for _, name, opener, pane in sorted(sessions):
         if pane in panes and pane != manager and pane not in owner:
@@ -757,11 +763,15 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
         return min(rank[p] for p in under(key))
 
     def slots(key) -> list[Slot]:
-        live = sorted((k for k, up in parent.items() if up == key and k in owner), key=lambda p: int(p[1:]))
-        order = list(live)
-        for q in sorted((k for k, up in parent.items() if up == key and k not in owner), key=first):
-            later = next((k for k in live if first(k) > first(q)), None)
-            order.insert(len(order) if later is None else order.index(later), q)
+        if key is None:
+            order = sorted((k for k, up in parent.items() if up is None),
+                           key=lambda k: _natural(owner[k][0] if k in owner else k))
+        else:
+            live = sorted((k for k, up in parent.items() if up == key and k in owner), key=lambda p: int(p[1:]))
+            order = list(live)
+            for q in sorted((k for k, up in parent.items() if up == key and k not in owner), key=first):
+                later = next((k for k in live if first(k) > first(q)), None)
+                order.insert(len(order) if later is None else order.index(later), q)
         return [Slot(k if k in owner else None, tuple(slots(k))) for k in order]
 
     manual = sorted((p for p in panes if p != manager and p not in owner), key=lambda p: int(p[1:]))
