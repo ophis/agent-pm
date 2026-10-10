@@ -237,7 +237,7 @@ import sys
 sys.path.insert(0, sys.argv[1])
 import manager
 for i in range(15):
-    manager.put(sys.argv[2], sys.argv[3] + str(i), manager.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/workers.py"]))
+    manager.put(sys.argv[2], sys.argv[3] + str(i), manager.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
 """
 
 LEASE_CHILD = """
@@ -259,7 +259,7 @@ except manager.Held as e:
 
 def good(**over):
     """A valid entry value."""
-    value = dict(kind="worker", sid=SID, cwd="/w", resume=["/usr/bin/python3", "/x/workers.py"], note=None, opener=None,
+    value = dict(kind="worker", sid=SID, cwd="/w", resume=["/usr/bin/python3", "/x/crew.py"], note=None, opener=None,
                  pane=None, split=None, split_from=None, tui=None, state="working", started=WHEN)
     return {**value, **over}
 
@@ -269,7 +269,8 @@ VALID = {
     "kind": ["worker", "role", "pipeline"],
     "sid": [SID, None],
     "cwd": ["/w", "/w with space/é日", "/w ​"],
-    "resume": [["/usr/bin/python3", "/x/workers.py", "; rm -rf ~"], ["/p", "/x/drive.py"], ["/p", "/x/router.py", "a", "b"]],
+    "resume": [["/usr/bin/python3", "/x/crew.py", "; rm -rf ~"], ["/p", "/x/drive.py"], ["/p", "/x/router.py", "a", "b"],
+               ["/p", "/x/workers.py", "start"]],
     "note": [None, "", "x" * 500, "né ​"],
     "opener": [None, "mgr", "w0t0p0:5E1B-C0FFEE"],
     "pane": [None, "%3", "5E1B-C0FFEE"],
@@ -280,7 +281,7 @@ VALID = {
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
-RESUME_1 = "an absolute path named workers.py, drive.py or router.py"
+RESUME_1 = "an absolute path named crew.py, drive.py or router.py"
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 INVALID = [
@@ -292,13 +293,14 @@ INVALID = [
     ("cwd", "/w ", f"cwd: {{!r}}: want {CWD}"), ("cwd", "/w\x00", f"cwd: {{!r}}: want {CWD}"),
     ("cwd", "/w\x7f", f"cwd: {{!r}}: want {CWD}"), ("cwd", None, f"cwd: {{!r}}: want {CWD}"),
     ("resume", ["/usr/bin/python3"], f"resume: {{!r}}: want {RESUME_LIST}"), ("resume", "x", f"resume: {{!r}}: want {RESUME_LIST}"),
-    ("resume", ["/p", "/x/workers.py", "a\nb"], f"resume: {{!r}}: want {RESUME_LIST}"),
-    ("resume", ["/p", "/x/workers.py", "a "], f"resume: {{!r}}: want {RESUME_LIST}"),
-    ("resume", ["/p", "/x/workers.py", 3], f"resume: {{!r}}: want {RESUME_LIST}"),
-    ("resume", ["python3", "/x/workers.py"], "resume[0]: 'python3': want an absolute path"),
-    ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
+    ("resume", ["/p", "/x/crew.py", "a\nb"], f"resume: {{!r}}: want {RESUME_LIST}"),
+    ("resume", ["/p", "/x/crew.py", "a "], f"resume: {{!r}}: want {RESUME_LIST}"),
+    ("resume", ["/p", "/x/crew.py", 3], f"resume: {{!r}}: want {RESUME_LIST}"),
+    ("resume", ["python3", "/x/crew.py"], "resume[0]: 'python3': want an absolute path"),
+    ("resume", ["/p", "crew.py"], f"resume[1]: 'crew.py': want {RESUME_1}"),
     ("resume", ["/p", "/x/other.py"], f"resume[1]: '/x/other.py': want {RESUME_1}"),
-    ("resume", ["/p", "/x/workers.py/"], f"resume[1]: '/x/workers.py/': want {RESUME_1}"),
+    ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
+    ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"), ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
     ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"), ("note", "a b", f"note: {{!r}}: want {NOTE}"),
     ("note", 5, f"note: {{!r}}: want {NOTE}"),
@@ -464,8 +466,8 @@ class RosterTest(unittest.TestCase):
             (lambda r: r.update(x=1), "keys: unexpected ['x']"),
             (lambda r: r["entries"].update(w2=good(kind="boss")), "entry 'w2': " + KIND.format("boss")),
             (lambda r: r["entries"].update({"a b": good()}), "entry 'a b': name: want [A-Za-z0-9_-]+"),
-            (lambda r: r["entries"].update(w2=good(resume=("/p", "/x/workers.py"))),
-             f"entry 'w2': resume: ('/p', '/x/workers.py'): want {RESUME_LIST}"),
+            (lambda r: r["entries"].update(w2=good(resume=("/p", "/x/crew.py"))),
+             f"entry 'w2': resume: ('/p', '/x/crew.py'): want {RESUME_LIST}"),
             (lambda r: r["entries"].update(w2={}), "entry 'w2': keys: missing " + str(sorted(good()))),
         ]
         for change, why in bad:
@@ -625,7 +627,7 @@ class RosterTest(unittest.TestCase):
 
     def test_missing_directory_is_not_attached_and_nothing_is_created(self):
         os.rmdir(self.dir)
-        message = f"manager directory {self.dir} not attached: run workers.py attach first"
+        message = f"manager directory {self.dir} not attached: run crew.py attach first"
         self.refused(message)
         self.refused(message, write=False)
         self.assertEqual(os.listdir(self.managers), [])
@@ -682,10 +684,10 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(full, good(kind="role", sid=None, resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
                                     split="right", split_from="a", tui="t", state="done"))
         with self.assertRaises(manager.ManagerError) as cm:
-            manager.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/workers.py"])
+            manager.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
         self.assertEqual(str(cm.exception), "entry: " + KIND.format("boss"))
         with self.assertRaisesRegex(manager.ManagerError, "^entry: cwd: 'rel': want"):
-            manager.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/workers.py"])
+            manager.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"])
 
     def test_set_entry_and_record_validate_replace_and_leave_the_dict_on_a_fault(self):
         for setter in (manager.set_entry, manager.record):
@@ -745,7 +747,7 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(self.entries(), {})
 
     def test_recovery_forms_each_a_copy(self):
-        resume = ["/usr/bin/python3", "/x/workers.py", "start"]
+        resume = ["/usr/bin/python3", "/x/crew.py", "start"]
         cases = [("worker", SID, resume), ("pipeline", SID, resume), ("worker", None, resume),
                  ("role", SID, [*resume, "--sid", SID, "--resume", "--input", "Continue the unfinished task."]),
                  ("role", None, None)]
@@ -757,6 +759,18 @@ class RosterTest(unittest.TestCase):
                 if got is not None:
                     got.append("x")
                     self.assertEqual(e["resume"], resume)
+
+    def test_recovery_runs_this_crew_py_for_a_legacy_workers_py_entry(self):
+        crew = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(manager.__file__))),
+                            "skills", "tmux", "scripts", "crew.py")
+        self.assertTrue(os.path.isfile(crew))
+        resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
+        for kind in ("worker", "pipeline", "role"):
+            with self.subTest(kind=kind):
+                e = good(kind=kind, resume=list(resume))
+                got = manager.recovery(e)
+                self.assertEqual(got[:4], ["/usr/bin/python3", crew, "start", "w1"])
+                self.assertEqual(e["resume"], resume)
 
     def test_printable(self):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):
@@ -782,7 +796,7 @@ class RosterTest(unittest.TestCase):
 
 
 NOW = "2026-02-02T02:02:02+00:00"
-ATTACH = "manager directory {} not attached: run workers.py attach first"
+ATTACH = "manager directory {} not attached: run crew.py attach first"
 KEPT = object()
 
 
@@ -817,7 +831,7 @@ class LeaseTest(unittest.TestCase):
 
     def message(self, session="other", since=WHEN):
         return (f"manager directory {self.dir}: held by tmux session {session} since {since}; "
-                "ask that manager to run workers.py release, or end that session")
+                "ask that manager to run crew.py release, or end that session")
 
     def refused(self, call, r, message, kind=manager.ManagerError):
         before = json.dumps(r)
@@ -1113,7 +1127,7 @@ class CursorTest(unittest.TestCase):
         for after in (3, 9, None):
             with self.subTest(after=after), self.assertRaises(manager.Stale) as cm:
                 manager.advance(r, self.dir, after, 0)
-            self.assertEqual(str(cm.exception), "stale line numbers (gen 0, now 1): run workers.py attach")
+            self.assertEqual(str(cm.exception), "stale line numbers (gen 0, now 1): run crew.py attach")
         self.assertEqual(r, self.doc(2, 1))
 
     def test_advance_past_the_end_is_stale(self):
@@ -1121,7 +1135,7 @@ class CursorTest(unittest.TestCase):
         r = self.doc(2, 1)
         with self.assertRaises(manager.Stale) as cm:
             manager.advance(r, self.dir, 6, 1)
-        self.assertEqual(str(cm.exception), f"line 6 is past the end of {self.events} (5 lines): run workers.py attach")
+        self.assertEqual(str(cm.exception), f"line 6 is past the end of {self.events} (5 lines): run crew.py attach")
         self.assertEqual(r, self.doc(2, 1))
         os.unlink(self.events)
         with self.assertRaisesRegex(manager.Stale, r"^line 1 is past the end of .* \(0 lines\)"):

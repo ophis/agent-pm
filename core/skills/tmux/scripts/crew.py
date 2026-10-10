@@ -44,7 +44,7 @@ ENDED = {"done": "finished", "failed": "finished", "needs_input": "waiting"}
 CLIENTS = "#{client_activity} #{client_tty}"
 HOSTS = "#{pane_tty}\t#{session_name}"
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
-ROTATE_MSG = "rotate: run workers.py attach, then arm with its N and GEN"
+ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
 
 
 class WorkersError(Exception):
@@ -100,7 +100,7 @@ def _refuse(flags) -> None:
             return
         word = flag.split("=", 1)[0] if flag.startswith("--") else flag
         if word in REFUSED:
-            raise WorkersError(f"{word}: workers.py picks the session; use start --resume <sid>")
+            raise WorkersError(f"{word}: crew.py picks the session; use start --resume <sid>")
 
 
 def _early(name: str, proc) -> None:
@@ -752,7 +752,7 @@ def main(argv=None) -> int:
     if "--" in argv:
         i = argv.index("--")
         argv, flags = argv[:i], argv[i + 1:]
-    ap = argparse.ArgumentParser(prog="workers.py")
+    ap = argparse.ArgumentParser(prog="crew.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("start")
     p.add_argument("name")
@@ -760,7 +760,7 @@ def main(argv=None) -> int:
     p.add_argument("--cwd")
     p.add_argument("--prompt")
     p.add_argument("--resume", metavar="SID", help="a session id")
-    p.add_argument("--note", help="its roster note, as workers.py note sets it")
+    p.add_argument("--note", help="its roster note, as crew.py note sets it")
     p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
