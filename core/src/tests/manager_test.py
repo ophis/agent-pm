@@ -982,6 +982,100 @@ class LeaseTest(unittest.TestCase):
         self.assertEqual(out[loser][0].strip(), self.message(winners[0], holder["since"]))
 
 
+def tmux_sessions(*live, stuck=()):
+    """A proc answering tmux kill-session and has-session over the sessions in `live`: a kill ends one (unless it is in
+    `stuck`) and fails for one not live; its argv are recorded."""
+    alive = set(live)
+
+    def proc(argv, **kw):
+        proc.calls.append(argv)
+        cmd, session = argv[1], argv[3][1:]
+        if argv[0] != "tmux" or cmd not in ("kill-session", "has-session"):
+            raise AssertionError(argv)
+        rc = 0 if session in alive else 1
+        if cmd == "kill-session" and session not in stuck:
+            alive.discard(session)
+        return subprocess.CompletedProcess(argv, rc, "", "" if rc == 0 else f"can't find session: {session}\n")
+
+    proc.calls = []
+    return proc
+
+
+def kills(*sessions):
+    """The tmux calls manager.stop makes for sessions, in order."""
+    return [["tmux", cmd, "-t", f"={s}"] for s in sessions for cmd in ("kill-session", "has-session")]
+
+
+class StopTest(unittest.TestCase):
+    """manager.stop inside a roster() block of m1's directory; tmux is tmux_sessions."""
+
+    def setUp(self):
+        self.agent_pm = hermetic.home(self)
+        self.dir = os.path.join(self.agent_pm, "managers", "m1")
+        manager.ensure(self.dir)
+        self.entries = {"w1": good(), "w2": good(sid=SID2), "d1": good(kind="role", tui="t1"),
+                        "d2": good(kind="pipeline", tui="t2"), "d3": good(kind="role", tui=None)}
+
+    def stop(self, name, proc):
+        """manager.stop's key for name, and the entries then written."""
+        with manager.roster(self.dir) as r:
+            r["entries"] = dict(self.entries)
+        with manager.roster(self.dir) as r:
+            key = manager.stop(r, name, proc=proc)
+        with manager.roster(self.dir, write=False) as r:
+            return key, r["entries"]
+
+    def refused(self, name, proc, message):
+        """manager.stop raises message inside the block; nothing written."""
+        with manager.roster(self.dir) as r:
+            r["entries"] = dict(self.entries)
+        with self.assertRaises(manager.ManagerError) as cm, manager.roster(self.dir) as r:
+            manager.stop(r, name, proc=proc)
+        self.assertEqual(str(cm.exception), message)
+        with manager.roster(self.dir, write=False) as r:
+            self.assertEqual(r["entries"], self.entries)
+
+    def test_a_worker_its_session_killed_then_removed(self):
+        proc = tmux_sessions("w1", "w2")
+        self.assertEqual(self.stop("w1", proc), ("w1", {n: e for n, e in self.entries.items() if n != "w1"}))
+        self.assertEqual(proc.calls, kills("w1"))
+
+    def test_a_role_or_pipeline_by_its_key_or_its_tui_the_driver_killed_first(self):
+        for key, tui in (("d1", "t1"), ("d2", "t2")):
+            for name in (key, tui):
+                with self.subTest(name=name):
+                    proc = tmux_sessions(key, tui)
+                    key_, left = self.stop(name, proc)
+                    self.assertEqual((key_, sorted(left)), (key, sorted(set(self.entries) - {key})))
+                    self.assertEqual(proc.calls, kills(key, tui))
+
+    def test_sessions_gone_already_still_killed_and_the_entry_removed(self):
+        for name, live, sessions in (("w1", (), ("w1",)), ("d1", ("t1",), ("d1", "t1")), ("d3", (), ("d3",))):
+            with self.subTest(name=name):
+                proc = tmux_sessions(*live)
+                self.assertNotIn(name, self.stop(name, proc)[1])
+                self.assertEqual(proc.calls, kills(*sessions))
+
+    def test_no_tmux_counts_as_gone(self):
+        self.assertNotIn("w1", self.stop("w1", no_tmux)[1])
+
+    def test_an_entry_key_beats_another_entrys_tui(self):
+        self.entries["t1"] = good()
+        proc = tmux_sessions("t1", "d1")
+        self.assertEqual(self.stop("t1", proc)[0], "t1")
+        self.assertEqual(proc.calls, kills("t1"))
+
+    def test_not_in_roster_kills_nothing(self):
+        proc = tmux_sessions("w9")
+        self.refused("w9", proc, "w9 not in roster")
+        self.assertEqual(proc.calls, [])
+
+    def test_a_session_still_live_keeps_the_entry(self):
+        proc = tmux_sessions("d1", "t1", stuck=("t1",))
+        self.refused("d1", proc, "d1: session t1 still live after tmux kill-session")
+        self.assertEqual(proc.calls, kills("d1", "t1"))
+
+
 WIDTH = 64
 SPAN = manager.EVENTS_MAX // WIDTH
 WRITER = b"12:00:00 w9 done\n"

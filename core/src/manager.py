@@ -14,7 +14,8 @@ roster.json: a regular file of the caller's, at most ROSTER_MAX bytes (a symlink
 JSON (indent 2, sorted keys), written through a temp file and os.replace. Missing: version 1, holder null, cursor 0,
 gen 0, no entries. An entry is written by the script that starts the subordinate, at start, replacing one of the same
 name (record): workers.py start (a worker, under its name), drive.detach for drive.py --detach (a role) and
-router.py --tui (a pipeline), keyed by the driver session.
+router.py --tui (a pipeline), keyed by the driver session. `workers.py stop` removes one with its sessions (stop),
+`workers.py forget` one whose sessions are gone.
   {"version": 1, "holder": null | {"session": NAME, "since": time}, "cursor": int >= 0, "gen": int >= 0,
    "entries": {NAME: entry}}
 Exactly these keys (holder's: session, since), else ManagerError and the file untouched. An entry has exactly these
@@ -492,6 +493,25 @@ def remove(r: dict, name: str) -> dict:
         return r["entries"].pop(name)
     except KeyError:
         raise ManagerError(f"{name} not in roster") from None
+
+
+def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
+    """Stops entry `name` (its key, else the entry whose tui it is), inside a roster() block: kills its sessions (its
+    key's, then its tui's), gone already or not, then removes it (remove); returns its key. Not in the roster:
+    ManagerError, nothing killed. A session still live after its kill: ManagerError, the entry kept."""
+    entries = r["entries"]
+    key = name if name in entries else next((k for k in sorted(entries) if entries[k]["tui"] == name), None)
+    if key is None:
+        raise ManagerError(f"{name} not in roster")
+    for session in (key, entries[key]["tui"]):
+        if session is None:
+            continue
+        with contextlib.suppress(tui_claude.TuiError):
+            tui_claude.kill(session, proc=proc)
+        if _live(session, proc):
+            raise ManagerError(f"{key}: session {session} still live after tmux kill-session")
+    remove(r, key)
+    return key
 
 
 def recovery(entry: dict) -> list[str] | None:
