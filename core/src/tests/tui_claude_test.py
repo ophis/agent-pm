@@ -1850,6 +1850,10 @@ class GridTree(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(self.tree(rows, panes), want)
 
+    def test_a_driver_with_an_opener_and_no_pane_takes_no_cell(self):
+        rows = [(2, "w1", "mgr", "%1"), (3, "r-0123abcd-drive", "mgr", ""), (4, "r-0123abcd", "mgr", "%2")]
+        self.assertEqual(self.tree(rows, ["%0", "%1", "%2"]), [slot("%2"), slot("%1")])
+
     def test_a_closed_pane_keeps_the_rest_in_order(self):
         panes = ["%0", "%1", "%3", "%4", "%5", "%6", "%7"]
         rows = [(i + 1, f"w{i}", "mgr", f"%{i}") for i in (1, 3, 4, 5, 6, 7)]

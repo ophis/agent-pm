@@ -641,13 +641,14 @@ def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.
 
 
 def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iterm: str, proc=subprocess.run,
-           sleep=time.sleep, roster: tuple[str, dict] | None = None) -> None:
+           sleep=time.sleep, roster: tuple[str, dict] | None = None, opener: str | None = None) -> None:
     """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
-    argv unblocks them (main). Raises RunnerError. With roster (a manager directory, manager.entry's keyword
-    arguments), once the session runs it writes that entry as `name` (manager.put, no lease check); an entry write
-    failure only prints its line (manager.unwritten)."""
+    argv unblocks them (main). Raises RunnerError. With opener (the run's, tui_claude.OPENER), the session gets it as
+    @opener, as its tui session does (`workers.py stop-all` finds it so), no @pane: a failure only prints its line.
+    With roster (a manager directory, manager.entry's keyword arguments), once the session runs it writes that entry as
+    `name` (manager.put, no lease check); an entry write failure only prints its line (manager.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken
         if "\0" in arg:
             raise RunnerError("an argv item holds a NUL character")
@@ -669,6 +670,11 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
                     "-c", tui_claude.EXEC, path], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if res.returncode:
             raise RunnerError(f"tmux: {(res.stderr or '').strip()}")
+        if opener is not None:
+            res = proc(["tmux", "set-option", "-t", f"={name}:", "@opener", opener], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+            if res.returncode:
+                print(f"drive.py: driver session {name}: @opener: {(res.stderr or '').strip()}", file=sys.stderr)
         for _ in range(round(tui_claude.HANDOVER_TIMEOUT / tui_claude.POLL)):
             if not os.path.exists(path):
                 started = True
@@ -961,7 +967,7 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
                                                    "split", "split-from", "prefix") if given[k] is not None),
                    "--detach", f"--manager={os.path.basename(d)}"]})
     try:
-        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster=roster)
+        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster=roster, opener=opener)
     except RunnerError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 3

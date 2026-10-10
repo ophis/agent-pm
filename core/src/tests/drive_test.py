@@ -2022,10 +2022,11 @@ class Detach(Base):
 
     def test_detach_starts_this_command_as_the_driver_in_its_session_and_exits(self):
         driver, tui = f"p-{SID[:8]}-drive", f"p-{SID[:8]}"
-        code, err, (argv,), handover = self.outer("--runner", "tui", "--prefix", "p")
+        code, err, (argv, opener), handover = self.outer("--runner", "tui", "--prefix", "p")
         self.assertEqual(code, 0)
         self.assertEqual(argv, ["tmux", "new-session", "-d", "-e", "ITERM_SESSION_ID=w0t0p0:AB-12", "-s", driver,
                                 sys.executable, "-I", "-c", drive.tui_claude.EXEC, argv[-1]])
+        self.assertEqual(opener, ["tmux", "set-option", "-t", f"={driver}:", "@opener", "w0t0p0:AB-12"])
         self.assertFalse(os.path.exists(os.path.dirname(argv[-1])))
         self.assertEqual(handover["argv"], [
             sys.executable, os.path.abspath(drive.__file__), "--role=dummy-tester", "--input=Hello.",
@@ -2124,6 +2125,26 @@ class Detach(Base):
                 self.assertEqual((code, calls), (2, ["list-clients"]))
                 self.assertTrue(err.endswith(f"drive.py: {want}\n"), err)
                 self.assertFalse(os.path.exists(self.events))
+
+    def test_the_driver_carries_its_runs_opener_and_none_without_one(self):
+        os.environ.update(INSIDE)   # the caller's tmux session: mgr
+        for runner, want in (("tui", [["set-option", "-t", f"={self.DRIVER}:", "@opener", "mgr"]]), ("headless", [])):
+            with self.subTest(runner=runner):
+                code, err, calls, _ = self.outer("--runner", runner)
+                self.assertEqual(code, 0, err)
+                self.assertEqual([c[1:] for c in calls if c[1] == "set-option"], want)
+
+    def test_a_failed_opener_only_prints_its_line(self):
+        def proc(argv, **kw):
+            if argv[1] == "new-session":
+                os.unlink(argv[-1])
+            fail = argv[1] == "set-option"
+            return subprocess.CompletedProcess(argv, int(fail), "", "no such session\n" if fail else "")
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=proc, opener="mgr")
+        self.assertEqual(err.getvalue(), "drive.py: driver session d: @opener: no such session\n")
 
     def test_a_failed_tmux_start_exits_3(self):
         code, err, calls, _ = self.outer("--runner", "tui", rc=1)

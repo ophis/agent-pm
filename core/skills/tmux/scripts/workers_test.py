@@ -2112,6 +2112,81 @@ class StopTest(RosterCase):
         self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/y/workers.py", "--go"]])
 
 
+class StopAllTest(RosterCase):
+    """workers.py stop-all, the caller in tmux session mgr, its holder unless a test says otherwise."""
+
+    def test_selects_by_opener_recursively_deepest_first(self):
+        live = {"mgr": {"opener": ""}, "w1": {"opener": "mgr"}, "w2": {"opener": "mgr"}, "w3": {"opener": "w1"},
+                "w4": {"opener": "w3"}, "x": {"opener": "other"}, "y": {"opener": "x"}, "z": {"opener": ""},
+                "loop": {"opener": "loop"}, "back": {"opener": "w4"}}
+        self.assertEqual(workers.opened("mgr", live), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(workers.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(workers.opened("nobody", live), [])
+        entries = {"mgr": {"x": entry(), "w9": entry(tui="t9"), "w1": entry()}}
+        live = {**live, "w9": {"opener": ""}, "t9": {"opener": "mgr"}}   # x: another manager's, its name reused
+        self.assertEqual(workers.opened("mgr", live, lambda s: entries.get(s, {})),
+                         ["back", "w4", "w3", "t9", "w1", "w2", "w9"])
+
+    def sessions(self):
+        return {"w1": opts(SID, pane="%1", opener="mgr"), "w3": opts(pane="%2", opener="w1"),
+                "d1": opts(opener="mgr"), "t1": opts(pane="%3", opener="mgr"),
+                "agent-pm-engineer-TASK-1": opts(opener="mgr"), "o1": opts(pane="%4", opener="other")}
+
+    def test_dry_run_lists_all_and_stops_nothing(self):
+        before = self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"),
+                           **{"agent-pm-engineer-TASK-1": entry("pipeline")})
+        server = Server(sessions=self.sessions())
+        self.assertEqual(self.run_main(server, "stop-all", "--dry-run"), (0, nl(
+            "would stop w3", "would stop agent-pm-engineer-TASK-1; a scheduler may resume it", "would stop d1",
+            "would stop t1", "would stop w1"), ""))
+        self.assertEqual((server.ran("kill-session"), self.bytes()), ([], before))
+
+    def test_stops_them_by_exact_target_and_removes_their_entries(self):
+        self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"), gone=entry(state="gone"),
+                  **{"agent-pm-engineer-TASK-1": entry("pipeline")})
+        w1 = os.path.join(self.agent_pm, "managers", "w1")
+        manager.ensure(w1)
+        manager.put(w1, "w3", entry())
+        server = Server(sessions=self.sessions())
+        self.assertEqual(self.run_main(server, "stop-all"), (0, nl(
+            "stopped w3", "stopped agent-pm-engineer-TASK-1; a scheduler may resume it", "stopped d1", "stopped t1",
+            "stopped w1"), ""))
+        self.assertEqual([c[3] for c in server.ran("kill-session")],
+                         ["=w3", "=agent-pm-engineer-TASK-1", "=d1", "=t1", "=w1"])
+        self.assertEqual((set(server.sessions), set(self.entries())), ({"mgr", "o1"}, {"gone"}))
+        with manager.roster(w1, write=False) as r:
+            self.assertEqual(r["entries"], {})
+
+    def test_unshown_sessions_of_its_roster_too_an_entry_kept_while_its_key_lives(self):
+        self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"))   # no pane shown: no @opener
+        server = Server(sessions={"w1": opts(SID), "d1": opts(), "t1": opts()},
+                        fail={"kill-session -t =d1": "boom\n"})
+        live = "workers: stop-all: still live after tmux kill-session: d1\n"
+        self.assertEqual(self.run_main(server, "stop-all"), (1, "stopped t1\nstopped w1\n", live))
+        self.assertEqual(set(self.entries()), {"d1"})
+
+    def test_nothing_to_stop(self):
+        self.assertEqual(self.run_main(Server(sessions={"o1": opts(opener="other")}), "stop-all"),
+                         (0, "workers: stop-all: nothing to stop\n", ""))
+
+    def test_a_session_outliving_its_kill_exits_1_keeping_its_entry(self):
+        self.seed(MGR, w1=entry(), w2=entry())
+        server = Server(sessions={"w1": opts(opener="mgr"), "w2": opts(opener="mgr")},
+                        fail={"kill-session -t =w1": "boom\n"})
+        self.assertEqual(self.run_main(server, "stop-all"),
+                         (1, "stopped w2\n", "workers: stop-all: still live after tmux kill-session: w1\n"))
+        self.assertEqual(set(self.entries()), {"w1"})
+
+    def test_outside_tmux_or_not_the_holder_stops_nothing(self):
+        server = Server(None, sessions={"w1": opts(opener="mgr")})
+        self.assertEqual(self.run_main(server, "stop-all"),
+                         (1, "", "workers: stop-all: not in tmux: run it in the manager's tmux session\n"))
+        self.seed(OTHER, w1=entry())
+        server = Server(sessions={"w1": opts(opener="mgr"), "other": opts()})
+        self.assertEqual(self.run_main(server, "stop-all"), (1, "", self.held()))
+        self.assertEqual(server.ran("kill-session"), [])
+
+
 class ResumeTest(RosterCase):
     """workers.py attach --resume, mgr attaching: every live session shown (no reopen); the recovery commands run on
     Server."""

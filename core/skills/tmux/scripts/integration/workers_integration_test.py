@@ -6,7 +6,8 @@ off: placement only, then tile @N; a switch to open-close) and a split outside i
 concurrent attaches, a killed worker and a killed role run gone, then back by their recovery commands, `attach --resume`
 bringing back a killed worker but not a stopped one, and a worker, a role run and a pipeline run (STAND_IN) after the
 tmux server is lost, a role run stopped by its tui session, a role run ended on needs_input waiting, which
-`attach --resume` leaves alone, an unshown worker reopened, a take-over resuming from the event cursor, events rotation)."""
+`attach --resume` leaves alone, an unshown worker reopened, a take-over resuming from the event cursor, events rotation,
+`stop-all` stopping what one manager opened, the role run's driver given no grid cell)."""
 import contextlib
 import functools
 import json
@@ -854,6 +855,30 @@ class Roster(Live):
             return [c for c in self.calls(session) if has_pair(c["argv"], "--resume", sid)]
         except ValueError:
             return []
+
+    def test_stop_all_stops_what_mgr_opened_and_only_that(self):
+        self.attach()
+        self.started("w1")
+        self.started("w2")
+        self.attach(inside="w1")
+        self.started("w3", inside="w1")
+        self.role_run()
+        self.second()
+        self.attach(inside=SECOND)
+        self.started("o1", inside=SECOND)
+        self.assertEqual((self.server.option(ROLE_DRIVER, "@opener"), self.server.option(ROLE_DRIVER, "@pane")),
+                         (MANAGER, ""))
+        self.grid([[ROLE_TUI, ("w1", ["w3"]), "w2"]])   # the driver: no cell
+        mine = ["w3", ROLE_TUI, ROLE_DRIVER, "w1", "w2"]
+        res = self.ok(self.workers("stop-all", "--dry-run"))
+        self.assertEqual(res.stdout, "".join(f"would stop {n}\n" for n in mine))
+        self.assertTrue(self.live(*mine, "o1"))
+        res = self.ok(self.workers("stop-all"))
+        self.assertEqual(res.stdout, "".join(f"stopped {n}\n" for n in mine))
+        self.assertTrue(self.gone(*mine))
+        self.assertTrue(self.live(MANAGER, SECOND, "o1"))
+        self.assertEqual(self.roster()["entries"], {})
+        self.assertEqual(self.ok(self.workers("stop-all")).stdout, "workers: stop-all: nothing to stop\n")
 
     def test_killed_role_run_gone_then_recovered(self):
         self.attach()
