@@ -140,17 +140,12 @@ class Fake(unittest.TestCase):
 
 
 class Resolve(Fake):
-    def test_role_overrides_global(self):
-        _, run = self.compose("editor")
-        self.assertEqual((run.tier, run.effort), (1, "high"))
-        _, run = self.compose()
-        self.assertEqual((run.tier, run.effort), (2, "medium"))
-
-    def test_output_is_replaced_whole(self):
-        self.assertEqual(self.compose("editor")[1].output, {"type": "github", "repo": "o/docs", "branch": "main"})
-        self.assertEqual(self.compose()[1].output, {"type": "local"})
-
-    def test_list_defaults_are_empty(self):
+    def test_role_overrides_global_output_is_replaced_whole_and_lists_default_empty(self):
+        for role, tier, effort, output in (("editor", 1, "high", {"type": "github", "repo": "o/docs", "branch": "main"}),
+                                           ("writer", 2, "medium", {"type": "local"})):
+            with self.subTest(role=role):
+                _, run = self.compose(role)
+                self.assertEqual((run.tier, run.effort, run.output), (tier, effort, output))
         _, run = self.compose("editor")
         self.assertEqual((run.read, run.write, run.commands, run.templates), ([], [], [], []))
 
@@ -166,7 +161,7 @@ class Resolve(Fake):
         _, run = self.compose("editor", layers=[layer, {"tier": 4}])
         self.assertEqual(run.tier, 4)
 
-    def test_gate_defaults_to_none_and_a_layers_gate_is_its_value_verbatim(self):
+    def test_gate_defaults_to_none_and_a_layers_or_config_tomls_gate_is_its_value_verbatim(self):
         self.write({"team/roles/writer.md": WRITER + "\nGate: `<gate>`.\n"})
         prompt, run = self.compose()
         self.assertEqual(run.gate, "")
@@ -176,20 +171,15 @@ class Resolve(Fake):
         self.assertEqual(run.gate, gate)
         self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`")
         self.assertIn("Gate: `<gate>`.", prompt)
-
-    def test_gate_is_a_config_toml_run_key_too(self):
         self.config(CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"'))
         self.assertEqual(self.compose()[1].gate, "make gate")
 
-    def test_no_language_no_language_line(self):
+    def test_language_renders_its_line_once_at_any_level_and_no_language_drops_it(self):
         self.write({"team/principles.md": FILES["team/principles.md"] + "\n- Write well.\n- Reports are in {{language}}.\n- Be brief.\n"})
         prompt, run = self.compose("editor")
         self.assertEqual(run.language, "")
         self.assertIn("- Write well.\n- Be brief.\n", prompt)
         self.assertNotIn("Reports are in", prompt)
-
-    def test_language_renders_its_line_once_at_any_level(self):
-        self.write({"team/principles.md": FILES["team/principles.md"] + "\n- Reports are in {{language}}.\n"})
         self.config(CONFIG.replace('effort = "high"', 'effort = "high"\nlanguage = "French"'))
         prompt, run = self.compose("editor")
         self.assertEqual(prompt.count("Reports are in French."), 1)
@@ -285,9 +275,22 @@ class OldKeys(Fake):
 
 
 class Validate(Fake):
-    def test_config_toml_must_be_valid_on_its_own(self):
-        self.config(CONFIG.replace("tier = 1", "tier = 9"))
-        self.fails("tier must be an integer 1–4", "editor", layers=[{"tier": 2}])
+    TIER = "tier must be an integer 1–4"
+
+    def test_an_invalid_config_toml_fails_whatever_the_layers(self):
+        for old, new, msg, role, layers in (
+                ("tier = 1", "tier = 9", self.TIER, "editor", [{"tier": 2}]),
+                ("tier = 1", "tier = 5", self.TIER, "editor", ()),
+                ('effort = "medium"', 'effort = "medium"\nmodel = "opus"', "unknown key 'model' in roles.writer",
+                 "writer", ()),
+                ('effort = "medium"', 'effort = "ultra"', "effort must be one of", "writer", ()),
+                ('type = "github"', 'type = "s3"', "no destination 's3'", "editor", ()),
+                ('repo = "o/docs"\n', "", "<out-repo> is used in destinations/github.md but Parameters doesn't define "
+                 "it (output.repo is not set)", "editor", ()),
+                ('templates = ["note"]', 'templates = ["memo"]', "missing file templates/memo.md", "writer", ())):
+            with self.subTest(new=new):
+                self.config(CONFIG.replace(old, new))
+                self.fails(msg, role, layers=layers)
 
     def test_the_local_file_is_checked_with_config_toml(self):
         self.local('[roles.editor]\nmodel = "opus"\n')
@@ -297,25 +300,33 @@ class Validate(Fake):
         self.config(CONFIG.replace("tier = 1", "tier = 9"))
         os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
         os.remove(os.path.join(self.root, "team", "roles", "editor.md"))
-        self.fails("tier must be an integer 1–4", "editor")
+        self.fails(self.TIER, "editor")
 
-    def test_invalid_layer_value(self):
-        self.fails("tier must be an integer 1–4", "editor", layers=[{"tier": 9}])
+    def test_a_missing_rule_file(self):
+        for rel, msg, role in (("roles/editor.md", "missing file roles/editor.md", "editor"),
+                               ("guide.md", "missing file guide.md", "writer")):
+            with self.subTest(rel=rel):
+                self.write(FILES)
+                os.remove(os.path.join(self.root, "team", rel))
+                self.fails(msg, role)
 
-    def test_gate_is_one_line_without_backticks(self):
-        for gate in ("a\nb", "echo `id`", 7):
-            self.fails("gate must be one line of shell command without backticks", "editor", layers=[{"gate": gate}])
+    def test_an_invalid_layer_value(self):
+        self.assertLessEqual({"language", "show"}, set(compose.RUN_KEYS))
+        gate, language, show = ("gate must be one line of shell command without backticks",
+                                "language must be one line of text", "show must be one line of shell command")
+        for layer, msg in (({"tier": 9}, self.TIER), ({"gate": "a\nb"}, gate), ({"gate": "echo `id`"}, gate),
+                           ({"gate": 7}, gate), ({"language": "a\nb"}, language), ({"language": 7}, language),
+                           ({"show": "a\nb"}, show), ({"show": 7}, show)):
+            with self.subTest(layer=layer):
+                self.fails(msg, "editor", layers=[layer])
+
+    def test_replace_is_checked(self):
         _, run = self.compose("editor")
-        with self.assertRaises(compose.ConfigError):
-            replace(run, gate="a\nb")
-
-    def test_language_is_one_line_of_text(self):
-        self.assertIn("language", compose.RUN_KEYS)
-        for language in ("a\nb", 7):
-            self.fails("language must be one line of text", "editor", layers=[{"language": language}])
+        for change in ({"effort": "ultra"}, {"gate": "a\nb"}):
+            with self.subTest(change=change), self.assertRaises(compose.ConfigError):
+                replace(run, **change)
 
     def test_show_is_unset_by_default_and_a_layer_sets_it_at_any_level(self):
-        self.assertIn("show", compose.RUN_KEYS)
         self.assertIsNone(self.compose("editor")[1].show)
         _, run = self.compose("editor", layers=[{"show": ""}])
         self.assertEqual(run.show, "")
@@ -324,21 +335,10 @@ class Validate(Fake):
         _, run = self.compose("editor", layers=[{"roles": {"editor": {"show": "x {{session}}"}}}])
         self.assertEqual(run.show, "x {{session}}")
 
-    def test_show_is_one_line_of_text(self):
-        for show in ("a\nb", 7):
-            self.fails("show must be one line of shell command", "editor", layers=[{"show": show}])
-
-    def test_replace_is_checked(self):
-        _, run = self.compose("editor")
-        with self.assertRaises(compose.ConfigError):
-            replace(run, effort="ultra")
-
-    def test_resume_needs_a_sid(self):
+    def test_new_params_get_a_sid_and_a_resume_needs_one(self):
+        self.assertRegex(compose.RunParams(input="x", out="o", workdir="w").sid, r"^[0-9a-f-]{36}$")
         with self.assertRaises(compose.ConfigError):
             compose.RunParams(input="x", out="o", workdir="w", resume=True)
-
-    def test_new_params_get_a_sid(self):
-        self.assertRegex(compose.RunParams(input="x", out="o", workdir="w").sid, r"^[0-9a-f-]{36}$")
 
     def test_a_prefix_is_a_tmux_session_name(self):
         for prefix in ("bad name", "", "a.b"):
@@ -346,41 +346,12 @@ class Validate(Fake):
                 compose.RunParams(input="x", out="o", workdir="w", prefix=prefix)
         self.assertEqual(compose.RunParams(input="x", out="o", workdir="w", prefix="A_b-0").prefix, "A_b-0")
 
-    def test_unknown_role(self):
-        self.fails("unknown role 'nobody'", role="nobody")
-
-    def test_unknown_task_or_another_roles(self):
-        self.fails("task 'essay' is not one of writer's tasks (short-note, long-note)", task="essay")
-        self.fails("task 'short-note' is not one of editor's tasks (long-note)", "editor", "short-note")
-
-    def test_unknown_key(self):
-        self.config(CONFIG.replace('effort = "medium"', 'effort = "medium"\nmodel = "opus"'))
-        self.fails("unknown key 'model' in roles.writer")
-
-    def test_tier_out_of_range(self):
-        self.config(CONFIG.replace("tier = 1", "tier = 5"))
-        self.fails("tier must be an integer 1–4", "editor")
-
-    def test_bad_effort(self):
-        self.config(CONFIG.replace('effort = "medium"', 'effort = "ultra"'))
-        self.fails("effort must be one of")
-
-    def test_unknown_destination(self):
-        self.config(CONFIG.replace('type = "github"', 'type = "s3"'))
-        self.fails("no destination 's3'", "editor")
-
-    def test_missing_output_value(self):
-        self.config(CONFIG.replace('repo = "o/docs"\n', ""))
-        self.fails("<out-repo> is used in destinations/github.md but Parameters doesn't define it "
-                   "(output.repo is not set)", "editor")
-
-    def test_missing_template(self):
-        self.config(CONFIG.replace('templates = ["note"]', 'templates = ["memo"]'))
-        self.fails("missing file templates/memo.md")
-
-    def test_missing_role_file(self):
-        os.remove(os.path.join(self.root, "team", "roles", "editor.md"))
-        self.fails("missing file roles/editor.md", "editor")
+    def test_unknown_role_or_task_or_another_roles(self):
+        for role, task, msg in (("nobody", None, "unknown role 'nobody'"),
+                                ("writer", "essay", "task 'essay' is not one of writer's tasks (short-note, long-note)"),
+                                ("editor", "short-note", "task 'short-note' is not one of editor's tasks (long-note)")):
+            with self.subTest(role=role, task=task):
+                self.fails(msg, role, task)
 
 
 class Prompt(Fake):
@@ -408,22 +379,16 @@ class Prompt(Fake):
             for text in ("Write a note.", "Write a long note.", "# Short Note", "# Long Note"):
                 self.assertNotIn(text, prompt, task)
 
-    def test_missing_guide(self):
-        os.remove(os.path.join(self.root, "team", "guide.md"))
-        self.fails("missing file guide.md")
-
     def test_destination_keeps_its_names(self):
         prompt, _ = self.compose("editor")
         self.assertIn("Push to `<out-repo>` on `<out-branch>`.", prompt)
 
-    def test_template_is_fenced(self):
-        prompt, _ = self.compose()
-        self.assertIn("```markdown\n# Note: [Title]\n```", prompt)
-
-    def test_fence_outgrows_backticks_in_template(self):
-        self.write({"team/templates/note.md": "```js\nx\n```\n"})
-        prompt, _ = self.compose()
-        self.assertIn("````markdown\n```js\nx\n```\n````", prompt)
+    def test_template_is_fenced_and_the_fence_outgrows_its_backticks(self):
+        for template, want in (("# Note: [Title]\n", "```markdown\n# Note: [Title]\n```"),
+                               ("```js\nx\n```\n", "````markdown\n```js\nx\n```\n````")):
+            with self.subTest(template=template):
+                self.write({"team/templates/note.md": template})
+                self.assertIn(want, self.compose()[0])
 
     def test_an_input_naming_a_file_is_text(self):
         self.write({"input.md": "question"})
@@ -474,43 +439,32 @@ class Prompt(Fake):
         self.assertIn("Keep it local.", prompt)
         self.assertNotIn("Push to", prompt)
 
-    def test_no_params_no_workdir_line_or_input(self):
+    def test_no_params_no_workdir_line_or_input_but_the_clients_inline_ones(self):
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, client=Plain())
         self.assertEqual(list(parameters(prompt)), ["<scripts>", "<tasks>"])
         self.assertNotIn("# Input", prompt)
         self.assertTrue(prompt.endswith("Keep it local.\n"))
         self.assertEqual((run.role_title, run.task), ("Writer", ""))
-
-    def test_no_params_the_clients_inline_workdir_and_input(self):
-        run = compose.load_run(self.root, "writer")
         client = Plain(inline_workdir="the dir `mktemp -d` prints", inline_input="Given with this prompt.")
         prompt = compose.render(self.root, run, client=client)
         self.assertEqual(list(parameters(prompt).items())[0], ("<Workdir>", "the dir `mktemp -d` prints"))
         self.assertTrue(prompt.endswith("Keep it local.\n\n# Input\n\nGiven with this prompt.\n"))
 
-    def test_resume_starts_with_resumed_run_and_names_no_task(self):
+    def test_resume_starts_with_resumed_run_names_no_task_and_its_input_adds_to_the_earlier_one(self):
         self.assertIn("Continue the task this session already picked or was given, following your task file's "
                       "`## Resume` section; never pick it again.", compose.RESUME)
-        prompt, _ = self.compose(resume=True)
-        self.assertTrue(prompt.startswith(compose.RESUME + "# Guide"))
-        self.assertIn("Task: pick one;", prompt)
-        prompt, _ = self.compose()
-        self.assertTrue(prompt.startswith("# Guide"))
-
-    def test_a_resumes_input_adds_to_the_sessions_earlier_input(self):
         self.assertIn("The input below is current: it adds to this session's earlier input.", compose.RESUME)
         self.assertNotIn("re-read the input", compose.RESUME)
         prompt, _ = self.compose(resume=True, input="Answers:\n- Use B.")
-        self.assertTrue(prompt.startswith(compose.RESUME))
+        self.assertTrue(prompt.startswith(compose.RESUME + "# Guide"))
+        self.assertIn("Task: pick one;", prompt)
         self.assertTrue(prompt.endswith("\n# Input\n\nAnswers:\n- Use B.\n"))
+        prompt, _ = self.compose()
+        self.assertTrue(prompt.startswith("# Guide"))
 
-    def test_leftover_placeholder_in_a_rule_file(self):
-        self.write({"team/roles/writer.md": WRITER + "\nUse {{tool}}.\n"})
-        self.fails("unfilled placeholder {{tool}}")
-
-    def test_a_run_value_placeholder_is_gone(self):
-        for name in ("scripts", "tasks", "methods", "gate", "repo", "branch", "dir", "host", "report"):
+    def test_a_leftover_or_run_value_placeholder_in_a_rule_file(self):
+        for name in ("tool", "scripts", "tasks", "methods", "gate", "repo", "branch", "dir", "host", "report"):
             with self.subTest(name=name):
                 self.write({"team/roles/writer.md": WRITER + f"\nUse `{{{{{name}}}}}`.\n"})
                 self.fails(f"unfilled placeholder {{{{{name}}}}} in roles/writer.md")
@@ -663,12 +617,11 @@ class Anchors(Fake):
 class Parameters(Fake):
     GITHUB = FILES["output/destinations/github.md"]
 
-    def test_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
-        self.assertEqual(list(parameters(self.compose()[0]).items()), [
+    def test_the_rule_opens_the_section_and_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
+        prompt = self.compose()[0]
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: `/w`\n", prompt)
+        self.assertEqual(list(parameters(prompt).items()), [
             ("<Workdir>", "`/w`"), ("<scripts>", f"`{self.root}/src`"), ("<tasks>", f"`{self.root}/team/tasks`")])
-
-    def test_the_rule_opens_the_section(self):
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: `/w`\n", self.compose()[0])
 
     def test_report_only_with_params_and_a_handover_using_it_in_code(self):
         run = compose.load_run(self.root, "writer")
@@ -787,11 +740,11 @@ class Deliverable(Fake):
 
 
 class Fill(unittest.TestCase):
-    def test_default_used_when_value_missing(self):
-        self.assertEqual(compose.fill("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "t"), "https://github.com/o/n")
-
-    def test_value_beats_default(self):
-        self.assertEqual(compose.fill("{{host|github.com}}", {"host": "ghe.example.com"}, "t"), "ghe.example.com")
+    def test_a_default_is_used_when_the_value_is_missing_and_a_value_beats_it(self):
+        for text, values, want in (("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "https://github.com/o/n"),
+                                   ("{{host|github.com}}", {"host": "ghe.example.com"}, "ghe.example.com")):
+            with self.subTest(values=values):
+                self.assertEqual(compose.fill(text, values, "t"), want)
 
     def test_missing_without_default_fails(self):
         with self.assertRaises(compose.ConfigError):
@@ -828,12 +781,12 @@ text **not** an item
 
 
 class Outline(unittest.TestCase):
-    def test_unfenced_skips_fences_by_char_and_length(self):
-        text = "a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng"
-        self.assertEqual(compose.unfenced(text), [(0, "a"), (12, "e")])
-
-    def test_two_backticks_are_no_fence(self):
-        self.assertEqual(compose.unfenced("``\nx"), [(0, "``"), (1, "x")])
+    def test_unfenced_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
+        for text, want in (("a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
+                            [(0, "a"), (12, "e")]),
+                           ("``\nx", [(0, "``"), (1, "x")])):
+            with self.subTest(text=text):
+                self.assertEqual(compose.unfenced(text), want)
 
     def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
         steps = ("Role", "Steps")
@@ -878,6 +831,7 @@ class Outline(unittest.TestCase):
 with open(os.path.join(CORE, compose.CONFIG), "rb") as _f:
     ROLES = list(tomllib.load(_f)["roles"])
 ALL = [(r, t) for r in ROLES for t in compose.index(CORE, r)]
+RUNS = [(r, None) for r in ROLES] + ALL   # each role given no task, then each role and task
 TASKS = os.path.join(CORE, "team", "tasks")
 
 
@@ -972,16 +926,14 @@ def role_sources(role, client="claude"):
 
 
 class GenericNames(unittest.TestCase):
-    def test_a_plugin_skill_without_its_slash(self):
-        text = "run autopilot:build\nthen `agent-pm:tmux`\nor x/agent-pm:act-as"
-        self.assertEqual(generic_names(text), ["run autopilot:build", "then `agent-pm:tmux`"])
-
-    def test_the_x_skill(self):
-        text = "the act-as skill\nthe tmux skill's workers\nthe skill"
-        self.assertEqual(generic_names(text), ["the act-as skill", "the tmux skill's workers"])
-
-    def test_slash_commands_and_workflow_names_pass(self):
-        self.assertEqual(generic_names("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research"), [])
+    def test_a_plugin_skill_without_its_slash_or_the_x_skill_is_caught_and_slash_commands_pass(self):
+        for text, want in (("run autopilot:build\nthen `agent-pm:tmux`\nor x/agent-pm:act-as",
+                            ["run autopilot:build", "then `agent-pm:tmux`"]),
+                           ("the act-as skill\nthe tmux skill's workers\nthe skill",
+                            ["the act-as skill", "the tmux skill's workers"]),
+                           ("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research", [])):
+            with self.subTest(text=text):
+                self.assertEqual(generic_names(text), want)
 
 
 class References(unittest.TestCase):
@@ -1055,12 +1007,13 @@ class Tickets(unittest.TestCase):
 
 
 class RealCore(unittest.TestCase):
-    def test_core_config_renders_the_language_rule_once(self):
+    def test_core_config_renders_the_language_and_progress_rules_once(self):
         for role in ROLES:
             prompt, run = composed(role)
             self.assertEqual(run.language, "Chinese")
             self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
             self.assertIn("are in Chinese", prompt, role)
+            self.assertEqual(prompt.count("is a point to tell the user your progress"), 1, role)
 
     def test_fixed_labels_are_translated_and_template_headings_say_so(self):
         prompt, _ = composed("researcher")
@@ -1111,10 +1064,6 @@ class RealCore(unittest.TestCase):
         for role, table in local["roles"].items():
             compose.check_old_keys(table, role)
 
-    def test_every_prompt_has_the_progress_rule_once(self):
-        for role in ROLES:
-            self.assertEqual(composed(role)[0].count("is a point to tell the user your progress"), 1, role)
-
     def test_each_charter_opens_with_its_index_naming_a_listed_default(self):
         defaults = {"researcher": "deep-research", "pm": "product-design", "engineer": "build", "dummy-tester": "echo"}
         self.assertEqual(set(ROLES), set(defaults))
@@ -1164,42 +1113,35 @@ class RealCore(unittest.TestCase):
             self.assertIn("Put the deliverable in the outcome's `deliverable`", without, dest)
             self.assertIn("Leave `url` empty.", without, dest)
 
-    def test_every_run_compiles_without_placeholders(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
-            prompt, run = composed(role, task)
-            self.assertNotIn("{{", prompt, (role, task))
-            self.assertEqual(run.task, task or "")
-
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role in ROLES:
             for client in clients.REGISTRY:
                 self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
+        for role, task in RUNS:
             for client in clients.REGISTRY:
                 anchors = heading_anchors(client_prompt(client, role, task)[0])
                 self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
 
-    def test_every_prompt_opens_with_the_guide(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
-            prompt, run = composed(role, task)
-            g = guide(prompt)
-            self.assertTrue(g.startswith("# Guide\n"), task)
-            self.assertIn("`<tasks>/<task>.md`", g, task)
-            self.assertIn(f"[{run.role_title} rules](#{compose.anchor(run.role_title)}) > your task file's rules", g)
-            self.assertEqual(prompt.count("On conflict:"), 1, task)
-            self.assertIn("On conflict:", g, task)
-
-    def test_every_guide_lists_parameters_first_and_input_last(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
-            g = guide(composed(role, task)[0])
-            items = re.findall(r"^- \*\*.+$", g, re.M)
-            self.assertEqual(items[0], "- **Parameters**: the value of each name this prompt and your task's file use.", (role, task))
-            self.assertEqual(items[-1], "- **Input**: the last section; everything after its heading is the input text, "
-                                        "verbatim (it may contain `#` or `---`).", (role, task))
-            self.assertNotIn("final `---`", g, (role, task))
-            self.assertNotIn("your Workdir and the Input text", g, (role, task))
+    def test_every_run_compiles_without_placeholders_and_opens_with_the_guide_listing_parameters_first_input_last(self):
+        for role, task in RUNS:
+            with self.subTest(role=role, task=task):
+                prompt, run = composed(role, task)
+                self.assertNotIn("{{", prompt)
+                self.assertEqual(run.task, task or "")
+                g = guide(prompt)
+                self.assertTrue(g.startswith("# Guide\n"))
+                self.assertIn("`<tasks>/<task>.md`", g)
+                self.assertIn(f"[{run.role_title} rules](#{compose.anchor(run.role_title)}) > your task file's rules", g)
+                self.assertEqual(prompt.count("On conflict:"), 1)
+                self.assertIn("On conflict:", g)
+                items = re.findall(r"^- \*\*.+$", g, re.M)
+                self.assertEqual(items[0], "- **Parameters**: the value of each name this prompt and your task's file use.")
+                self.assertEqual(items[-1], "- **Input**: the last section; everything after its heading is the input "
+                                            "text, verbatim (it may contain `#` or `---`).")
+                self.assertNotIn("final `---`", g)
+                self.assertNotIn("your Workdir and the Input text", g)
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
@@ -1214,7 +1156,7 @@ class RealCore(unittest.TestCase):
         self.assertNotIn("light-research", picked)
 
     def test_a_prompt_has_its_roles_index_and_no_task_steps(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
+        for role, task in RUNS:
             prompt, _ = composed(role, task)
             for t, line in compose.index(CORE, role).items():
                 self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", prompt, (role, task))
@@ -1226,26 +1168,21 @@ class RealCore(unittest.TestCase):
         with self.assertRaisesRegex(compose.ConfigError, "task 'deep-research' is not one of engineer's tasks"):
             compose.load_run(CORE, "engineer", "deep-research")
 
-    def test_pm(self):
-        prompt, run = composed("pm")
-        self.assertIn("[PM rules](#pm) > your task file's rules", prompt)
-        self.assertIn("# Template: `templates/prd.md`", prompt)
-        self.assertEqual(run.output["dir"], "Product Design/")
-        self.assertEqual((run.read, run.write), ([], []))
-
-    def test_engineer(self):
-        prompt, run = composed("engineer")
-        self.assertIn("[Engineer rules](#engineer) > your task file's rules", prompt)
-        self.assertIn("gh pr create", prompt)
-        self.assertEqual((run.effort, run.write, run.output), ("xhigh", [], {"type": "pull-request"}))
-
-    def test_researcher(self):
-        for task in (None, "deep-research", "light-research"):
-            prompt, run = composed("researcher", task)
-            self.assertIn("[Researcher rules](#researcher) > your task file's rules", prompt)
-            self.assertIn("# Template: `templates/research-report.md`", prompt)
-            self.assertIn("`ophis/private_docs`", prompt)
-            self.assertEqual((run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
+    def test_pm_engineer_and_researcher_runs(self):
+        researcher = (("[Researcher rules](#researcher) > your task file's rules",
+                       "# Template: `templates/research-report.md`", "`ophis/private_docs`"),
+                      lambda run: (run.tier, run.effort, run.read), (2, "high", ["{{methods}}"]))
+        for role, task, literals, got, want in (
+                ("pm", None, ("[PM rules](#pm) > your task file's rules", "# Template: `templates/prd.md`"),
+                 lambda run: (run.output["dir"], run.read, run.write), ("Product Design/", [], [])),
+                ("engineer", None, ("[Engineer rules](#engineer) > your task file's rules", "gh pr create"),
+                 lambda run: (run.effort, run.write, run.output), ("xhigh", [], {"type": "pull-request"})),
+                *(("researcher", task, *researcher) for task in (None, "deep-research", "light-research"))):
+            with self.subTest(role=role, task=task):
+                prompt, run = composed(role, task)
+                for literal in literals:
+                    self.assertIn(literal, prompt)
+                self.assertEqual(got(run), want)
 
     def test_each_roles_parameters_follow_what_its_texts_use(self):
         base, out = ["<Workdir>", "<scripts>", "<tasks>"], ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"]
@@ -1271,12 +1208,6 @@ class RealCore(unittest.TestCase):
                        "No subagents with a round's tools → skip that round, under Gaps."):
             self.assertIn(phrase, task_text("deep-research"))
 
-    def test_researcher_names_no_harness_tool(self):
-        with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
-            text = f.read()
-        for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
-            self.assertNotIn(word, text, word)
-
     def test_names_written_as_their_values_each_pre_approved_command_starts_a_command(self):
         scripts = os.path.join(CORE, "src")
         report = compose.report_command(scripts, RUN)
@@ -1291,7 +1222,7 @@ class RealCore(unittest.TestCase):
             self.assertIn(f"`{report} outcome --status", prompt, role)
 
     def test_a_claude_prompt_defines_each_run_value_once_under_the_rule(self):
-        for role, task in [(r, None) for r in ROLES] + ALL:
+        for role, task in RUNS:
             prompt, _ = claude_prompt(role, task)
             for value in ("report.py", RUN.workdir, os.path.join(CORE, "src"), compose.RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
@@ -1337,8 +1268,22 @@ class RealCore(unittest.TestCase):
             self.assertIn("repo URL", text, role)
             self.assertEqual(text.count("repo URL"), len(re.findall(r"repo URLs? or local clone paths?", text)), role)
 
-    def test_builds_fail_without_push_permission(self):
-        self.assertIn("`push` false → `failed`", composed("engineer")[0])
+    def test_literals_a_role_or_task_text_holds(self):
+        engineer, researcher = composed("engineer")[0], composed("researcher")[0]
+        for why, text, literal in (
+                ("builds fail without push permission", engineer, "`push` false → `failed`"),
+                ("light-build's cutoff skips merge commits", task_text("light-build"),
+                 "`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`"),
+                ("research hand-off phrases", task_text("light-research"), "`Light Research. Angles: "),
+                ("research hand-off phrases", task_text("light-research"), "`Suggest upgrading to Deep Research: "),
+                ("research hand-off phrases", task_text("deep-research"), "`Light Research.` type line"),
+                # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
+                ("a read-only task's branch is <id>-<task>", researcher,
+                 "`<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`"),
+                ("a read-only task's branch is <id>-<task>", task_text("product-design"),
+                 "`<branch>` `<id>-product-design`")):
+            with self.subTest(why, literal=literal):
+                self.assertIn(literal, text)
 
     def test_builds_wait_for_the_prs_checks(self):
         for task in ("build", "light-build"):
@@ -1405,21 +1350,6 @@ class RealCore(unittest.TestCase):
         line = compose.index(CORE, "engineer")["light-build"]
         self.assertIn("(a task list in its state file, implementation, verification, a light review, no spec or plan docs)",
                       line)
-
-    def test_light_builds_cutoff_skips_merge_commits(self):
-        self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`", task_text("light-build"))
-
-    def test_research_hand_off_phrases(self):
-        light, deep = task_text("light-research"), task_text("deep-research")
-        self.assertIn("`Light Research. Angles: ", light)
-        self.assertIn("`Suggest upgrading to Deep Research: ", light)
-        self.assertIn("`Light Research.` type line", deep)
-
-    def test_read_only_tasks_branch_is_id_dash_task(self):
-        # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
-        self.assertIn("`<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`",
-                      composed("researcher")[0])
-        self.assertIn("`<branch>` `<id>-product-design`", task_text("product-design"))
 
     def test_light_research_prepares_before_its_start_mark(self):
         text = task_text("light-research")
@@ -1533,19 +1463,34 @@ class Methods(unittest.TestCase):
         for phrase in ("fetch selection waits for all search results", "verification waits for all claims"):
             self.assertIn(phrase, rule(deep, "Pipeline")[0])
 
-    def test_both_state_pipeline_and_restrictions_and_ultracode_voting(self):
+    def test_each_states_voting_pipeline_restrictions_and_its_own_limits(self):
+        voting = ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
+                  "else (agent errors, missing votes) → unverified", "votes that came back", "unsure → votes refuted")
+        both = ("≤ 10 subagents running at once", "verification waits for all claims",
+                "the calling task's restrictions for", "into every subagent prompt, voters included")
+        own = {"deep-research": ("5 complementary web search angles", "after every search agent has returned",
+                                 "rank the whole set by relevance (high → low)", "dispatch fetches for the first ≤ 15",
+                                 "top 25", "≤ 100",
+                                 "start each web agent with fresh context (no inherited conversation), so it sees "
+                                 "only its prompt",
+                                 "only from the brief and web results",
+                                 "Dispatch fetches only for URLs a search agent returned", "**Page text**:"),
+               "ultracode": voting + ("A fixed method for the ultracode round",
+                                      "room in the cap for the key claims' votes", "while ≥ 3 cap slots remain",
+                                      "undispatched subquestions and unverified claims go under Gaps")}
+        self.assertEqual(set(own), set(METHOD_NAMES))
         for m in METHOD_NAMES:
             text = method(m)
-            self.assertTrue(text.startswith("# "), m)
-            self.assertNotRegex(text, r"\b[Yy]ou\b", m)
-            for phrase in ("≤ 10 subagents running at once", "verification waits for all claims",
-                           "the calling task's restrictions for", "into every subagent prompt, voters included"):
-                self.assertIn(phrase, text, m)
-        for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
-                       "else (agent errors, missing votes) → unverified", "votes that came back",
-                       "unsure → votes refuted"):
-            self.assertIn(phrase, method("ultracode"), phrase)
-            self.assertNotIn(phrase, method("deep-research"), phrase)
+            with self.subTest(m):
+                self.assertTrue(text.startswith("# "))
+                self.assertNotRegex(text, r"\b[Yy]ou\b")
+            for phrase in both + own[m]:
+                with self.subTest(m, phrase=phrase):
+                    self.assertIn(phrase, text)
+        self.assertNotIn("as each search agent's results arrive", method("deep-research"))
+        for phrase in voting:  # the Voting rule's one home is ultracode
+            with self.subTest("deep-research", not_in=phrase):
+                self.assertNotIn(phrase, method("deep-research"))
 
     def test_private_detail_has_its_home_in_the_researcher_charter(self):
         home = "with no **private detail** in queries: internal names, paths, permalinks, private repo names, "
@@ -1558,29 +1503,13 @@ class Methods(unittest.TestCase):
         for text in (task_text("deep-research"), method("deep-research")):
             self.assertNotIn("internal names", text)
 
-    def test_methods_are_harness_neutral(self):
-        for m in METHOD_NAMES:
-            text = method(m)
-            for word in ("{{", "Read, Grep", "Glob", "Workflow tool", "journal.jsonl"):
-                self.assertNotIn(word, text, f"{m}: {word}")
-
-    def test_deep_research_limits_and_public_material(self):
-        text = method("deep-research")
-        for phrase in ("5 complementary web search angles", "after every search agent has returned",
-                       "rank the whole set by relevance (high → low)", "dispatch fetches for the first ≤ 15",
-                       "top 25", "≤ 100",
-                       "start each web agent with fresh context (no inherited conversation), so it sees only its "
-                       "prompt",
-                       "only from the brief and web results", "Dispatch fetches only for URLs a search agent returned",
-                       "**Page text**:"):
-            self.assertIn(phrase, text)
-        self.assertNotIn("as each search agent's results arrive", text)
-
-    def test_ultracode_gaps_and_room_for_votes(self):
-        text = method("ultracode")
-        for phrase in ("A fixed method for the ultracode round", "room in the cap for the key claims' votes",
-                       "while ≥ 3 cap slots remain", "undispatched subquestions and unverified claims go under Gaps"):
-            self.assertIn(phrase, text)
+    def test_the_researcher_charter_and_methods_are_harness_neutral(self):
+        with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
+            texts = {"roles/researcher.md": (f.read(), ())} | {m: (method(m), ("{{",)) for m in METHOD_NAMES}
+        for name, (text, more) in texts.items():
+            for word in ("Read, Grep", "Glob", "Workflow tool", "journal.jsonl", *more):
+                with self.subTest(name, word=word):
+                    self.assertNotIn(word, text)
 
 
 if __name__ == "__main__":

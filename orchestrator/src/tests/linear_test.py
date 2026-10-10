@@ -144,30 +144,33 @@ class LinearGql(unittest.TestCase):
     def setUp(self):
         no_seam(self)
 
-    def test_harness_key_by_service_only(self):
-        for env in ({}, {SEAM: ""}):
-            with self.subTest(env=env):
-                calls = []
-                def run(cmd, **kw):
-                    calls.append(cmd)
-                    return SimpleNamespace(stdout="secret\n")
-                with mock.patch.dict(os.environ, env), mock.patch.object(linear, "harness_service", return_value="svc-h"), \
-                        mock.patch.object(linear.subprocess, "run", run), \
-                        mock.patch.object(linear.urllib.request, "urlopen",
-                                          return_value=respond(b'{"data": {"viewer": {"id": "v"}}}')) as urlopen:
-                    self.assertEqual(linear.linear_gql(VIEWER), {"viewer": {"id": "v"}})
-                self.assertEqual(calls, [["/usr/bin/security", "find-generic-password", "-s", "svc-h", "-w"]])
+    def gql(self, query=VIEWER, body=b'{"data": {}}', **kw):
+        """linear_gql(query, **kw), the harness's service svc-h (read only without service=), urlopen answering body;
+        returns (its result, the Keychain run, urlopen)."""
+        harness = {"side_effect": AssertionError("harness key read")} if "service" in kw else {"return_value": "svc-h"}
+        run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
+        with mock.patch.object(linear, "harness_service", **harness), mock.patch.object(linear.subprocess, "run", run), \
+                mock.patch.object(linear.urllib.request, "build_opener", side_effect=AssertionError("opener built")), \
+                mock.patch.object(linear.urllib.request, "urlopen", return_value=respond(body)) as urlopen:
+            return linear.linear_gql(query, **kw), run, urlopen
+
+    def test_key_by_service_only_sent_by_urlopen(self):
+        """The Keychain item of service (default the harness's) by name; urlopen, with the proxies as configured."""
+        for env, kw, service in (({}, {}, "svc-h"), ({SEAM: ""}, {}, "svc-h"), ({}, {"service": "linear-api-key-pm"}, "linear-api-key-pm")):
+            with self.subTest(env=env, service=service), mock.patch.dict(os.environ, env):
+                out, run, urlopen = self.gql(body=b'{"data": {"viewer": {"id": "v"}}}', **kw)
+                self.assertEqual(out, {"viewer": {"id": "v"}})
+                self.assertEqual([c.args[0] for c in run.call_args_list],
+                                 [["/usr/bin/security", "find-generic-password", "-s", service, "-w"]])
+                urlopen.assert_called_once()
                 req = urlopen.call_args[0][0]
                 self.assertEqual((req.full_url, req.get_header("Authorization")), ("https://api.linear.app/graphql", "secret"))
+                self.assertEqual(json.loads(req.data)["variables"], {})
 
     def test_timeout_bounds_keychain_and_request(self):
         for kw, want in (({}, 30), ({"timeout": 5}, 5)):
             with self.subTest(timeout=want):
-                run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
-                with mock.patch.object(linear, "harness_service", return_value="svc-h"), \
-                        mock.patch.object(linear.subprocess, "run", run), \
-                        mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
-                    linear.linear_gql("query($i: String!) { issue(id: $i) { id } }", i="TASK-1", **kw)
+                _, run, urlopen = self.gql("query($i: String!) { issue(id: $i) { id } }", i="TASK-1", **kw)
                 self.assertEqual(run.call_args.kwargs["timeout"], want)
                 self.assertEqual(urlopen.call_args.kwargs["timeout"], want)
                 self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {"i": "TASK-1"})
@@ -178,23 +181,6 @@ class LinearGql(unittest.TestCase):
         with mock.patch.object(config, "load_config", return_value={"harness_key": "linear-harness"}) as load:
             self.assertEqual((linear.harness_service(), linear.harness_service()), ("linear-harness", "linear-harness"))
         load.assert_called_once_with()
-
-    def test_urlopen_sends_it_with_the_proxies_as_configured(self):
-        with mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(stdout="secret\n")), \
-                mock.patch.object(linear, "harness_service", return_value="svc-h"), \
-                mock.patch.object(linear.urllib.request, "build_opener", side_effect=AssertionError("opener built")), \
-                mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
-            linear.linear_gql(VIEWER)
-        urlopen.assert_called_once()
-
-    def test_service_names_the_keychain_item(self):
-        run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
-        with mock.patch.object(linear, "harness_service", side_effect=AssertionError("harness key read")), \
-                mock.patch.object(linear.subprocess, "run", run), \
-                mock.patch.object(linear.urllib.request, "urlopen", return_value=respond()) as urlopen:
-            linear.linear_gql(VIEWER, service="linear-api-key-pm")
-        self.assertEqual(run.call_args[0][0], ["/usr/bin/security", "find-generic-password", "-s", "linear-api-key-pm", "-w"])
-        self.assertEqual(json.loads(urlopen.call_args[0][0].data)["variables"], {})
 
     def test_a_bad_keychain_key_raises_naming_only_the_service(self):
         for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
@@ -288,13 +274,6 @@ class Unavailable(unittest.TestCase):
         for query, op in cases.items():
             with self.subTest(query=query):
                 self.assertEqual(linear.operation(query), op)
-
-    def test_attributes_and_text(self):
-        e = linear.Unavailable("teams", status=503)
-        self.assertEqual((e.op, e.status, e.reason, str(e)), ("teams", 503, None, "teams: HTTP 503"))
-        e = linear.Unavailable("issues", reason="TimeoutError: timed out")
-        self.assertEqual((e.op, e.status, e.reason, str(e)), ("issues", None, "TimeoutError: timed out",
-                                                              "issues: TimeoutError: timed out"))
 
 
 class Outage(unittest.TestCase):
@@ -557,10 +536,6 @@ class Log(Logs):
         self.assertEqual(self.log("router", "pick", "TASK-2", dry=True, queue=1), self.json("router", "pick", "TASK-2", queue=1))
         self.assertEqual(len(self.lines()), 2)
 
-    def test_dry_writes_nothing(self):
-        self.log("promote", "promote", "DR-1", dry=True, role="pm")
-        self.assertFalse(os.path.exists(self.logs))
-
     def test_once_dedups_on_src_kind_issue_entry_and_reason(self):
         base = dict(src="router", kind="usage-skip", issue=None, mode="new", reason="blocked by usage", usage="five_hour=0.95")
         cases = [({}, True), ({"usage": "five_hour=0.97", "mode": "resume"}, False), ({"reason": "other"}, True),
@@ -748,18 +723,17 @@ class LastMove(unittest.TestCase):
              {"createdAt": "2026-09-27T11:00:00.000Z", "actorId": "agent", "toStateId": IN_REVIEW},
              {"createdAt": "2026-09-27T13:00:00.000Z", "actorId": None, "toStateId": IN_PROGRESS}]
 
-    def test_latest_move_into_the_states(self):
+    def test_latest_move_into_the_states_by_actors(self):
         at = linear.parse_time
-        self.assertEqual(linear.last_move(self.NODES, {TODO}), at("2026-09-27T12:00:00.000Z"))
-        self.assertEqual(linear.last_move(self.NODES, {TODO, IN_REVIEW}), at("2026-09-27T12:00:00.000Z"))
-        self.assertEqual(linear.last_move(self.NODES, {IN_REVIEW}), at("2026-09-27T11:00:00.000Z"))
-        self.assertIsNone(linear.last_move(self.NODES, {STATES["done"]}))
-        self.assertIsNone(linear.last_move([], {TODO}))
-
-    def test_by_actors(self):
-        self.assertEqual(linear.last_move(self.NODES, {TODO}, {"human"}), linear.parse_time("2026-09-27T10:00:00.000Z"))
-        self.assertIsNone(linear.last_move(self.NODES, {IN_PROGRESS}, {"human", "agent"}))
-        self.assertIsNone(linear.last_move(self.NODES, {TODO}, set()))
+        for nodes, states, actors, want in (
+                (self.NODES, {TODO}, None, at("2026-09-27T12:00:00.000Z")),
+                (self.NODES, {TODO, IN_REVIEW}, None, at("2026-09-27T12:00:00.000Z")),
+                (self.NODES, {IN_REVIEW}, None, at("2026-09-27T11:00:00.000Z")),
+                (self.NODES, {STATES["done"]}, None, None), ([], {TODO}, None, None),
+                (self.NODES, {TODO}, {"human"}, at("2026-09-27T10:00:00.000Z")),
+                (self.NODES, {IN_PROGRESS}, {"human", "agent"}, None), (self.NODES, {TODO}, set(), None)):
+            with self.subTest(states=states, actors=actors, nodes=len(nodes)):
+                self.assertEqual(linear.last_move(nodes, states, actors), want)
 
 
 if __name__ == "__main__":

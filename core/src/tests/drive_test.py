@@ -122,10 +122,6 @@ class ClientConfig(unittest.TestCase):
 
 
 class Claude(Base):
-    def test_no_deny_rules(self):
-        for role, task in (("researcher", "light-research"), ("engineer", "build")):
-            self.assertNotIn("--disallowedTools", self.plan(role, task, client="claude", repo=self.repo).argv)
-
     def test_the_prompt_names_the_file_the_agent_writes_the_deliverable_to(self):
         elsewhere = os.path.join(self.tmp.name, "elsewhere", "out.md")
         for layers in ([{"output": {"type": "local"}}], [{"output": {"type": "orchestrator"}}]):
@@ -151,20 +147,17 @@ class Claude(Base):
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
 
-    def test_build_xhigh_and_repo_commands(self):
-        argv = self.plan("engineer", None, client="claude").argv
-        self.assertEqual(argv[argv.index("--effort") + 1], "xhigh")
-        self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
-            f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in ("worktree", "status")]
-            + [f"Bash({self.report()} *)"])
-
-    def test_product_design_argv_has_the_worktree_rule(self):
-        argv = self.plan("pm", "product-design", client="claude").argv
-        self.assertEqual(argv[argv.index("--allowedTools"):], [
-            "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
-            f"Bash({self.report()} *)"])
-        self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] "
-                      "<repo>`", argv[2])
+    def test_a_roles_effort_and_repo_commands(self):
+        for role, task, effort, cmds in (("engineer", None, "xhigh", ("worktree", "status")),
+                                         ("pm", "product-design", "high", ("worktree",))):
+            with self.subTest(role=role):
+                argv = self.plan(role, task, client="claude").argv
+                self.assertEqual(argv[argv.index("--effort") + 1], effort)
+                self.assertEqual(argv[argv.index("--allowedTools"):], ["--allowedTools"] + [
+                    f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in cmds]
+                    + [f"Bash({self.report()} *)"])
+                self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> "
+                              "[--name <checkout>] <repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
@@ -180,20 +173,23 @@ class Claude(Base):
             argv = self.plan(role, task, client="claude", repo=self.repo).argv
             self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"], dirs, (role, task))
 
-    def test_deep_research_names_core_method_files_for_claude_and_by_default(self):
-        prompts = [self.plan("researcher", "deep-research", client="claude").argv[2]]
+    def test_a_researcher_names_core_method_files_for_claude_by_default_and_as_a_skill(self):
+        prompts = {"claude": self.plan("researcher", "deep-research", client="claude").argv[2]}
         self.plan("researcher", "deep-research")
-        prompts.append(Recorder.seen[-1]["prompt"])
-        for prompt in prompts:
-            self.assertIn(f"\n- `<methods>`: `{METHODS}`\n", prompt)
-            for name in ("deep-research", "ultracode"):
-                self.assertTrue(os.path.isfile(os.path.join(METHODS, f"{name}.md")), name)
-                self.assertIn(f"`<methods>/{name}.md`", prompt)
+        prompts["default"] = Recorder.seen[-1]["prompt"]
+        prompts["skill"] = drive.inline(CORE, clients.get("skill", CORE), "researcher", None)
+        for client, prompt in prompts.items():
+            with self.subTest(client=client):
+                self.assertIn(f"\n- `<methods>`: `{METHODS}`\n", prompt)
+                for name in ("deep-research", "ultracode"):
+                    self.assertTrue(os.path.isfile(os.path.join(METHODS, f"{name}.md")), name)
+                    self.assertIn(f"`<methods>/{name}.md`", prompt)
 
-    def test_interactive_is_argv_without_the_headless_flags(self):
+    def test_interactive_is_argv_without_the_headless_flags_and_neither_has_deny_rules(self):
         for role, task in (("researcher", "light-research"), ("engineer", "build")):
             launch = self.plan(role, task, client="claude", repo=self.repo)
             argv = launch.argv
+            self.assertNotIn("--disallowedTools", argv)
             j = argv.index("--settings")
             rest = [a for i, a in enumerate(argv) if i not in (1, 2, j, j + 1)]
             for flag in ("--output-format", "stream-json", "--verbose"):
@@ -255,16 +251,18 @@ class Claude(Base):
         argv = self.plan(client="claude", input="Explain {{x}} templates.").argv
         self.assertTrue(argv[2].rstrip().endswith("Explain {{x}} templates."))
 
-    def test_unmapped_tier(self):
-        with self.assertRaises(compose.ConfigError) as cm:
-            claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS)
-        self.assertIn("no model for tier 2", str(cm.exception))
-
-    def test_setting_sources_in_flags_is_refused(self):
-        for flag in ("--setting-sources", "--setting-sources=user,project"):
-            with self.subTest(flag), self.assertRaises(compose.ConfigError) as cm:
-                claude(flags=["--verbose", flag, "user"])
-            self.assertIn("--setting-sources is the driver's", str(cm.exception))
+    def test_a_bad_config_is_a_config_error(self):
+        for name, make, want in (
+                ("unmapped tier", lambda: claude(tiers={}).launch("p", run(), params=PARAMS, access=NO_ACCESS),
+                 "no model for tier 2"),
+                ("--setting-sources", lambda: claude(flags=["--verbose", "--setting-sources", "user"]),
+                 "--setting-sources is the driver's"),
+                ("--setting-sources=", lambda: claude(flags=["--verbose", "--setting-sources=user,project", "user"]),
+                 "--setting-sources is the driver's"),
+                ("unknown key", lambda: claude(argv=[]), "unknown key 'argv'")):
+            with self.subTest(name), self.assertRaises(compose.ConfigError) as cm:
+                make()
+            self.assertIn(want, str(cm.exception))
 
     def test_role_value_beats_the_global(self):
         c = claude(allow=["Read"], roles={"r": {"allow": ["WebFetch"]}})
@@ -289,11 +287,6 @@ class Claude(Base):
         self.assertEqual(launch.resume, f"cd {self.repo} && claude --resume {SID} --add-dir {self.work}")
         self.assertEqual(launch.transcript, clients.claude.transcript(self.repo, SID))
 
-    def test_unknown_config_key(self):
-        with self.assertRaises(compose.ConfigError) as cm:
-            claude(argv=[])
-        self.assertIn("unknown key 'argv'", str(cm.exception))
-
 
 class Generic(Base):
     def test_driver_hands_the_client_neutral_access(self):
@@ -314,71 +307,59 @@ class Generic(Base):
         self.assertEqual((plain.tier, plain.effort), (3, "low"))
         self.assertEqual((layered.tier, layered.effort), (1, "low"))
 
-    def test_access_appends_the_gate_after_the_filled_commands(self):
+    def test_access_fills_the_dirs_and_commands_report_then_gate_last(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        acc = drive.access(run(commands=["{{scripts}}/x *"], gate=gate), self.params(), repo=None, scripts="/s",
-                           methods="/m", tasks="/t")
         report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
-        self.assertEqual(acc.commands, ["/s/x *", report, gate])
-        acc = drive.access(run(commands=["x"]), self.params(), repo=None, scripts="/s", methods="/m", tasks="/t")
-        self.assertEqual(acc.commands, ["x", report])
-
-    def test_repo_entry_binds_to_the_repo_arg(self):
-        acc = drive.access(run(write=["repo"], commands=["{{scripts}}/x --dir {{workdir}}/src *"]), self.params(),
-                           repo=self.repo, scripts="/s", methods="/m", tasks="/t")
-        self.assertEqual(acc, drive.Access(dirs=["/t", self.repo], commands=[
-            f"/s/x --dir {self.work}/src *", f"python3 /s/report.py --to {self.work}/run.jsonl *"], cwd=self.work))
-
-    def test_methods_fills_read_and_write_entries_and_nothing_else_does(self):
-        acc = drive.access(run(read=["{{methods}}", "/t"], write=["{{methods}}/out"]), self.params(), repo=None,
-                           scripts="/s", methods="/m", tasks="/t")
-        self.assertEqual(acc.dirs, ["/t", "/m", "/m/out"])
+        for name, cfg, repo, dirs, commands in (
+                ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, ["/t"], ["/s/x *", report, gate]),
+                ("no gate", {"commands": ["x"]}, None, ["/t"], ["x", report]),
+                ("repo entry binds to the repo arg", {"write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]},
+                 self.repo, ["/t", self.repo], [f"/s/x --dir {self.work}/src *", report]),
+                ("methods fills read and write", {"read": ["{{methods}}", "/t"], "write": ["{{methods}}/out"]}, None,
+                 ["/t", "/m", "/m/out"], [report])):
+            with self.subTest(name):
+                acc = drive.access(run(**cfg), self.params(), repo=repo, scripts="/s", methods="/m", tasks="/t")
+                self.assertEqual(acc, drive.Access(dirs=dirs, commands=commands, cwd=self.work))
         for key in ("read", "write"):
             with self.subTest(key), self.assertRaises(compose.ConfigError) as cm:
                 drive.access(run(**{key: ["{{nope}}"]}), self.params(), repo=None, scripts="/s", methods="/m", tasks="/t")
             self.assertIn("{{nope}}", str(cm.exception))
 
-    def test_the_run_never_needs_the_out_dir(self):
-        self.plan(out=os.path.join(self.tmp.name, "elsewhere", "out.md"))
-        self.assertEqual(Recorder.seen[0]["access"].dirs, [TASKS, METHODS])
+    def test_the_run_never_needs_the_out_dir_nor_a_repo_not_given(self):
+        for role, task, params, dirs in (("researcher", "light-research",
+                                          {"out": os.path.join(self.tmp.name, "elsewhere", "out.md")}, [TASKS, METHODS]),
+                                         ("engineer", None, {}, [TASKS])):
+            with self.subTest(role=role):
+                self.plan(role, task, **params)
+                self.assertEqual(Recorder.seen[-1]["access"].dirs, dirs)
 
-    def test_repo_ignored_without_repo_arg(self):
-        self.plan("engineer", None)
-        self.assertEqual(Recorder.seen[0]["access"].dirs, [TASKS])
-
-    def test_unknown_client(self):
+    def test_a_client_unknown_or_of_the_wrong_kind(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
         self.assertIn("unknown client 'nope'", str(cm.exception))
-
-    def test_plan_sets_the_configs_status_line(self):
-        self.assertIs(self.plan().status_line, False)
-        path = os.path.join(hermetic.home(self), "core.local.toml")
-        for text, want in (("status_line = true\n", True), ("status_line = false\n", False)):
-            with open(path, "w") as f:
-                f.write(text)
-            self.assertIs(self.plan().status_line, want, text)
-        with open(path, "w") as f:
-            f.write('status_line = "on"\n')
-        with self.assertRaisesRegex(compose.ConfigError, "status_line: want true or false"):
-            self.plan()
-
-    def test_plan_sets_the_configs_workers_per_column(self):
-        self.assertIsNone(self.plan().per_column)
-        path = os.path.join(hermetic.home(self), "core.local.toml")
-        with open(path, "w") as f:
-            f.write("workers_per_column = 2\n")
-        self.assertEqual(self.plan().per_column, 2)
-        with open(path, "w") as f:
-            f.write("workers_per_column = 0\n")
-        with self.assertRaisesRegex(compose.ConfigError, "workers_per_column: want an integer from 1 to 9999"):
-            self.plan()
-
-    def test_plan_and_inline_each_need_their_kind_of_client(self):
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
             drive.inline(CORE, claude(), "dummy-tester")
+
+    def test_plan_sets_the_configs_status_line_and_workers_per_column(self):
+        path = os.path.join(hermetic.home(self), "core.local.toml")
+        for attr, default, good, bad, msg in (
+                ("status_line", False, (("true", True), ("false", False)), '"on"', "status_line: want true or false"),
+                ("per_column", None, (("2", 2),), "0", "workers_per_column: want an integer from 1 to 9999")):
+            key = "workers_per_column" if attr == "per_column" else attr
+            with self.subTest(key):
+                if os.path.exists(path):
+                    os.remove(path)
+                self.assertIs(getattr(self.plan(), attr), default)
+                for text, want in good:
+                    with open(path, "w") as f:
+                        f.write(f"{key} = {text}\n")
+                    self.assertIs(getattr(self.plan(), attr), want, text)
+                with open(path, "w") as f:
+                    f.write(f"{key} = {bad}\n")
+                with self.assertRaisesRegex(compose.ConfigError, msg):
+                    self.plan()
 
 
 class Cwd(Base):
@@ -470,16 +451,12 @@ class Cwd(Base):
         launch, _ = self.launch(cwd=sub)
         self.assertEqual((launch.cwd, launch.project), (sub, False))
 
-    def test_a_cwd_that_is_no_directory_or_no_path_is_a_config_error(self):
-        for cwd, want in ((os.path.join(self.tmp.name, "nope"), "is not a directory"), ("rel/dir", "absolute or ~ path")):
-            with self.subTest(cwd=cwd), self.assertRaises(compose.ConfigError) as cm:
-                self.launch(cwd=self.other, layers=[{"cwd": cwd}])
+    def test_a_cwd_that_is_no_directory_or_no_path_or_a_bad_trusted_dirs_is_a_config_error(self):
+        for trusted, cwd, want in (((), os.path.join(self.tmp.name, "nope"), "is not a directory"),
+                                   ((), "rel/dir", "absolute or ~ path"), (("rel/dir",), None, "trusted_dirs")):
+            with self.subTest(trusted=trusted, cwd=cwd), self.assertRaises(compose.ConfigError) as cm:
+                self.launch(*trusted, cwd=self.other, layers=[{"cwd": cwd}] if cwd else [])
             self.assertIn(want, str(cm.exception))
-
-    def test_a_bad_trusted_dirs_is_a_config_error(self):
-        with self.assertRaises(compose.ConfigError) as cm:
-            self.launch("rel/dir")
-        self.assertIn("trusted_dirs", str(cm.exception))
 
     def write_record(self, *entries):
         """<workdir>/run.jsonl holding one `session` event per entry."""
@@ -538,13 +515,7 @@ class Skill(Base):
     def text(self, role, task=None):
         return drive.inline(CORE, clients.get("skill", CORE), role, task)
 
-    def test_a_destination_has_no_deliverable_file_line(self):
-        for role in ("researcher", "pm", "dummy-tester"):
-            text = self.text(role)
-            self.assertNotIn("Write the deliverable to", text, role)
-            self.assertIn("publish, post or save it nowhere else. Leave `url` empty.", text, role)
-
-    def test_prints_the_prompt_with_this_cores_paths(self):
+    def test_prints_the_prompt_with_this_cores_paths_parameters_and_input_replacing_the_tail(self):
         text = self.text("pm")
         self.assertTrue(text.startswith("# Guide"))
         self.assertIn(f"\n- `<scripts>`: `{CORE}/src`\n", text)
@@ -552,9 +523,6 @@ class Skill(Base):
                       "<repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
-
-    def test_parameters_and_input_replace_the_tail(self):
-        text = self.text("pm")
         self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
                       "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
@@ -563,16 +531,10 @@ class Skill(Base):
         for tail in ("\n---\n\nInput:", "Workdir: "):
             self.assertNotIn(tail, text)
 
-    def test_a_researcher_names_core_methods(self):
-        text = self.text("researcher")
-        self.assertIn(f"\n- `<methods>`: `{METHODS}`\n", text)
-        for name in ("deep-research", "ultracode"):
-            self.assertTrue(os.path.isfile(os.path.join(METHODS, f"{name}.md")), name)
-            self.assertIn(f"`<methods>/{name}.md`", text)
-
-    def test_document_roles_return_to_the_orchestrator(self):
+    def test_document_roles_return_to_the_orchestrator_with_no_deliverable_file_line(self):
         for role, task in (("researcher", None), ("researcher", "light-research"), ("pm", None), ("dummy-tester", None)):
             text = self.text(role, task)
+            self.assertNotIn("Write the deliverable to", text, role)
             self.assertIn("publish, post or save it nowhere else. Leave `url` empty.", text)
             self.assertNotIn("ophis/private_docs", text)
             self.assertIn("## Return\n\nEnd with your final reply in this conversation", text)
@@ -646,24 +608,22 @@ class RoleRuns(Base):
         start.assert_not_called()
         return code, json.loads(out.getvalue()) if code == 0 else out.getvalue(), err.getvalue()
 
-    def test_an_engineer_run_needs_no_task(self):
-        code, shown, _ = self.main("--role", "engineer")
-        argv = shown["argv"]
-        self.assertEqual((code, argv[argv.index("--effort") + 1]), (0, "xhigh"))
-        self.assertIn("gh pr create", argv[2])
-        self.assertIn("**Your task**: pick it from your charter's Tasks section", argv[2].split("\n# Principles\n")[0])
-        self.assertIn(TASKS, [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"])
+    def test_a_run_needs_no_task_and_a_given_one_is_named_in_the_prompt(self):
+        for extra, want in ((("--role", "engineer"), "**Your task**: pick it from your charter's Tasks section"),
+                            (("--role", "researcher", "--task", "light-research"),
+                             "**Your task**: `light-research` (`<tasks>/light-research.md`).")):
+            with self.subTest(extra=extra):
+                code, shown, _ = self.main(*extra)
+                self.assertEqual(code, 0)
+                self.assertIn(want, shown["argv"][2].split("\n# Principles\n")[0])
 
-    def test_a_given_task_is_named_in_the_prompt(self):
-        code, shown, _ = self.main("--role", "researcher", "--task", "light-research")
-        self.assertEqual(code, 0)
-        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`).",
-                      shown["argv"][2].split("\n# Principles\n")[0])
-
-    def test_the_tui_session_is_named_after_the_role(self):
-        code, shown, _ = self.main("--role", "engineer", "--runner", "tui")
-        argv = shown["argv"]
-        self.assertEqual((code, argv[argv.index("--name") + 1]), (0, f"engineer-{SID[:8]}"))
+    def test_the_tui_session_is_named_after_the_role_or_the_prefix(self):
+        for extra, name in (((), f"engineer-{SID[:8]}"), (("--prefix", "p", "--events", "/tmp/ev.log"), f"p-{SID[:8]}")):
+            with self.subTest(extra=extra):
+                code, shown, _ = self.main("--role", "engineer", "--runner", "tui", *extra)
+                argv = shown["argv"]
+                self.assertEqual((code, argv[0], argv[argv.index("--name") + 1]), (0, "claude", name))
+                self.assertFalse(os.path.exists(self.work))
 
     def test_a_task_off_the_roles_index_exits_2(self):
         code, out, err = self.main("--role", "engineer", "--task", "deep-research")
@@ -791,11 +751,10 @@ class Handover(unittest.TestCase):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
         self.assertIn("before calling the next tool, send a text message containing only that line",
                       clients.SkillClient({}).handover())
-        self.assertNotIn("ultracode", claude().handover())
-        self.assertNotIn("progress:budget", claude().handover())
-
-    def test_claude_reports_through_the_report_command_outcome_last(self):
         text = claude().handover()
+        self.assertNotIn("ultracode", text)
+        self.assertNotIn("progress:budget", text)
+        # claude reports through the report command, the outcome last
         self.assertIn("`report progress <name>", text)
         self.assertIn("`report outcome --status", text)
         self.assertIn("last action", text)
@@ -848,18 +807,16 @@ class Report(Base):
         self.assertEqual(len(lines), before + 1)
         return lines[-1]
 
-    def test_stop_pending_counts_the_list_at_key_on_stdin(self):
-        for tasks, n in (([{}, {}], 2), ([], 0)):
-            with self.subTest(n=n):
-                stdin = io.StringIO(json.dumps({"background_tasks": tasks}))
-                self.assertEqual(self.stop_line(stdin, "--pending", "background_tasks"), {"kind": "stop", "pending": n})
-
-    def test_stop_pending_without_a_list_at_key_is_a_plain_stop(self):
+    def test_stop_pending_counts_the_list_at_key_on_stdin_else_is_a_plain_stop(self):
         undecodable = io.TextIOWrapper(io.BytesIO(b'{"background_tasks": [\xff\xfe]}'), encoding="utf-8")
-        for stdin in (io.StringIO(""), io.StringIO("not json"), io.StringIO("[1]"), io.StringIO("{}"),
-                      io.StringIO('{"background_tasks": 3}'), undecodable):
-            with self.subTest(stdin=stdin):
-                self.assertEqual(self.stop_line(stdin, "--pending", "background_tasks"), STOP)
+        for name, stdin, want in (
+                ("2", io.StringIO(json.dumps({"background_tasks": [{}, {}]})), {"kind": "stop", "pending": 2}),
+                ("0", io.StringIO(json.dumps({"background_tasks": []})), {"kind": "stop", "pending": 0}),
+                ("empty", io.StringIO(""), STOP), ("not json", io.StringIO("not json"), STOP),
+                ("a list", io.StringIO("[1]"), STOP), ("no key", io.StringIO("{}"), STOP),
+                ("no list", io.StringIO('{"background_tasks": 3}'), STOP), ("undecodable", undecodable, STOP)):
+            with self.subTest(name):
+                self.assertEqual(self.stop_line(stdin, "--pending", "background_tasks"), want)
 
     def test_stop_without_pending_reads_no_stdin(self):
         class Unreadable:
@@ -897,21 +854,21 @@ class Report(Base):
         self.assertEqual(self.report("progress", "start", "-x go")[0], 0)
         self.assertEqual(self.lines(), [progress("round-1", "2 rounds, cap 80"), progress("start", "-x go")])
 
-    def test_outcome_from_arguments_the_deliverable_from_its_file(self):
+    def test_outcome_from_arguments_the_deliverable_from_its_file_questions_and_files_repeatable(self):
         doc = os.path.join(self.work, "doc.md")
         with open(doc, "w") as f:
             f.write("# Doc\n")
-        code, out = self.report("outcome", "--status", "done", "--title", "T", "--summary", "S", "--deliverable", doc)
-        self.assertEqual((code, self.lines()), (0, [outcome(DONE)]))
-        self.assertIn("outcome reported", out)
-
-    def test_repeatable_questions_and_files(self):
-        self.assertEqual(self.report("outcome", "--status", "needs_input", "--title", "T", "--summary", "- a\n- b",
-                                     "--question", "Which repo?", "--question", "- Why?", "--file", "a.md",
-                                     "--file", "b.md", "--url", "https://x")[0], 0)
-        self.assertEqual(self.lines(), [outcome({"status": "needs_input", "title": "T", "summary": "- a\n- b",
-                                                 "questions": ["Which repo?", "- Why?"], "url": "https://x",
-                                                 "files": ["a.md", "b.md"]})])
+        for argv, want in (
+                (("--status", "done", "--title", "T", "--summary", "S", "--deliverable", doc), DONE),
+                (("--status", "needs_input", "--title", "T", "--summary", "- a\n- b", "--question", "Which repo?",
+                  "--question", "- Why?", "--file", "a.md", "--file", "b.md", "--url", "https://x"),
+                 {"status": "needs_input", "title": "T", "summary": "- a\n- b", "questions": ["Which repo?", "- Why?"],
+                  "url": "https://x", "files": ["a.md", "b.md"]})):
+            with self.subTest(status=want["status"]):
+                before = self.lines()
+                code, out = self.report("outcome", *argv)
+                self.assertEqual((code, self.lines()), (0, [*before, outcome(want)]))
+                self.assertIn("outcome reported", out)
 
     def test_bad_arguments_append_nothing(self):
         base = ["outcome", "--title", "T", "--summary", "S"]
@@ -920,10 +877,6 @@ class Report(Base):
             self.assertNotEqual(self.report(*argv)[0], 0, argv)
         self.assertEqual(self.lines(), [])
 
-    def test_a_fifo_channel_is_refused_not_waited_on(self):
-        os.mkfifo(self.channel)
-        self.assertEqual(self.report("progress", "x", "y")[0], 1)
-
     def test_a_deliverable_that_is_not_utf8_is_an_error_line(self):
         doc = os.path.join(self.work, "doc.md")
         with open(doc, "wb") as f:
@@ -931,12 +884,15 @@ class Report(Base):
         code, _ = self.report("outcome", "--status", "done", "--title", "T", "--summary", "S", "--deliverable", doc)
         self.assertEqual((code, self.lines()), (1, []))
 
-    def test_a_symlinked_channel_is_refused(self):
+    def test_a_fifo_or_symlinked_channel_is_refused_not_waited_on_or_followed(self):
         target = os.path.join(self.tmp.name, "zshrc")
         with open(target, "w") as f:
             f.write("mine")
-        os.symlink(target, self.channel)
-        self.assertEqual(self.report("progress", "x", "y")[0], 1)
+        for name, plant in (("fifo", os.mkfifo), ("symlink", lambda path: os.symlink(target, path))):
+            with self.subTest(name):
+                plant(self.channel)
+                self.assertEqual(self.report("progress", "x", "y")[0], 1)
+                os.remove(self.channel)
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
 
@@ -960,24 +916,17 @@ class Validate(Base):
     def test_valid(self):
         self.assertEqual(self.check({**DONE, "title": "  T  "}), drive.Outcome("done", "T", "S", deliverable="# Doc\n"))
 
-    def test_shape(self):
-        self.fails([DONE], "not an object")
-        self.fails({**DONE, "status": "maybe"}, "status 'maybe'")
-        self.fails({**DONE, "summary": 3}, "must be text")
-        self.fails({**DONE, "deliverable": ["x"]}, "must be text")
-        self.fails({**DONE, "files": "x.md"}, "must be lists")
-
-    def test_the_schema_holds(self):
-        self.fails({**DONE, "extra": 1}, "unknown field 'extra'")
-        self.fails({**DONE, "title": "x" * 201}, "title is longer than 200")
-        self.fails({**DONE, "summary": "x" * 4001}, "summary is longer than 4000")
-        self.fails({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text")
-        self.fails({**DONE, "files": None}, "files must be a list")
-        self.fails({**DONE, "url": None}, "url must be text")
-
-    def test_title(self):
-        for title in ("", "  ", "a\nb", "a\x1b[2Jb", 5):
-            self.fails({**DONE, "title": title}, "printable", )
+    def test_the_shape_schema_and_title_hold(self):
+        for data, msg in (([DONE], "not an object"), ({**DONE, "status": "maybe"}, "status 'maybe'"),
+                          ({**DONE, "summary": 3}, "must be text"), ({**DONE, "deliverable": ["x"]}, "must be text"),
+                          ({**DONE, "files": "x.md"}, "must be lists"), ({**DONE, "extra": 1}, "unknown field 'extra'"),
+                          ({**DONE, "title": "x" * 201}, "title is longer than 200"),
+                          ({**DONE, "summary": "x" * 4001}, "summary is longer than 4000"),
+                          ({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text"),
+                          ({**DONE, "files": None}, "files must be a list"), ({**DONE, "url": None}, "url must be text"),
+                          *(({**DONE, "title": title}, "printable") for title in ("", "  ", "a\nb", "a\x1b[2Jb", 5))):
+            with self.subTest(msg=msg, data=data):
+                self.fails(data, msg)
 
     def test_questions(self):
         ask = {**DONE, "status": "needs_input"}
@@ -1073,29 +1022,24 @@ class Start(Base):
                          [("round", "half way")])
         self.assertEqual(log, "Progress (round): half way\nhi\n")
 
-    def test_run_env_drops_the_parent_session_keys(self):
-        parent = {"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j", "CLAUDECODE": "1"}
+    def test_the_popen_env_drops_the_parent_session_keys_its_pwd_is_the_cwd_and_its_pipes_are_text(self):
+        parent = {"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j", "CLAUDECODE": "1", "PWD": "/stale"}
         with unittest.mock.patch.dict(os.environ, parent):
             _, ((_, kw),), _ = self.start([outcome(DONE)])
         self.assertNotIn("CLAUDE_CODE_CHILD_SESSION", kw["env"])
         self.assertNotIn("CLAUDE_JOB_DIR", kw["env"])
         self.assertEqual((kw["env"]["CLAUDECODE"], kw["env"]["FAKE"]), ("1", "1"))
-
-    def test_pwd_is_the_runs_cwd(self):
-        with unittest.mock.patch.dict(os.environ, {"PWD": "/stale"}):
-            _, ((_, kw),), _ = self.start([outcome(DONE)])
         self.assertEqual((kw["cwd"], kw["env"]["PWD"]), (self.work, self.work))
+        self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"], kw["text"], kw["errors"]),
+                         (subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE, True, "replace"))
 
-    def test_stop_events_reach_no_sink(self):
+    def test_headless_ignores_stops_and_they_reach_no_sink(self):
         seen = []
-        r, _, _ = self.start([{"kind": "stop"}, progress("start", "x"), {"kind": "stop"}, outcome(DONE)],
-                             sinks=[lambda e: seen.append(e.kind)])
-        self.assertEqual((r.returncode, seen), (0, ["progress", "outcome"]))
-
-    def test_headless_ignores_stops(self):
         with unittest.mock.patch.object(drive.tui_claude, "send") as send:
-            r, _, _ = self.start([*[{"kind": "stop"}] * (drive.STOP_LIMIT + 1), said("still going"), outcome(DONE)])
+            r, _, _ = self.start([*[STOP] * (drive.STOP_LIMIT + 1), progress("start", "x"), STOP, said("still going"),
+                                  outcome(DONE)], sinks=[lambda e: seen.append(e.kind)])
         self.assertEqual((r.returncode, r.outcome.status, send.called), (0, "done", False))
+        self.assertEqual(seen, ["progress", "text", "outcome"])
 
     def test_progress_arrives_while_stdout_is_quiet(self):
         got = threading.Event()
@@ -1159,11 +1103,6 @@ class Start(Base):
         self.assertEqual([(e.kind, e.text) for e in seen], [("text", "hi"), ("stderr", "late")])
         self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"], ["late"])
 
-    def test_both_pipes_are_taken_as_text_with_bad_bytes_replaced(self):
-        _, ((_, kw),), _ = self.start([outcome(DONE)])
-        self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"], kw["text"], kw["errors"]),
-                         (subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE, True, "replace"))
-
     def test_an_error_reading_stderr_stops_the_run(self):
         def stderr():
             yield "x\n"
@@ -1222,12 +1161,6 @@ class Start(Base):
         self.start([progress("start", "first build\n  of the PRD")], sinks=[seen.append])
         self.assertEqual([(e.name, e.text) for e in seen if e.kind == "progress"], [("start", "first build of the PRD")])
 
-    def test_a_fifo_at_the_channel_is_refused_not_waited_on(self):
-        os.makedirs(self.work)
-        os.mkfifo(os.path.join(self.work, "run.jsonl"))
-        with self.assertRaises(OSError):
-            self.start([outcome(DONE)])
-
     def test_garbage_and_partial_lines(self):
         def items():
             with open(os.path.join(self.work, "run.jsonl"), "a") as f:
@@ -1239,39 +1172,20 @@ class Start(Base):
         self.start(items(), sinks=[seen.append])
         self.assertEqual(sorted((e.kind, e.text) for e in seen), [("progress", "1"), ("text", "x")])
 
-    def test_a_symlinked_channel_is_not_read(self):
-        os.makedirs(self.work)
-        target = os.path.join(self.tmp.name, "lines")
-        with open(target, "w") as f:
-            f.write(json.dumps(outcome(DONE)) + "\n")
-
-        def items():
-            os.remove(os.path.join(self.work, "run.jsonl"))
-            os.symlink(target, os.path.join(self.work, "run.jsonl"))
-            with open(target, "a") as f:
-                f.write(json.dumps(outcome(DONE)) + "\n")
-            yield said("x")
-        r, _, _ = self.start(items())
-        self.assertEqual(r.error, "the agent run returned no outcome")
-
-    def test_orchestrator_destination_saves_the_deliverable_with_no_url(self):
-        r, _, _ = self.start([outcome(DONE)], output={"type": "orchestrator"})
-        self.assertEqual((r.outcome.url, self.read("out.md")), ("", "# Doc\n"))
-
-    def test_github_destination_keeps_the_runs_url_and_saves_no_deliverable(self):
+    def test_a_destination_decides_the_url_and_whether_the_deliverable_is_saved(self):
         gh = {"type": "github", "repo": "o/docs", "branch": "main"}
         url = "https://github.com/o/docs/blob/main/x.md"
-        r, _, _ = self.start([outcome({**DONE, "url": url})], output=gh)
-        self.assertEqual(r.outcome.url, url)
-        self.assertFalse(self.exists("out.md"))
-
-    def test_needs_input_reaches_the_record(self):
-        self.start([outcome({**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""})])
-        self.assertEqual(self.last("result")["outcome"]["questions"], ["Which repo?"])
-
-    def test_no_outcome(self):
-        r, _, _ = self.start([said("bye")])
-        self.assertEqual((r.returncode, r.outcome, r.error), (0, None, "the agent run returned no outcome"))
+        needs = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
+        for output, data, want_url, saved in (({"type": "orchestrator"}, DONE, "", "# Doc\n"),
+                                              (gh, {**DONE, "url": url}, url, None),
+                                              (None, needs, "", None)):
+            with self.subTest(output=output, status=data["status"]):
+                if self.exists("out.md"):
+                    os.remove(os.path.join(self.work, "out.md"))
+                r, _, _ = self.start([outcome(data)], output=output)
+                self.assertEqual(r.outcome.url, want_url)
+                self.assertEqual(self.read("out.md") if saved else self.exists("out.md"), saved or False)
+                self.assertEqual(self.last("result")["outcome"]["questions"], data.get("questions", []))
 
     def test_failed_client_ignores_the_outcome_and_leaves_no_stale_outcome(self):
         self.start([outcome(DONE)])
@@ -1280,27 +1194,6 @@ class Start(Base):
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("out.md"))
         self.assertEqual(self.last("result")["error"], "the client exited 143")
-
-    def test_invalid_outcome_is_the_error_and_reaches_no_sink(self):
-        seen = []
-        r, _, _ = self.start([outcome({**DONE, "status": "maybe"})], sinks=[seen.append])
-        self.assertIn("invalid outcome: status 'maybe'", r.error)
-        self.assertEqual(seen, [])
-
-    def test_a_symlink_planted_at_out_during_the_run_is_replaced_not_followed(self):
-        target = os.path.join(self.tmp.name, "zshrc")
-        with open(target, "w") as f:
-            f.write("mine")
-
-        def items():
-            os.symlink(target, os.path.join(self.work, "out.md"))
-            yield from feed(os.path.join(self.work, "run.jsonl"), [progress("round", "x"), outcome(DONE)])
-
-        self.start(items())
-        with open(target) as f:
-            self.assertEqual(f.read(), "mine")
-        self.assertEqual(self.last("result")["outcome"]["status"], "done")
-        self.assertEqual(self.read("out.md"), "# Doc\n")
 
     def spy_save(self):
         patch = unittest.mock.patch.object(drive, "save", wraps=drive.save)
@@ -1338,18 +1231,42 @@ class Start(Base):
         self.assertEqual([(str(c.args[0]), c.args[1]) for c in save.call_args_list], [(out, "# Doc\n")])
         self.assertEqual((r.outcome.url, self.read("out.md"), self.read("tmp/deliverable.md")), (out, "# Doc\n", "# Doc\n"))
 
-    def test_an_out_that_differs_from_the_deliverable_is_replaced(self):
+    def test_an_out_not_a_regular_file_holding_the_deliverable_is_replaced_never_followed_or_waited_on(self):
         save, out = self.spy_save(), os.path.join(self.work, "out.md")
-        for written in ("", "# Do", "# Doc", "# Doc\n\n", "# Doc\nmore", "# Dac\n"):
-            def items():
-                with open(out, "w") as f:
-                    f.write(written)
-                yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
+        target = os.path.join(self.tmp.name, "zshrc")
 
-            with self.subTest(written=written):
+        def write(text):
+            def plant():
+                with open(out, "w") as f:
+                    f.write(text)
+            return plant
+
+        def link(text):
+            def plant():
+                with open(target, "w") as f:
+                    f.write(text)
+                os.symlink(target, out)
+            return plant
+
+        cases = [(f"differs: {w!r}", write(w), None) for w in ("", "# Do", "# Doc", "# Doc\n\n", "# Doc\nmore", "# Dac\n")]
+        cases += [("fifo", lambda: os.mkfifo(out), None), ("symlink", link("mine"), "mine"),
+                  ("symlink to the deliverable", link("# Doc\n"), "# Doc\n")]
+        for name, plant, kept in cases:
+            def items():
+                plant()
+                yield from feed(os.path.join(self.work, "run.jsonl"), [progress("round", "x"), outcome(DONE)])
+
+            with self.subTest(name):
                 save.reset_mock()
+                if os.path.lexists(out):
+                    os.remove(out)
                 self.start(items())
-                self.assertEqual((save.call_count, self.read("out.md")), (1, "# Doc\n"))
+                self.assertEqual((save.call_count, stat.S_ISREG(os.lstat(out).st_mode), self.read("out.md")),
+                                 (1, True, "# Doc\n"))
+                self.assertEqual(self.last("result")["outcome"]["status"], "done")
+                if kept is not None:
+                    with open(target) as f:
+                        self.assertEqual(f.read(), kept)
 
     def test_a_stale_out_never_stands_for_the_deliverable(self):
         save, out = self.spy_save(), os.path.join(self.work, "out.md")
@@ -1375,62 +1292,43 @@ class Start(Base):
                     popen=lambda argv, **kw: FakeProc(feed(p.channel, [outcome({**DONE, "deliverable": "# Draft\n"})])))
         self.assertEqual((seen, save.call_count, self.read("out.md")), (["# Draft\n"], 0, "# Draft\n"))
 
-    def test_a_fifo_at_out_is_replaced_not_waited_on(self):
-        save, out = self.spy_save(), os.path.join(self.work, "out.md")
-
-        def items():
-            os.mkfifo(out)
-            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
-
-        self.start(items())
-        self.assertEqual((save.call_count, stat.S_ISREG(os.lstat(out).st_mode), self.read("out.md")), (1, True, "# Doc\n"))
-
-    def test_a_symlink_at_out_is_replaced_even_when_its_target_holds_the_deliverable(self):
-        save, out = self.spy_save(), os.path.join(self.work, "out.md")
+    def test_a_record_replaced_by_a_symlink_is_not_read_or_followed_and_the_run_still_ends(self):
         target = os.path.join(self.tmp.name, "zshrc")
+        planted = json.dumps(outcome(DONE)) + "\n"
         with open(target, "w") as f:
-            f.write("# Doc\n")
-
-        def items():
-            os.symlink(target, out)
-            yield from feed(os.path.join(self.work, "run.jsonl"), [outcome(DONE)])
-
-        self.start(items())
-        self.assertEqual((save.call_count, os.path.islink(out), self.read("out.md")), (1, False, "# Doc\n"))
-        with open(target) as f:
-            self.assertEqual(f.read(), "# Doc\n")
-
-    def test_a_record_replaced_by_a_symlink_is_not_followed_and_the_run_still_ends(self):
-        target = os.path.join(self.tmp.name, "zshrc")
-        with open(target, "w") as f:
-            f.write("mine")
+            f.write(planted)
 
         def items():
             os.remove(os.path.join(self.work, "run.jsonl"))
             os.symlink(target, os.path.join(self.work, "run.jsonl"))
+            with open(target, "a") as f:
+                f.write(planted)
             yield said("x")
 
         err = io.StringIO()
         with redirect_stderr(err):
             r, _, _ = self.start(items())
         with open(target) as f:
-            self.assertEqual(f.read(), "mine")
+            self.assertEqual(f.read(), planted * 2)
         self.assertEqual(r, drive.Result(0, None, "the agent run returned no outcome"))
         self.assertEqual(len(re.findall(r"^drive\.py: .*run\.jsonl", err.getvalue(), re.M)), 2, err.getvalue())
 
-    def test_a_symlink_at_the_record_stops_the_run_before_it_starts(self):
+    def test_a_fifo_or_symlink_at_the_record_stops_the_run_before_it_starts(self):
         os.makedirs(self.work)
-        target = os.path.join(self.tmp.name, "zshrc")
+        path, target = os.path.join(self.work, "run.jsonl"), os.path.join(self.tmp.name, "zshrc")
         with open(target, "w") as f:
             f.write("mine")
-        os.symlink(target, os.path.join(self.work, "run.jsonl"))
-        with self.assertRaises(OSError):
-            self.start([outcome(DONE)])
+        for name, plant in (("fifo", os.mkfifo), ("symlink", lambda p: os.symlink(target, p))):
+            with self.subTest(name):
+                plant(path)
+                with self.assertRaises(OSError):
+                    self.start([outcome(DONE)])
+                self.assertFalse(hasattr(self, "proc"))
+                os.remove(path)
         with open(target) as f:
             self.assertEqual(f.read(), "mine")
-        self.assertFalse(hasattr(self, "proc"))
 
-    def test_an_error_reading_stdout_stops_the_run(self):
+    def test_an_error_reading_stdout_stops_the_run_and_ends_the_record(self):
         def items():
             yield said("x")
             raise KeyboardInterrupt
@@ -1438,20 +1336,17 @@ class Start(Base):
         with self.assertRaises(KeyboardInterrupt):
             self.start(items(), sinks=[])
         self.assertTrue(self.proc.killed)
+        result, end = self.events()[-2:]
+        self.assertEqual(self.bare(result), {"kind": "result", "error": "stopped: KeyboardInterrupt"})
+        self.assertEqual(self.bare(end), {"kind": "end", "sid": SID, "rc": 1})
 
-    def test_sinks_replace_the_defaults(self):
-        seen = []
-        r, _, log = self.start([progress("start", "one"), said("hi"), outcome(DONE)], sinks=[seen.append])
-        self.assertEqual([(e.kind, e.name, e.text) for e in seen[:2]], [("progress", "start", "one"), ("text", "", "hi")])
-        self.assertEqual((seen[2].kind, seen[2].outcome["url"]), ("outcome", os.path.join(self.work, "out.md")))
-        self.assertEqual(log, "")
-        self.assertEqual(self.read("out.md"), "# Doc\n")
-
-    def test_every_sink_gets_every_event(self):
+    def test_sinks_replace_the_defaults_and_every_sink_gets_every_event(self):
         a, b = [], []
-        self.start([said("hi"), outcome(DONE)], sinks=[a.append, b.append])
-        self.assertEqual([e.kind for e in a], ["text", "missing", "outcome"])
-        self.assertEqual(a, b)
+        r, _, log = self.start([progress("start", "one"), said("hi"), outcome(DONE)], sinks=[a.append, b.append])
+        self.assertEqual([(e.kind, e.name, e.text) for e in a[:2]], [("progress", "start", "one"), ("text", "", "hi")])
+        self.assertEqual((a[2].kind, a[2].outcome["url"]), ("outcome", os.path.join(self.work, "out.md")))
+        self.assertEqual((len(a), a, log), (3, b, ""))
+        self.assertEqual(self.read("out.md"), "# Doc\n")
 
     def recorded(self, launch, items=(), **params):
         """drive.start of `launch` over `items`; (result, the record's events when `begun` ran, its events after)."""
@@ -1489,12 +1384,17 @@ class Start(Base):
         _, before, _ = self.recorded(drive.Launch(["fake"]), input="  Answers:\n- B\n")
         self.assertEqual((before[0]["text"], before[1]["cwd"]), ("  Answers:\n- B\n", self.work))
 
-    def test_a_run_without_a_valid_outcome_records_its_error(self):
-        for items, rc in (([said("bye")], 0), ([outcome(DONE)], 143), ([outcome({**DONE, "status": "maybe"})], 0)):
+    def test_a_run_without_a_valid_outcome_records_its_error_and_sinks_get_no_outcome(self):
+        for items, rc, error, kinds in (
+                ([said("bye")], 0, "the agent run returned no outcome", ["text"]),
+                ([outcome(DONE)], 143, "the client exited 143", []),
+                ([outcome({**DONE, "status": "maybe"})], 0, "invalid outcome: status 'maybe'", [])):
             with self.subTest(items=items, rc=rc):
-                r, _, _ = self.start(items, rc=rc)
+                seen = []
+                r, _, _ = self.start(items, rc=rc, sinks=[seen.append])
                 result, end = self.events()[-2:]
-                self.assertTrue(r.error)
+                self.assertEqual((r.returncode, r.outcome, [e.kind for e in seen]), (rc, None, kinds))
+                self.assertIn(error, r.error)
                 self.assertEqual((self.bare(result), self.bare(end)),
                                  ({"kind": "result", "error": r.error}, {"kind": "end", "sid": SID, "rc": rc}))
 
@@ -1507,7 +1407,7 @@ class Start(Base):
         self.assertEqual([e["text"] for e in events if e["kind"] == "input"], ["Research X.", "Use B."])
         self.assertEqual([e["outcome"]["status"] for e in events if e["kind"] == "result"], ["needs_input", "done"])
 
-    def test_the_driver_events_are_no_reports(self):
+    def test_the_driver_events_are_no_reports_even_when_the_agent_appends_them(self):
         os.makedirs(self.work)
         tail = drive.Tail(os.path.join(self.work, "run.jsonl"))
         lines = [{"ts": "t", "kind": "input", "text": "x"},
@@ -1516,20 +1416,8 @@ class Start(Base):
         for line in lines:
             drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(line) + "\n")
         self.assertEqual(list(tail()), [])
-
-    def test_a_result_line_the_agent_appends_is_no_outcome(self):
         r, _, _ = self.start([{"kind": "result", "outcome": DONE}])
         self.assertEqual(r.error, "the agent run returned no outcome")
-
-    def test_the_record_ends_when_the_run_raises(self):
-        def items():
-            yield said("x")
-            raise KeyboardInterrupt
-        with self.assertRaises(KeyboardInterrupt):
-            self.start(items(), sinks=[])
-        result, end = self.events()[-2:]
-        self.assertEqual(self.bare(result), {"kind": "result", "error": "stopped: KeyboardInterrupt"})
-        self.assertEqual(self.bare(end), {"kind": "end", "sid": SID, "rc": 1})
 
     def test_the_closing_writes_never_mask_the_runs_exception(self):
         def items():
@@ -1558,15 +1446,11 @@ class Start(Base):
             self.assertEqual(err, "drive.py: missing progress mark: start\n")
             self.assertEqual(kinds, ["progress", "missing", "outcome"])
 
-    def test_no_report_when_start_was_seen_needs_input_or_resumed(self):
+    def test_no_report_when_start_was_seen_needs_input_resumed_or_no_outcome(self):
         for items, params in (((progress("start", "go"), outcome(DONE)), {}), ((outcome(self.NEEDS),), {}),
-                              ((outcome(DONE),), {"resume": True})):
+                              ((outcome(DONE),), {"resume": True}), ((said("bye"),), {})):
             _, missing, err, _ = self.missing(*items, **params)
             self.assertEqual((missing, err), ([], ""), (items, params))
-
-    def test_no_outcome_reports_nothing(self):
-        _, missing, err, _ = self.missing(said("bye"))
-        self.assertEqual((missing, err), ([], ""))
 
 
 class Session(Base):
@@ -1603,11 +1487,9 @@ class Session(Base):
 
 
 class Command(unittest.TestCase):
-    def test_each_runner_starts_its_command(self):
+    def test_each_runner_starts_its_command_an_unknown_runner_or_no_command_is_a_config_error(self):
         launch = drive.Launch(["h"], interactive=["i"])
         self.assertEqual([drive.command(launch, r, Recorder({})) for r in ("headless", "tui")], [["h"], ["i"]])
-
-    def test_unknown_runner_or_no_command(self):
         for launch, runner, msg in ((drive.Launch(["h"], interactive=["i"]), "gui", "unknown runner 'gui'"),
                                     (drive.Launch(["h"]), "tui", "Recorder has no tui command"),
                                     (drive.Launch([], interactive=["i"]), "headless", "has no headless command")):
@@ -1706,18 +1588,13 @@ class TuiRunner(Base):
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(err):
             return drive.main(argv, root=CORE, **kw), fake.calls, err.getvalue()
 
-    def test_session_name_and_start_arguments(self):
-        _, calls, _, _ = self.start([outcome(DONE)], show="echo {{session}}")
+    def test_session_name_and_start_arguments_pwd_the_runs_cwd(self):
+        with unittest.mock.patch.dict(os.environ, {"PWD": "/stale"}):
+            _, calls, _, _ = self.start([outcome(DONE)], show="echo {{session}}")
         (_, name, argv, kw), = [c for c in calls if c[0] == "start"]
         self.assertEqual((name, argv, kw["cwd"]), (self.NAME, ["claude", "hi"], self.work))
         self.assertEqual(kw["template"], "echo {{session}}")
-        self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"]), ("1", os.environ["PATH"]))
-
-    def test_pwd_is_the_runs_cwd(self):
-        with unittest.mock.patch.dict(os.environ, {"PWD": "/stale"}):
-            _, calls, _, _ = self.start([outcome(DONE)])
-        (_, _, _, kw), = [c for c in calls if c[0] == "start"]
-        self.assertEqual((kw["cwd"], kw["env"]["PWD"]), (self.work, self.work))
+        self.assertEqual((kw["env"]["FAKE"], kw["env"]["PATH"], kw["env"]["PWD"]), ("1", os.environ["PATH"], self.work))
 
     def test_tui_session_name(self):
         self.assertIs(drive.tui_session, compose.tui_session)
@@ -1742,39 +1619,23 @@ class TuiRunner(Base):
         (_, name, _, kw), = [c for c in fake.calls if c[0] == "start"]
         return name, kw
 
-    def test_layout_reaches_tui_start_and_defaults_to_the_automatic_stack(self):
-        for layout, want in ((None, (None, None, None)), (drive.Layout(), (None, None, None)),
-                             (drive.Layout("below", "s"), ("below", "s", None)),
-                             (drive.Layout(opener="w0t0p0:AB-12"), (None, None, "w0t0p0:AB-12")),
-                             (drive.Layout("right", None, "mine"), ("right", None, "mine"))):
-            with self.subTest(layout=layout):
-                _, kw = self.launched(layout)
-                self.assertEqual((kw["split"], kw["split_from"], kw["opener"]), want)
-
-    def test_the_launchs_status_line_reaches_tui_start(self):
-        for status_line in (False, True):
-            self.assertIs(self.launched(status_line=status_line)[1]["status_line"], status_line)
-
-    def test_the_launchs_per_column_reaches_tui_start(self):
-        for per_column in (None, 2):
-            self.assertEqual(self.launched(per_column=per_column)[1]["per_column"], per_column)
-
-    def test_prefix_names_the_session_and_events_reach_tui_start(self):
-        name, kw = self.launched(prefix="engineer-TASK-1", events="/tmp/ev.log")
-        self.assertEqual((name, kw["events"]), ("engineer-TASK-1-11111111", "/tmp/ev.log"))
-        name, kw = self.launched()
-        self.assertEqual((name, kw["events"]), (self.NAME, None))
-
-    def test_a_kill_after_a_prefixed_start_names_the_prefixed_session(self):
-        def sink(event):
-            raise RuntimeError("sink")
-
-        p = self.params(prefix="p-1")
-        fake = FakeTui(p.channel, [[progress("round", "x")]])
-        launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"])
-        with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), self.assertRaises(RuntimeError):
-            drive.start(launch, run(), p, client=claude(), runner="tui", sinks=[sink])
-        self.assertEqual(fake.calls[-1], ("kill", "p-1-11111111"))
+    def test_the_layout_launch_prefix_and_events_reach_tui_start(self):
+        """The layout defaults to the automatic stack; the prefix names the session."""
+        unset = {"split": None, "split_from": None, "opener": None, "status_line": False, "per_column": None,
+                 "events": None}
+        for kw, name, want in (
+                ({}, self.NAME, {}), ({"layout": drive.Layout()}, self.NAME, {}),
+                ({"layout": drive.Layout("below", "s")}, self.NAME, {"split": "below", "split_from": "s"}),
+                ({"layout": drive.Layout(opener="w0t0p0:AB-12")}, self.NAME, {"opener": "w0t0p0:AB-12"}),
+                ({"layout": drive.Layout("right", None, "mine")}, self.NAME, {"split": "right", "opener": "mine"}),
+                ({"status_line": True}, self.NAME, {"status_line": True}),
+                ({"per_column": 2}, self.NAME, {"per_column": 2}),
+                ({"prefix": "engineer-TASK-1", "events": "/tmp/ev.log"}, "engineer-TASK-1-11111111",
+                 {"events": "/tmp/ev.log"})):
+            with self.subTest(**kw):
+                got_name, got = self.launched(**kw)
+                self.assertEqual((got_name, {k: got[k] for k in unset}), (name, {**unset, **want}))
+                self.assertIs(got["status_line"], want.get("status_line", False))
 
     def test_the_tui_session_has_the_name_its_command_gives_claude(self):
         for prefix in (None, "engineer-TASK-1"):
@@ -1804,39 +1665,22 @@ class TuiRunner(Base):
                 self.assertFalse(os.path.lexists(self.work))
                 self.assertFalse(os.path.lexists(p.channel))
 
-    def test_a_layout_with_no_split_and_a_good_opener_is_accepted(self):
-        for layout in (drive.Layout(), drive.Layout(opener="mine"), drive.Layout(opener="w0t0p0:AB-12"),
-                       drive.Layout("below", "s", "mine")):
-            drive.check_layout("tui", layout)
-
-    def test_main_split_and_split_from_build_the_layout(self):
+    def test_main_split_split_from_prefix_and_events_reach_start_and_the_tui_session(self):
         seen = []
         real = drive.start
 
         def start(*a, **kw):
-            seen.append(kw["layout"])
+            seen.append((kw["layout"], a[2].prefix, kw["events"]))
             return real(*a, **kw)
 
-        for flags, want in ((["--split", "below", "--split-from", "s"], drive.Layout("below", "s")),
-                            (["--split-from", "s"], drive.Layout(None, "s")), (["--split", "right"], drive.Layout("right")),
-                            ([], None)):
-            with unittest.mock.patch.object(drive, "start", start):
-                self.main([outcome(DONE)], extra=flags)
-            self.assertEqual(seen.pop(), want)
-
-    def test_main_prefix_and_events_reach_start_and_the_tui_session(self):
-        seen = []
-        real = drive.start
-
-        def start(*a, **kw):
-            seen.append((a[2].prefix, kw["events"]))
-            return real(*a, **kw)
-
-        for flags, want in (([], (None, None)), (["--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log"],
-                                                  ("engineer-TASK-1", "/tmp/ev.log"))):
-            with unittest.mock.patch.object(drive, "start", start):
+        for flags, want in ((["--split", "below", "--split-from", "s"], (drive.Layout("below", "s"), None, None)),
+                            (["--split-from", "s"], (drive.Layout(None, "s"), None, None)),
+                            (["--split", "right"], (drive.Layout("right"), None, None)), ([], (None, None, None)),
+                            (["--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log"],
+                             (None, "engineer-TASK-1", "/tmp/ev.log"))):
+            with self.subTest(flags=flags), unittest.mock.patch.object(drive, "start", start):
                 code, calls, _ = self.main([outcome(DONE)], extra=flags)
-            self.assertEqual((code, seen.pop()), (0, want))
+                self.assertEqual((code, seen.pop()), (0, want))
         (_, name, _, kw), = [c for c in calls if c[0] == "start"]
         self.assertRegex(name, r"engineer-TASK-1-[0-9a-f]{8}")
         self.assertEqual(kw["events"], "/tmp/ev.log")
@@ -1904,13 +1748,13 @@ class TuiRunner(Base):
                 proc.assert_not_called()
                 self.assertFalse(os.path.exists(self.work))
 
-    def test_main_a_bad_prefix_or_headless_prefix_or_events_exits_2_before_anything_starts(self):
+    def test_main_a_bad_prefix_or_headless_prefix_events_or_layout_exits_2_before_anything_starts(self):
         base = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
                 "--workdir", self.work]
         cases = ((["--runner", "tui", "--prefix", "a b"], "prefix"), (["--runner", "tui", "--prefix", ""], "prefix"),
                  (["--prefix", "p"], "prefix"), (["--events", "/tmp/ev.log"], "events"),
                  (["--runner", "headless", "--prefix", "p", "--dry-run"], "prefix"),
-                 (["--events", "/tmp/ev.log", "--dry-run"], "events"))
+                 (["--events", "/tmp/ev.log", "--dry-run"], "events"), (["--split", "below"], "no layout"))
         for extra, word in cases:
             with self.subTest(extra=extra):
                 err = io.StringIO()
@@ -1919,25 +1763,6 @@ class TuiRunner(Base):
                 self.assertIn(word, err.getvalue())
                 start.assert_not_called()
                 self.assertFalse(os.path.exists(self.work))
-
-    def test_main_dry_run_with_a_prefix_exits_0_and_starts_nothing(self):
-        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
-                "--workdir", self.work, "--runner", "tui", "--prefix", "engineer-TASK-1", "--events", "/tmp/ev.log",
-                "--dry-run"]
-        out = io.StringIO()
-        with redirect_stdout(out), redirect_stderr(io.StringIO()), unittest.mock.patch.object(drive, "start") as start:
-            self.assertEqual(drive.main(argv, root=CORE), 0)
-        self.assertEqual(json.loads(out.getvalue())["argv"][0], "claude")
-        start.assert_not_called()
-
-    def test_main_layout_with_headless_exits_2(self):
-        err = io.StringIO()
-        argv = ["--role", "dummy-tester", "--task", "echo", "--input", "Hello.", "--out", os.path.join(self.work, "out.md"),
-                "--workdir", self.work, "--split", "below"]
-        with redirect_stderr(err), unittest.mock.patch.object(drive, "start") as start:
-            self.assertEqual(drive.main(argv, root=CORE), 2)
-        self.assertIn("no layout", err.getvalue())
-        start.assert_not_called()
 
     def test_done_on_the_first_outcome_without_waiting_for_a_stop_or_a_kill(self):
         r, calls, kinds, _ = self.start([progress("start", "x")], [outcome(DONE)])
@@ -1957,13 +1782,15 @@ class TuiRunner(Base):
         code, (start, *rest), _ = self.main([outcome(DONE)])
         self.assertEqual((code, start[2][0], rest), (0, "claude", []))
 
-    def test_a_sink_raising_kills_the_session(self):
+    def test_a_sink_raising_kills_the_session_prefixed_or_not(self):
         def sink(event):
             raise RuntimeError("sink")
 
-        with self.assertRaises(RuntimeError):
-            self.start([progress("round", "x")], sinks=[sink])
-        self.assertEqual(self.fake.calls[-1], ("kill", self.NAME))
+        for prefix, name in ((None, self.NAME), ("p-1", "p-1-11111111")):
+            with self.subTest(prefix=prefix):
+                with self.assertRaises(RuntimeError):
+                    self.start([progress("round", "x")], sinks=[sink], prefix=prefix)
+                self.assertEqual(self.fake.calls[-1], ("kill", name))
 
     def test_a_failed_kill_is_printed_and_the_drivers_exception_raised(self):
         def sink(event):
@@ -1991,11 +1818,6 @@ class TuiRunner(Base):
         code, calls, err = self.main(api={"status": status})
         self.assertEqual((code, [c[0] for c in calls]), (3, ["start", "kill"]))
         self.assertIn("drive.py: tui: no server\n", err)
-
-    def test_a_missing_start_mark_is_reported(self):
-        r, _, kinds, err = self.start([progress("round", "x"), outcome(DONE)])
-        self.assertEqual(kinds, ["progress", "missing", "outcome"])
-        self.assertIn("drive.py: missing progress mark: start\n", err)
 
     def test_the_first_stop_without_an_outcome_nudges_once(self):
         r, calls, kinds, _ = self.start([STOP], [STOP], [outcome(DONE), STOP])
@@ -2046,24 +1868,21 @@ class TuiRunner(Base):
         code, calls, _ = self.main(*steps)
         self.assertEqual((code, [c[0] for c in calls]), (1, ["start"]))
 
-    def test_exactly_wait_limit_of_quiet_is_not_over_it(self):
-        r, _, _, err = self.start((drive.WAIT_LIMIT, []), [outcome(DONE)])
-        self.assertEqual((r.outcome.status, err), ("done", "drive.py: missing progress mark: start\n"))
+    def test_exactly_wait_limit_of_quiet_is_not_over_it_and_an_outcome_in_the_poll_that_passes_it_wins(self):
+        for steps in (((drive.WAIT_LIMIT, []), [outcome(DONE)]), ((drive.WAIT_LIMIT + 1, [outcome(DONE)]),)):
+            with self.subTest(steps=steps):
+                r, calls, _, err = self.start(*steps)
+                self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls], err),
+                                 (0, "done", ["start"], "drive.py: missing progress mark: start\n"))
 
-    def test_progress_restarts_the_quiet_clock(self):
+    def test_progress_restarts_the_quiet_clock_pending_stops_do_not(self):
         p = drive.WAIT_LIMIT - 10
-        r, _, _, _ = self.start((p, [progress("round", "x")]), (drive.WAIT_LIMIT + 10, []), (p + drive.WAIT_LIMIT, []),
-                                (p + drive.WAIT_LIMIT + 1, []))
-        self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
-
-    def test_pending_stops_do_not_restart_the_quiet_clock(self):
-        r, _, _, _ = self.start((drive.WAIT_LIMIT - 10, [PENDING]), (drive.WAIT_LIMIT + 1, []))
-        self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
-
-    def test_an_outcome_in_the_poll_the_quiet_limit_passes_wins(self):
-        r, calls, _, err = self.start((drive.WAIT_LIMIT + 1, [outcome(DONE)]))
-        self.assertEqual((r.returncode, r.outcome.status, [c[0] for c in calls], err),
-                         (0, "done", ["start"], "drive.py: missing progress mark: start\n"))
+        for name, steps in (("progress", ((p, [progress("round", "x")]), (drive.WAIT_LIMIT + 10, []),
+                                          (p + drive.WAIT_LIMIT, []), (p + drive.WAIT_LIMIT + 1, []))),
+                            ("pending", ((p, [PENDING]), (drive.WAIT_LIMIT + 1, [])))):
+            with self.subTest(name):
+                r, _, _, _ = self.start(*steps)
+                self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
         send = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no pane"))
@@ -2256,16 +2075,12 @@ class Detach(Base):
         (_, _, _, kw), = [c for c in calls if c[0] == "start"]
         self.assertEqual((code, kw["events"], os.listdir(home)), (0, None, []))
 
-    def test_stdin_input_reaches_the_driver_as_text(self):
-        with unittest.mock.patch.object(sys, "stdin", io.StringIO("# Echo\nthis")):
-            code, _, _, handover = self.outer("--input", "-")
-        self.assertEqual((code, handover["argv"][3]), (0, "--input=# Echo\nthis"))
-
-    def test_stdin_text_dash_reaches_the_driver_as_text_not_its_stdin(self):
-        with unittest.mock.patch.object(sys, "stdin", io.StringIO("-")):
-            code, _, _, handover = self.outer("--runner", "tui", "--input", "-")
-        self.assertEqual((code, handover["argv"][3]), (0, "--input=-"))
-        stdin = unittest.mock.Mock()
+    def test_stdin_input_reaches_the_driver_as_text_a_dash_too_not_its_stdin(self):
+        for runner, text in (("headless", "# Echo\nthis"), ("tui", "-")):
+            with self.subTest(text=text), unittest.mock.patch.object(sys, "stdin", io.StringIO(text)):
+                code, _, _, handover = self.outer("--runner", runner, "--input", "-")
+                self.assertEqual((code, handover["argv"][3]), (0, f"--input={text}"))
+        stdin = unittest.mock.Mock()   # the driver of the last row, input "-"
         with unittest.mock.patch.object(sys, "stdin", stdin):
             code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
         stdin.read.assert_not_called()
@@ -2315,21 +2130,15 @@ class Detach(Base):
         self.assertEqual([c[1:] for c in calls[1:]], [["kill-session", "-t", "=d"]])
         self.assertFalse(os.path.exists(os.path.dirname(calls[0][-1])))
 
-    def test_an_argv_item_holding_nul_raises_before_the_handover_or_tmux(self):
-        proc = unittest.mock.Mock()
-        with unittest.mock.patch.object(drive.tempfile, "mkdtemp") as mkdtemp, \
-                self.assertRaisesRegex(drive.RunnerError, "an argv item holds a NUL character"):
-            drive.detach("d", [sys.executable, "--input=a\0b"], cwd=self.tmp.name, env={}, iterm="", proc=proc)
-        proc.assert_not_called()
-        mkdtemp.assert_not_called()
-
-    def test_an_argv_item_with_a_lone_surrogate_raises_before_the_handover_or_tmux(self):
-        proc = unittest.mock.Mock()
-        with unittest.mock.patch.object(drive.tempfile, "mkdtemp") as mkdtemp, \
-                self.assertRaisesRegex(drive.RunnerError, "an argv item cannot be encoded"):
-            drive.detach("d", [sys.executable, "--input=a\ud800b"], cwd=self.tmp.name, env={}, iterm="", proc=proc)
-        proc.assert_not_called()
-        mkdtemp.assert_not_called()
+    def test_an_argv_item_holding_nul_or_a_lone_surrogate_raises_before_the_handover_or_tmux(self):
+        for item, want in (("--input=a\0b", "an argv item holds a NUL character"),
+                           ("--input=a\ud800b", "an argv item cannot be encoded")):
+            with self.subTest(want), unittest.mock.patch.object(drive.tempfile, "mkdtemp") as mkdtemp:
+                proc = unittest.mock.Mock()
+                with self.assertRaisesRegex(drive.RunnerError, want):
+                    drive.detach("d", [sys.executable, item], cwd=self.tmp.name, env={}, iterm="", proc=proc)
+                proc.assert_not_called()
+                mkdtemp.assert_not_called()
 
     def test_a_tui_run_detached_from_an_attached_session_gets_its_role_entry_under_the_driver_name(self):
         hermetic.home(self)
@@ -2546,15 +2355,12 @@ class AppendLine(unittest.TestCase):
             drive.append_line(self.path, "héllo wörld\n")
         self.assertEqual((write.call_count, self.content()), (5, "héllo wörld\n".encode()))
 
-    def test_appends_after_what_is_there_and_an_empty_text_creates_the_file(self):
+    def test_appends_after_what_is_there_and_an_empty_text_creates_the_file_owner_only(self):
         drive.append_line(self.path, "")
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         drive.append_line(self.path, "one\n")
         drive.append_line(self.path, "two\n")
         self.assertEqual(self.content(), b"one\ntwo\n")
-
-    def test_created_owner_only(self):
-        drive.append_line(self.path, "x\n")
-        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
 
     def test_a_symlink_is_refused(self):
         target = os.path.join(self.dir, "target")
@@ -2637,14 +2443,10 @@ class Main(Base):
         self.assertFalse(os.path.exists(self.work))
 
     def test_dry_run_prints_the_runners_command(self):
-        launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.", cwd=os.getcwd())
+        with redirect_stderr(io.StringIO()):
+            launch = self.plan("dummy-tester", "echo", client="claude", input="Hello.", cwd=os.getcwd())
         code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui")
         self.assertEqual((code, json.loads(out)["argv"]), (0, launch.interactive))
-
-    def test_dry_run_tui_argv_names_the_claude_session_after_the_tui_session(self):
-        code, out, _, _ = self.run_main("--dry-run", "--sid", SID, "--runner", "tui", "--prefix", "p")
-        argv = json.loads(out)["argv"]
-        self.assertEqual((code, argv[argv.index("--name") + 1]), (0, f"p-{SID[:8]}"))
 
     def test_dry_run_shows_the_events_file_given_or_the_manager_directorys_and_creates_nothing(self):
         home = hermetic.home(self)
@@ -2686,7 +2488,7 @@ class Main(Base):
             self.assertEqual((code, out, calls), (2, "", []))
             self.assertIn("drive.py: Recorder has no tui command", err)
 
-    def test_done_run_exits_0_and_reports_session(self):
+    def test_done_run_exits_0_reports_its_session_and_leaves_its_record(self):
         code, _, err, calls = self.run_main("--sid", SID, lines=[outcome(DONE)])
         self.assertEqual(code, 0)
         self.assertIn(f"session {SID}", err)
@@ -2694,11 +2496,8 @@ class Main(Base):
         (argv, kw), = calls
         self.assertEqual((argv[0], kw["cwd"]), ("claude", os.getcwd()))
         self.assertEqual(kw["env"]["PATH"], os.environ["PATH"])
-
-    def test_a_run_by_hand_leaves_its_record(self):
-        code, _, _, _ = self.run_main("--sid", SID, lines=[outcome(DONE)])
         entry = drive.session(self.work, SID)
-        self.assertEqual((code, entry["cwd"], entry["project"]), (0, os.getcwd(), False))
+        self.assertEqual((entry["cwd"], entry["project"]), (os.getcwd(), False))
         self.assertEqual(entry["resume"], f"cd {os.getcwd()} && claude --resume {SID} --add-dir {self.work}")
         self.assertEqual(entry["transcript"], clients.claude.transcript(os.getcwd(), SID))
 
@@ -2718,26 +2517,27 @@ class Main(Base):
             self.assertTrue(cmd[2].endswith(f"\n# Input\n\n{want.strip()}\n"), cmd[2][-100:])
             self.assertNotIn("SECRET", cmd[2])
 
-    def test_no_outcome_exits_1(self):
-        code, _, err, _ = self.run_main()
-        self.assertEqual(code, 1)
-        self.assertIn("no outcome", err)
+    def test_no_outcome_exits_1_and_a_client_failure_3(self):
+        for lines, rc, code, want in (((), 0, 1, "no outcome"), ([outcome(DONE)], 1, 3, "the client exited 1")):
+            with self.subTest(code=code):
+                got, _, err, _ = self.run_main(lines=lines, rc=rc)
+                self.assertEqual(got, code)
+                self.assertIn(want, err)
 
-    def test_client_failure_exits_3(self):
-        self.assertEqual(self.run_main(lines=[outcome(DONE)], rc=1)[0], 3)
-
-    def test_config_error_exits_2(self):
-        code, _, err, calls = self.run_main("--task", "essay")
-        self.assertEqual((code, calls), (2, []))
-        self.assertIn("drive.py:", err)
-
-    def test_a_bad_workers_per_column_exits_2_before_anything_starts(self):
-        with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
-            f.write("workers_per_column = 0\n")
-        for extra in ((), ("--dry-run",)):
-            code, out, err, calls = self.run_main(*extra)
-            self.assertEqual((code, out, calls), (2, "", []))
-            self.assertIn("drive.py: workers_per_column: want an integer from 1 to 9999", err)
+    def test_a_config_error_exits_2_before_anything_starts(self):
+        for name, extra, local, want in (
+                ("a task off the index", ("--task", "essay"), None, "drive.py: task 'essay' is not one of"),
+                ("a bad workers_per_column", (), "workers_per_column = 0\n",
+                 "drive.py: workers_per_column: want an integer from 1 to 9999")):
+            path = os.path.join(hermetic.home(self), "core.local.toml")
+            if local:
+                with open(path, "w") as f:
+                    f.write(local)
+            for dry in ((), ("--dry-run",)):
+                with self.subTest(name, dry=dry):
+                    code, out, err, calls = self.run_main(*extra, *dry)
+                    self.assertEqual((code, out, calls), (2, "", []))
+                    self.assertIn(want, err)
 
     def test_resume_end_to_end(self):
         code, _, _, ((argv, _),) = self.run_main("--sid", SID, "--resume", lines=[outcome(DONE)])

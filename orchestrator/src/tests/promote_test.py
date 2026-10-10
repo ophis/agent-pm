@@ -362,20 +362,22 @@ class TestIdempotency(Base):
 
 
 class TestChildTitle(unittest.TestCase):
-    def test_strips_own_prefix_once(self):
-        for src, want in [("PRD: Session Registry", "TDD: Session Registry"),
-                          ("PRD: PRD: X", "TDD: PRD: X"),
-                          ("PRD:\nX", "TDD: X")]:
-            self.assertEqual(promote.child_title("TDD", "PRD", src), want)
-
-    def test_other_titles_kept(self):
-        for src in ["Fix: X", "PRD:X", "prd: X", "PRDs: X", "X PRD: Y"]:
-            self.assertEqual(promote.child_title("TDD", "PRD", src), f"TDD: {src}")
-        self.assertEqual(promote.child_title("TDD", "PRD", "PRD: "), "TDD: PRD:")
-
-    def test_no_source_prefix_strips_nothing(self):
-        for src_prefix in (None, ""):
-            self.assertEqual(promote.child_title("PRD", src_prefix, "PRD: X"), "PRD: PRD: X")
+    def test_child_title(self):
+        """The source's own prefix stripped once, on one line; any other title kept; no source prefix strips nothing."""
+        for prefix, src_prefix, src, want in (
+                ("TDD", "PRD", "PRD: Session Registry", "TDD: Session Registry"),
+                ("TDD", "PRD", "PRD: PRD: X", "TDD: PRD: X"),
+                ("TDD", "PRD", "PRD:\nX", "TDD: X"),
+                ("TDD", "PRD", "Fix: X", "TDD: Fix: X"),
+                ("TDD", "PRD", "PRD:X", "TDD: PRD:X"),
+                ("TDD", "PRD", "prd: X", "TDD: prd: X"),
+                ("TDD", "PRD", "PRDs: X", "TDD: PRDs: X"),
+                ("TDD", "PRD", "X PRD: Y", "TDD: X PRD: Y"),
+                ("TDD", "PRD", "PRD: ", "TDD: PRD:"),
+                ("PRD", None, "PRD: X", "PRD: PRD: X"),
+                ("PRD", "", "PRD: X", "PRD: PRD: X")):
+            with self.subTest(src_prefix=src_prefix, src=src):
+                self.assertEqual(promote.child_title(prefix, src_prefix, src), want)
 
 
 class TestScopeAndConfig(Base):
@@ -386,21 +388,18 @@ class TestScopeAndConfig(Base):
         self.assertEqual(src["state"], "Handoff")
 
     def test_config_only_extension(self):
-        self.config = self.write_config(PM_NEXT)
-        self.ready(role="pm", title="PRD: Title DR-1")
-        self.run_main()
-        (child,) = self.fake.children.values()
-        self.assertEqual((child["projectId"], child["assigneeId"], child["title"]), ("p-dr", "u-engineer", "ENG: Title DR-1"))
-        self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X")
-
-    def test_child_titles_from_the_roles_tasks_entries(self):
-        self.config = self.write_config(PM_NEXT)
-        self.ready(role="pm", title="DES: Title DR-1")
-        tasks = {"pm": config.Task("design", prefix="DES"), "engineer": config.Task("build", prefix="BLD")}
-        with mock.patch.dict(config.TASKS, tasks):
-            self.run_main()
-        (child,) = self.fake.children.values()
-        self.assertEqual(child["title"], "BLD: Title DR-1")
+        """A config `next` alone promotes; the child's title prefixes come from the roles' config.TASKS entries."""
+        custom = {"pm": config.Task("design", prefix="DES"), "engineer": config.Task("build", prefix="BLD")}
+        for tasks, title, want in (({}, "PRD: Title DR-1", "ENG: Title DR-1"), (custom, "DES: Title DR-1", "BLD: Title DR-1")):
+            with self.subTest(want=want):
+                self.fake = FakeLinear()
+                self.config = self.write_config(PM_NEXT)
+                self.ready(role="pm", title=title)
+                with mock.patch.dict(config.TASKS, tasks):
+                    self.run_main()
+                (child,) = self.fake.children.values()
+                self.assertEqual((child["projectId"], child["assigneeId"], child["title"]), ("p-dr", "u-engineer", want))
+                self.assertEqual(instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X")
 
     def test_instructions_optional(self):
         self.config = self.write_config(PM_NEXT)
@@ -441,12 +440,19 @@ class TestFailures(Base):
         self.assertIn("handoff-error DR-1", self.out)
 
     def test_failing_over_grace_bounces(self):
-        src = self.ready(handoff=90)
-        self.fake.fail[promote.M_CREATE] = "create failed"
-        self.run_main()
-        self.assertEqual(src["state"], "In Review")
-        self.assertTrue(src["posted"][0].startswith("Handoff failed: linear api error: create failed"))
-        self.assertEqual(src["subscribers"], ["me@x.com"])
+        """Naming the next-stage issue when it already exists."""
+        for fail, existing, posted in ((promote.M_CREATE, False, "Handoff failed: linear api error: create failed"),
+                                       (promote.M_RELATE, True, "Handoff failed: linear api error: relate failed The "
+                                                                "next-stage issue C-9 already exists.")):
+            with self.subTest(existing=existing):
+                self.fake = FakeLinear()
+                src = self.ready(handoff=90)
+                if existing:
+                    cid = promote.child_id("DR-1", "pm", ago(90))
+                    self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
+                self.fake.fail[fail] = "create failed" if fail == promote.M_CREATE else "relate failed"
+                self.run_main()
+                self.assertEqual((src["state"], src["posted"], src["subscribers"]), ("In Review", [posted], ["me@x.com"]))
 
     def test_grace_counts_from_latest_handoff(self):
         src = self.ready(handoff=2900)
@@ -464,15 +470,6 @@ class TestFailures(Base):
                          f"## Instructions\nMe, {ago(2915)}:\nbuild X\n\nMe, {ago(20)}:\nagain")
         self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(2900)))
         self.assertEqual(src["state"], "Done")
-
-    def test_failure_bounce_names_existing_child(self):
-        src = self.ready(handoff=90)
-        cid = promote.child_id("DR-1", "pm", ago(90))
-        self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
-        self.fake.fail[promote.M_RELATE] = "relate failed"
-        self.run_main()
-        self.assertIn("C-9 already exists", src["posted"][0])
-        self.assertEqual(src["state"], "In Review")
 
 
 class TestPartialFailures(Base):

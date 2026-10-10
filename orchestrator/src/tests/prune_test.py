@@ -129,15 +129,30 @@ class PruneTest(unittest.TestCase):
         shutil.rmtree(self.work)
         os.makedirs(self.work)
 
+    def symlinked_dot_git(self, ident, *parts):
+        """A clone whose .git is a symlink out."""
+        path = self.mkc(ident, *parts)
+        shutil.rmtree(os.path.join(path, ".git"))
+        os.symlink(os.path.join(self.outside, "dotgit"), os.path.join(path, ".git"))
+        return path
+
     def test_entries_that_are_no_clone_or_worktree_are_skipped_and_kept(self):
-        for key, parts in (("src/o/bare", ("src", "o", "bare")), ("publish", ("publish",))):
-            with self.subTest(key=key):
+        """No .git, or a symlinked one. An issue a row: a skip is logged once a day."""
+        rows = [(dot_git, make, parts) for dot_git, make in (("none", partial(self.mkg, git=None)),
+                                                             ("symlinked", self.symlinked_dot_git))
+                for parts in (("src", "o", "bare"), ("publish",))]
+        for n, (dot_git, make, parts) in enumerate(rows, 41):
+            with self.subTest(dot_git=dot_git, parts=parts):
+                ident = f"TASK-{n}"
                 self.fresh()
-                path = self.mkg("TASK-49", *parts, git=None)
-                code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
+                path = make(ident, *parts)
+                code, out = self.prune(gql_for({ident: ("Done", [(30, "Done")])}))
                 self.assertEqual(code, 0)
-                self.assertEqual(out.splitlines(), [f"prune-skip entry=TASK-49/{key} reason=not a clone or worktree"])
+                self.assertEqual(out.splitlines(), [f"prune-skip entry={ident}/{'/'.join(parts)} reason=not a clone or worktree"])
                 self.assertTrue(os.path.isdir(path))
+                if dot_git == "symlinked":
+                    self.assertTrue(os.path.isfile(os.path.join(path, "notes.md")))
+                    self.assertTrue(os.path.isdir(os.path.join(self.outside, "dotgit")))
 
     def test_the_same_skip_twice_is_one_line(self):
         """FR-10: prune-skip once a day."""
@@ -157,12 +172,15 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(bare))
 
     def test_young_and_in_progress_untouched(self):
+        """Their clones and TUI sessions kept: finished under 24h ago (counted from the latest finish), or not finished."""
         path = self.mkc("TASK-48", "src", "o", "repo")
         busy = self.mkc("TASK-50", "src", "o", "repo")
+        tmux = Tmux(live=["engineer-TASK-48-aaaaaaaa", "engineer-TASK-50-bbbbbbbb"])
         gql = gql_for({"TASK-48": ("Done", [(50, "Done"), (30, "In Progress"), (24 - 1 / 3600, "Done")]),
                        "TASK-50": ("In Progress", [(50, "Done"), (30, "In Progress")])})
-        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(self.prune(gql, tmux=tmux), (0, ""))
         self.assertTrue(os.path.isdir(path) and os.path.isdir(busy))
+        self.assertEqual(tmux.tmux_calls(), ["list-sessions"])
 
     def test_unknown_finish_time_skipped(self):
         path = self.mkc("TASK-49", "src", "o", "repo")
@@ -171,11 +189,20 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-skip TASK-49 reason=finish time unknown", out)
         self.assertTrue(os.path.isdir(path))
 
-    def test_empty_folder_no_issue_query(self):
-        os.makedirs(os.path.join(self.work, "TASK-49", "src"))
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
+    def test_no_entry_no_candidate(self):
+        """An empty src, an owner dir with nothing in it, a publish that is a file: no issue query."""
+        def publish_file():
+            os.makedirs(os.path.join(self.work, "TASK-49"))
+            write(os.path.join(self.work, "TASK-49", "publish"), "x")
+        for name, make in (("empty src", lambda: os.makedirs(os.path.join(self.work, "TASK-49", "src"))),
+                           ("empty owner dir", lambda: os.makedirs(os.path.join(self.work, "TASK-49", "src", "o"))),
+                           ("publish a file", publish_file)):
+            with self.subTest(name):
+                self.fresh()
+                make()
+                gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+                self.assertEqual(self.prune(gql), (0, ""))
+                self.assertNotIn(prune.Q_ISSUE, gql.calls)
 
     def test_core_clones_in_src_and_publish_deleted_after_24h(self):
         src, publish = self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")
@@ -189,47 +216,23 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49")))
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
+        self.assertNotIn(linear.Q_TEAM, gql.calls)  # the given team
+        self.assertIn("state { id }", prune.Q_ISSUE)
 
-    def test_dry_run_plans_clone_deletion_and_deletes_nothing(self):
-        paths = [self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")]
+    def test_dry_run_plans_clone_and_worktree_deletion_and_touches_nothing(self):
+        clones = [self.mkc("TASK-49", "src", "o", "m"), self.mkc("TASK-49", "publish")]
+        wt = self.mkg("TASK-49", "src", "o", "n")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
         code, out = self.prune(gql, dry=True)
         self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines(), ["prune-plan entry=TASK-49/src/o/repo what=delete the clone",
+        self.assertEqual(out.splitlines(), ["prune-plan entry=TASK-49/src/o/m what=delete the clone",
+                                     "prune-plan entry=TASK-49/src/o/n what=delete the worktree",
                                      "prune-plan entry=TASK-49/publish what=delete the clone",
                                      "prune-plan TASK-49 what=archive"])
         self.assertNotIn(prune.M_ARCHIVE, gql.calls)
-        self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in paths))
+        self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in clones))
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
-    def test_dry_run_plans_worktree_deletion_and_touches_nothing(self):
-        wt, clone = self.mkg("TASK-49", "src", "o", "n"), self.mkc("TASK-49", "src", "o", "m")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        code, out = self.prune(gql, dry=True)
-        self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines(), ["prune-plan entry=TASK-49/src/o/m what=delete the clone",
-                                     "prune-plan entry=TASK-49/src/o/n what=delete the worktree"])
-        self.assertTrue(os.path.isdir(os.path.join(clone, ".git")) and os.path.isfile(os.path.join(wt, ".git")))
-
-    def test_publish_that_is_a_file_is_no_candidate(self):
-        os.makedirs(os.path.join(self.work, "TASK-49"))
-        write(os.path.join(self.work, "TASK-49", "publish"), "x")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
-
-    def test_clone_with_a_symlinked_dot_git_is_skipped(self):
-        for parts in (("src", "o", "n"), ("publish",)):
-            with self.subTest(parts=parts):
-                self.fresh()
-                path = self.mkc("TASK-49", *parts)
-                shutil.rmtree(os.path.join(path, ".git"))
-                os.symlink(os.path.join(self.outside, "dotgit"), os.path.join(path, ".git"))
-                code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
-                self.assertEqual(code, 0)
-                self.assertEqual(out.splitlines(), [f"prune-skip entry=TASK-49/{'/'.join(parts)} reason=not a clone or worktree"])
-                self.assertTrue(os.path.isfile(os.path.join(path, "notes.md")))
-                self.assertTrue(os.path.isdir(os.path.join(self.outside, "dotgit")))
-        
     def test_symlinked_clone_entries_refused(self):
         victim = self.mkc("TASK-50", "src", "o", "repo")
         os.makedirs(os.path.join(self.work, "TASK-49", "src"))
@@ -293,12 +296,6 @@ class PruneTest(unittest.TestCase):
         again = gql_for({"TASK-49": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(again), (0, ""))
         self.assertNotIn(prune.Q_ISSUE, again.calls)
-
-    def test_owner_dir_with_nothing_to_prune_is_no_candidate(self):
-        os.makedirs(os.path.join(self.work, "TASK-49", "src", "o"))
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql), (0, ""))
-        self.assertNotIn(prune.Q_ISSUE, gql.calls)
 
     def test_tmp_goes_and_the_rest_of_the_issues_dir_and_logs_stay(self):
         logs = os.path.join(self.root, "logs")
@@ -483,13 +480,6 @@ class PruneTest(unittest.TestCase):
         self.assertIn("prune-error error=archive: Linear: SystemExit: linear api error: down", out)
         self.assertFalse(os.path.lexists(clone))
 
-    def test_given_team_skips_team_query(self):
-        self.mkc("TASK-49", "src", "o", "repo")
-        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
-        self.assertEqual(self.prune(gql)[0], 0)
-        self.assertNotIn(linear.Q_TEAM, gql.calls)
-        self.assertIn("state { id }", prune.Q_ISSUE)
-
     def test_a_live_tui_session_alone_makes_a_candidate_closed_when_finished_24h(self):
         tmux = Tmux(live=[A, B, "engineer-TASK-8-aaaaaaaa"])
         gql = gql_for({"TASK-7": ("Done", [(24, "Done")]), "TASK-8": ("In Progress", [(30, "In Progress")])})
@@ -515,12 +505,6 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(out.splitlines(), [f"prune-closed TASK-7 session={A}", "prune-removed entry=TASK-7/src/o/repo what=clone"])
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
         self.assertFalse(os.path.lexists(clone))
-
-    def test_young_and_unfinished_sessions_kept(self):
-        gql = gql_for({"TASK-7": ("Done", [(24 - 1 / 3600, "Done")]), "TASK-8": ("In Progress", [(30, "In Progress")])})
-        tmux = Tmux(live=[A, "engineer-TASK-8-aaaaaaaa"])
-        self.assertEqual(self.prune(gql, tmux=tmux), (0, ""))
-        self.assertEqual(tmux.tmux_calls(), ["list-sessions"])
 
     def test_dry_run_plans_each_live_session_and_kills_none(self):
         tmux = Tmux(live=[A, B, "engineer-TASK-70-bbbbbbbb"])
