@@ -445,6 +445,25 @@ def setup(a, root):
     return cfg, roles, name, role
 
 
+def pipeline(a, driver, tui, layout, rd, sh):
+    """drive.detach's roster for a tui run of a.issue, rd its run dir: (d, the pipeline entry's fields), d its roster
+    directory (manager.home of a.manager and a.events); None without one. A ManagerError prints its line
+    (manager.unwritten)."""
+    if a.events is None:   # home would say None, after an own_session tmux call
+        return None
+    try:
+        d = manager.home(a.manager, a.events, proc=sh)
+    except manager.ManagerError as e:
+        manager.unwritten(driver, e)
+        return None
+    if d is None:
+        return None
+    return d, {"kind": "pipeline", "sid": a.sid, "cwd": rd, "note": a.issue, "tui": tui, "opener": layout.opener,
+               "split": layout.split, "split_from": layout.split_from,
+               "resume": [sys.executable, os.path.abspath(__file__), "--issue", a.issue, "--tui", "--events",
+                          os.path.join(d, "events"), "--manager", os.path.basename(d)]}
+
+
 def outer(a, *, sh, gql, run, projects, keychain, root):
     """Checks, bounces or prepares the agent run (a: SHARED and the tui runner's options), then starts the inner in tmux.
     Exits 0 started or bounced, 1 config, input or tmux failure, 2 a bad id, not a role account, config error or a failed
@@ -513,19 +532,20 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     except Exception as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
-    attended_argv, iterm = [], ""
+    attended_argv, iterm, roster = [], "", None
     if layout:
         iterm = os.environ.get("ITERM_SESSION_ID", "")  # tmux's own may be stale
         given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
         print(f"router.py: driver: {tui_claude.attach_command(session(name, a.issue))}", file=sys.stderr)
         print(f"router.py: tui: {tui_claude.attach_command(tui)}", file=sys.stderr)
+        roster = pipeline(a, session(name, a.issue), tui, layout, rd, sh)
     try:  # the input goes through the handover file: tmux rejects a command over about 16 KB
         drive.detach(session(name, a.issue), [
             sys.executable, RUN, "--uuid", issue.id,
             *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
             *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
-            cwd=rd, env=os.environ, iterm=iterm, proc=sh)
+            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster=roster)
     except drive.RunnerError as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
@@ -539,7 +559,7 @@ def begin(mode, issue, sid, role, task, opts, runs):
     drive.note(runs, "resume" if mode == "resume" else "start", issue=ident, sid=sid, role=role)
     return argparse.Namespace(issue=ident, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
                               task=task, mode=mode, runner="tui" if opts["tui"] else "headless", split=opts["split"],
-                              split_from=opts["split_from"], events=opts["events"])
+                              split_from=opts["split_from"], events=opts["events"], manager=opts["manager"])
 
 
 @contextlib.contextmanager
