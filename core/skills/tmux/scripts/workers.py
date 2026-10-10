@@ -613,6 +613,74 @@ def stop(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> 
         manager.stop(r, name, proc=proc)
 
 
+def opened(own: str, live: dict[str, dict], entries=lambda session: {}) -> list[str]:
+    """The live sessions own opened, by @opener or as a session (key, tui) of an entry in entries(own), and,
+    recursively, those they opened; deepest first, then by name; own never."""
+    depth, level, todo = {}, 0, {own}
+    while todo:
+        level += 1
+        found = {n for n, o in live.items() if o["opener"] in todo}
+        found.update(n for s in todo for k, e in entries(s).items() for n in (k, e["tui"]) if n in live)
+        todo = found - set(depth) - {own}
+        depth.update((n, level) for n in todo)
+    return sorted(depth, key=lambda n: (-depth[n], n))
+
+
+def _entries(directory: str) -> dict:
+    """directory's roster entries, read only; {} when it is missing or unreadable (printed)."""
+    if not os.path.isdir(directory):
+        return {}
+    try:
+        with manager.roster(directory, write=False) as r:
+            return r["entries"]
+    except manager.ManagerError as e:
+        print(f"workers: stop-all: {e}", file=sys.stderr)
+        return {}
+
+
+def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> tuple[list[str], list[str]]:
+    """Kills each session own opened (opened, by the roster in each one's manager directory too), by exact target, then
+    removes the entries keyed by one of them, or whose tui is one and whose key is not live, from those rosters, own's
+    lease checked first; dry_run kills and writes nothing. Returns (one line per session: `stopped <name>`, `would stop
+    <name>` with dry_run; a pipeline entry's adds that a scheduler may resume it; the sessions still live after their
+    kill). Outside tmux: WorkersError."""
+    if own is None:
+        raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
+    home = manager.directory(own, proc=proc)
+    if os.path.isdir(home):
+        with _leased(home, own, proc, write=False):
+            pass
+    read = {}
+
+    def entries(session):
+        if session not in read:
+            read[session] = _entries(manager.directory(session, proc=proc))
+        return read[session]
+
+    chosen = opened(own, _live(proc), entries)
+    pipelines = {k for es in read.values() for k, e in es.items() if e["kind"] == "pipeline"}
+    verb, left = "would stop", []
+    if not dry_run:
+        verb = "stopped"
+        for name in chosen:
+            with contextlib.suppress(tui_claude.TuiError):
+                tui_claude.kill(name, proc=proc)
+        after = _live(proc)
+        left = [n for n in chosen if n in after]
+        gone = set(chosen) - set(left)
+        for session in [s for s, es in read.items() if es]:
+            d = manager.directory(session, proc=proc)
+            try:
+                with (_leased(d, own, proc) if session == own else manager.roster(d)) as r:
+                    for k in [k for k, e in r["entries"].items() if k in gone or e["tui"] in gone and k not in after]:
+                        manager.remove(r, k)
+            except (manager.ManagerError, WorkersError) as e:
+                print(f"workers: stop-all: {e}", file=sys.stderr)
+    lines = [f"{verb} {n}" + ("; a scheduler may resume it" if n in pipelines else "")
+             for n in chosen if n not in left]
+    return lines, left
+
+
 def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
     """Removes entry `name`; refused, nothing written, while a session keeps it live (_sessions)."""
     _check(name)
@@ -713,6 +781,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("stop")
     p.add_argument("name", help="a roster entry, or its tui session")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
+    p = sub.add_parser("stop-all", help="stop every session your tmux session opened, and those they opened")
+    p.add_argument("--dry-run", action="store_true", help="print them, stop nothing")
     p = sub.add_parser("forget")
     p.add_argument("name")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
@@ -738,6 +808,12 @@ def main(argv=None) -> int:
             note(_directory(a.manager), _own(), a.name, a.text, proc=subprocess.run)
         elif a.cmd == "stop":
             stop(_directory(a.manager), _own(), a.name, proc=subprocess.run)
+        elif a.cmd == "stop-all":
+            lines, left = stop_all(_own(), dry_run=a.dry_run, proc=subprocess.run)
+            for line in lines or ([] if left else ["workers: stop-all: nothing to stop"]):
+                print(line)
+            if left:
+                raise WorkersError(f"stop-all: still live after tmux kill-session: {', '.join(left)}")
         elif a.cmd == "forget":
             forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "start":

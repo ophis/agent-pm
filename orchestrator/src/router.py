@@ -545,7 +545,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
             sys.executable, RUN, "--uuid", issue.id,
             *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
             *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
-            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster=roster)
+            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster=roster, opener=layout and layout.opener)
     except drive.RunnerError as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1

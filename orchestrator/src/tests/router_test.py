@@ -2168,10 +2168,12 @@ class Attended(OuterBase):
                 ("tmux", {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}, dict(live=["mine"]), ["--opener=mine"], ""))
         for name, env, opts, tail, iterm in rows:
             with self.subTest(name), mock.patch.dict(os.environ, env):
-                self.sh_calls = []
+                self.sh_calls, self.options = [], []
                 self.assertEqual(self.tui(**opts), 0)
                 self.driver("--runner=tui", *tail, iterm=iterm)
                 self.assertEqual(self.err, ATTACH)
+                opener = [a[9:] for a in tail if a.startswith("--opener=")]   # the driver session carries it too
+                self.assertEqual(self.options, [("=agent-pm-engineer-TASK-7:", "@opener", o) for o in opener])
 
     def test_events_reach_the_inner_as_an_absolute_path(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
@@ -2192,7 +2194,8 @@ class Attended(OuterBase):
 
     def test_attach_lines_come_before_the_driver_session(self):
         printed, sh = [], self.sh
-        self.sh = lambda argv, **kw: printed.append(sys.stderr.getvalue()) or sh(argv, **kw)
+        self.sh = lambda argv, **kw: (argv[1] == "new-session" and printed.append(sys.stderr.getvalue())
+                                      or sh(argv, **kw))
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
         self.assertEqual(self.tui(), 0)
         self.assertEqual(printed, [ATTACH])
