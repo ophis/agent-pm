@@ -30,7 +30,8 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
                       "cwd"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column"}
+GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column",
+                          "grid_retile"}
 OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index (core/CLAUDE.md › Rules)

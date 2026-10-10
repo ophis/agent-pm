@@ -1,12 +1,13 @@
 """crew.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
-breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker and a killed
-role run gone, then back by their recovery commands, `attach --resume` bringing back a killed worker but not a stopped
-one, and a worker, a role run and a pipeline run (STAND_IN) after the tmux server is lost, a role run stopped by its tui
-session, a role run ended on needs_input waiting, which `attach --resume` leaves alone, an unshown worker reopened, a
-take-over resuming from the event cursor, events rotation, `stop-all` stopping what one manager opened, the
-role run's driver given no grid cell)."""
+breaker), its grid_retile modes (open-close: a drag, a window resize and a restart hold, an open and a stop re-tile;
+off: placement only, then tile @N; a switch to open-close) and a split outside it; the roster (two managers' lease,
+concurrent attaches, a killed worker and a killed role run gone, then back by their recovery commands, `attach --resume`
+bringing back a killed worker but not a stopped one, and a worker, a role run and a pipeline run (STAND_IN) after the
+tmux server is lost, a role run stopped by its tui session, a role run ended on needs_input waiting, which
+`attach --resume` leaves alone, an unshown worker reopened, a take-over resuming from the event cursor, events rotation,
+`stop-all` stopping what one manager opened, the role run's driver given no grid cell)."""
 import contextlib
 import functools
 import json
@@ -99,6 +100,7 @@ class Live(unittest.TestCase):
         self.events = self.events_of(MANAGER)
         self.log, self.cwd = (os.path.join(root, n) for n in ("log.jsonl", "work"))
         os.mkdir(self.cwd)
+        self.local = {}
         if self.ATTACH:
             self.attach()
 
@@ -222,10 +224,49 @@ class Live(unittest.TestCase):
             live_tmux.wait(check)
         check()
 
-    def per_column(self, n: int) -> None:
-        """Core config's workers_per_column, in this test's ~/.agent-pm/core.local.toml."""
+    def core_local(self, key: str, value: int | str) -> None:
+        """Core config's `key`, in this test's ~/.agent-pm/core.local.toml, the keys set before kept."""
+        self.local[key] = value
         with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
-            f.write(f"workers_per_column = {n}\n")
+            f.write("".join(f"{k} = {json.dumps(v)}\n" for k, v in self.local.items()))
+
+    def per_column(self, n: int) -> None:
+        """Core config's workers_per_column."""
+        self.core_local("workers_per_column", n)
+
+    def retile(self, mode: str) -> None:
+        """Core config's grid_retile."""
+        self.core_local("grid_retile", mode)
+
+    def window_of(self, name: str) -> str:
+        """`name`'s window id."""
+        return self.display(name, "#{window_id}")
+
+    def hooks(self, name: str) -> list[str]:
+        """The tui_claude.GRID_HOOKS set on `name`'s window (show-hooks -w)."""
+        out = self.ok(self.server.tmux("show-hooks", "-w", "-t", self.window_of(name))).stdout
+        return [h for h in tui_claude.GRID_HOOKS if re.search(rf"^{h}\b", out, re.M)]
+
+    def open_close_hooks(self, name: str) -> None:
+        """Fails unless `name`'s window has exactly open-close's hooks, each a tile only on a new pane set."""
+        self.assertEqual(self.hooks(name), list(tui_claude.RETILE_HOOKS["open-close"]))
+        out = self.ok(self.server.tmux("show-hooks", "-w", "-t", self.window_of(name))).stdout
+        for h in tui_claude.RETILE_HOOKS["open-close"]:
+            line = next(line for line in out.splitlines() if re.match(rf"{h}\b", line))
+            self.assertIn(" tile --no-wait --if-panes-changed @", line)
+
+    def pane_set(self, name: str) -> str:
+        """`name`'s window's pane ids, in numeric order, space-joined: what tile records in @grid-panes."""
+        panes = self.ok(self.server.tmux("list-panes", "-t", self.window_of(name), "-F", "#{pane_id}")).stdout.split()
+        return " ".join(sorted(panes, key=lambda p: int(p[1:])))
+
+    def holds(self, read, value, what: str):
+        """Fails unless read() is `value` throughout STEADY s, polled; `value`."""
+        end = time.monotonic() + STEADY
+        while time.monotonic() < end:
+            self.assertEqual(read(), value, what)
+            time.sleep(live_tmux.POLL)
+        return value
 
 
 def is_event(line: str, name: str, kind: str) -> bool:
@@ -332,7 +373,11 @@ class Lifecycle(Live):
 
 
 class Grid(Live):
-    """Placement rules: core/skills/tmux/SKILL.md › Start 3."""
+    """Placement rules: core/skills/tmux/SKILL.md › Start 3. Core config's grid_retile all: every grid hook set."""
+
+    def setUp(self):
+        super().setUp()
+        self.retile("all")
 
     def test_columns_retile(self):
         self.per_column(2)
@@ -381,10 +426,11 @@ class Settle(Live):
     """mgr's window as an incident left it, built by hand before any grid exists: mgr's, w1's and w2's panes (ids in
     that order; w1, w2 sessions of gone openers old1, old2) in pane order w2 w1 mgr under an old top-bottom layout. At
     per-column 1 it needs two tile passes, the second swapping. A layout by hand is even-vertical: even-horizontal of
-    these three panes already is their grid."""
+    these three panes already is their grid. Core config's grid_retile all, as grid_up's."""
 
     def setUp(self):
         super().setUp()
+        self.retile("all")
         self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
         self.window = self.display(MANAGER, "#{window_id}")
         w1 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE)
@@ -408,9 +454,10 @@ class Settle(Live):
         return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
 
     def grid_up(self) -> None:
-        """_grid_up on the window at per-column 1, in a process in mgr's pane: how the incident installed the grid."""
+        """_grid_up on the window at per-column 1, retile all, in a process in mgr's pane: how the incident installed
+        the grid."""
         code = (f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tui_claude; "
-                f"sys.exit(tui_claude._grid_up({self.window!r}, {self.manager!r}, 1, subprocess.run))")
+                f"sys.exit(tui_claude._grid_up({self.window!r}, {self.manager!r}, 1, 'all', subprocess.run))")
         self.ok(self.call(sys.executable, "-I", "-c", code))
 
     def settled(self) -> str:
@@ -421,11 +468,7 @@ class Settle(Live):
 
     def steady(self, layout: str) -> str:
         """Fails unless the window's layout is `layout` throughout STEADY s."""
-        end = time.monotonic() + STEADY
-        while time.monotonic() < end:
-            self.assertEqual(self.layout(), layout)
-            time.sleep(live_tmux.POLL)
-        return layout
+        return self.holds(self.layout, layout, "the window's layout")
 
     def hand_layout(self, tiles: str) -> tuple[str, str]:
         """A hand even-vertical, then the window's @grid-manager and @grid-tiles once it is re-tiled (@grid-tiles no
@@ -484,7 +527,8 @@ class Settle(Live):
                             f"trips past {tui_claude.TILE_LIMIT} in {tui_claude.TILE_WINDOW} s")
         # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
         self.assertGreaterEqual(most, tui_claude.TILE_LIMIT - 1)
-        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN, tui_claude.GRID_TILES, tui_claude.GRID_BUSY)
+        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN, tui_claude.GRID_TILES, tui_claude.GRID_BUSY,
+                   tui_claude.GRID_PANES_SET)
         self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
         hooks = self.tmux("show-hooks", "-w", "-t", self.window)
         self.assertEqual([h for h in tui_claude.GRID_HOOKS if h in hooks], [], hooks)
@@ -492,6 +536,132 @@ class Settle(Live):
         self.steady(self.layout())
         self.started("w3")
         self.grid([[["w1"], ["w2"], "w3"]])
+
+
+class Retile(Live):
+    """Core config's grid_retile, unset (open-close) unless a test sets it: core/skills/tmux/SKILL.md › Start 3. A
+    check that nothing re-tiles holds STEADY s, longer than a hook's tile takes in Settle."""
+
+    def setUp(self):
+        super().setUp()
+        self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
+
+    def panes(self) -> dict[str, tuple[int, int, int, int]]:
+        return self.server.panes(f"={MANAGER}:")
+
+    def layout(self) -> str:
+        return self.display(MANAGER, "#{window_layout}")
+
+    def tiles(self) -> str:
+        return self.window_option(MANAGER, tui_claude.GRID_TILES)
+
+    def drag(self, name: str, rows: int) -> str:
+        """The border below `name`'s pane moved `rows` down (up when negative), as a mouse drag: resize-pane. The
+        layout after it."""
+        before = self.layout()
+        self.ok(self.server.tmux("resize-pane", "-t", self.server.pane_of(name), "-D" if rows > 0 else "-U",
+                                 str(abs(rows))))
+        after = self.layout()
+        self.assertNotEqual(after, before)
+        return after
+
+    def split_of(self, before: dict, name: str, target: str, side: str) -> None:
+        """Fails unless `name`'s pane is new, split from pane `target` on `side` (right or below): the two fill
+        target's old box, a border between; every other pane of `before` unchanged."""
+        after, new = self.panes(), self.server.pane_of(name)
+        self.assertEqual(set(after), {*before, new})
+        self.assertEqual({p: after[p] for p in before if p != target}, {p: before[p] for p in before if p != target})
+        (x, y, w, h), kept, added = before[target], after[target], after[new]
+        if side == "right":
+            want = (x, y, kept[2], h), (x + kept[2] + 1, y, w - kept[2] - 1, h)
+        else:
+            want = (x, y, w, kept[3]), (x, y + kept[3] + 1, w, h - kept[3] - 1)
+        self.assertEqual((kept, added), want, f"{name}: {side} of {target} ({before[target]})")
+        self.assertTrue(min(*kept[2:], *added[2:]) > 0, (kept, added))
+
+    def test_open_close_retiles_on_an_open_only(self):
+        width = self.server.size[0] // 2
+        self.started("w1")
+        self.started("w2")
+        self.grid([["w1", "w2"]], width)
+        self.open_close_hooks(MANAGER)
+        self.assertEqual(self.window_option(MANAGER, tui_claude.GRID_PANES_SET), self.pane_set(MANAGER))
+        dragged = self.drag("w1", 5)
+        self.holds(self.layout, dragged, "the layout after a drag")
+        tiles = self.tiles()
+        self.ok(self.server.tmux("resize-window", "-t", self.window_of(MANAGER), "-x", "160", "-y", "40"))
+        self.assertEqual(self.display(MANAGER, "#{window_width}x#{window_height}"), "160x40")
+        heights = [self.panes()[self.server.pane_of(n)][3] for n in ("w1", "w2")]
+        self.assertGreater(heights[0] - heights[1], 1)   # still dragged: a tile would change it
+        self.holds(lambda: (self.layout(), self.tiles()), (self.layout(), tiles),
+                   "the layout and @grid-tiles after a window resize")
+        width = self.panes()[self.manager][2]
+        self.started("w3")
+        self.grid([["w1", "w2", "w3"]], width)
+        self.open_close_hooks(MANAGER)
+        self.holds(self.layout, self.layout(), "the layout after an open")
+
+    def test_open_close_retiles_on_a_stop(self):
+        width = self.server.size[0] // 2
+        for name in ("w1", "w2", "w3"):
+            self.started(name)
+        self.grid([["w1", "w2", "w3"]], width)
+        # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the window's pane-exited
+        # hook, so window-layout-changed (a new pane set) re-tiles
+        self.server.attach("w1")
+        # stop kills w2's session: the attach client in its pane exits, so the pane closes
+        self.assertEqual(self.ok(self.workers("stop", "w2")).stdout, "")
+        self.grid([["w1", "w3"]], width)
+        self.open_close_hooks(MANAGER)
+        self.assertEqual(self.ok(self.workers("stop", "w3")).stdout, "")
+        self.grid([["w1"]], width)   # tmux's own close leaves the grid: the hook's tile only records the pane set
+        live_tmux.wait(lambda: self.window_option(MANAGER, tui_claude.GRID_PANES_SET) == self.pane_set(MANAGER),
+                       what="@grid-panes the window's pane set")
+
+    def test_off_places_only_till_tile(self):
+        self.retile("off")
+        before = self.panes()
+        self.started("w1")
+        w1 = self.server.pane_of("w1")
+        self.split_of(before, "w1", self.manager, "right")
+        before = self.panes()
+        self.started("w2")
+        self.split_of(before, "w2", w1, "below")
+        self.drag("w1", -10)   # w2's pane now the largest worker pane: a sub-worker of w1 goes below it
+        before = self.panes()
+        largest = max((p for p in before if p != self.manager), key=lambda p: (before[p][2] * before[p][3], int(p[1:])))
+        self.assertEqual(largest, self.server.pane_of("w2"))
+        self.attach(inside="w1")
+        self.started("z1", inside="w1")
+        self.split_of(before, "z1", largest, "below")
+        self.holds(self.panes, self.panes(), "the panes as placed")
+        self.assertEqual(self.hooks(MANAGER), [])
+        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN)
+        self.assertEqual([self.window_option(MANAGER, k) for k in options], [self.manager, str(tui_claude.PER_COLUMN)])
+        self.ok(self.tui("tile", self.window_of(MANAGER)))
+        self.grid([[("w1", ["z1"]), "w2"]], self.server.size[0] // 2)
+
+    def test_a_switch_to_open_close_leaves_only_its_hooks(self):
+        self.retile("all")
+        self.started("w1")
+        self.grid([["w1"]])
+        self.assertEqual(self.hooks(MANAGER), list(tui_claude.GRID_HOOKS))
+        self.retile("open-close")
+        self.started("w2")
+        self.grid([["w1", "w2"]])
+        self.open_close_hooks(MANAGER)
+        dragged = self.drag("w1", 5)
+        self.holds(self.layout, dragged, "the layout after a drag")
+
+    def test_restart_keeps_a_dragged_layout(self):
+        self.started("w1")
+        self.started("w2")
+        self.grid([["w1", "w2"]])
+        self.wait_event("w1", "done")   # its transcript, which --resume needs
+        dragged = self.drag("w1", 5)
+        self.ok(self.restart("w1"))
+        self.assertEqual(len(self.calls("w1")), 2)
+        self.holds(self.layout, dragged, "the layout after a restart")
 
 
 class Managers(Live):

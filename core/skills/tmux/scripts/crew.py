@@ -87,6 +87,14 @@ def _per_column() -> int | None:
         raise WorkersError(f"core config: {e}") from e
 
 
+def _retile() -> str | None:
+    """Core config's grid_retile (repo.read_config)."""
+    try:
+        return repo.grid_retile(repo.read_config(os.path.join(CORE, "config.toml")))
+    except (OSError, ValueError) as e:
+        raise WorkersError(f"core config: {e}") from e
+
+
 def _tmux(argv: list, proc) -> None:
     res = _run(proc, argv)
     if res.returncode != 0:
@@ -156,8 +164,9 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
     file used; record its options on the tmux session, then its roster entry (_enroll); returns the session id.
     `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the entry's.
     `split_from` or `split` replaces tui_claude's automatic placement outside a tmux grid, which ignores them; it
-    defaults the other. Its status line and grid column size: core config's status_line and workers_per_column. A
-    claude that exits within EARLY seconds raises, the session and the entry kept (see _early)."""
+    defaults the other. Its status line, grid column size and grid re-tiling: core config's status_line,
+    workers_per_column and grid_retile. A claude that exits within EARLY seconds raises, the session and the entry
+    kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
@@ -169,7 +178,7 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
     with _leased(directory, own, proc, write=False):
         pass
     events = manager.events(directory, create=False)
-    status_line, per_column = _status_line(), _per_column()
+    status_line, per_column, retile = _status_line(), _per_column(), _retile()
     cwd = os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
@@ -183,7 +192,7 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
         tui_claude.start(name, [claude, pick, sid, "--name", name, *flags,
                                 *(["--", prompt] if prompt else [])],
                          cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, per_column=per_column,
-                         status_line=status_line, proc=proc)
+                         retile=retile, status_line=status_line, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
     options = {"@sid": sid, "@cwd": cwd, "@claude": claude, "@flags": json.dumps(list(flags))}
@@ -455,7 +464,7 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
     return panes
 
 
-def _reopen(panes: dict, entries: dict, per_column: int | None, proc) -> tuple[dict, list]:
+def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | None, proc) -> tuple[dict, list]:
     """Reopens each pane session no client shows (tui_claude.show, beside the caller). Returns, by entry name, where
     each other one is shown: the session of the tmux pane its most recently active client runs in, when a NAME, else
     (list-panes failing too) `a terminal`; and the reopened entries' (name, kind, sid, session). A session whose
@@ -470,7 +479,8 @@ def _reopen(panes: dict, entries: dict, per_column: int | None, proc) -> tuple[d
         clients = [line.partition(" ") for line in out.split("\n") if line]
         if not clients:
             try:
-                tui_claude.show(session, split=e["split"], split_from=e["split_from"], per_column=per_column, proc=proc)
+                tui_claude.show(session, split=e["split"], split_from=e["split_from"], per_column=per_column,
+                                retile=retile, proc=proc)
             except tui_claude.TuiError as err:
                 raise WorkersError(str(err)) from err
             opened.append((name, e["kind"], e["sid"], session))
@@ -524,7 +534,7 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
     reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
     same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands; and the
     entries as the table shows them."""
-    per_column = _per_column()
+    per_column, retile = _per_column(), _retile()
     try:
         events = manager.events(directory)
         with manager.roster(directory) as r:
@@ -537,7 +547,7 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
             manager.rotate(r, directory)
             panes = _sync(r, live)
             backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
-        shown, opened = _reopen(panes, r["entries"], per_column, proc)
+        shown, opened = _reopen(panes, r["entries"], per_column, retile, proc)
         if opened:
             live = _live(proc)
             with manager.roster(directory) as r:

@@ -1088,13 +1088,14 @@ class RealCore(unittest.TestCase):
                 self.assertNotIn(LANGUAGE_RULE, prompt, role)
                 self.assertNotIn("Chinese", prompt, role)
 
-    def test_a_local_users_trusted_dirs_and_workers_per_column_are_accepted(self):
+    def test_a_local_users_trusted_dirs_workers_per_column_and_grid_retile_are_accepted(self):
         with tempfile.TemporaryDirectory() as root:
             for d in ("team", "output"):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
             shutil.copy(os.path.join(CORE, compose.CONFIG), root)
             with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
-                f.write('users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\nworkers_per_column = 2\n')
+                f.write('users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\nworkers_per_column = 2\n'
+                        'grid_retile = "off"\n')
             for role, task in ALL:
                 run = compose.load_run(root, role, task)
                 self.assertEqual((run.task, run.show), (task, ""))
@@ -1102,7 +1103,7 @@ class RealCore(unittest.TestCase):
     def test_local_lines_uncommented_are_a_valid_local_file(self):
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             local = tomllib.loads("".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: ")))
-        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column"}, set(local))
+        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column", "grid_retile"}, set(local))
         self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
         for role, table in local["roles"].items():
             compose.check_old_keys(table, role)

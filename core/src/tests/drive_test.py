@@ -361,6 +361,18 @@ class Generic(Base):
                 with self.assertRaisesRegex(compose.ConfigError, msg):
                     self.plan()
 
+    def test_plan_sets_the_configs_grid_retile(self):
+        path = os.path.join(hermetic.home(self), "core.local.toml")
+        self.assertIsNone(self.plan().retile)
+        for mode in ("all", "open-close", "off"):
+            with open(path, "w") as f:
+                f.write(f'grid_retile = "{mode}"\n')
+            self.assertEqual(self.plan().retile, mode)
+        with open(path, "w") as f:
+            f.write('grid_retile = "x"\n')
+        with self.assertRaisesRegex(compose.ConfigError, "^grid_retile: want one of all, open-close, off$"):
+            self.plan()
+
 
 class Cwd(Base):
     """drive.place: the run's cwd and whether its project settings load."""
@@ -1608,12 +1620,12 @@ class TuiRunner(Base):
         for name in ("r-t-xyz", "r-t-1111111", "r-t-111111111", "-11111111", "11111111", "r t-11111111", "r-t-11111111\n"):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
-    def launched(self, layout=None, status_line=False, prefix=None, per_column=None, **kw):
+    def launched(self, layout=None, status_line=False, prefix=None, per_column=None, retile=None, **kw):
         """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
         p = self.params(prefix=prefix)
         fake = FakeTui(p.channel, [[outcome(DONE)]])
         launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line,
-                              per_column=per_column)
+                              per_column=per_column, retile=retile)
         with fake.patch(), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
             drive.start(launch, run(), p, client=claude(), runner="tui", layout=layout, sinks=[], **kw)
         (_, name, _, kw), = [c for c in fake.calls if c[0] == "start"]
@@ -1622,7 +1634,7 @@ class TuiRunner(Base):
     def test_the_layout_launch_prefix_and_events_reach_tui_start(self):
         """The layout defaults to the automatic stack; the prefix names the session."""
         unset = {"split": None, "split_from": None, "opener": None, "status_line": False, "per_column": None,
-                 "events": None}
+                 "retile": None, "events": None}
         for kw, name, want in (
                 ({}, self.NAME, {}), ({"layout": drive.Layout()}, self.NAME, {}),
                 ({"layout": drive.Layout("below", "s")}, self.NAME, {"split": "below", "split_from": "s"}),
@@ -1630,6 +1642,7 @@ class TuiRunner(Base):
                 ({"layout": drive.Layout("right", None, "mine")}, self.NAME, {"split": "right", "opener": "mine"}),
                 ({"status_line": True}, self.NAME, {"status_line": True}),
                 ({"per_column": 2}, self.NAME, {"per_column": 2}),
+                ({"retile": "off"}, self.NAME, {"retile": "off"}),
                 ({"prefix": "engineer-TASK-1", "events": "/tmp/ev.log"}, "engineer-TASK-1-11111111",
                  {"events": "/tmp/ev.log"})):
             with self.subTest(**kw):
@@ -2549,7 +2562,9 @@ class Main(Base):
         for name, extra, local, want in (
                 ("a task off the index", ("--task", "essay"), None, "drive.py: task 'essay' is not one of"),
                 ("a bad workers_per_column", (), "workers_per_column = 0\n",
-                 "drive.py: workers_per_column: want an integer from 1 to 9999")):
+                 "drive.py: workers_per_column: want an integer from 1 to 9999"),
+                ("a bad grid_retile", (), 'grid_retile = "x"\n',
+                 "drive.py: grid_retile: want one of all, open-close, off")):
             path = os.path.join(hermetic.home(self), "core.local.toml")
             if local:
                 with open(path, "w") as f:
