@@ -42,6 +42,7 @@ LIVE_STATES = ("working", "done", "blocked", "dead")
 CLIENTS = "#{client_activity} #{client_tty}"
 HOSTS = "#{pane_tty}\t#{session_name}"
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
+ROTATE_MSG = "rotate: run workers.py attach, then arm with its N and GEN"
 
 
 class WorkersError(Exception):
@@ -50,6 +51,10 @@ class WorkersError(Exception):
 
 class NotAWorker(WorkersError):
     pass
+
+
+class Refused(WorkersError):
+    """A refusal next-event prints on stdout: background readers watch only it."""
 
 
 def _run(proc, argv, **kw):
@@ -455,19 +460,34 @@ def _table(entries: dict, shown: dict) -> str:
     return "".join(f"{line}\n" for line in lines)
 
 
-def attach(directory: str, own: str | None, *, proc=subprocess.run) -> str:
+def _backlog(events: str, cursor: int) -> list[str]:
+    """The event lines (EVENT) of `events` after line `cursor` (manager.following), each `<line> <text>` as next-event
+    prints it; a trailing fragment is not a line yet."""
+    texts = (raw.decode("utf-8", errors="replace") for raw in manager.following(events, cursor).split(b"\n")[:-1])
+    return [f"{n} {text}" for n, text in enumerate(texts, cursor + 1) if EVENT.fullmatch(text)]
+
+
+def attach(directory: str, own: str | None, *, after: int | None = None, gen: int | None = None,
+           proc=subprocess.run) -> str:
     """Attaches the manager in tmux session `own` (None: outside tmux, no lease) to its directory, made with its events
-    file: in one roster() block takes the lease (manager.take) and syncs the entries (_sync); then, the lock released,
+    file. In one roster() block: takes the lease (manager.take); with `after`, line `after` of generation `gen` (the
+    Monitor re-arm), records it (manager.advance; stale: refused, nothing written); rotates the events file when due
+    (manager.rotate); syncs the entries (_sync); reads the backlog (_backlog), cursor and gen. Then, the lock released,
     reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
-    same kind and sid. Returns the table (_table)."""
+    same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands."""
     per_column = _per_column()
     try:
-        manager.events(directory)
+        events = manager.events(directory)
         with manager.roster(directory) as r:
             manager.take(r, directory, own, proc=proc)
             if own is None:
                 print(f"workers: not in tmux: no lease on {directory}; another manager may attach", file=sys.stderr)
-            panes = _sync(r, _live(proc))
+            if after is not None:
+                manager.advance(r, directory, after, gen)
+            live = _live(proc)   # before the rotation: a raise after its rename would drop the new cursor and gen
+            manager.rotate(r, directory)
+            panes = _sync(r, live)
+            backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
         shown, opened = _reopen(panes, r["entries"], per_column, proc)
         if opened:
             live = _live(proc)
@@ -478,7 +498,11 @@ def attach(directory: str, own: str | None, *, proc=subprocess.run) -> str:
                         _place(r, name, live[session])
     except manager.ManagerError as e:
         raise WorkersError(str(e)) from e
-    return _table(r["entries"], shown)
+    me, name = shlex.quote(os.path.abspath(__file__)), shlex.quote(os.path.basename(os.path.dirname(events)))
+    arm = [f"N={cursor} GEN={gen}", f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
+           f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen}",
+           f"next-event: python3 {me} next-event --manager {name} --after {cursor} --gen {gen}"]
+    return _table(r["entries"], shown) + "".join(f"{line}\n" for line in backlog + arm)
 
 
 @contextlib.contextmanager
@@ -540,6 +564,18 @@ def _events(name: str | None) -> str:
     return manager.events(directory, create=False)
 
 
+def _record(directory: str, own: str | None, after: int | None, gen: int, proc) -> tuple[str, int, bool]:
+    """next-event's step, in one roster() block, its lease checked first (_leased): records line `after` of generation
+    `gen` (None: the last complete line) as handled (manager.advance; stale: Refused, nothing written). Returns
+    (the events file, `after` resolved, whether a rotation is due)."""
+    with _leased(directory, own, proc) as r:
+        try:
+            after = manager.advance(r, directory, after, gen)
+        except manager.Stale as e:
+            raise Refused(str(e)) from e
+        return manager.events(directory, create=False), after, manager.due(r, directory)
+
+
 def _own() -> str | None:
     """The caller's tmux session (tui_claude.own_session); None outside tmux."""
     try:
@@ -554,6 +590,12 @@ def _after(value: str) -> int | None:
     if re.fullmatch(r"[0-9]+", value):
         return int(value)
     raise argparse.ArgumentTypeError(f"{value!r}: use a line number or end")
+
+
+def _number(value: str) -> int:
+    if re.fullmatch(r"[0-9]+", value):
+        return int(value)
+    raise argparse.ArgumentTypeError(f"{value!r}: use a non-negative integer")
 
 
 def main(argv=None) -> int:
@@ -577,8 +619,11 @@ def main(argv=None) -> int:
     p = sub.add_parser("next-event")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p.add_argument("--after", type=_after, required=True)
+    p.add_argument("--gen", type=_number, required=True)
     p = sub.add_parser("attach")
     p.add_argument("--manager", help="manager directory to attach to (default: your tmux session's)")
+    p.add_argument("--after", type=_number, metavar="LINE", help="the line of the last event handled; with --gen")
+    p.add_argument("--gen", type=_number, metavar="G", help="the generation of that line; with --after")
     p = sub.add_parser("release")
     p.add_argument("--manager", help="manager directory to release (default: your tmux session's)")
     p = sub.add_parser("note")
@@ -589,9 +634,11 @@ def main(argv=None) -> int:
     p.add_argument("name")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     a = ap.parse_args(argv)
+    if a.cmd == "attach" and (a.after is None) != (a.gen is None):
+        ap.error("--after and --gen go together")
     try:
         if a.cmd == "attach":
-            print(attach(_directory(a.manager), _own(), proc=subprocess.run), end="")
+            print(attach(_directory(a.manager), _own(), after=a.after, gen=a.gen, proc=subprocess.run), end="")
         elif a.cmd == "release":
             directory = _directory(a.manager)
             release(directory, _own(), proc=subprocess.run)
@@ -611,7 +658,10 @@ def main(argv=None) -> int:
             if text:
                 print(text)
         else:
-            line, event = next_event(_events(a.manager), a.after)
+            events, after, due = _record(_directory(a.manager), _own(), a.after, a.gen, subprocess.run)
+            if due:
+                raise Refused(ROTATE_MSG)
+            line, event = next_event(events, after)
             print(f"{line} {event}")
             try:
                 text = content(event, proc=subprocess.run)
@@ -619,6 +669,9 @@ def main(argv=None) -> int:
                 text = f"workers: {e}"   # stdout: background readers watch only it
             if text:
                 print(text)
+    except Refused as e:
+        print(f"workers: {e}")
+        return 1
     except WorkersError as e:
         print(f"workers: {e}", file=sys.stderr)
         return 1
