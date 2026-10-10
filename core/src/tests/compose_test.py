@@ -490,7 +490,8 @@ class Prompt(Fake):
         self.assertTrue(prompt.endswith("Keep it local.\n\n# Input\n\nGiven with this prompt.\n"))
 
     def test_resume_starts_with_resumed_run_and_names_no_task(self):
-        self.assertIn("Continue the task this session already picked or was given; never pick it again.", compose.RESUME)
+        self.assertIn("Continue the task this session already picked or was given, following your task file's "
+                      "`## Resume` section; never pick it again.", compose.RESUME)
         prompt, _ = self.compose(resume=True)
         self.assertTrue(prompt.startswith(compose.RESUME + "# Guide"))
         self.assertIn("Task: pick one;", prompt)
@@ -527,12 +528,13 @@ def heading_anchors(prompt):
 
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
-TASK_FILE = re.compile(r"`<tasks>/(<task>|[\w-]+)\.md`")
+FILE_REF = re.compile(r"`<(tasks|methods)>/(<task>|[\w-]+)\.md`")
+PAREN = re.compile(r"\(([^()]*)\)")
 SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
 
 
 def task_path(after, paths):
-    """The longest of `paths` (tuples of titles) that `after`, the text following a task file's code span, opens with
+    """The longest of `paths` (tuples of titles) that `after`, the text following a file's code span, opens with
     ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
     best = None
     for path in paths:
@@ -547,16 +549,19 @@ def reference_errors(own, tasks, methods):
     text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
     label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
     `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
-    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task file reference, the code span
-    `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) then ` › ` and a path of each of them, their
-    `# ` title dropped, the longest that matches; (4) no `›` left once those, code spans and links are removed."""
+    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task or method file reference, the code
+    span `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) or `<methods>/<m>.md` (`methods/<m>.md` of
+    `methods`) then ` › ` and a path of each of them, their `# ` title dropped, the longest that matches; (4) no `›`
+    left once those, code spans and links are removed; (5) no `(name)` left, `name` the last title of a path of
+    `own` (a section named in parentheses, not linked)."""
     outline = compose.outline(own)
     anchors = {a for _, _, a, _ in outline if a}
-    entries = {}
+    entries, titles = {}, {path[-1] for _, path, _, _ in outline}
     for _, path, a, _ in outline:
         entries.setdefault(path, set()).add(a)
-    inside = {task: {path[1:] for _, path, _, _ in compose.outline(text) if len(path) > 1}
-              for task, text in tasks.items()}
+    inside = {(kind, name): {path[1:] for _, path, _, _ in compose.outline(text) if len(path) > 1}
+              for kind, files in (("tasks", tasks), ("methods", methods)) for name, text in files.items()}
+    named = {"tasks": list(tasks), "methods": []}
     errors = []
     for label, text in ({"prompt": own} | {f"tasks/{t}.md": x for t, x in tasks.items()} | dict(methods)).items():
         for _, line in compose.unfenced(text):
@@ -564,13 +569,15 @@ def reference_errors(own, tasks, methods):
             for m in CODE_SPAN.finditer(line):
                 kept.append(line[pos:m.start()] + " ")
                 pos = m.end()
-                if not (ref := TASK_FILE.fullmatch(m[0])) or not line.startswith(" › ", pos):
+                if not (ref := FILE_REF.fullmatch(m[0])) or not line.startswith(" › ", pos):
                     continue
-                names = list(inside) if ref[1] == "<task>" else [ref[1]]
+                kind = ref[1]
+                names = [(kind, n) for n in named[kind]] if ref[2] == "<task>" else [
+                    (kind, ref[2] if kind == "tasks" else f"methods/{ref[2]}.md")]
                 found = names and all(n in inside for n in names)
                 best = task_path(line[pos:], set.intersection(*(inside[n] for n in names))) if found else None
                 if not best or line[pos + len(best):].startswith(" › "):
-                    errors.append(f"{label}: no such task file path: {line.strip()}")
+                    errors.append(f"{label}: no such {kind[:-1]} file path: {line.strip()}")
                     pos = len(line)
                     break
                 pos += len(best)
@@ -583,7 +590,8 @@ def reference_errors(own, tasks, methods):
                         errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
                 elif not SCHEME.match(target):
                     errors.append(f"{label}: relative link target: [{t}]({target})")
-            if "›" in LINK.sub(" ", left):
+            plain = LINK.sub(" ", left)
+            if "›" in plain or any(name in titles for name in PAREN.findall(plain)):
                 errors.append(f"{label}: bare reference: {line.strip()}")
     return errors
 
@@ -932,7 +940,7 @@ REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkou
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
 PICK = ("**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
-        "wins. Read only that task's file, `<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to "
+        "wins. Read that task's file (no other task's), `<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to "
         "sections of this prompt.")
 COMMANDS_RULE = ("- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
                  "command (no `cd`, pipe, redirect or `&&`).")
@@ -1015,6 +1023,20 @@ class References(unittest.TestCase):
                            ("`<tasks>/a.md` › Steps › Go", True), ("`<tasks>/b.md` › Steps › Go", False)):
             self.assertEqual(reference_errors("# R\n", tasks, {"m": text}) == [], want, text)
 
+    def test_a_method_file_path_must_exist_in_that_method_file(self):
+        methods = {"methods/a.md": "# A\n\n## Rules\n\n- **Voting**: x\n"}
+        for text, want in (("`<methods>/a.md` › Rules › Voting", True), ("`<methods>/a.md` › Rules", True),
+                           ("`<methods>/a.md` › Rules › Nope", False), ("`<methods>/b.md` › Rules", False),
+                           ("`<methods>/<task>.md` › Rules", False)):
+            self.assertEqual(reference_errors("# R\n", {}, methods | {"m": text}) == [], want, text)
+
+    def test_a_section_name_of_the_prompt_in_parentheses_is_a_bare_reference(self):
+        for text in ("decide it (Repo).", "(Merge)", "see (Finish) first", "(Worktree)", "(Autopilot)"):
+            self.assertTrue(self.errors(text), text)
+        for text in ("(local, mixed)", "([Engineer › Repo](#repo))", "(`Repo`)", "(the Repo)", "(Repo step 1)",
+                     "```\n(Repo)\n```"):
+            self.assertEqual(self.errors(text), [], text)
+
 class Tickets(unittest.TestCase):
     def test_an_id_beyond_the_examples_is_caught(self):
         with tempfile.TemporaryDirectory() as root:
@@ -1039,6 +1061,19 @@ class RealCore(unittest.TestCase):
             self.assertEqual(run.language, "Chinese")
             self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
             self.assertIn("are in Chinese", prompt, role)
+
+    def test_fixed_labels_are_translated_and_template_headings_say_so(self):
+        prompt, _ = composed("researcher")
+        self.assertIn("- Reports and PRDs, headings and fixed labels included (e.g. `Check:`, `Confidence:`, a type line "
+                      "such as `Light Research. Angles: …`), are in Chinese.", prompt)
+        for role, task in [(r, None) for r in ROLES] + ALL:
+            g = guide(composed(role, task)[0])
+            self.assertIn("Its headings are fixed apart from their language ([Principles › Writing](#writing))", g,
+                          (role, task))
+
+    def test_echo_summary_overrides_outputs_length(self):
+        with open(os.path.join(CORE, "team", "tasks", "echo.md")) as f:
+            self.assertIn("`summary` the input's first line, not [Output](#output)'s 3–5 lines.", f.read())
 
     def test_no_language_no_language_rule(self):
         with tempfile.TemporaryDirectory() as root:
@@ -1168,7 +1203,8 @@ class RealCore(unittest.TestCase):
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
-        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`). Read only that task's file",
+        self.assertIn("**Your task**: `light-research` (`<tasks>/light-research.md`). Read that task's file "
+                      "(no other task's)",
                       named)
         self.assertNotIn("pick it from", named)
         picked = guide(composed("researcher")[0])
@@ -1339,7 +1375,36 @@ class RealCore(unittest.TestCase):
                  "or branch.", "Commits merged from `origin/<base>` are not this build's work.",
                  "Skip S8; keep the commits. After <your task's push points>, run exactly "
                  "`git -C <worktree> push -u origin <branch>`.")
-        self.assertIn("\nAdd verbatim:\n\n```\n" + "\n".join(lines) + "\n```\n", section(charter, "Autopilot"))
+        self.assertIn("\nAdd verbatim, placeholders filled in:\n\n```\n" + "\n".join(lines) + "\n```\n",
+                      section(charter, "Autopilot"))
+
+    def test_merges_failing_checks_say_what_happens_in_finish_before_the_build_and_on_resume(self):
+        merge = item(section(composed("engineer")[0], "Repo"), "Merge")
+        self.assertIn("One failing: during [Engineer › Finish › Done](#finish) → [Engineer › Finish › Failure](#finish); "
+                      "before the build → the failing checks go into the build's requirement; on [Engineer › Repo › Resume](#repo) → "
+                      "into the requirement of the build left, none left → [Engineer › Finish › Failure](#finish).", merge)
+
+    def test_the_pull_request_destination_reads_pr_from_repo_py_status(self):
+        self.assertIn("3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0])
+
+    def test_a_builds_files_are_its_spec_and_plan_doc(self):
+        self.assertIn("adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc (on failure, those "
+                      "that exist);", task_text("build"))
+
+    def test_builds_report_each_s5_task_against_their_task_count(self):
+        for task, doc in (("build", "the plan doc's"), ("light-build", "the state file's")):
+            text = task_text(task)
+            self.assertIn("**Report progress** at the end of each build step (`S<i>`) you run and of each S5 task:", text, task)
+            self.assertIn("[agent-pm-progress:step] the step and its result; an S5 task as "
+                          f"`S5 task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` {doc} task count "
+                          "(its `### Task` headings)", text, task)
+
+    def test_light_build_always_writes_a_state_file_with_a_task_list(self):
+        self.assertIn('docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; '
+                      'never `git add -f` it."', task_text("light-build"))
+        line = compose.index(CORE, "engineer")["light-build"]
+        self.assertIn("(a task list in its state file, implementation, verification, a light review, no spec or plan docs)",
+                      line)
 
     def test_light_builds_cutoff_skips_merge_commits(self):
         self.assertIn("`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`", task_text("light-build"))
@@ -1348,7 +1413,7 @@ class RealCore(unittest.TestCase):
         light, deep = task_text("light-research"), task_text("deep-research")
         self.assertIn("`Light Research. Angles: ", light)
         self.assertIn("`Suggest upgrading to Deep Research: ", light)
-        self.assertIn("`Light Research.` line", deep)
+        self.assertIn("`Light Research.` type line", deep)
 
     def test_read_only_tasks_branch_is_id_dash_task(self):
         # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
@@ -1424,7 +1489,7 @@ class RealCore(unittest.TestCase):
     def test_github_host_defaults_and_overrides(self):
         prompt, run = composed("researcher")
         self.assertIn("gh repo clone <out-host>/<out-repo> <pub>", prompt)
-        self.assertIn("https://<out-host>/<out-repo>/blob/<out-branch>/<path>", prompt)
+        self.assertIn("https://<out-host>/<out-repo>/blob/<out-branch>/<file>`, `<file>` URL-encoded", prompt)
         self.assertEqual(parameters(prompt)["<out-host>"], "`github.com`")
         prompt = compose.render(CORE, replace(run, output={**run.output, "host": "ghe.example.com"}), PARAMS,
                                 client=Plain())
@@ -1455,7 +1520,7 @@ def item(text, name):
 
 
 class Methods(unittest.TestCase):
-    def test_voting_is_the_same_in_both_and_pipeline_shares_its_start(self):
+    def test_voting_has_its_home_in_ultracode_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
         for m, text in zip(METHOD_NAMES, (deep, ultra)):
             for name in ("Voting", "Pipeline"):
@@ -1463,22 +1528,35 @@ class Methods(unittest.TestCase):
             self.assertTrue(rule(text, "Pipeline")[0].startswith(
                 "- **Pipeline**: ≤ 10 subagents running at once. Each result of a stage goes to the next stage as soon "
                 "as it arrives, never in batches;"), m)
-        self.assertEqual(rule(deep, "Voting"), rule(ultra, "Voting"))
+        self.assertEqual(rule(deep, "Voting"), ["- **Voting**: `<methods>/ultracode.md` › Rules › Voting."])
         self.assertTrue(rule(ultra, "Pipeline")[0].endswith("only verification waits for all claims, to rank them."))
         for phrase in ("fetch selection waits for all search results", "verification waits for all claims"):
             self.assertIn(phrase, rule(deep, "Pipeline")[0])
 
-    def test_both_state_voting_pipeline_and_restrictions(self):
+    def test_both_state_pipeline_and_restrictions_and_ultracode_voting(self):
         for m in METHOD_NAMES:
             text = method(m)
             self.assertTrue(text.startswith("# "), m)
             self.assertNotRegex(text, r"\b[Yy]ou\b", m)
-            for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
-                           "else (agent errors, missing votes) → unverified", "votes that came back",
-                           "unsure → votes refuted", "≤ 10 subagents running at once",
-                           "verification waits for all claims", "the calling task's restrictions for",
-                           "into every subagent prompt, voters included"):
+            for phrase in ("≤ 10 subagents running at once", "verification waits for all claims",
+                           "the calling task's restrictions for", "into every subagent prompt, voters included"):
                 self.assertIn(phrase, text, m)
+        for phrase in ("≥ 2 refutes → refuted", "else ≥ 2 valid votes → confirmed",
+                       "else (agent errors, missing votes) → unverified", "votes that came back",
+                       "unsure → votes refuted"):
+            self.assertIn(phrase, method("ultracode"), phrase)
+            self.assertNotIn(phrase, method("deep-research"), phrase)
+
+    def test_private_detail_has_its_home_in_the_researcher_charter(self):
+        home = "with no **private detail** in queries: internal names, paths, permalinks, private repo names, "
+        with open(os.path.join(CORE, "team", "roles", "researcher.md")) as f:
+            self.assertIn(home, f.read())
+        link = "private detail ([Researcher › Type and target › Agents](#type-and-target))"
+        self.assertIn(link, task_text("deep-research"))
+        self.assertIn("private detail per [Researcher › Type and target › Agents](#type-and-target)",
+                      method("deep-research"))
+        for text in (task_text("deep-research"), method("deep-research")):
+            self.assertNotIn("internal names", text)
 
     def test_methods_are_harness_neutral(self):
         for m in METHOD_NAMES:

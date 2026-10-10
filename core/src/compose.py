@@ -56,7 +56,8 @@ PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
 RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "
           "started. The input below is current: it adds to this session's earlier input. Continue the task this "
-          "session already picked or was given; never pick it again.\n\n")
+          "session already picked or was given, following your task file's `## Resume` section; never pick it "
+          "again.\n\n")
 
 
 class ConfigError(Exception):

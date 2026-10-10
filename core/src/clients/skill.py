@@ -10,7 +10,7 @@ class SkillClient(Client):
     keys = frozenset({"roles"})
     runs = False
     inline_workdir = "the dir `mktemp -d` prints, run once at the start and reused for this invocation"
-    inline_input = "Given with this prompt."
+    inline_input = "The text after `<role>[:<task>]` in your `/agent-pm:act-as` arguments."
 
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "

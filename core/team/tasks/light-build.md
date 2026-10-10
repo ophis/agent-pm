@@ -17,9 +17,9 @@ Build the requirement with `/autopilot:light-build`, then open a pull request.
    - Else → build the requirement.
 4. **Report progress:**
    [agent-pm-progress:start] the build (continue, new or first)
-5. **Build**: `/autopilot:light-build` ([Engineer › Autopilot](#autopilot)), the requirements being the requirement, a PRD if given and the user's requirements; docs line "A state file, if you write one, goes where the repo keeps design docs, else in `docs/.autopilot/`; never `git add -f` it."; push points: S5 and each fix.
-   - **Report progress** at the end of each build step (`S<n>`) you run:
-     [agent-pm-progress:step] the step and its result
+5. **Build**: `/autopilot:light-build` ([Engineer › Autopilot](#autopilot)), the requirements being the requirement, a PRD if given and the user's requirements; docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; never `git add -f` it."; push points: S5 and each fix.
+   - **Report progress** at the end of each build step (`S<i>`) you run and of each S5 task:
+     [agent-pm-progress:step] the step and its result; an S5 task as `S5 task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` the state file's task count (its `### Task` headings)
 6. **Finish** ([Engineer › Finish](#finish)).
 
 ## Resume

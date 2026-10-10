@@ -558,7 +558,8 @@ class Skill(Base):
         self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
                       "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
-        self.assertTrue(text.endswith("\n# Input\n\nGiven with this prompt.\n"))
+        self.assertTrue(text.endswith("\n# Input\n\nThe text after `<role>[:<task>]` in your "
+                                      "`/agent-pm:act-as` arguments.\n"))
         for tail in ("\n---\n\nInput:", "Workdir: "):
             self.assertNotIn(tail, text)
 
@@ -684,7 +685,8 @@ class RoleRuns(Base):
         self.plan("engineer", None, resume=True)
         prompt = Recorder.seen[-1]["prompt"]
         self.assertTrue(prompt.startswith(compose.RESUME + "# Guide\n"))
-        self.assertIn("Continue the task this session already picked or was given; never pick it again.", prompt)
+        self.assertIn("Continue the task this session already picked or was given, following your task file's "
+                      "`## Resume` section; never pick it again.", prompt)
         self.assertIn("**Your task**: pick it from", prompt.split("\n# Principles\n")[0])
 
 
