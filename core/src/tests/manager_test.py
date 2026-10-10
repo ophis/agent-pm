@@ -300,7 +300,7 @@ VALID = {
     "split": [None, "right", "below"],
     "split_from": [None, "mgr"],
     "tui": [None, "mgr"],
-    "state": ["working", "done", "blocked", "dead", "gone", "finished"],
+    "state": ["working", "done", "blocked", "dead", "gone", "waiting", "finished"],
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
@@ -337,8 +337,8 @@ INVALID = [
     ("split_from", "a b", "split_from: {!r}: want a session name or null"),
     ("split_from", "", "split_from: {!r}: want a session name or null"),
     ("tui", "a;", "tui: {!r}: want a session name or null"),
-    ("state", "idle", "state: {!r}: want working, done, blocked, dead, gone or finished"),
-    ("state", None, "state: {!r}: want working, done, blocked, dead, gone or finished"),
+    ("state", "idle", "state: {!r}: want working, done, blocked, dead, gone, waiting or finished"),
+    ("state", None, "state: {!r}: want working, done, blocked, dead, gone, waiting or finished"),
     ("started", "2026-01-01T00:00:00", "started: {!r}: want an ISO 8601 time with a UTC offset"),
     ("started", "soon", "started: {!r}: want an ISO 8601 time with a UTC offset"),
     ("started", "", "started: {!r}: want an ISO 8601 time with a UTC offset"),
@@ -819,7 +819,7 @@ class RosterTest(unittest.TestCase):
         self.assertEqual((manager.VERSION, manager.NOTE_MAX, manager.LOCK_TIMEOUT, manager.ROSTER_MAX),
                          (1, 500, 30, 1 << 20))
         self.assertEqual(manager.KINDS, ("worker", "role", "pipeline"))
-        self.assertEqual(manager.STATES, ("working", "done", "blocked", "dead", "gone", "finished"))
+        self.assertEqual(manager.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished"))
 
 
 NOW = "2026-02-02T02:02:02+00:00"

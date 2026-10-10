@@ -40,6 +40,7 @@ RUN_TAIL = 1 << 20
 LIVE = "#{session_name}\t#{@sid}\t#{@state}\t#{@pane}\t#{@opener}"
 NO_SERVER = ("no server running", "error connecting to")
 LIVE_STATES = ("working", "done", "blocked", "dead")
+ENDED = {"done": "finished", "failed": "finished", "needs_input": "waiting"}
 CLIENTS = "#{client_activity} #{client_tty}"
 HOSTS = "#{pane_tty}\t#{session_name}"
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
@@ -374,24 +375,25 @@ def _live(proc) -> dict[str, dict]:
             for f in rows if len(f) == 5 and NAME.fullmatch(f[0])}
 
 
-def _finished(cwd: str) -> bool:
-    """Whether the last `result` line in the last RUN_TAIL bytes of <cwd>/run.jsonl (a regular file, never through a
-    symlink) has an outcome whose status is done or failed; anything else, an unreadable file included, is False."""
+def _status(cwd: str) -> str | None:
+    """The outcome status of the last `result` line in the last RUN_TAIL bytes of <cwd>/run.jsonl (a regular file,
+    never through a symlink); None when that line has no outcome with a string status, or there is none (an unreadable
+    file included)."""
     try:
         fd = os.open(os.path.join(cwd, "run.jsonl"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
-        return False
+        return None
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            return False
+            return None
         with os.fdopen(fd, "rb", closefd=False) as f:
             at = max(0, st.st_size - RUN_TAIL)
             f.seek(max(0, at - 1))
             # from the byte before the tail: its first piece is the line the tail cuts, or empty
             lines = f.read(RUN_TAIL + 1).split(b"\n")[1 if at else 0:]
     except OSError:
-        return False
+        return None
     finally:
         os.close(fd)
     for raw in reversed(lines):
@@ -401,8 +403,9 @@ def _finished(cwd: str) -> bool:
             continue
         if isinstance(line, dict) and line.get("kind") == "result":
             outcome = line.get("outcome")
-            return isinstance(outcome, dict) and outcome.get("status") in ("done", "failed")
-    return False
+            status = outcome.get("status") if isinstance(outcome, dict) else None
+            return status if isinstance(status, str) else None
+    return None
 
 
 def _placed(e: dict, options: dict) -> dict:
@@ -428,7 +431,8 @@ def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
 def _sync(r: dict, live: dict) -> dict[str, str]:
     """Syncs roster r's entries with the live sessions; returns each live entry's pane session (_sessions) by entry
     name. A worker whose session is gone takes the name of the one live session with its sid, when no entry has that
-    name."""
+    name. With no live session a worker is gone, a role or pipeline ENDED's state for its run's last outcome status
+    (_status), else gone."""
     entries = r["entries"]
     for name in sorted(entries):
         sid = entries[name]["sid"]
@@ -441,7 +445,7 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
         e = entries[name]
         pane, driver = _sessions(name, e, live)
         if pane is None and driver is None:
-            e["state"] = "gone" if e["kind"] == "worker" or not _finished(e["cwd"]) else "finished"
+            e["state"] = "gone" if e["kind"] == "worker" else ENDED.get(_status(e["cwd"]), "gone")
             continue
         state = live[pane]["state"] if pane else "working"
         e["state"] = state if state in LIVE_STATES else "working"
@@ -550,26 +554,30 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
     return _table(r["entries"], shown) + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
 
 
-def recover(entries: dict, *, proc=subprocess.run) -> Iterator[str]:
+def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]:
     """Runs each gone entry's recovery argv (manager.recovery), by name, in the entry's cwd, never through a shell;
-    yields a line per entry as it ends: `resumed <name>: exit <code>[: <its last output line>]` (stdout and stderr
-    together), or `resumed <name>: not run: <why>`. One failing stops none."""
+    yields (whether it ran and exited 0, its line) per entry as it ends: `resumed <name>: exit <code>[: <its last
+    output line>]` (stdout and stderr together), or `resumed <name>: not run: <why>`. One failing, by any exception,
+    stops none."""
     for name in sorted(entries):
         e = entries[name]
         if e["state"] != "gone":
             continue
         argv = manager.recovery(e)
         if argv is None:
-            yield f"resumed {name}: not run: no sid"
+            yield False, f"resumed {name}: not run: no sid"
             continue
         try:
             res = proc(argv, cwd=e["cwd"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True, errors="replace")
         except OSError as err:
-            yield f"resumed {name}: not run: {err.strerror or err}"
+            yield False, f"resumed {name}: not run: {err.strerror or err}"
+            continue
+        except Exception as err:   # e.g. Popen's ValueError for an argv item (a NUL, a lone surrogate)
+            yield False, f"resumed {name}: not run: {type(err).__name__}: {err}"
             continue
         last = next((line.strip() for line in reversed(res.stdout.splitlines()) if line.strip()), "")
-        yield f"resumed {name}: exit {res.returncode}" + (f": {last}" if last else "")
+        yield res.returncode == 0, f"resumed {name}: exit {res.returncode}" + (f": {last}" if last else "")
 
 
 @contextlib.contextmanager
@@ -716,8 +724,12 @@ def main(argv=None) -> int:
             text, entries = attach(_directory(a.manager), _own(), after=a.after, gen=a.gen, proc=subprocess.run)
             print(text, end="", flush=True)
             if a.resume:
-                for line in recover(entries, proc=subprocess.run):
+                failed = False
+                for ok, line in recover(entries, proc=subprocess.run):
                     print(line, flush=True)
+                    failed = failed or not ok
+                if failed:
+                    return 1
         elif a.cmd == "release":
             directory = _directory(a.manager)
             release(directory, _own(), proc=subprocess.run)
