@@ -322,27 +322,27 @@ class Inner(Base):
             f"run end TASK-7 sid={SID} exit=1", "run no-outcome TASK-7 error=no result"])
         self.assertEqual(self.gql.calls, self.harness(1))
 
-    def test_a_role_or_task_error_logs_config_error_and_end(self):
-        cases = [(dict(assignee="x@y.com"), "'x@y.com' is not a role account"),
-                 (dict(assignee=RESEARCHER, task="build"),
-                  "task 'build' is not one of researcher's tasks (deep-research, light-research)")]
-        for kw, reason in cases:
+    def test_a_config_role_or_task_error_logs_config_error_and_end(self):
+        """Exit 1, `config-error` then `end`, and nothing else: no runs line, no Linear call, no claude."""
+        def bad_config():
+            self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
+        cases = [(None, dict(assignee="x@y.com"), "'x@y.com' is not a role account"),
+                 (None, dict(assignee=RESEARCHER, task="build"),
+                  "task 'build' is not one of researcher's tasks (deep-research, light-research)"),
+                 (bad_config, {}, "orchestrator/config.toml: missing harness_key")]   # last: it changes the config
+        for setup, kw, reason in cases:
             with self.subTest(reason=reason):
+                if setup:
+                    setup()
+                n = len(self.said())
                 self.assertEqual(self.inner(**kw), 1)
-                self.assertEqual(self.said()[-2:], [f"run config-error TASK-7 reason={reason}",
-                                                    f"run end TASK-7 sid={SID} exit=1"])
+                error, end = self.said()[n:]
+                want = f"run config-error TASK-7 reason={reason}"
+                self.assertEqual(error[:len(want)] if setup else error, want)   # the config one goes on
+                self.assertEqual(end, f"run end TASK-7 sid={SID} exit=1")
                 self.assertEqual(self.err, "")
                 self.assertFalse(os.path.exists(self.runs))
         self.assertEqual((self.gql.calls, self.popen_calls), ([], []))
-
-    def test_config_error_writes_no_runs_line(self):
-        os.remove(os.path.join(self.root, "orchestrator", "config.toml"))
-        self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
-        self.assertEqual(self.inner(), 1)
-        error, end = self.said()
-        self.assertTrue(error.startswith("run config-error TASK-7 reason=orchestrator/config.toml: missing harness_key"), error)
-        self.assertEqual(end, f"run end TASK-7 sid={SID} exit=1")
-        self.assertFalse(os.path.exists(self.runs))
 
     def test_bad_uuid_or_target(self):
         for kw in (dict(uuid="nope"), dict(target="a/b/c")):

@@ -112,40 +112,28 @@ class ReadIssue(unittest.TestCase):
 
 class ParseHandoff(unittest.TestCase):
     def test_sections(self):
-        self.assertEqual(issues.parse_handoff(HANDOFF), issues.Handoff(
-            "ENG-3",
-            "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this.",
-            "- Ann, 2026-09-01T00:00:00.000Z:\n  > hello\n  > ## Source"))
-
-    def test_missing_sections_are_empty(self):
-        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Instructions\nGo.\n")
-        self.assertEqual(got, issues.Handoff("ENG-3", "Go.", ""))
-        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}")
-        self.assertEqual(got, issues.Handoff("ENG-3", "", ""))
-
-    def test_only_exact_header_lines_start_a_section(self):
-        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Instructions\nSee ## Comments below.\n## Comments here\n"
-                                   "## Comments\n- Ann, t:\n  > x\n")
-        self.assertEqual((got.instructions, got.comments),
-                         ("See ## Comments below.\n## Comments here", "- Ann, t:\n  > x"))
-
-    def test_header_lines_inside_instructions_stay_in_instructions(self):
-        text = ("Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore.")
-        for sources in ("## Source\n- Spec: u\n\n", ""):
-            with self.subTest(sources=sources):
-                got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n{sources}## Instructions\n{text}\n\n"
-                                           "## Comments\n- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n")
-                self.assertEqual(got.instructions, text.strip())
-                self.assertEqual(got.comments, "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments")
-
-    def test_comments_header_is_the_last_exact_line(self):
-        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\n\n## Source\n- A: u\n\n## Instructions\nGo.\n## Comments\nx\n\n"
-                                   "## Comments\n- Ann, t:\n  > y\n")
-        self.assertEqual((got.instructions, got.comments), ("Go.\n## Comments\nx", "- Ann, t:\n  > y"))
-
-    def test_crlf(self):
-        got = issues.parse_handoff(f"Handoff from ENG-3: {URL}\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n")
-        self.assertEqual(got.instructions, "Go.")
+        """A section starts at a line exactly its header; a missing one is empty; header lines inside Instructions stay
+        there; Comments is the last exact header line."""
+        inner = "Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore."
+        inside = ("- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n", "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments")
+        cases = [
+            ("full", HANDOFF, "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this.",
+             "- Ann, 2026-09-01T00:00:00.000Z:\n  > hello\n  > ## Source"),
+            ("no source, no comments", f"Handoff from ENG-3: {URL}\n\n## Instructions\nGo.\n", "Go.", ""),
+            ("header line only", f"Handoff from ENG-3: {URL}", "", ""),
+            ("only exact header lines", f"Handoff from ENG-3: {URL}\n\n## Instructions\nSee ## Comments below.\n"
+             "## Comments here\n## Comments\n- Ann, t:\n  > x\n", "See ## Comments below.\n## Comments here", "- Ann, t:\n  > x"),
+            ("headers inside instructions, with source", f"Handoff from ENG-3: {URL}\n\n## Source\n- Spec: u\n\n"
+             f"## Instructions\n{inner}\n\n## Comments\n{inside[0]}", inner, inside[1]),
+            ("headers inside instructions, no source", f"Handoff from ENG-3: {URL}\n\n## Instructions\n{inner}\n\n"
+             f"## Comments\n{inside[0]}", inner, inside[1]),
+            ("comments header is the last exact line", f"Handoff from ENG-3: {URL}\n\n## Source\n- A: u\n\n## Instructions\n"
+             "Go.\n## Comments\nx\n\n## Comments\n- Ann, t:\n  > y\n", "Go.\n## Comments\nx", "- Ann, t:\n  > y"),
+            ("crlf", f"Handoff from ENG-3: {URL}\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n", "Go.", ""),
+        ]
+        for name, description, instructions, comments in cases:
+            with self.subTest(name):
+                self.assertEqual(issues.parse_handoff(description), issues.Handoff("ENG-3", instructions, comments))
 
     def test_not_a_handoff(self):
         for description in ("", "Do the thing.", f"\nHandoff from ENG-3: {URL}", f"Handoff from eng-3: {URL}",
@@ -157,55 +145,47 @@ class ParseHandoff(unittest.TestCase):
 
 class IsUser(unittest.TestCase):
     def test_is_user(self):
-        self.assertTrue(issues.is_user(note("x", email="ANN@Example.com"), HUMANS))
-        self.assertTrue(issues.is_user(note("x", email="bob@example.com"), HUMANS))
-        self.assertFalse(issues.is_user(note("x", email="agent@example.com"), HUMANS))
-        self.assertFalse(issues.is_user(note("x", email=None), HUMANS))
-        self.assertFalse(issues.is_user(note("x", email=""), HUMANS))
+        for email, want in (("ANN@Example.com", True), ("bob@example.com", True), ("agent@example.com", False),
+                            (None, False), ("", False)):
+            with self.subTest(email=email):
+                self.assertIs(issues.is_user(note("x", email=email), HUMANS), want)
 
 
 class Brief(unittest.TestCase):
-    def test_handoff_instructions(self):
-        self.assertEqual(issues.brief(issue(HANDOFF)).splitlines()[0], "Ann, 2026-09-01T00:00:00.000Z:")
-        self.assertEqual(issues.brief(issue(f"Handoff from ENG-3: {URL}")), "")
-
-    def test_direct_issue_description(self):
-        self.assertEqual(issues.brief(issue("Do the thing.\n\n## Comments\nx")), "Do the thing.\n\n## Comments\nx")
+    def test_brief(self):
+        """A Handoff's instructions, else the description, `## Comments` and all."""
+        for description, want in (
+                (HANDOFF, "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this."),
+                (f"Handoff from ENG-3: {URL}", ""),
+                ("Do the thing.\n\n## Comments\nx", "Do the thing.\n\n## Comments\nx")):
+            with self.subTest(description=description):
+                self.assertEqual(issues.brief(issue(description)), want)
 
 
 class BuildCutoff(unittest.TestCase):
-    def cutoff(self, *notes, created="2026-09-01T00:00:00.000Z"):
-        return issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS)
-
-    def test_fallback_created_at(self):
-        self.assertEqual(self.cutoff(), "2026-09-01T00:00:00.000Z")
-        self.assertEqual(self.cutoff(note("Working on it")), "2026-09-01T00:00:00.000Z")
-
-    def test_latest_non_user_match(self):
-        self.assertEqual(self.cutoff(
-            note("Build started: a", "2026-09-02T00:00:00.000Z"),
-            note("Build started: b", "2026-09-04T00:00:00.000Z"),
-            note("Build ready: c", "2026-09-05T00:00:00.000Z")), "2026-09-04T00:00:00.000Z")
-
-    def test_latest_by_time_not_position(self):
-        self.assertEqual(self.cutoff(
-            note("Build started: b", "2026-09-04T00:00:00.000Z"),
-            note("Build started: a", "2026-09-02T00:00:00.000Z")), "2026-09-04T00:00:00.000Z")
-
-    def test_user_notes_ignored(self):
-        self.assertEqual(self.cutoff(
-            note("Build started: a", "2026-09-02T00:00:00.000Z"),
-            note("Build started", "2026-09-03T00:00:00.000Z", email="ANN@example.com")), "2026-09-02T00:00:00.000Z")
-
-    def test_body_stripped_before_match(self):
-        self.assertEqual(self.cutoff(note("\n  Build started: x\n", "2026-09-02T00:00:00.000Z")),
-                         "2026-09-02T00:00:00.000Z")
-
-    def test_word_boundary_and_anchor(self):
-        for body in ("Build startedness", "Build starting", "build started", "Re: Build started: x", "Build  started"):
-            with self.subTest(body=body):
-                self.assertEqual(self.cutoff(note(body, "2026-09-02T00:00:00.000Z")), "2026-09-01T00:00:00.000Z")
-        self.assertEqual(self.cutoff(note("Build started", "2026-09-02T00:00:00.000Z")), "2026-09-02T00:00:00.000Z")
+    def test_build_cutoff(self):
+        """`at` of the latest (by time) non-user note whose stripped body starts `Build started` as a word, else the
+        creation time."""
+        created = "2026-09-01T00:00:00.000Z"
+        cases = [
+            ("no notes", (), created),
+            ("no match", (note("Working on it"),), created),
+            ("latest non-user match", (note("Build started: a", "2026-09-02T00:00:00.000Z"),
+                                       note("Build started: b", "2026-09-04T00:00:00.000Z"),
+                                       note("Build ready: c", "2026-09-05T00:00:00.000Z")), "2026-09-04T00:00:00.000Z"),
+            ("latest by time, not position", (note("Build started: b", "2026-09-04T00:00:00.000Z"),
+                                              note("Build started: a", "2026-09-02T00:00:00.000Z")), "2026-09-04T00:00:00.000Z"),
+            ("user notes ignored", (note("Build started: a", "2026-09-02T00:00:00.000Z"),
+                                    note("Build started", "2026-09-03T00:00:00.000Z", email="ANN@example.com")),
+             "2026-09-02T00:00:00.000Z"),
+            ("body stripped", (note("\n  Build started: x\n", "2026-09-02T00:00:00.000Z"),), "2026-09-02T00:00:00.000Z"),
+            ("bare", (note("Build started", "2026-09-02T00:00:00.000Z"),), "2026-09-02T00:00:00.000Z"),
+            *((body, (note(body, "2026-09-02T00:00:00.000Z"),), created)
+              for body in ("Build startedness", "Build starting", "build started", "Re: Build started: x", "Build  started")),
+        ]
+        for name, notes, want in cases:
+            with self.subTest(name):
+                self.assertEqual(issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), want)
 
 
 if __name__ == "__main__":

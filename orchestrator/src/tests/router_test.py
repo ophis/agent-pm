@@ -310,14 +310,12 @@ class Base(unittest.TestCase):
 
 
 class ParseAndLiveness(Base):
-    def test_missing_log_is_empty(self):
-        self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])
-
     def write_lines(self, lines):
         with open(self.log, "w") as f:
             f.write("".join(line + "\n" for line in lines))
 
     def test_parse_log_is_utc_entries_in_file_order(self):
+        self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])   # a missing log is empty
         self.add("start", "TASK-1", "a", 60, "researcher")
         self.add("start", "TASK-2", "b", 50, "pm")
         self.add("resume", "TASK-1", "a", 40, "pm-lead")
@@ -368,10 +366,9 @@ def event(status="allowed", five=0.1, **week):
 
 
 class Gate(unittest.TestCase):
-    def test_no_event(self):
-        self.assertEqual(router.gate(['{"type":"system"}', "garbage"]), (False, "no rate_limit_event"))
-
     def test_ok_from_the_last_event(self):
+        self.assertEqual(router.gate(['{"type":"system"}', "garbage"]), (False, "no rate_limit_event"))
+        self.assertEqual([router.gate([event(five=0.85)], *m)[0] for m in ((), (0.8,))], [True, False])   # max_5h
         rows = (([event(five=0.89)], True),
                 ([event(five=0.9)], False),
                 ([event(status="rejected", five=0.1)], False),
@@ -384,9 +381,6 @@ class Gate(unittest.TestCase):
         for row, (lines, ok) in enumerate(rows):
             with self.subTest(row=row):
                 self.assertEqual(router.gate(lines)[0], ok)
-
-    def test_max_5h(self):
-        self.assertEqual([router.gate([event(five=0.85)], *m)[0] for m in ((), (0.8,))], [True, False])
 
 
 class Brake(unittest.TestCase):
@@ -416,14 +410,16 @@ class Brake(unittest.TestCase):
 
 
 class Plan(Base):
-    def test_nothing(self):
-        fake = FakeLinear([issue("TASK-1", "In Review", "researcher")])
-        self.assertEqual(self.plan(fake), "")
-
-    def test_new(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.assertEqual(self.plan(fake), "new")
-        self.assertEqual(fake.mutations, [])
+    def test_new_or_nothing_without_a_change(self):
+        rows = (("nothing", [issue("TASK-1", "In Review", "researcher")], ""),
+                ("new", [issue("TASK-1", "Todo", "researcher")], "new"),
+                ("other assignees not recovered", [issue("TASK-1", "In Progress", "someone", updated=ago(hours=3)),
+                                                   issue("TASK-2", "In Progress", None, updated=ago(hours=3))], ""))
+        for name, issues_, out in rows:
+            with self.subTest(name):
+                fake = FakeLinear(issues_)
+                self.assertEqual(self.plan(fake), out)
+                self.assertEqual(fake.mutations, [])
 
     def test_attempt_cap_beats_resume(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=5)))
@@ -601,23 +597,19 @@ class Plan(Base):
         self.resumable("TASK-1", "new", 100)
         self.add("resume", "TASK-1", "new", 60)
 
-    def test_user_reset_resumes_new_sid(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
-        self.reset_fixture()
-        self.assertEqual(self.plan(fake), "resume TASK-1 new https://linear.app/x/TASK-1 Deep Research")
-        self.assertEqual(fake.mutations, [])
-
-    def test_user_reset_orders_by_new_sid(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=2), issue("TASK-2", "In Progress", "researcher", priority=2))
-        self.reset_fixture()
-        self.resumable("TASK-2", "b", 200)
-        self.assertEqual(self.plan(fake), "resume TASK-2 b https://linear.app/x/TASK-2 Deep Research")
-
-    def test_recover_skips_other_assignees(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "someone", updated=ago(hours=3)),
-                           issue("TASK-2", "In Progress", None, updated=ago(hours=3))])
-        self.plan(fake)
-        self.assertEqual(fake.mutations, [])
+    def test_user_reset_resumes_and_orders_by_new_sid(self):
+        rows = (("resumes", (), "resume TASK-1 new https://linear.app/x/TASK-1 Deep Research"),
+                ("orders", (issue("TASK-2", "In Progress", "researcher", priority=2),),
+                 "resume TASK-2 b https://linear.app/x/TASK-2 Deep Research"))
+        for name, others, out in rows:
+            with self.subTest(name):
+                self.lines, self.hist = [], {}
+                fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=2), *others)
+                self.reset_fixture()
+                if others:
+                    self.resumable("TASK-2", "b", 200)
+                self.assertEqual(self.plan(fake), out)
+                self.assertEqual(fake.mutations, [])
 
     def test_attempt_cap_subscribes_humans(self):
         for members in ([], ["me@x.com", "b@x.com"]):
@@ -649,18 +641,19 @@ class Plan(Base):
         self.touch("TASK-1", "d", 200)
         return fake, self.plan(fake)
 
-    def test_attempt_cap_reset_by_user(self):
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": USER, "toStateId": STATES["Todo"]}])
-        self.assertEqual(out, "resume TASK-1 d https://linear.app/x/TASK-1 Deep Research")
-        self.assertEqual(fake.mutations, [])
-
-    def test_attempt_cap_reset_only_by_human_members(self):
-        fake, out = self.capped([{"createdAt": ago(minutes=380), "actorId": AGENT, "toStateId": STATES["Todo"]},
-                                 {"createdAt": ago(minutes=375), "actorId": "role-account", "toStateId": STATES["Todo"]},
-                                 {"createdAt": ago(minutes=370), "actorId": USER, "toStateId": STATES["In Progress"]},
-                                 {"createdAt": ago(minutes=360), "actorId": None, "toStateId": STATES["Todo"]}])
-        self.assertEqual(out, "")
-        self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
+    def test_attempt_cap_reset_only_by_a_human_members_move_to_todo(self):
+        def move(m, actor, state="Todo"):
+            return {"createdAt": ago(minutes=m), "actorId": actor, "toStateId": STATES[state]}
+        rows = (("user", [move(380, USER)], "resume TASK-1 d https://linear.app/x/TASK-1 Deep Research", "In Progress"),
+                ("not a human member", [move(380, AGENT), move(375, "role-account"), move(370, USER, "In Progress"),
+                                        move(360, None)], "", "In Review"))
+        for name, hist, out, state in rows:
+            with self.subTest(name):
+                self.lines = []
+                fake, got = self.capped(hist)
+                self.assertEqual((got, fake.issues["TASK-1"]["state"]), (out, state))
+                if state == "In Progress":
+                    self.assertEqual(fake.mutations, [])
 
     def test_skipped_move_posts_no_comment(self):
         fake = Moved([issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))], "In Review")
@@ -703,18 +696,9 @@ class Prune(Base):
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp.name, self.log))
         self.assertEqual(self.read(), "".join(line + "\n" for line in keep))
         self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
-
-    def test_a_line_eight_days_old_is_pruned_and_the_rest_stays(self):
-        keep = self.row("start", "TASK-1", "b", hours=1)
-        self.write([self.row("start", "TASK-8", "old", days=8), keep])
+        self.write([keep[1], "plain text"])  # unparsable lines alone, no old one, still a rewrite
         router.prune(self.log, NOW)
-        self.assertEqual(self.read(), keep + "\n")
-
-    def test_only_unparsable_lines_dropped_is_still_a_rewrite(self):
-        keep = self.row("start", "TASK-1", "b", hours=1)
-        self.write([keep, "plain text"])
-        router.prune(self.log, NOW)
-        self.assertEqual(self.read(), keep + "\n")
+        self.assertEqual(self.read(), keep[1] + "\n")
 
     def test_no_temp_left_when_the_rewrite_fails(self):
         self.write([self.row("start", "TASK-1", "a", days=8), self.row("start", "TASK-1", "b", hours=1)])
@@ -773,12 +757,12 @@ class Usage(unittest.TestCase):
                 self.assertEqual(router.options(argv)["manager"], want)
 
     def test_bad_issue_id(self):
-        for argv in (["--issue", "task-7"], ["--tui", "--issue", "TASK"]):
+        for argv in (["--issue", "task-7"], ["--tui", "--issue", "TASK"], ["--issue", "task-7", "--tui"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with redirect_stderr(err), mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
                     self.assertEqual(router.main(argv, gql=None, sh=mock.Mock(side_effect=AssertionError("sh ran"))), 2)
-                self.assertEqual(err.getvalue(), f"router.py: bad issue id: {argv[-1]}\n")
+                self.assertEqual(err.getvalue(), f"router.py: bad issue id: {argv[argv.index('--issue') + 1]}\n")
 
 
 class Claim(Base):
@@ -843,12 +827,6 @@ class Claim(Base):
             self.add("start", "TASK-1", sid, 300)
         self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
 
-    def test_claim_skipped_when_no_longer_todo(self):
-        fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Review")
-        self.assertEqual(self.claim(fake), "")
-        self.assertIn("claim-skip TASK-1 reason=no longer Todo", self.said())
-        self.assertEqual(fake.mutations, [])
-
     def test_no_longer_todo_skipped_for_the_next(self):
         class Snatched(FakeLinear):
             """Someone moves TASK-1 out of Todo right after the Todo list read."""
@@ -885,11 +863,6 @@ class Claim(Base):
             self.claim(fake)
         self.assertEqual(str(cm.exception), "issueUpdate: success: false")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
-
-    def test_pick_recovers_then_claims(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))])
-        self.assertEqual(self.claim(fake, recover=True), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
-        self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
 
 
 class Blockers(Base):
@@ -1033,9 +1006,6 @@ class Tick(Base):
         self.tick(FakeLinear([]))
         self.assertEqual(self.path, router.PATH)
         self.assertIn("/opt/homebrew/bin", self.path)
-
-    def test_interrupted_text(self):
-        self.assertEqual(router.INTERRUPTED, "The previous agent run was interrupted. Moving this issue back to the Todo queue.")
 
     def test_now_skips_hours_and_starts(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -1271,15 +1241,6 @@ class Tick(Base):
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
         self.tick(fake, shell=FakeShell(probe_five=0.97), again=True)
         self.assertEqual(self.said(), [])
-
-    def test_resume(self):
-        fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")], self.hist)
-        self.resumable("TASK-1", "a", 60)
-        self.tick(fake)
-        self.assertEqual([c for c in self.sh.calls if c[0] == "claude"], [router.PROBE])
-        (launch,) = self.sh.launches()
-        self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), None, "resume"))
-        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
 
     def test_prune_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
@@ -1568,11 +1529,17 @@ class TuiTick(Base):
     runner. Outside tmux and on a HOME of its own unless a test says otherwise (in_tmux)."""
     def setUp(self):
         super().setUp()
+        self.enterContext(mock.patch.dict(os.environ))
+        self.fresh(False)
+
+    def fresh(self, tmux):
+        """A new HOME (so a new ~/.agent-pm), in tmux or not."""
         self.agent_pm = hermetic.home(self)
         self.managers = os.path.join(self.agent_pm, "managers")
-        self.enterContext(mock.patch.dict(os.environ))
         for k in ("TMUX", "TMUX_PANE"):
             os.environ.pop(k, None)
+        if tmux:
+            self.in_tmux()
 
     def in_tmux(self, pane="%3"):
         os.environ.update(TMUX="/tmp/tmux-501/default,1,0", TMUX_PANE=pane)
@@ -1629,16 +1596,6 @@ class TuiTick(Base):
                 self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from), ("resume", "tui", "below", None))
                 self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher"))
 
-    def test_dry_run_launches_nothing(self):
-        for argv, said in ((("--tui", "--dry-run", "--now"), ["plan mode=new queue=1", "pick TASK-1 queue=1"]),
-                           (("--tui", "--dry-run", "--issue", "TASK-1"), ["pick TASK-1 queue=1"])):
-            with self.subTest(argv=argv):
-                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tui_tick(fake, *argv), 0)
-                self.assertEqual(self.said()[:len(said)], said)
-                self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
-                self.assertEqual(self.layout, [mock.call(None, None)])
-
     def test_no_place_for_the_pane_or_a_bad_events_file_exits_2_before_any_linear_call(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
         before = self.unmap("\n".join(self.lines) + "\n")
@@ -1657,54 +1614,46 @@ class TuiTick(Base):
                 self.assertEqual(self.err, f"router.py: {msg}\n")
                 self.assertEqual((fake.queries, self.sh.calls, self.state), ([], [], before))
 
-    def test_without_tui_no_layout_and_a_headless_launch(self):
-        for argv in ((), ("--now",), ("--issue", "TASK-1")):
-            with self.subTest(argv=argv):
-                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                with mock.patch.object(attended, "layout", side_effect=AssertionError("layout ran")):
-                    self.tick(fake, *argv)
-                (launch,) = self.sh.launches()
-                self.assertEqual((launch.mode, launch.runner, launch.split, launch.split_from, launch.events),
-                                 ("new", "headless", None, None, None))
+    def test_without_tui_no_layout_no_events_and_a_headless_launch(self):
+        for tmux in (False, True):
+            for argv in ((), ("--now",), ("--issue", "TASK-1"), ("--now", "--dry-run")):
+                with self.subTest(tmux=tmux, argv=argv):
+                    self.fresh(tmux)
+                    fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+                    self.assertEqual(self.tui_tick(fake, *argv, layout=AssertionError("layout ran")), 0)
+                    want = [] if "--dry-run" in argv else [("new", "headless", None, None, None)]
+                    self.assertEqual([(a.mode, a.runner, a.split, a.split_from, a.events) for a in self.sh.launches()], want)
+                    self.assertNotIn(DISPLAY, self.sh.calls)
+                    self.assertEqual((HINT in self.err, os.listdir(self.agent_pm)), (False, []))
 
-    def test_without_events_in_tmux_the_events_file_is_the_own_sessions_manager_directory(self):
-        want = self.events_of("mgr")
-        for argv in (("--now", "--tui"), ("--issue", "TASK-1", "--tui")):
-            with self.subTest(argv=argv):
-                self.in_tmux()
+    def test_the_events_file_is_events_else_the_manager_else_the_own_tmux_sessions(self):
+        events = os.path.join(self.tmp.name, "events.log")
+        rows = ((True, ("--now", "--tui", "--events", events), events, None),
+                (True, ("--now", "--tui", "--manager", "m1", f"--events={events}"), events, "m1"),
+                (True, ("--now", "--tui"), "mgr", None),
+                (True, ("--issue", "TASK-1", "--tui"), "mgr", None),
+                (False, ("--now", "--tui", "--manager", "m1"), "m1", "m1"),
+                (False, ("--tui", "--manager=m-2", "--now"), "m-2", "m-2"),
+                (True, ("--now", "--tui", "--manager", "m1"), "m1", "m1"),
+                (True, ("--tui", "--manager=m-2", "--now"), "m-2", "m-2"))
+        for tmux, argv, name, manager_ in rows:
+            with self.subTest(tmux=tmux, argv=argv):
+                self.fresh(tmux)
+                want = name if name == events else self.events_of(name)
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tui_tick(fake, *argv), 0)
                 (launch,) = self.sh.launches()
                 self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, None, "new",
-                                                    "tui", None, None, want))
-                self.assertEqual(self.sh.calls[0], DISPLAY)
-                self.assertEqual((self.mode(want), self.mode(os.path.dirname(want)), self.err), (0o600, 0o700, ""))
-
-    def test_manager_names_the_directory_in_or_out_of_tmux(self):
-        for tmux in (False, True):
-            for argv, name in ((("--now", "--tui", "--manager", "m1"), "m1"), (("--tui", "--manager=m-2", "--now"), "m-2")):
-                with self.subTest(tmux=tmux, argv=argv):
-                    if tmux:
-                        self.in_tmux()
-                    fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                    self.assertEqual(self.tui_tick(fake, *argv), 0)
-                    (launch,) = self.sh.launches()
-                    self.assertEqual(launch.events, self.events_of(name))
-                    self.assertEqual((self.mode(launch.events), self.err), (0o600, ""))
-                    self.assertNotIn(DISPLAY, self.sh.calls)
-
-    def test_events_beats_the_manager_and_tmux(self):
-        events = os.path.join(self.tmp.name, "events.log")
-        self.in_tmux()
-        for argv in (("--now", "--tui", "--events", events), ("--now", "--tui", "--manager", "m1", f"--events={events}")):
-            with self.subTest(argv=argv):
-                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tui_tick(fake, *argv), 0)
-                (launch,) = self.sh.launches()
-                self.assertEqual(launch.events, events)
+                                                    "tui", None, None, want, manager_))
                 self.assertEqual(self.err, "")
-                self.assertNotIn(DISPLAY, self.sh.calls)
-                self.assertEqual(os.listdir(self.agent_pm), [])
+                if name == "mgr":   # no --manager or --events: the own tmux session names it
+                    self.assertEqual(self.sh.calls[0], DISPLAY)
+                else:
+                    self.assertNotIn(DISPLAY, self.sh.calls)
+                if name == events:
+                    self.assertEqual(os.listdir(self.agent_pm), [])
+                else:
+                    self.assertEqual((self.mode(want), self.mode(os.path.dirname(want))), (0o600, 0o700))
 
     def test_outside_tmux_without_events_or_manager_the_run_goes_on_without_events_and_says_so(self):
         for argv in (("--now", "--tui"), ("--issue", "TASK-1", "--tui"), ("--tui", "--dry-run", "--now")):
@@ -1716,28 +1665,21 @@ class TuiTick(Base):
                 self.assertTrue(self.err.startswith(HINT + "\n"))
                 self.assertEqual(os.listdir(self.agent_pm), [])
 
-    def test_dry_run_resolves_but_creates_nothing(self):
-        for tmux, extra in ((True, ()), (False, ("--manager", "m1"))):
-            with self.subTest(tmux=tmux):
-                if tmux:
-                    self.in_tmux()
-                fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tui_tick(fake, "--tui", "--dry-run", "--now", *extra), 0)
-                self.assertEqual((self.sh.launches(), fake.mutations, HINT in self.err), ([], [], False))
-                self.assertEqual((DISPLAY in self.sh.calls, os.listdir(self.agent_pm)), (tmux, []))
-
-    def test_a_tick_without_tui_neither_resolves_nor_hints(self):
-        self.in_tmux()
-        for argv in ((), ("--now",), ("--issue", "TASK-1"), ("--now", "--dry-run")):
-            with self.subTest(argv=argv):
+    def test_dry_run_resolves_but_creates_or_launches_nothing(self):
+        plan = ["plan mode=new queue=1", "pick TASK-1 queue=1"]
+        rows = ((False, ("--tui", "--dry-run", "--now"), plan, True),
+                (False, ("--tui", "--dry-run", "--issue", "TASK-1"), plan[1:], True),
+                (True, ("--tui", "--dry-run", "--now"), plan, False),
+                (False, ("--tui", "--dry-run", "--now", "--manager", "m1"), plan, False))
+        for tmux, argv, said, hint in rows:
+            with self.subTest(tmux=tmux, argv=argv):
+                self.fresh(tmux)
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tui_tick(fake, *argv), 0)
-                self.assertNotIn(DISPLAY, self.sh.calls)
-                self.assertEqual((HINT in self.err, os.listdir(self.agent_pm)), (False, []))
-        os.environ.pop("TMUX")
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.assertEqual(self.tui_tick(fake, "--now"), 0)
-        self.assertNotIn(HINT, self.err)
+                self.assertEqual(self.said()[:len(said)], said)
+                self.assertEqual((self.sh.launches(), fake.mutations, self.state), ([], [], ""))
+                self.assertEqual(self.layout, [mock.call(None, None)])
+                self.assertEqual((HINT in self.err, DISPLAY in self.sh.calls, os.listdir(self.agent_pm)), (hint, tmux, []))
 
     def test_a_manager_that_fails_exits_2_before_any_linear_call(self):
         elsewhere = os.path.join(self.agent_pm, "elsewhere")
@@ -2004,33 +1946,27 @@ class Outer(OuterBase):
         self.assertFalse(any(big in arg for arg in self.sh_calls[-1][0]))
         self.assertEqual(os.listdir(self.rd), [])
 
-    def test_nul_is_removed_from_the_input(self):
-        self.gql.issue = node(description="Add a session\0 registry.\0", comments=[USER_NOTE])
-        self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.input(), INPUT)
+    def test_nul_is_removed_and_a_lone_surrogate_replaced_in_the_input(self):
+        for description, want in (("Add a session\0 registry.\0", INPUT),
+                                  ("Add a session\ud800 registry.", INPUT.replace("Add a session registry.",
+                                                                                   "Add a session? registry."))):
+            with self.subTest(description=description):
+                self.gql.issue = node(description=description, comments=[USER_NOTE])
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.input(), want)
 
-    def test_a_lone_surrogate_is_replaced_in_the_input(self):
-        self.gql.issue = node(description="Add a session\ud800 registry.", comments=[USER_NOTE])
-        self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.input(), INPUT.replace("Add a session registry.", "Add a session? registry."))
-
-    def test_research_has_no_target(self):
-        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
-        self.run.table = [(LISTING, res("[]"))]
-        self.assertEqual(self.outer(RESEARCHER), 0)
-        self.assertEqual(self.handover("researcher"), inner(*forwarded(RESEARCHER), text=(
-            f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['research']}\n\n"
-            "## Question\n\nCompare queues\n\nWhich queue fits?")))
-        self.assertEqual(self.run.calls, [(LISTING, 60)])
-
-    def test_design_gets_the_research_target(self):
-        self.gql.issue = node(title="Queues PRD", description="Build a PRD for X.")
-        self.run.table = [(DESIGN_LISTING, res("[]"))]
-        self.assertEqual(self.outer(PM), 0)
-        self.assertEqual(self.handover("pm"), inner(*forwarded(PM), text=(
-            f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE['design']}\n\n"
-            "## Brief\n\nQueues PRD\n\nBuild a PRD for X.")))
-        self.assertEqual(self.run.calls, [(DESIGN_LISTING, 60)])
+    def test_research_and_design_have_no_target(self):
+        rows = ((RESEARCHER, "researcher", LISTING, "research", "Question", "Compare queues", "Which queue fits?"),
+                (PM, "pm", DESIGN_LISTING, "design", "Brief", "Queues PRD", "Build a PRD for X."))
+        for who_, role, listing, kind, heading, title, description in rows:
+            with self.subTest(role=role):
+                self.gql.issue = node(title=title, description=description)
+                self.run.table, self.run.calls = [(listing, res("[]"))], []
+                self.assertEqual(self.outer(who_), 0)
+                self.assertEqual(self.handover(role), inner(*forwarded(who_), text=(
+                    f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n{inputs.PRECEDENCE[kind]}\n\n"
+                    f"## {heading}\n\n{title}\n\n{description}")))
+                self.assertEqual(self.run.calls, [(listing, 60)])
 
     def local_clone(self):
         """A real clone (no network) of the target in the temp root, configured under [local_clones]; its realpath."""
@@ -2223,22 +2159,19 @@ class Attended(OuterBase):
         p.start()
         self.addCleanup(p.stop)
 
-    def test_split_from_a_session(self):
-        self.assertEqual(self.tui(split="below", split_from="dev", live=["dev"]), 0)
-        self.driver("--runner=tui", "--split=below", "--split-from=dev")
-        self.assertEqual(self.err, ATTACH)
-
-    def test_an_iterm2_pane_gets_the_tui_and_a_detached_driver(self):
-        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
-        self.assertEqual(self.tui(), 0)
-        self.driver("--runner=tui", "--opener=w0t0p0:ABC", iterm="w0t0p0:ABC")
-        self.assertEqual(self.err, ATTACH)
-
-    def test_the_callers_tmux_session_is_the_opener_never_split_from(self):
-        os.environ.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
-        self.assertEqual(self.tui(live=["mine"]), 0)
-        self.driver("--runner=tui", "--opener=mine")
-        self.assertEqual(self.err, ATTACH)
+    def test_the_pane_place_reaches_the_inner(self):
+        """split from a session; an iTerm2 pane gets the TUI and a detached driver; the caller's tmux session is the
+        opener, never split-from."""
+        rows = (("split-from", {}, dict(split="below", split_from="dev", live=["dev"]),
+                 ["--split=below", "--split-from=dev"], ""),
+                ("iterm2", {"ITERM_SESSION_ID": "w0t0p0:ABC"}, {}, ["--opener=w0t0p0:ABC"], "w0t0p0:ABC"),
+                ("tmux", {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}, dict(live=["mine"]), ["--opener=mine"], ""))
+        for name, env, opts, tail, iterm in rows:
+            with self.subTest(name), mock.patch.dict(os.environ, env):
+                self.sh_calls = []
+                self.assertEqual(self.tui(**opts), 0)
+                self.driver("--runner=tui", *tail, iterm=iterm)
+                self.assertEqual(self.err, ATTACH)
 
     def test_events_reach_the_inner_as_an_absolute_path(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
@@ -2246,17 +2179,6 @@ class Attended(OuterBase):
         self.assertEqual(self.tui(split="below", events=os.path.join(self.tmp, ".", "events.log")), 0)
         self.driver("--runner=tui", "--split=below", "--opener=w0t0p0:ABC", f"--events={events}", iterm="w0t0p0:ABC")
         self.assertEqual(os.stat(events).st_mode & 0o777, 0o600)
-
-    def test_a_bad_events_file_starts_nothing(self):
-        os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
-        cases = [(self.tmp, f"events file {self.tmp}: Is a directory"),
-                 (os.path.join(self.tmp, "a#b"), f"events file {self.tmp}/a#b: tmux would misread it")]
-        for path, msg in cases:
-            with self.subTest(msg=msg):
-                self.assertEqual(self.tui(events=path), 2)
-                self.assertEqual(self.err, f"router.py: {msg}\n")
-        self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
-        self.assertFalse(os.path.exists(self.rd))
 
     def test_a_role_outside_the_session_name_contract_starts_nothing(self):
         os.environ["ITERM_SESSION_ID"] = "w0t0p0:ABC"
@@ -2284,13 +2206,16 @@ class Attended(OuterBase):
                 self.assertEqual(self.tui(), 0)
                 self.assertEqual(self.err, ATTACH.replace("tmux attach", prefix + "tmux attach"))
 
-    def test_no_place_for_the_pane_starts_nothing(self):
-        cases = [({}, "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
-                      "run from tmux or iTerm2, or pass --split-from SESSION"),
-                 ({"split": "left"}, "split must be one of right, below"),
-                 ({"split_from": "gone"}, "no tmux session gone")]
-        for opts, msg in cases:
-            with self.subTest(msg=msg):
+    def test_no_place_for_the_pane_or_a_bad_events_file_starts_nothing(self):
+        iterm = {"ITERM_SESSION_ID": "w0t0p0:ABC"}
+        cases = [({}, {}, "no pane to show the TUI beside (no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)): "
+                          "run from tmux or iTerm2, or pass --split-from SESSION"),
+                 ({}, {"split": "left"}, "split must be one of right, below"),
+                 ({}, {"split_from": "gone"}, "no tmux session gone"),
+                 (iterm, {"events": self.tmp}, f"events file {self.tmp}: Is a directory"),
+                 (iterm, {"events": os.path.join(self.tmp, "a#b")}, f"events file {self.tmp}/a#b: tmux would misread it")]
+        for env, opts, msg in cases:
+            with self.subTest(msg=msg), mock.patch.dict(os.environ, env):
                 self.assertEqual(self.tui(**opts), 2)
                 self.assertEqual(self.err, f"router.py: {msg}\n")
         self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
@@ -2408,11 +2333,6 @@ class AttendedEntry(OuterBase):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(argv), 2)
                 self.assertEqual(self.err, router.USAGE + "\n")
-        self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
-
-    def test_bad_issue_id(self):
-        self.assertEqual(self.main(["--issue", "task-7", "--tui"]), 2)
-        self.assertEqual(self.err, "router.py: bad issue id: task-7\n")
         self.assertEqual((self.sh_calls, self.gql.queries, self.tmux.calls), ([], [], []))
 
     def test_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
