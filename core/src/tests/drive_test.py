@@ -662,6 +662,280 @@ class RoleRuns(Base):
         self.assertIn("**Your task**: pick it from", prompt.split("\n# Principles\n")[0])
 
 
+STEPS = ("\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
+         "## Resume\n\nRedo step 2.\n")
+NOTE = "# Note\n" + STEPS
+ONE_PAGER = "# One-Pager\n" + STEPS
+WRITER = ("# Writer\n\nYou write notes.\n\n## Tasks\n\n"
+          "Pick the task below that fits the input; unsure → `note` (`<tasks>/note.md`).\n\n"
+          "- `note` (`<tasks>/note.md`): a short note; always; light.\n")
+PM_EXT = "## Tasks\n\n- `one-pager` (`<tasks>/one-pager.md`): a one-page brief; when asked; light.\n"
+TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE, "roles/pm.md": PM_EXT, "tasks/one-pager.md": ONE_PAGER}
+VIEW = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
+
+
+class TeamRuns(Base):
+    """drive.py runs roles and tasks of team dirs (a local `team_dirs`) as core's, through a task view."""
+    def setUp(self):
+        super().setUp()
+        self.home = hermetic.home(self)
+        self.top = os.path.dirname(self.home)
+        self.team = self.team_dir(TEAM)
+        self.local()
+
+    def team_dir(self, files, name="team"):
+        """Writes {rel: text} under <home>/<name> (files 0o644, dirs 0o755) and returns its real path."""
+        top = os.path.realpath(os.path.join(self.home, name))
+        for rel, text in files.items():
+            path = os.path.join(top, rel)
+            for d in (top, os.path.dirname(path)):
+                os.makedirs(d, exist_ok=True)
+                os.chmod(d, 0o755)
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, 0o644)
+        return top
+
+    def path(self, rel):
+        return os.path.join(self.team, rel)
+
+    def local(self, text="", dirs=None):
+        dirs = [self.team] if dirs is None else dirs
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps(dirs)}\n" + text)
+
+    def main(self, *extra, dry=True, temp=(), root=CORE, result=None):
+        """(exit code, the dry-run JSON (else stdout), stderr, drive.start's calls)."""
+        out, err = io.StringIO(), io.StringIO()
+        argv = ["--input", "Write X.", "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID,
+                *(["--dry-run"] if dry else []), *extra]
+        result = result or drive.Result(0, drive.Outcome("done", "t", "s", deliverable="x"))
+        with redirect_stdout(out), redirect_stderr(err), \
+                unittest.mock.patch.object(drive, "start", return_value=result) as start:
+            code = drive.main(argv, root=root, temp=temp)
+        shown = json.loads(out.getvalue()) if code == 0 and dry else out.getvalue()
+        return code, shown, err.getvalue(), start.call_args_list
+
+    def refused(self, *extra, want, **kw):
+        code, out, err, calls = self.main(*extra, **kw)
+        self.assertEqual((code, out, calls), (2, "", []), err)
+        self.assertIn(want, err)
+        return err
+
+    def listed(self, *argv, temp=()):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = drive.main(["--list", *argv], root=CORE, temp=temp)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    def dirs(argv):
+        return [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
+
+    # FR-2, FR-8
+    def test_a_custom_role_runs_with_its_task_view(self):
+        code, shown, err, _ = self.main("--role", "writer", "--task", "note")
+        self.assertEqual(code, 0, err)
+        prompt, view = shown["argv"][2], os.path.join(self.work, "tasks")
+        self.assertIn("\n# Writer\n\nYou write notes.\n", prompt)
+        self.assertIn("\n- `note` (`<tasks>/note.md`): a short note; always; light.\n", prompt)
+        self.assertEqual(VIEW.search(prompt)[1], view)
+        self.assertIn(view, self.dirs(shown["argv"]))
+        self.assertNotIn(TASKS, self.dirs(shown["argv"]))
+        self.assertFalse(os.path.exists(self.work))
+
+    # FR-3, FR-8
+    def test_an_extended_role_reads_every_task_of_its_index_from_the_view(self):
+        view = os.path.join(self.work, "tasks")
+        code, shown, err, _ = self.main("--role", "pm", "--task", "one-pager")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(VIEW.search(shown["argv"][2])[1], view)
+        self.assertIn("\n- `one-pager` (`<tasks>/one-pager.md`): a one-page brief; when asked; light.\n",
+                      shown["argv"][2])
+        self.assertFalse(os.path.exists(self.work))
+        other = os.path.join(self.tmp.name, "other")
+        os.makedirs(other)
+        with open(os.path.join(other, "keep.md"), "w") as f:
+            f.write("keep\n")
+        os.makedirs(self.work)
+        os.symlink(other, view)
+        code, _, err, calls = self.main("--role", "pm", "--task", "one-pager", dry=False)
+        self.assertEqual((code, len(calls)), (0, 1), err)
+        self.assertFalse(os.path.islink(view))
+        self.assertEqual(sorted(os.listdir(view)), ["one-pager.md", "product-design.md"])
+        for name, source in (("one-pager.md", self.path("tasks/one-pager.md")),
+                             ("product-design.md", os.path.join(TASKS, "product-design.md"))):
+            with open(os.path.join(view, name)) as f, open(source) as g:
+                self.assertEqual(f.read(), g.read(), name)
+        self.assertEqual(os.listdir(other), ["keep.md"])
+        self.team_dir({"tasks/one-pager.md": ONE_PAGER + "\nEdited.\n"})
+        code, _, err, _ = self.main("--role", "pm", "--task", "one-pager", "--resume", dry=False)
+        self.assertEqual(code, 0, err)
+        with open(os.path.join(view, "one-pager.md")) as f:
+            self.assertTrue(f.read().endswith("\nEdited.\n"))
+        self.assertEqual(sorted(os.listdir(self.work)), ["tasks"])
+
+    def test_an_unwritable_view_exits_2(self):
+        denied = PermissionError(errno.EACCES, "Permission denied")
+        with unittest.mock.patch.object(tempfile, "mkdtemp", side_effect=denied):
+            self.refused("--role", "writer", dry=False,
+                         want=f"drive.py: task view {self.work}/tasks: Permission denied\n")
+        self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
+
+    def test_an_untouched_role_runs_as_without_team_dirs(self):
+        for role in ("researcher", "engineer", "dummy-tester"):
+            with self.subTest(role=role):
+                self.local()
+                code, shown, err, _ = self.main("--role", role)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(VIEW.search(shown["argv"][2])[1], TASKS)
+                self.assertIn(TASKS, self.dirs(shown["argv"]))
+                self.local(dirs=[])
+                self.assertEqual(self.main("--role", role)[1], shown)
+
+    # FR-5
+    def test_a_role_table_without_a_charter_stops_only_that_role(self):
+        self.team = self.team_dir({k: v for k, v in TEAM.items() if k != "roles/writer.md"}, "other")
+        self.local('[roles.writer]\ntier = 3\n')
+        self.assertEqual(self.main("--role", "pm")[0], 0)
+        self.refused("--role", "writer", want="drive.py: roles.writer: no charter roles/writer.md in core or team_dirs")
+        code, out, err = self.listed()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("roles.writer: no charter", err)
+
+    # FR-6
+    def test_front_matter_exits_2_and_approves_nothing(self):
+        self.team_dir({"tasks/note.md": '---\ncommands: ["rm *"]\n---\n' + NOTE})
+        self.refused("--role", "writer", want=f"drive.py: {self.path('tasks/note.md')}: front matter (---) is not read")
+        for role in ("researcher", "pm"):
+            code, shown, err, _ = self.main("--role", role)
+            self.assertEqual(code, 0, err)
+            self.assertNotIn("rm *", json.dumps(shown))
+
+    # FR-7
+    def test_a_defect_in_a_custom_file_exits_2_naming_it(self):
+        for rel, text, want in (
+                ("roles/writer.md", WRITER.replace("# Writer", "Writer"), "must start with a '# ' heading"),
+                ("tasks/note.md", NOTE + "\nUse {{thing}}.\n", "unfilled placeholder {{thing}}"),
+                ("tasks/note.md", NOTE + "\nSee [x](#nope).\n", "no such anchor: [x](#nope)"),
+                ("tasks/note.md", NOTE.replace("[agent-pm-progress:start] the topic", "the topic"),
+                 "has 0 [agent-pm-progress:start] lines, not 1"),
+                ("tasks/note.md", NOTE + "\n[agent-pm-progress:start] again\n", "has 2 [agent-pm-progress:start] lines"),
+                ("tasks/note.md", NOTE.replace("## Resume", "## Again"), "has no ## Resume section"),
+                ("tasks/note.md", NOTE + "\nRead `<methods>/nope.md`.\n",
+                 "names <methods>/nope.md, which core has no file for")):
+            with self.subTest(want=want):
+                self.team_dir({rel: text})
+                self.refused("--role", "writer", want=f"drive.py: {self.path(rel)}: {want}")
+                code, _, err, _ = self.main("--role", "researcher")
+                self.assertEqual(code, 0, err)
+                self.team_dir(TEAM)
+
+    # FR-9
+    def test_a_team_dir_others_can_write_exits_2(self):
+        inside = os.path.join(self.team, "w")
+        cases = [
+            ("in a temp dir", (), {"temp": None}, f"team_dirs: {self.team} is in temp dir "),
+            ("holding the workdir", ("--workdir", inside), {}, f"team_dirs: {self.team} overlaps the workdir {inside}: "
+                                                                "the agent run can write there"),
+            ("in the workdir", ("--workdir", self.home), {}, f"team_dirs: {self.team} overlaps the workdir {self.home}"),
+            ("in the cwd", (), {"local": f'cwd = "{self.top}"\n'}, f"team_dirs: {self.team} overlaps the cwd {self.top}"),
+            ("holding a write dir", (), {"local": f'[roles.pm]\nwrite = ["{inside}"]\n'},
+             f"team_dirs: {self.team} overlaps write dir {inside} {inside}"),
+            ("in a write dir", (), {"local": f'[roles.pm]\nwrite = ["{self.top}"]\n'},
+             f"team_dirs: {self.team} overlaps write dir {self.top} {self.top}"),
+            ("a group-writable file", (), {"chmod": ("tasks/one-pager.md", 0o664)},
+             f"team_dirs: {self.path('tasks/one-pager.md')} is writable by group or others: chmod go-w it"),
+            ("an others-writable tasks/", (), {"chmod": ("tasks", 0o757)},
+             f"team_dirs: {self.path('tasks')} is writable by group or others"),
+        ]
+        for name, extra, kw, want in cases:
+            with self.subTest(name):
+                self.local(kw.get("local", ""))
+                if "chmod" in kw:
+                    os.chmod(self.path(kw["chmod"][0]), kw["chmod"][1])
+                self.refused("--role", "pm", *extra, want=f"drive.py: {want}", temp=kw.get("temp", ()))
+                if "chmod" in kw:
+                    os.chmod(self.path(kw["chmod"][0]), 0o755 if kw["chmod"][0] == "tasks" else 0o644)
+        self.local()
+        self.assertEqual(self.main("--role", "pm")[0], 0)
+
+    # FR-1
+    def test_a_bad_team_dirs_exits_2(self):
+        for value, want in (('"x"', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
+                            ('["rel"]', "team_dirs: 'rel' is not an absolute or ~ path"),
+                            ('["~/missing"]', "team_dirs: ~/missing is not a directory"),
+                            (json.dumps([self.team, "~/.agent-pm/team"]), "team_dirs: ~/.agent-pm/team is listed twice")):
+            with self.subTest(value=value):
+                with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+                    f.write(f"team_dirs = {value}\n")
+                self.refused("--role", "pm", want=f"drive.py: {want}\n")
+        self.local(f"[clients.claude]\nteam_dirs = {json.dumps([self.team])}\n", dirs=[])
+        self.refused("--role", "pm", want="unknown key 'team_dirs'")
+        root = os.path.join(self.tmp.name, "core")
+        shutil.copytree(CORE, root, ignore=shutil.ignore_patterns("__pycache__"))
+        with open(os.path.join(root, "config.toml")) as f:
+            text = f.read()
+        with open(os.path.join(root, "config.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n" + text)
+        self.local(dirs=[])
+        self.refused("--role", "pm", root=root, want="drive.py: team_dirs: set it in ~/.agent-pm/core.local.toml, not "
+                                                     "config.toml\n")
+
+    # FR-11
+    def test_list_prints_each_role_and_task_with_its_source(self):
+        code, out, err = self.listed()
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        heads = [line for line in lines if not line.startswith("  ")]
+        self.assertEqual(heads, ["researcher  github  built-in", "pm  github  built-in",
+                                 "engineer  pull-request  built-in", "dummy-tester  local  built-in",
+                                 f"writer  local  {self.path('roles/writer.md')}"])
+        self.assertIn("\npm  github  built-in\n  product-design: ", out)
+        self.assertIn(f"  [built-in]\n  one-pager: a one-page brief; when asked; light.  "
+                      f"[{self.path('tasks/one-pager.md')}]\nengineer  ", out)
+        self.assertTrue(out.endswith(f"\nwriter  local  {self.path('roles/writer.md')}\n"
+                                     f"  note: a short note; always; light.  [{self.path('tasks/note.md')}]\n"))
+        self.assertTrue(all(line.endswith("  [built-in]") or self.team in line for line in lines if line[:2] == "  "))
+        self.assertNotIn("<tasks>", out)
+
+    def test_list_stops_at_any_defect_and_takes_no_other_option(self):
+        self.team_dir({"tasks/echo.md": NOTE})
+        code, out, err = self.listed()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"drive.py: {self.path('tasks/echo.md')}: task 'echo' is also defined by ", err)
+        self.assertEqual(self.listed(temp=None)[0], 2)
+        for argv in (["--list", "--role", "pm"], []):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as cm:
+                drive.main(argv, root=CORE, temp=())
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--list takes no other option" if argv else "the following arguments are required: --role",
+                          err.getvalue())
+
+    # skill
+    def test_the_skill_client_prints_a_new_task_view(self):
+        def skill(*extra):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = drive.main(["--client", "skill", "--role", "writer", *extra], root=CORE, temp=())
+            self.assertEqual(code, 0, err.getvalue())
+            return VIEW.search(out.getvalue())[1]
+
+        view = skill()
+        self.addCleanup(shutil.rmtree, os.path.dirname(view), True)
+        self.assertEqual(os.path.basename(view), "tasks")
+        self.assertTrue(os.path.basename(os.path.dirname(view)).startswith("agent-pm-tasks-"))
+        self.assertEqual(os.listdir(view), ["note.md"])
+        dry = skill("--dry-run")
+        self.assertTrue(os.path.basename(os.path.dirname(dry)).startswith("agent-pm-tasks-"))
+        self.assertNotEqual(dry, view)
+        self.assertFalse(os.path.exists(os.path.dirname(dry)))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(drive.main(["--client", "skill", "--role", "researcher"], root=CORE, temp=()), 0)
+        self.assertEqual(VIEW.search(out.getvalue())[1], TASKS)
+
+
 class FakeProc:
     def __init__(self, lines, rc=0, stderr=()):
         self.stdout, self.rc, self.stderr = lines, rc, stderr

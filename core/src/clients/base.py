@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import repo
-from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
+from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, View, lookup  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ class Launch:
     status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
     per_column: int | None = None   # the config's workers_per_column, set by drive.plan, for the tui runner
     retile: str | None = None       # the config's grid_retile, set by drive.plan, for the tui runner
+    view: View | None = None        # the run's task view, set by drive.plan; None: none
 
 
 @dataclass(frozen=True)
