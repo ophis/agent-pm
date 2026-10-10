@@ -987,7 +987,7 @@ class MainTest(WorkerCase):
 class ManagerDirTest(WorkerCase):
     """main's events file is the manager directory's (core/skills/tmux/SKILL.md › Start 1), attached first; start and
     next_event are fakes, the tmux session of the caller's pane `session` (none: outside tmux)."""
-    CMDS = (["start", "w1"], ["next-event", "--after", "0"])
+    CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
 
     def setUp(self):
         super().setUp()
@@ -1209,18 +1209,20 @@ class NextEventTest(unittest.TestCase):
         path = manager.events(manager.directory("m1"), create=False)
         self.append(nl(self.A, self.B), path)
         with self.sleeping():
-            self.assertEqual(self.run_main("--after", "1"), (0, f"2 {self.B}\n", ""))
+            self.assertEqual(self.run_main("--after", "1", "--gen", "0"), (0, f"2 {self.B}\n", ""))
         with self.sleeping(lambda: self.append(nl(self.C), path)):
-            self.assertEqual(self.run_main("--after", "end"), (0, f"3 {self.C}\n", ""))
+            self.assertEqual(self.run_main("--after", "end", "--gen", "0"), (0, f"3 {self.C}\n", ""))
 
     def test_main_error_exit(self):
         attached("--manager", "m1")
         err = workers.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
         with mock.patch.object(workers, "next_event", side_effect=err):
-            self.assertEqual(self.run_main("--after", "0"), (1, "", f"workers: {err}\n"))
+            self.assertEqual(self.run_main("--after", "0", "--gen", "0"), (1, "", f"workers: {err}\n"))
 
     def test_main_usage_error(self):
-        for argv in (["--after", "-1"], ["--after", "x"], ["--after", "1.5"], ["--after", ""], []):
+        for argv in (*(["--after", bad, "--gen", "0"] for bad in ("-1", "x", "1.5", "")),
+                     *(["--after", "1", "--gen", bad] for bad in ("-1", "x", "end", "")),
+                     ["--after", "1"], ["--gen", "0"], []):
             with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
                 workers.main(["next-event", "--manager", "m1", *argv])
             self.assertEqual(cm.exception.code, 2, argv)
@@ -1259,7 +1261,7 @@ class NextEventContentTest(WorkerCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(workers.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["next-event", "--manager", "m1", "--after", "0"])
+            rc = workers.main(["next-event", "--manager", "m1", "--after", "0", "--gen", "0"])
         return rc, out.getvalue(), err.getvalue()
 
     def pane(self, worker=True, fake=None):
@@ -1322,6 +1324,23 @@ SCRIPT = {"worker": "/x/workers.py", "role": "/x/drive.py", "pipeline": "/x/rout
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane\n"
 SHOWN = "1 /dev/ttys001\n"
 SHOW = tui_claude.show
+WIDTH = 64
+SPAN = manager.EVENTS_MAX // WIDTH
+
+
+def numbered(count, start=1):
+    """count event lines `12:00:00 w<i> done`, i from start, dot-padded to WIDTH bytes with their newline."""
+    return nl(*(f"12:00:00 w{i} done ".ljust(WIDTH - 1, ".") for i in range(start, start + count)))
+
+
+def tail(directory, n=0, gen=0, *backlog):
+    """What attach prints after the table for manager directory `directory`: the backlog, N and GEN, the arm
+    commands."""
+    me, events = shlex.quote(os.path.abspath(workers.__file__)), shlex.quote(os.path.join(directory, "events"))
+    name = os.path.basename(directory)
+    return nl(*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
+              f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen}",
+              f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}")
 
 
 def entry(kind="worker", **over):
@@ -1417,11 +1436,11 @@ class RosterCase(WorkerCase):
         self.path = os.path.join(self.mdir, "roster.json")
         self.lock = os.path.join(self.mdir, "roster.lock")
 
-    def seed(self, holder=None, cursor=0, **entries):
+    def seed(self, holder=None, cursor=0, gen=0, **entries):
         """roster.json holding these entries; returns its bytes."""
         manager.ensure(self.mdir)
         with open(self.path, "w") as f:
-            json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": 0, "entries": entries}, f)
+            json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": gen, "entries": entries}, f)
         return self.bytes()
 
     def bytes(self):
@@ -1494,7 +1513,7 @@ class AttachTest(RosterCase):
 
     def test_first_attach_makes_the_directory_and_files_and_takes_the_lease(self):
         with mock.patch.object(manager, "now", return_value=WHEN):
-            self.assertEqual(self.synced(Server()), HEADER)
+            self.assertEqual(self.synced(Server()), HEADER + tail(self.mdir))
         self.assertEqual(stat.S_IMODE(os.stat(self.mdir).st_mode), 0o700)
         for name in ("events", "roster.json", "roster.lock"):
             self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.mdir, name)).st_mode), 0o600, name)
@@ -1523,7 +1542,7 @@ class AttachTest(RosterCase):
         for holder in (None, {"session": "old", "since": WHEN}):
             with self.subTest(holder=holder):
                 self.seed(holder=holder)
-                self.assertEqual(self.attach(Server(None), "--manager", "mgr"), (0, HEADER, notice))
+                self.assertEqual(self.attach(Server(None), "--manager", "mgr"), (0, HEADER + tail(self.mdir), notice))
                 self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
     def test_outside_tmux_without_manager_exits_1_and_makes_nothing(self):
@@ -1579,7 +1598,7 @@ class AttachTest(RosterCase):
     def test_a_worker_without_a_session_is_gone(self):
         self.seed(w1=entry(state="blocked", pane="%4"))
         self.assertEqual(self.synced(Server()), HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
-                                                         f"resume w1: {PY} /x/workers.py --go\n")
+                                                         f"resume w1: {PY} /x/workers.py --go\n" + tail(self.mdir))
         self.assertEqual(self.entries()["w1"]["state"], "gone")
         self.assertEqual(self.shows, [])
 
@@ -1709,7 +1728,8 @@ class AttachTest(RosterCase):
         server = Server(sessions={name: opts(SID) for name in cases}, clients={n: c for n, (c, _) in cases.items()},
                         panes=panes)
         self.assertEqual(self.synced(server), HEADER + "".join(
-            f"{n}\tworker\t{SID}\tworking\t-\t/w\t-\tshown in {where}\n" for n, (_, where) in cases.items()))
+            f"{n}\tworker\t{SID}\tworking\t-\t/w\t-\tshown in {where}\n" for n, (_, where) in cases.items())
+                         + tail(self.mdir))
         self.assertEqual(server.ran("list-clients")[0], ["tmux", "list-clients", "-t", "=w1", "-F",
                                                          "#{client_activity} #{client_tty}"])
         self.assertEqual(server.ran("list-panes"), [["tmux", "list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]])
@@ -1741,14 +1761,15 @@ class AttachTest(RosterCase):
                                           f"resume B: {role}",
                                           "resume C: none (no sid)",
                                           f"resume a: {PY} /x/workers.py '; rm -rf ~'",
-                                          f"resume p1: {PY} /x/router.py --plan '/p q'"))
+                                          f"resume p1: {PY} /x/router.py --plan '/p q'") + tail(self.mdir))
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
-        self.assertEqual(shlex.split(out.splitlines()[-2].split(": ", 1)[1]), [PY, "/x/workers.py", "; rm -rf ~"])
+        self.assertEqual(shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/workers.py", "; rm -rf ~"])
 
     def test_an_invalid_entry_is_skipped_with_one_stderr_line(self):
         self.seed(w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/workers.py"]))
         rc, out, err = self.attach(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
-        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"))
+        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
+                                     + tail(self.mdir)))
         self.assertEqual(err, "manager: roster.json: entry 'bad': sid: '; rm -rf ~': want a session id or null\n"
                               "manager: roster.json: entry 'rel': resume[0]: 'python3': want an absolute path\n")
         self.assertEqual(set(self.entries()), {"w1"})
@@ -1783,7 +1804,8 @@ class AttachTest(RosterCase):
                 self.assertEqual(self.synced(server), HEADER + nl(f"w1\tworker\t{SID}\tworking\t-\t/w\t-",
                                                                   f"w2\tworker\t{SID2}\tworking\t-\t/w\t%9",
                                                                   "w3\tworker\t-\tgone\t-\t/w\t-",
-                                                                  f"resume w3: {PY} /x/workers.py --go"))
+                                                                  f"resume w3: {PY} /x/workers.py --go")
+                                 + tail(self.mdir))
                 self.assertEqual([s for s, _, _ in self.shows], ["w2"])
                 self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
                                  {"w1": (None, None), "w2": ("%9", "mgr"), "w3": (None, None)})
@@ -1794,7 +1816,8 @@ class AttachTest(RosterCase):
                 self.seed(w1=entry())
                 server = Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}, fail={"list-panes": fail})
                 self.assertEqual(self.synced(server),
-                                 HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n")
+                                 HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
+                                 + tail(self.mdir))
 
     def test_a_reopen_outside_tmux_prints_shows_messages_on_stderr(self):
         executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\n")
@@ -1802,7 +1825,7 @@ class AttachTest(RosterCase):
         with mock.patch.object(tui_claude, "show", SHOW):
             rc, out, err = self.attach(Server(None, sessions={"w1": opts(SID)}), "--manager", "mgr")
         cmd = tui_claude.attach_command("w1")
-        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n"))
+        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n" + tail(self.mdir)))
         self.assertEqual(err, f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
                               f"tui: session w1: {cmd}\n"
                               f"tui: show: {tui_claude.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
@@ -1811,7 +1834,7 @@ class AttachTest(RosterCase):
 class LeaseTest(RosterCase):
     """start and next-event check the lease (manager.check) before anything else and make nothing; start and
     next_event are fakes."""
-    CMDS = (["start", "w1"], ["next-event", "--after", "0"])
+    CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
 
     def setUp(self):
         super().setUp()
@@ -1858,12 +1881,14 @@ class LeaseTest(RosterCase):
                 self.assertEqual(self.ran(Server(), cmd), (0, "", True))
                 self.assertEqual(self.bytes(), before)
 
-    def test_allowed_outside_tmux_without_a_live_holder_writing_no_roster(self):
+    def test_allowed_outside_tmux_without_a_live_holder(self):
+        """start writes no roster; next-event writes the cursor it records, the holder left null."""
         manager.events(self.mdir)   # as drive.py and router.py --tui still make it
-        for cmd in self.CMDS:
-            with self.subTest(cmd=cmd[0]):
-                self.assertEqual(self.ran(Server(None), cmd), (0, "", True))
-                self.assertFalse(os.path.exists(self.path))
+        start, nxt = self.CMDS
+        self.assertEqual(self.ran(Server(None), start), (0, "", True))
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.ran(Server(None), nxt), (0, "", True))
+        self.assertEqual(json.loads(self.bytes()), {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}})
         before = self.seed(OTHER)
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0], holder="dead"):
@@ -1965,6 +1990,223 @@ class RosterCommandsTest(RosterCase):
         self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "forget", "w1"),
                          (1, "", "workers: tmux list-sessions: boom\n"))
         self.assertEqual(self.bytes(), before)
+
+
+class CursorTest(RosterCase):
+    """attach and next-event record the cursor; attach rotates and prints the backlog and the arm commands. mgr holds
+    the lease; next_event is a fake recording (events, after, the roster's cursor while it runs) in self.waits."""
+    BIG = SPAN * 11 // 10   # the lines of a 1.1 MiB events file
+    ROTATE = "workers: rotate: run workers.py attach, then arm with its N and GEN\n"
+
+    def setUp(self):
+        super().setUp()
+        self.mevents = os.path.join(self.mdir, "events")
+        self.old = self.mevents + ".1"
+        self.waits = []
+        p = mock.patch.object(workers, "next_event", side_effect=self.wait)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def wait(self, events, after):
+        self.waits.append((events, after, json.loads(self.bytes())["cursor"]))
+        return after + 1, "12:00:00 w1 outcome done"
+
+    def fill(self, data, cursor=0, gen=0):
+        """mgr's events file holding data, its roster held by mgr at cursor and gen; returns the roster's bytes."""
+        before = self.seed(MGR, cursor=cursor, gen=gen)
+        with open(self.mevents, "wb") as f:
+            f.write(data if isinstance(data, bytes) else data.encode())
+        return before
+
+    def read(self, path=None):
+        with open(path or self.mevents, "rb") as f:
+            return f.read()
+
+    def cursor(self):
+        r = json.loads(self.bytes())
+        return r["cursor"], r["gen"]
+
+    def attach(self, *argv, own="mgr"):
+        return self.run_main(Server(own), "attach", "--manager", "mgr", *argv)
+
+    def next_event(self, after, gen=0):
+        return self.run_main(Server(), "next-event", "--after", str(after), "--gen", str(gen))
+
+    def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
+        events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
+        self.fill(nl(*events), cursor=3)
+        me = shlex.quote(os.path.abspath(workers.__file__))
+        self.assertEqual(self.attach(), (0, HEADER + nl(
+            f"4 {events[3]}", f"5 {events[4]}", "N=3 GEN=0", f"monitor: tail -n +4 -F {self.mevents}",
+            f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0",
+            f"next-event: python3 {me} next-event --manager mgr --after 3 --gen 0"), ""))
+        self.assertEqual(self.cursor(), (3, 0))
+
+    def test_the_backlog_skips_a_non_event_line_but_counts_it(self):
+        self.fill(b"12:00:01 w1 done\ngarbage\n\n12:00:04 w1 caf\xc3\xa9 \xff\n12:00:05 w2 blocked\n12:00:06 w1 do",
+                  cursor=1)
+        self.assertEqual(self.attach(), (0, HEADER + tail(self.mdir, 1, 0, "4 12:00:04 w1 café �",
+                                                          "5 12:00:05 w2 blocked"), ""))
+
+    def test_attach_quotes_the_paths_it_prints(self):
+        home = os.path.join(self.dir, "it's a home")
+        os.mkdir(home)
+        script = os.path.join(self.dir, "my scripts", "workers.py")
+        with mock.patch.dict(os.environ, {"HOME": home}), mock.patch.object(workers, "__file__", script):
+            rc, out, err = self.attach()
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual([shlex.split(line.split(": ", 1)[1]) for line in out.splitlines()[-3:]],
+                         [["tail", "-n", "+1", "-F", os.path.join(home, ".agent-pm", "managers", "mgr", "events")],
+                          ["python3", script, "attach", "--manager", "mgr", "--after", "LINE", "--gen", "0"],
+                          ["python3", script, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0"]])
+
+    def test_attach_after_records_the_cursor_which_only_moves_forward(self):
+        lines = numbered(9).splitlines()
+        self.fill(numbered(9))
+        self.assertEqual(self.attach("--after", "7", "--gen", "0"),
+                         (0, HEADER + tail(self.mdir, 7, 0, f"8 {lines[7]}", f"9 {lines[8]}"), ""))
+        self.assertEqual(self.next_event(5), (0, "6 12:00:00 w1 outcome done\n", ""))
+        self.assertEqual((self.cursor(), self.waits), ((7, 0), [(self.mevents, 5, 7)]))
+        self.assertEqual(self.attach()[1].splitlines()[-4], "N=7 GEN=0")
+        self.assertEqual(self.cursor(), (7, 0))
+
+    def test_attach_refuses_stale_line_numbers_writing_nothing(self):
+        cases = {"an old gen": (["--after", "7", "--gen", "0"],
+                                "stale line numbers (gen 0, now 1): run workers.py attach"),
+                 "past the end": (["--after", "10", "--gen", "1"],
+                                  f"line 10 is past the end of {self.mevents} (9 lines): run workers.py attach")}
+        for why, (argv, msg) in cases.items():
+            with self.subTest(why):
+                before = self.fill(numbered(9), cursor=2, gen=1)
+                self.assertEqual(self.attach(*argv), (1, "", f"workers: {msg}\n"))
+                self.assertEqual(self.bytes(), before)
+
+    def test_attach_after_and_gen_go_together_as_numbers(self):
+        alone = "workers.py: error: --after and --gen go together\n"
+        for argv, want in ((["--after", "3"], alone), (["--gen", "0"], alone), (["--after", "end", "--gen", "0"], None),
+                           (["--after", "-1", "--gen", "0"], None), (["--after", "1", "--gen", "x"], None)):
+            with self.subTest(argv=argv):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+                    workers.main(["attach", "--manager", "mgr", *argv])
+                self.assertEqual(cm.exception.code, 2)
+                if want:
+                    self.assertTrue(err.getvalue().endswith(want), err.getvalue())
+                self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_attach_rotates_keeping_the_lines_after_the_cursor(self):
+        data = numbered(self.BIG)
+        backlog = [f"{i} {line}" for i, line in enumerate(data.splitlines()[-3:], 1)]
+        cases = {"at the cursor": (self.BIG - 3, []),
+                 "--after below the cursor": (self.BIG - 3, ["--after", "5", "--gen", "0"]),
+                 "--after recorded first": (0, ["--after", str(self.BIG - 3), "--gen", "0"])}
+        for why, (cursor, argv) in cases.items():
+            with self.subTest(why):
+                self.sleep.reset_mock()
+                self.fill(data, cursor)
+                ino = os.lstat(self.mevents).st_ino
+                self.assertEqual(self.attach(*argv), (0, HEADER + tail(self.mdir, 0, 1, *backlog), ""))
+                self.assertEqual(self.cursor(), (0, 1))
+                self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, data.encode()))
+                self.assertEqual(self.read(), "".join(data.splitlines(keepends=True)[-3:]).encode())
+                self.sleep.assert_called_once_with(manager.SETTLE)
+        before = self.bytes()
+        self.assertEqual(self.attach("--after", "2", "--gen", "0"),
+                         (1, "", "workers: stale line numbers (gen 0, now 1): run workers.py attach\n"))
+        self.assertEqual(self.bytes(), before)
+
+    def test_attach_refuses_a_symlinked_events_1_renaming_nothing(self):
+        data = numbered(self.BIG).encode()
+        before = self.fill(data, self.BIG - 3)
+        os.symlink(os.path.join(self.dir, "target"), self.old)
+        self.assertEqual(self.attach(), (1, "", f"workers: {self.old}: not a regular file owned by you\n"))
+        self.assertEqual((self.bytes(), self.read(), os.path.islink(self.old)), (before, data, True))
+
+    def test_a_failed_list_sessions_with_a_rotation_due_renames_nothing(self):
+        data = numbered(self.BIG).encode()
+        before = self.fill(data, self.BIG - 3)
+        self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "attach"),
+                         (1, "", "workers: tmux list-sessions: boom\n"))
+        self.assertEqual((self.bytes(), self.read(), os.path.exists(self.old)), (before, data, False))
+
+    def test_attach_after_a_failed_copy_still_numbers_the_new_events(self):
+        data = numbered(self.BIG).encode()
+        self.fill(data, self.BIG - 3)
+        real = os.open
+
+        def open_(path, flags, *args, **kw):
+            if path == self.mevents and flags & os.O_APPEND and flags & os.O_NONBLOCK:
+                raise OSError(errno.EIO, "Input/output error")
+            return real(path, flags, *args, **kw)
+
+        with mock.patch("os.open", open_):
+            rc, out, err = self.attach()
+        self.assertEqual((rc, out), (0, HEADER + tail(self.mdir, 0, 1)))
+        self.assertEqual(err, f"manager: rotate: {self.mevents}: Input/output error: lines after {self.BIG - 3} of "
+                              f"{self.old} not copied\n")
+        self.assertEqual((self.cursor(), self.read(self.old), self.read()), ((0, 1), data, b""))
+
+    def test_next_event_records_the_line_before_it_waits(self):
+        self.fill(numbered(5) + "12:00:00 w6 do")
+        self.assertEqual(self.next_event(3), (0, "4 12:00:00 w1 outcome done\n", ""))
+        self.assertEqual(self.next_event("end"), (0, "6 12:00:00 w1 outcome done\n", ""))
+        self.assertEqual(self.waits, [(self.mevents, 3, 3), (self.mevents, 5, 5)])
+
+    def test_next_event_refuses_stale_line_numbers_on_stdout_writing_nothing(self):
+        cases = {"past the end": (9, 2, f"line 9 is past the end of {self.mevents} (5 lines): run workers.py attach"),
+                 "an old gen": (3, 1, "stale line numbers (gen 1, now 2): run workers.py attach")}
+        for why, (after, gen, msg) in cases.items():
+            with self.subTest(why):
+                before = self.fill(numbered(5), cursor=2, gen=2)
+                self.assertEqual(self.next_event(after, gen), (1, f"workers: {msg}\n", ""))
+                self.assertEqual(self.bytes(), before)
+        self.assertEqual(self.waits, [])
+
+    def test_next_event_records_then_refuses_when_a_rotation_is_due(self):
+        data = numbered(self.BIG).encode()
+        self.fill(data)
+        self.assertEqual(self.next_event(self.BIG - 3), (1, self.ROTATE, ""))
+        self.assertEqual((self.cursor(), self.waits, self.read(), os.path.exists(self.old)),
+                         ((self.BIG - 3, 0), [], data, False))
+
+    def test_next_event_waits_on_exactly_events_max_bytes(self):
+        self.fill(numbered(SPAN))
+        self.assertEqual(self.next_event(SPAN), (0, f"{SPAN + 1} 12:00:00 w1 outcome done\n", ""))
+        self.assertEqual(self.waits, [(self.mevents, SPAN, SPAN)])
+
+    def test_unhandled_lines_past_events_max_rotate_only_once_half_is_handled(self):
+        """events over EVENTS_MAX, all of it after the cursor: next-event waits and attach keeps the file until the
+        handled bytes reach EVENTS_MAX // 2."""
+        data = numbered(SPAN + 1).encode()
+        self.fill(data)
+        half = SPAN // 2
+        for k in (1, 2, 3, half - 1):
+            with self.subTest(k=k):
+                self.assertEqual(self.next_event(k), (0, f"{k + 1} 12:00:00 w1 outcome done\n", ""))
+        rc, out, err = self.attach()
+        self.assertEqual((rc, err, out.splitlines()[-4]), (0, "", f"N={half - 1} GEN=0"))
+        self.assertEqual((self.read(), os.path.exists(self.old)), (data, False))
+        self.assertEqual(self.next_event(half), (1, self.ROTATE, ""))
+        self.assertEqual((self.cursor(), self.read()), ((half, 0), data))
+
+    def test_next_event_refuses_a_fifo_events_on_stderr(self):
+        before = self.seed(MGR)
+        os.mkfifo(self.mevents)
+        with within():
+            self.assertEqual(self.next_event(0), (1, "", f"workers: {self.mevents}: not a regular file owned by you\n"))
+        self.assertEqual(self.bytes(), before)
+
+    def test_an_interrupted_next_event_leaves_its_line_for_the_next_manager(self):
+        """FR-15: next-event --after 12 interrupted, the lease released, another session's attach resumes after 12."""
+        data = numbered(15)
+        self.fill(data)
+        with mock.patch.object(workers, "next_event", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            self.next_event(12)
+        self.assertEqual(self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", ""))
+        backlog = [f"{i} {line}" for i, line in enumerate(data.splitlines()[12:], 13)]
+        self.assertEqual(self.attach(own="m2"), (0, HEADER + tail(self.mdir, 12, 0, *backlog), ""))
+        self.assertEqual(json.loads(self.bytes())["holder"]["session"], "m2")
 
 
 if __name__ == "__main__":
