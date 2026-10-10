@@ -646,7 +646,7 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
     argv unblocks them (main). Raises RunnerError. With opener (the run's, tui_claude.OPENER), the session gets it as
-    @opener, as its tui session does (`workers.py stop-all` finds it so), no @pane: a failure only prints its line.
+    @opener, as its tui session does (`crew.py stop-all` finds it so), no @pane: a failure only prints its line.
     With roster (a manager directory, manager.entry's keyword arguments), once the session runs it writes that entry as
     `name` (manager.put, no lease check); an entry write failure only prints its line (manager.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken

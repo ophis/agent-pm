@@ -2176,7 +2176,7 @@ class Detach(Base):
 
     def test_a_tui_run_detached_from_an_attached_session_gets_its_role_entry_under_the_driver_name(self):
         hermetic.home(self)
-        manager.events(manager.directory("mgr"))   # as workers.py attach
+        manager.events(manager.directory("mgr"))   # as crew.py attach
         os.environ.update(INSIDE)
         code, err, _, handover = self.outer("--runner", "tui", "--task", "echo", "--repo", self.repo, "--client",
                                             "claude", "--split", "below", "--split-from", "s", "--prefix", "p",
