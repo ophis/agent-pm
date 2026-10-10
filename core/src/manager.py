@@ -1,9 +1,9 @@
-"""A manager's directory, ~/.agent-pm/managers/<name>/: the fixed home of its `events` file, which workers.py (start,
+"""A manager's directory, ~/.agent-pm/managers/<name>/: the fixed home of its `events` file, which crew.py (start,
 next-event), drive.py (--runner tui, --detach) and router.py --tui use when given no --events (all but next-event
 append to it), and of its roster, roster.json, written only under the flock on roster.lock (both 0600).
 
 <name> is [A-Za-z0-9_-]+, resolved (directory) as `--manager <name>`, else the caller's tmux session
-(tui_claude.own_session), else none. `workers.py attach` creates it (ensure) and `events` (0600, a regular file of the
+(tui_claude.own_session), else none. `crew.py attach` creates it (ensure) and `events` (0600, a regular file of the
 caller's: tui_claude.events_file); `drive.py` and `router.py --tui` still may. ~/.agent-pm is made when missing and not
 checked; managers/ and <name>/ are made one level at a time, 0700 whatever the umask. One that exists keeps its mode but
 must be a directory (not a symlink) owned by the caller, and <name>/ also with no group or other permission bits (every
@@ -13,9 +13,9 @@ ManagerError.
 roster.json: a regular file of the caller's, at most ROSTER_MAX bytes (a symlink, a FIFO or a foreign file is refused),
 JSON (indent 2, sorted keys), written through a temp file and os.replace. Missing: version 1, holder null, cursor 0,
 gen 0, no entries. An entry is written by the script that starts the subordinate, at start, replacing one of the same
-name (record): workers.py start (a worker, under its name), drive.detach for drive.py --detach (a role) and
-router.py --tui (a pipeline), keyed by the driver session. `workers.py stop` removes one with its sessions (stop),
-`workers.py forget` one whose sessions are gone.
+name (record): crew.py start (a worker, under its name), drive.detach for drive.py --detach (a role) and
+router.py --tui (a pipeline), keyed by the driver session. `crew.py stop` removes one with its sessions (stop),
+`crew.py forget` one whose sessions are gone.
   {"version": 1, "holder": null | {"session": NAME, "since": time}, "cursor": int >= 0, "gen": int >= 0,
    "entries": {NAME: entry}}
 Exactly these keys (holder's: session, since), else ManagerError and the file untouched. An entry has exactly these
@@ -24,7 +24,7 @@ it):
   kind              worker | role | pipeline
   sid               SID or null
   cwd               an absolute path, printable
-  resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to workers.py, drive.py or
+  resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to crew.py, drive.py or
                     router.py
   note              null, or printable with at most NOTE_MAX characters
   opener            tui_claude.OPENER or null
@@ -38,7 +38,7 @@ U+2029, so a printed field stays one table cell or one command.
 
 cursor: the number of the last `events` line handled (lines count from 1, each ending in a newline: a trailing fragment
 is not one yet; 0: none). gen: the generation of `events`, + 1 per rotation; a line number means something only with its
-gen. `workers.py next-event --after N --gen G` and `workers.py attach --after N --gen G` (the Monitor re-arm) move the
+gen. `crew.py next-event --after N --gen G` and `crew.py attach --after N --gen G` (the Monitor re-arm) move the
 cursor (advance), only forward; a rotation sets it 0. Rotation (rotate) runs only inside `attach`, under roster.lock, when
 due (due): `events` becomes `events.1`, the previous generation (replaced by the next rotation), and a fresh `events` gets
 its lines after the cursor.
@@ -68,7 +68,7 @@ VERSION = 1
 KINDS = ("worker", "role", "pipeline")
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
-SCRIPTS = ("workers.py", "drive.py", "router.py")
+SCRIPTS = ("crew.py", "drive.py", "router.py")
 TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = ("kind", "sid", "cwd", "resume", "note", "opener", "pane", "split", "split_from", "tui", "state", "started")
 NOTE_MAX = 500
@@ -108,7 +108,7 @@ def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
 
 
 def _not_attached(directory: str) -> ManagerError:
-    return ManagerError(f"manager directory {directory} not attached: run workers.py attach first")
+    return ManagerError(f"manager directory {directory} not attached: run crew.py attach first")
 
 
 def _checked(path: str, *, private: bool = False) -> None:
@@ -428,7 +428,7 @@ def _holds(r: dict, directory: str, own: str | None, proc) -> bool:
         return True
     if _live(holder["session"], proc):
         raise Held(f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
-                   "ask that manager to run workers.py release, or end that session")
+                   "ask that manager to run crew.py release, or end that session")
     return False
 
 
@@ -591,13 +591,13 @@ def advance(r: dict, directory: str, after: int | None, gen: int) -> int:
     becomes the larger; returns `after` resolved. Stale when gen is not the roster's (checked first) or `after` is past
     the end."""
     if gen != r["gen"]:
-        raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run workers.py attach")
+        raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run crew.py attach")
     path = events(directory, create=False)
     n = lines(path)
     if after is None:
         after = n
     elif after > n:
-        raise Stale(f"line {after} is past the end of {path} ({n} lines): run workers.py attach")
+        raise Stale(f"line {after} is past the end of {path} ({n} lines): run crew.py attach")
     r["cursor"] = max(r["cursor"], after)
     return after
 

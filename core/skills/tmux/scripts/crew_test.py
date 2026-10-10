@@ -16,14 +16,14 @@ import uuid
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import workers  # noqa: E402
-sys.path.insert(0, os.path.join(workers.CORE, "src", "tests"))
+import crew  # noqa: E402
+sys.path.insert(0, os.path.join(crew.CORE, "src", "tests"))
 import hermetic  # noqa: E402
 
-manager = workers.manager
+manager = crew.manager
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
-tui_claude = workers.tui_claude
+tui_claude = crew.tui_claude
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 RUNNING_PANE, DEAD_PANE = "0  \n", "1 1 \n"
 ERROR = "Error: --session-id can only be used with --continue or --resume if --fork-session is also specified."
@@ -31,7 +31,7 @@ DEAD_LINE = "Pane is dead (status 1, Wed Oct  7 19:54:08 2026)"
 DEAD_TEXT = f"{ERROR}\n" + "\n" * 40 + f"{DEAD_LINE}\n" + "\n" * 10
 DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD_LINE}"
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
-WORKERS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workers.py")
+CREW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py")
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
 
 
@@ -51,7 +51,7 @@ def isolate(case):
 
 def no_sleep(case):
     """time.sleep as a recorder, `case.sleep`, for the rest of `case`'s test."""
-    p = mock.patch.object(workers.time, "sleep")
+    p = mock.patch.object(crew.time, "sleep")
     case.sleep = p.start()
     case.addCleanup(p.stop)
 
@@ -59,7 +59,7 @@ def no_sleep(case):
 @contextlib.contextmanager
 def spawned():
     """tui_claude.start as a recorder, yielded, and every session running (tui_claude.status): the rest of
-    workers.start runs, on a fake tmux, without a session."""
+    crew.start runs, on a fake tmux, without a session."""
     with mock.patch.object(tui_claude, "start") as start, \
             mock.patch.object(tui_claude, "status", return_value=tui_claude.RUNNING):
         yield start
@@ -173,7 +173,7 @@ class StartTest(unittest.TestCase):
         self.events = os.path.join(self.directory, "events")
         self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h",
                     "CLAUDE_JOB_DIR": "/j"}
-        for k in workers.STRIP:
+        for k in crew.STRIP:
             self.env[k] = "x"
         spy = mock.patch.object(tui_claude, "start", wraps=tui_claude.start)
         self.tui = spy.start()
@@ -183,23 +183,23 @@ class StartTest(unittest.TestCase):
     def start(self, fake, name="w1", **kw):
         kw.setdefault("cwd", self.dir)
         kw.setdefault("env", self.env)
-        return workers.start(name, self.directory, own=None, proc=fake, **kw)
+        return crew.start(name, self.directory, own=None, proc=fake, **kw)
 
     def layout(self):
         kw = self.tui.call_args.kwargs
         return kw["split_from"], kw["split"]
 
     def test_tui_claude_in_process(self):
-        self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(workers.CORE), "src",
+        self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(crew.CORE), "src",
                                                                              "tui_claude.py"))
-        self.assertTrue(os.path.isfile(os.path.join(workers.CORE, ".claude-plugin", "plugin.json")))
+        self.assertTrue(os.path.isfile(os.path.join(crew.CORE, ".claude-plugin", "plugin.json")))
 
     def test_tui_claude_call(self):
         fake = Fake()
         sid = self.start(fake, prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
-        env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
+        env = {k: v for k, v in self.env.items() if k not in crew.STRIP}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
                                          split_from=None, per_column=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
@@ -233,7 +233,7 @@ class StartTest(unittest.TestCase):
         self.start(fake, env={**self.env, "PWD": "/elsewhere"})
         self.assertEqual(fake.handover["cwd"], self.dir)
         env = fake.handover["env"]
-        for k in (*workers.STRIP, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
+        for k in (*crew.STRIP, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
             self.assertNotIn(k, env)
         self.assertEqual({k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME", "PWD")},
                          {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h", "PWD": self.dir})
@@ -265,7 +265,7 @@ class StartTest(unittest.TestCase):
                                                                     if c[1] == "set-option"))
 
     def test_a_failed_tmux_call_kills_the_session_before_any_watch(self):
-        """A worker option failing: workers.py kills the session, a failing kill ignored; tui_claude's decoration
+        """A worker option failing: crew.py kills the session, a failing kill ignored; tui_claude's decoration
         failing: tui_claude kills it, no worker option set. An OSError: a WorkersError. No early watch (_early)."""
         def oserror(*words):
             return lambda argv: all(w in argv for w in words)
@@ -281,7 +281,7 @@ class StartTest(unittest.TestCase):
                 self.sleep.reset_mock()
                 fake = Fake()
                 fake.fail_set, fake.oserror = fail, err
-                with self.assertRaisesRegex(workers.WorkersError, regex):
+                with self.assertRaisesRegex(crew.WorkersError, regex):
                     self.start(fake)
                 self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
                 self.assertEqual("@sid" in fake.options(), options)
@@ -300,7 +300,7 @@ class StartTest(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), mode)
 
     def assert_fails(self, fake, **kw):
-        with self.assertRaises(workers.WorkersError) as cm:
+        with self.assertRaises(crew.WorkersError) as cm:
             self.start(fake, **kw)
         self.assertEqual([c for c in fake.calls if len(c) > 1 and c[1] in ("set-option", "set-hook")], [])
         return str(cm.exception)
@@ -324,14 +324,14 @@ class StartTest(unittest.TestCase):
                     with self.subTest(resume=resume, given=given):
                         fake = Fake()
                         msg = self.assert_fails(fake, resume=resume, flags=("--model", "m", *given))
-                        self.assertEqual(msg, f"{flag}: workers.py picks the session; use start --resume <sid>")
+                        self.assertEqual(msg, f"{flag}: crew.py picks the session; use start --resume <sid>")
                         self.assertEqual(fake.calls, [])
 
     def test_directory_missing(self):
         self.directory = os.path.join(self.dir, "nope")
         fake = Fake()
         self.assertEqual(self.assert_fails(fake),
-                         f"manager directory {self.directory} not attached: run workers.py attach first")
+                         f"manager directory {self.directory} not attached: run crew.py attach first")
         self.assertEqual(fake.new_sessions(), [])
         self.assertFalse(os.path.exists(self.directory))
 
@@ -350,9 +350,9 @@ class StartTest(unittest.TestCase):
         fifo = mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
         none = contextlib.nullcontext
         cases = {"events a symlink": (symlinked(), {}, self.events),
-                 "events not owned": (mock.patch.object(workers.os, "getuid", return_value=os.getuid() + 1), {},
+                 "events not owned": (mock.patch.object(crew.os, "getuid", return_value=os.getuid() + 1), {},
                                       "owned"),
-                 "events not regular": (mock.patch.object(workers.os, "fstat", return_value=fifo), {}, "regular"),
+                 "events not regular": (mock.patch.object(crew.os, "fstat", return_value=fifo), {}, "regular"),
                  "claude not on PATH": (none(), {"env": {**self.env, "PATH": os.path.join(self.dir, "empty")}},
                                         "claude not found on PATH"),
                  "cwd missing": (none(), {"cwd": os.path.join(self.dir, "nope")}, "not a directory")}
@@ -386,7 +386,7 @@ class StartTest(unittest.TestCase):
             with self.subTest(text):
                 local(self, text)
                 fake = Fake()
-                with self.assertRaisesRegex(workers.WorkersError, f"core config: {msg}"):
+                with self.assertRaisesRegex(crew.WorkersError, f"core config: {msg}"):
                     self.start(fake)
                 self.assertEqual(fake.calls, [])
 
@@ -396,7 +396,7 @@ class StartTest(unittest.TestCase):
                 fake = Fake()
                 self.start(fake, **kw)
                 self.assertEqual(self.layout(), (kw.get("split_from"), kw.get("split")))
-                self.assertNotIn("list-sessions", [c[1] for c in fake.calls if c[-1] != workers.LIVE])
+                self.assertNotIn("list-sessions", [c[1] for c in fake.calls if c[-1] != crew.LIVE])
 
 
 class WorkerCase(unittest.TestCase):
@@ -416,7 +416,7 @@ class WorkerCase(unittest.TestCase):
         no_sleep(self)
 
     def started(self, fake, flags=("--model", "m c")):
-        return workers.start("w1", self.directory, own=None, cwd=self.dir, flags=flags, env=self.env, proc=fake)
+        return crew.start("w1", self.directory, own=None, cwd=self.dir, flags=flags, env=self.env, proc=fake)
 
 
 class ContainerTest(WorkerCase):
@@ -440,7 +440,7 @@ class ContainerTest(WorkerCase):
         with mock.patch.dict(os.environ, {"TMUX": f"{sock},42,0", "TMUX_PANE": "%0", "PATH": self.bin}, clear=True), \
                 contextlib.redirect_stderr(err):
             for name in ("w1", "w2"):
-                workers.start(name, self.directory, own=None, cwd=self.dir, env=self.env, proc=fake)
+                crew.start(name, self.directory, own=None, cwd=self.dir, env=self.env, proc=fake)
         self.assertEqual([c for c in fake.calls if c[1] == "split-window"], [
             ["tmux", "split-window", "-d", flag, "-P", "-F", "#{pane_id}", "-t", pane,
              "env", "-u", "TMUX", tmux, "-S", sock, "attach", "-t", f"={name}"]
@@ -474,8 +474,8 @@ class EarlyDeathTest(WorkerCase):
             self.started(fake)
             self.sleep.reset_mock()
         setup(fake)
-        with self.assertRaises(workers.WorkersError) as cm:
-            self.started(fake) if run == "start" else workers.restart("w1", env=self.env, proc=fake)
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.started(fake) if run == "start" else crew.restart("w1", env=self.env, proc=fake)
         return str(cm.exception)
 
     def capture(self):
@@ -488,7 +488,7 @@ class EarlyDeathTest(WorkerCase):
         last = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option")
         self.assertEqual(fake.calls[last][:5], ["tmux", "set-option", "-t", "=w1:", "@flags"])
         self.assertEqual(fake.calls[last + 1:],
-                         [["tmux", "list-sessions", "-F", workers.LIVE], *[["sleep", 0.5], status_call()] * 10])
+                         [["tmux", "list-sessions", "-F", crew.LIVE], *[["sleep", 0.5], status_call()] * 10])
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
 
     def test_restart_watches_a_running_pane_for_5_s(self):
@@ -496,7 +496,7 @@ class EarlyDeathTest(WorkerCase):
         self.started(fake)
         self.sleep.reset_mock()
         self.interleaved(fake)
-        workers.restart("w1", env=self.env, proc=fake)
+        crew.restart("w1", env=self.env, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
         self.assertEqual(fake.calls[at + 1:], [["sleep", 0.5], status_call()] * 10)
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
@@ -563,10 +563,10 @@ class RestartTest(WorkerCase):
         """With the caller's env minus STRIP, its PWD the worker's cwd; the command printed on stderr and returned."""
         fake = Fake()
         sid = self.started(fake)
-        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in workers.STRIP}}
+        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in crew.STRIP}}
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            cmd = workers.restart("w1", env=caller, proc=fake)
+            cmd = crew.restart("w1", env=caller, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
         respawn = fake.calls[at][fake.calls[at].index("respawn-pane"):-1]
         self.assertEqual(respawn, ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tui_claude.EXEC])
@@ -578,14 +578,14 @@ class RestartTest(WorkerCase):
         self.assertEqual(shlex.split(cmd), resumed)
         self.assertEqual(err.getvalue(), cmd + "\n")
         for k in ("CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
-            self.assertIn(k, workers.STRIP)
+            self.assertIn(k, crew.STRIP)
 
     def test_own_settings_merged_with_the_hooks(self):
         own = {"type": "command", "command": "mine"}
         flags = ("--settings", json.dumps({"model": "x", "hooks": {"Stop": [{"hooks": [own]}]}}))
         fake = Fake()
         self.started(fake, flags=flags)
-        workers.restart("w1", env=self.env, proc=fake)
+        crew.restart("w1", env=self.env, proc=fake)
         words = fake.handover["argv"]
         self.assertEqual(words.count("--settings"), 1)
         settings = json.loads(words[words.index("--settings") + 1])
@@ -602,7 +602,7 @@ class RestartTest(WorkerCase):
                 self.started(fake)
                 local(self, f"status_line = {status_line}\n")
                 n = len(fake.calls)
-                workers.restart("w1", env=self.env, proc=fake)
+                crew.restart("w1", env=self.env, proc=fake)
                 tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
                 self.assertEqual(tail[:-1], [*decorate_calls(self.events, status_line=status_line == "true"),
                                              ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
@@ -630,8 +630,8 @@ class RestartTest(WorkerCase):
                 self.started(fake)
                 setup(fake)
                 fake.handover = None
-                with self.assertRaisesRegex(workers.WorkersError, regex):
-                    workers.restart("w1", env=self.env, proc=fake)
+                with self.assertRaisesRegex(crew.WorkersError, regex):
+                    crew.restart("w1", env=self.env, proc=fake)
                 self.assertIsNone(fake.handover)
 
     def test_missing_or_corrupt_options_not_a_worker(self):
@@ -645,14 +645,14 @@ class RestartTest(WorkerCase):
                     fake.store.clear()
                 else:
                     fake.store[key] = bad
-                with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
-                    workers.restart("w1", env=self.env, proc=fake)
+                with self.assertRaisesRegex(crew.WorkersError, "w1: not a worker"):
+                    crew.restart("w1", env=self.env, proc=fake)
                 self.assertEqual(fake.respawns(), [])
 
     def test_bad_name(self):
         fake = Fake()
-        with self.assertRaises(workers.WorkersError):
-            workers.restart("a b", env=self.env, proc=fake)
+        with self.assertRaises(crew.WorkersError):
+            crew.restart("a b", env=self.env, proc=fake)
         self.assertEqual(fake.calls, [])
 
 
@@ -687,7 +687,7 @@ class ReplyTest(WorkerCase):
         return fake
 
     def reply(self, fake=None, **kw):
-        return workers.reply("w1", proc=fake or self.fake(), config=self.cfg, **kw)
+        return crew.reply("w1", proc=fake or self.fake(), config=self.cfg, **kw)
 
     def test_the_last_text_bearing_assistant_message(self):
         """Its text blocks, from each of its records (one id; none: a message of its own), other records between them
@@ -729,10 +729,10 @@ class ReplyTest(WorkerCase):
                 line("assistant", text("b " + big), mid="mL"), line("assistant", text("c " + big), mid="mL")]
         tail = [line("user", text("q")), line("assistant", TOOL, mid="mN")]
         data = "".join([*earlier, *last, *tail]).encode()
-        if data[len(data) - workers.BLOCK] & 0xC0 != 0x80:
+        if data[len(data) - crew.BLOCK] & 0xC0 != 0x80:
             tail[0] = line("user", text("qq"))
             data = "".join([*earlier, *last, *tail]).encode()
-        self.assertEqual(data[len(data) - workers.BLOCK] & 0xC0, 0x80)
+        self.assertEqual(data[len(data) - crew.BLOCK] & 0xC0, 0x80)
         self.transcript(*earlier, *last, *tail)
         reads = []
 
@@ -741,15 +741,15 @@ class ReplyTest(WorkerCase):
             read = f.read
             f.read = lambda n=-1: reads.append(read(n)) or reads[-1]
             return f
-        with mock.patch.object(workers, "open", side_effect=spy, create=True):
+        with mock.patch.object(crew, "open", side_effect=spy, create=True):
             self.assertEqual(self.reply(), "\n".join(("a " + big, "b " + big, "c " + big)))
         self.assertGreater(len(reads), 3)
-        self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + workers.BLOCK)
+        self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + crew.BLOCK)
 
     def test_bad_name(self):
         fake = self.fake()
-        with self.assertRaises(workers.WorkersError):
-            workers.reply("a b", proc=fake, config=self.cfg)
+        with self.assertRaises(crew.WorkersError):
+            crew.reply("a b", proc=fake, config=self.cfg)
         self.assertEqual(fake.calls, [])
 
     def test_no_transcript_of_its_session(self):
@@ -758,18 +758,18 @@ class ReplyTest(WorkerCase):
             with self.subTest(sids=sids):
                 for sid in sids:
                     self.transcript(line("assistant", text("x")), sid=sid)
-                with self.assertRaisesRegex(workers.WorkersError, f"^no transcript for {SID}"):
+                with self.assertRaisesRegex(crew.WorkersError, f"^no transcript for {SID}"):
                     self.reply()
 
     def test_bad_sid_before_glob(self):
         self.transcript(line("assistant", text("x")), sid="evil")
-        with mock.patch.object(workers.glob, "glob") as g:
-            with self.assertRaisesRegex(workers.WorkersError, "bad session id"):
+        with mock.patch.object(crew.glob, "glob") as g:
+            with self.assertRaisesRegex(crew.WorkersError, "bad session id"):
                 self.reply(self.fake("*"))
             g.assert_not_called()
 
     def test_not_a_worker(self):
-        with self.assertRaisesRegex(workers.WorkersError, "w1: not a worker"):
+        with self.assertRaisesRegex(crew.WorkersError, "w1: not a worker"):
             self.reply(Fake())
 
     def test_config_from_env_else_home(self):
@@ -783,7 +783,7 @@ class ReplyTest(WorkerCase):
                 with open(os.path.join(d, SID + ".jsonl"), "w") as f:
                     f.write(line("assistant", text(why)))
                 with mock.patch.dict(os.environ, env, clear=True):
-                    self.assertEqual(workers.reply("w1", proc=self.fake()), why)
+                    self.assertEqual(crew.reply("w1", proc=self.fake()), why)
 
 
 class MainTest(WorkerCase):
@@ -795,10 +795,10 @@ class MainTest(WorkerCase):
 
     def run_main(self, argv, fake=None):
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(workers.subprocess, "run", fake or Fake()), \
+        with mock.patch.object(crew.subprocess, "run", fake or Fake()), \
                 mock.patch.dict(os.environ, self.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(argv)
+            rc = crew.main(argv)
         return rc, out.getvalue(), err.getvalue()
 
     def entries(self):
@@ -824,7 +824,7 @@ class MainTest(WorkerCase):
         flags = ["--append-system-prompt", "a\nb"]
         rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--", *flags], fake)
         sid = fake.store["@sid"]
-        resume = [sys.executable, WORKERS, "start", "w1", "--manager", "m1", "--resume", sid, "--cwd", self.dir,
+        resume = [sys.executable, CREW, "start", "w1", "--manager", "m1", "--resume", sid, "--cwd", self.dir,
                   "--", *flags]
         self.assertEqual((rc, out), (0, f"w1 {sid}\n"))
         self.assertEqual([x for x in err.splitlines() if not x.startswith("tui: ")],
@@ -857,9 +857,9 @@ class MainTest(WorkerCase):
     def test_start_refusals_exit_1_before_any_tmux_call(self):
         bad = "a b"
         for argv, msg in ((["--resume", "abc"], "--resume abc: not a session id"),
-                          (["--", "--model", "m", "-c"], "-c: workers.py picks the session; use start --resume <sid>"),
+                          (["--", "--model", "m", "-c"], "-c: crew.py picks the session; use start --resume <sid>"),
                           (["--resume", SID, "--", "--session-id=x"],
-                           "--session-id: workers.py picks the session; use start --resume <sid>"),
+                           "--session-id: crew.py picks the session; use start --resume <sid>"),
                           (["--note", "x" * 501], "note: 501 characters: want at most 500"),
                           (["--note", bad], f"note: {bad!r}: {UNPRINTABLE}")):
             with self.subTest(argv=argv):
@@ -915,7 +915,7 @@ class MainTest(WorkerCase):
     def test_usage_error(self):
         for argv in (["start"], ["start", "w1", "--manager", "m1", "--split", "left"]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-                workers.main(argv)
+                crew.main(argv)
             self.assertEqual(cm.exception.code, 2, argv)
 
 
@@ -937,11 +937,11 @@ class ManagerDirTest(WorkerCase):
         env = {} if session is None else {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
         fake = Fake(results={"display-message": lambda argv: f"{session}\n"})
         err = io.StringIO()
-        with mock.patch.dict(os.environ, {**self.env, **env}), mock.patch.object(workers.subprocess, "run", fake), \
+        with mock.patch.dict(os.environ, {**self.env, **env}), mock.patch.object(crew.subprocess, "run", fake), \
                 spawned() as start, \
-                mock.patch.object(workers, "next_event", return_value=(1, "10:00:01 w1 outcome done")) as nxt, \
+                mock.patch.object(crew, "next_event", return_value=(1, "10:00:01 w1 outcome done")) as nxt, \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            rc = workers.main(argv)
+            rc = crew.main(argv)
         if argv[0] == "start":
             return rc, err.getvalue(), start.call_args.kwargs["events"] if start.called else None
         return rc, err.getvalue(), nxt.call_args.args[0] if nxt.called else None
@@ -977,10 +977,10 @@ class ManagerDirTest(WorkerCase):
 
     def test_events_option_is_gone_exit_2(self):
         for cmd in self.CMDS:
-            with self.subTest(cmd=cmd[0]), mock.patch.object(workers, "start") as start, \
-                    mock.patch.object(workers, "next_event") as nxt:
+            with self.subTest(cmd=cmd[0]), mock.patch.object(crew, "start") as start, \
+                    mock.patch.object(crew, "next_event") as nxt:
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-                    workers.main([cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]])
+                    crew.main([cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]])
                 self.assertEqual(cm.exception.code, 2)
                 self.assertFalse(start.called or nxt.called)
                 self.assertEqual(os.listdir(self.agent_pm), [])
@@ -1023,19 +1023,19 @@ class NextEventTest(unittest.TestCase):
             if step is None:
                 raise AssertionError("next_event kept waiting")
             step()
-        return mock.patch.object(workers.time, "sleep", side_effect=sleep)
+        return mock.patch.object(crew.time, "sleep", side_effect=sleep)
 
     def run_main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(workers.subprocess, "run", Fake()), \
+        with mock.patch.object(crew.subprocess, "run", Fake()), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["next-event", "--manager", "m1", *argv])
+            rc = crew.main(["next-event", "--manager", "m1", *argv])
         return rc, out.getvalue(), err.getvalue()
 
     def error(self, reason, after=0, path=None):
         path = path or self.path
-        with self.assertRaises(workers.WorkersError) as cm:
-            workers.next_event(path, after)
+        with self.assertRaises(crew.WorkersError) as cm:
+            crew.next_event(path, after)
         self.assertEqual(str(cm.exception), f"events file {path}: {reason}")
 
     def test_every_kind_is_an_event(self):
@@ -1043,7 +1043,7 @@ class NextEventTest(unittest.TestCase):
         self.append(nl(*kinds))
         with self.sleeping():
             for n, event in enumerate(kinds):
-                self.assertEqual(workers.next_event(self.path, n), (n + 1, event))
+                self.assertEqual(crew.next_event(self.path, n), (n + 1, event))
 
     def test_the_first_event_after_a_line_waited_for(self):
         """`after` None: after the complete lines there now (none in a missing file). A line counts once complete, a
@@ -1079,7 +1079,7 @@ class NextEventTest(unittest.TestCase):
                     self.append(data)
                 steps = [s if callable(s) else functools.partial(self.append, s) for s in steps]
                 with self.sleeping(*steps) as sleep:
-                    self.assertEqual(workers.next_event(self.path, after), want)
+                    self.assertEqual(crew.next_event(self.path, after), want)
                 self.assertEqual(sleep.call_args_list, [mock.call(0.5)] * len(steps))
 
     def test_a_shrunk_replaced_or_unreadable_file_stops_it(self):
@@ -1110,8 +1110,8 @@ class NextEventTest(unittest.TestCase):
 
     def test_main_error_exit(self):
         attached("--manager", "m1")
-        err = workers.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
-        with mock.patch.object(workers, "next_event", side_effect=err):
+        err = crew.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
+        with mock.patch.object(crew, "next_event", side_effect=err):
             self.assertEqual(self.run_main("--after", "0", "--gen", "0"), (1, "", f"workers: {err}\n"))
 
     def test_main_usage_error(self):
@@ -1119,7 +1119,7 @@ class NextEventTest(unittest.TestCase):
                      *(["--after", "1", "--gen", bad] for bad in ("-1", "x", "end", "")),
                      ["--after", "1"], ["--gen", "0"], []):
             with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-                workers.main(["next-event", "--manager", "m1", *argv])
+                crew.main(["next-event", "--manager", "m1", *argv])
             self.assertEqual(cm.exception.code, 2, argv)
 
 
@@ -1154,9 +1154,9 @@ class NextEventContentTest(WorkerCase):
         with open(manager.events(manager.directory("m1"), create=False), "w") as f:
             f.write(event + "\n")
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(workers.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
+        with mock.patch.object(crew.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(["next-event", "--manager", "m1", "--after", "0", "--gen", "0"])
+            rc = crew.main(["next-event", "--manager", "m1", "--after", "0", "--gen", "0"])
         return rc, out.getvalue(), err.getvalue()
 
     def pane(self, worker=True, fake=None):
@@ -1215,7 +1215,7 @@ class NextEventContentTest(WorkerCase):
 WHEN = "2026-10-09T12:00:00+00:00"
 SID2 = "1" + SID[1:]
 PY = "/usr/bin/python3"
-SCRIPT = {"worker": "/x/workers.py", "role": "/x/drive.py", "pipeline": "/x/router.py"}
+SCRIPT = {"worker": "/x/crew.py", "role": "/x/drive.py", "pipeline": "/x/router.py"}
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane\n"
 SHOWN = "1 /dev/ttys001\n"
 SHOW = tui_claude.show
@@ -1231,7 +1231,7 @@ def numbered(count, start=1):
 def tail(directory, n=0, gen=0, *backlog):
     """What attach prints after the table for manager directory `directory`: the backlog, N and GEN, the arm
     commands."""
-    me, events = shlex.quote(os.path.abspath(workers.__file__)), shlex.quote(os.path.join(directory, "events"))
+    me, events = shlex.quote(os.path.abspath(crew.__file__)), shlex.quote(os.path.join(directory, "events"))
     name = os.path.basename(directory)
     return nl(*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
               f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
@@ -1315,15 +1315,15 @@ class Server:
 
 
 def attached(*argv, own=None):
-    """Runs `workers.py attach argv…` on a fake tmux server (Server), the caller in tmux session `own` (None: outside
+    """Runs `crew.py attach argv…` on a fake tmux server (Server), the caller in tmux session `own` (None: outside
     tmux); fails unless it exits 0. What start and next-event need first."""
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     if own:
         env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
     err = io.StringIO()
-    with mock.patch.object(workers.subprocess, "run", Server(own)), mock.patch.dict(os.environ, env, clear=True), \
+    with mock.patch.object(crew.subprocess, "run", Server(own)), mock.patch.dict(os.environ, env, clear=True), \
             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-        rc = workers.main(["attach", *argv])
+        rc = crew.main(["attach", *argv])
     if rc:
         raise AssertionError(f"attach exited {rc}: {err.getvalue()}")
 
@@ -1359,10 +1359,10 @@ class RosterCase(WorkerCase):
     def held(self):
         """The FR-13 refusal for OTHER, as main prints it."""
         return (f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
-                "run workers.py release, or end that session\n")
+                "run crew.py release, or end that session\n")
 
     def not_attached(self):
-        return f"workers: manager directory {self.mdir} not attached: run workers.py attach first\n"
+        return f"workers: manager directory {self.mdir} not attached: run crew.py attach first\n"
 
     def run_main(self, server, *argv):
         """main's (exit code, stdout, stderr) for argv, the caller in tmux session server.own."""
@@ -1370,14 +1370,14 @@ class RosterCase(WorkerCase):
         if server.own:
             env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(workers.subprocess, "run", server), mock.patch.dict(os.environ, env), \
+        with mock.patch.object(crew.subprocess, "run", server), mock.patch.dict(os.environ, env), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = workers.main(list(argv))
+            rc = crew.main(list(argv))
         return rc, out.getvalue(), err.getvalue()
 
 
 class AttachTest(RosterCase):
-    """workers.py attach, the caller in tmux session mgr unless a test says otherwise; show is self.show."""
+    """crew.py attach, the caller in tmux session mgr unless a test says otherwise; show is self.show."""
 
     def setUp(self):
         super().setUp()
@@ -1496,7 +1496,7 @@ class AttachTest(RosterCase):
     def test_a_worker_without_a_session_is_gone(self):
         self.seed(w1=entry(state="blocked", pane="%4"))
         self.assertEqual(self.synced(Server()), HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
-                                                         f"resume w1: {PY} /x/workers.py --go\n" + tail(self.mdir))
+                                                         f"resume w1: {PY} /x/crew.py --go\n" + tail(self.mdir))
         self.assertEqual(self.entries()["w1"]["state"], "gone")
         self.assertEqual(self.shows, [])
 
@@ -1533,7 +1533,7 @@ class AttachTest(RosterCase):
                 self.assertEqual([c[3] for c in server.ran("list-clients")], ["=t4", "=t3t"])
 
     def test_a_role_or_pipeline_without_a_session_is_finished_waiting_or_gone_by_its_run_record(self):
-        done, failed, tail = result(outcome={"status": "done"}), result(outcome={"status": "failed"}), workers.RUN_TAIL
+        done, failed, tail = result(outcome={"status": "done"}), result(outcome={"status": "failed"}), crew.RUN_TAIL
         asking = result(outcome={"status": "needs_input"})
         pad = ("x" * 99 + "\n") * (tail // 100 + 1)
         cut = tail - len(done)
@@ -1663,7 +1663,7 @@ class AttachTest(RosterCase):
                 with open(os.path.join(d, "run.jsonl"), "w") as f:
                     f.write(result(outcome={"status": status}))
         self.seed(b=entry(note="check the logs", pane="%4"),
-                  a=entry(sid=None, resume=[PY, "/x/workers.py", "; rm -rf ~"]),
+                  a=entry(sid=None, resume=[PY, "/x/crew.py", "; rm -rf ~"]),
                   B=entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
                   C=entry("role", sid=None, cwd=cwd),
                   p1=entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--plan", "/p q"]),
@@ -1682,13 +1682,13 @@ class AttachTest(RosterCase):
                                           f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
                                           f"resume B: {role}",
                                           "resume C: none (no sid)",
-                                          f"resume a: {PY} /x/workers.py '; rm -rf ~'",
+                                          f"resume a: {PY} /x/crew.py '; rm -rf ~'",
                                           f"resume p1: {PY} /x/router.py --plan '/p q'") + tail(self.mdir))
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
-        self.assertEqual(shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/workers.py", "; rm -rf ~"])
+        self.assertEqual(shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/crew.py", "; rm -rf ~"])
 
     def test_an_invalid_entry_is_skipped_with_one_stderr_line(self):
-        self.seed(w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/workers.py"]))
+        self.seed(w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/crew.py"]))
         rc, out, err = self.attach(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
         self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
                                      + tail(self.mdir)))
@@ -1726,7 +1726,7 @@ class AttachTest(RosterCase):
                 self.assertEqual(self.synced(server), HEADER + nl(f"w1\tworker\t{SID}\tworking\t-\t/w\t-",
                                                                   f"w2\tworker\t{SID2}\tworking\t-\t/w\t%9",
                                                                   "w3\tworker\t-\tgone\t-\t/w\t-",
-                                                                  f"resume w3: {PY} /x/workers.py --go")
+                                                                  f"resume w3: {PY} /x/crew.py --go")
                                  + tail(self.mdir))
                 self.assertEqual([s for s, _, _ in self.shows], ["w2"])
                 self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
@@ -1761,7 +1761,7 @@ class LeaseTest(RosterCase):
 
     def setUp(self):
         super().setUp()
-        p = mock.patch.object(workers, "next_event", return_value=(1, "10:00:01 w1 outcome done"))
+        p = mock.patch.object(crew, "next_event", return_value=(1, "10:00:01 w1 outcome done"))
         self.fakes = [self.enterContext(spawned()), p.start()]
         self.addCleanup(p.stop)
 
@@ -1836,15 +1836,19 @@ class StartEntryTest(RosterCase):
         self.seed(MGR)
 
     def start(self, fake=None, **kw):
-        return workers.start("w1", self.mdir, own="mgr", cwd=self.dir, env=self.env, proc=fake or Fake(), **kw)
+        return crew.start("w1", self.mdir, own="mgr", cwd=self.dir, env=self.env, proc=fake or Fake(), **kw)
 
     def resume(self, sid, *rest):
         """w1's recovery argv for sid, rest after its --cwd."""
-        return [sys.executable, WORKERS, "start", "w1", "--manager", "mgr", "--resume", sid, "--cwd", self.dir, *rest]
+        return [sys.executable, CREW, "start", "w1", "--manager", "mgr", "--resume", sid, "--cwd", self.dir, *rest]
 
     def lines(self, err):
         """err's lines but show's (tui: …)."""
         return [x for x in err.getvalue().splitlines() if not x.startswith("tui: ")]
+
+    def test_the_worker_entry_resumes_through_crew_py(self):
+        sid = self.start()
+        self.assertEqual(self.entries()["w1"]["resume"][1], CREW)
 
     def test_the_worker_entry(self):
         cases = (({}, (), []),
@@ -1885,7 +1889,7 @@ class StartEntryTest(RosterCase):
     def test_a_claude_that_exits_at_once_leaves_a_working_entry_attach_syncs(self):
         fake = Fake()
         fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
-        with self.assertRaisesRegex(workers.WorkersError, "^w1: claude exited 1 at once"):
+        with self.assertRaisesRegex(crew.WorkersError, "^w1: claude exited 1 at once"):
             self.start(fake)
         sid = fake.store["@sid"]
         self.assertEqual((self.entries()["w1"]["sid"], self.entries()["w1"]["state"]), (sid, "working"))
@@ -1915,7 +1919,7 @@ class StartEntryTest(RosterCase):
     def test_another_live_holder_starts_nothing(self):
         before = self.seed(OTHER)
         fake = Fake()
-        with self.assertRaises(workers.WorkersError) as cm:
+        with self.assertRaises(crew.WorkersError) as cm:
             self.start(fake)
         self.assertEqual(f"workers: {cm.exception}\n", self.held())
         self.assertEqual((fake.new_sessions(), self.bytes()), ([], before))
@@ -1939,7 +1943,7 @@ class StartEntryTest(RosterCase):
         option.fail_set = "@flags"
         for why, fake in (("new-session", Fake(new_err="boom\n")), ("option", option)):
             with self.subTest(why):
-                with self.assertRaises(workers.WorkersError):
+                with self.assertRaises(crew.WorkersError):
                     self.start(fake)
                 self.assertEqual(self.entries(), {})
 
@@ -2047,7 +2051,7 @@ class RosterCommandsTest(RosterCase):
 
 
 class StopTest(RosterCase):
-    """workers.py stop, mgr the holder unless a test says otherwise (its refusals: RosterCommandsTest)."""
+    """crew.py stop, mgr the holder unless a test says otherwise (its refusals: RosterCommandsTest)."""
 
     def stopped(self, server, name, *argv):
         """stop's (exit code, stdout, stderr), the targets it killed and the entries left."""
@@ -2093,15 +2097,15 @@ class StopTest(RosterCase):
                 self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
     def test_a_stopped_entry_is_not_resumed(self):
-        self.seed(MGR, w1=entry(), w2=entry(sid=SID2, resume=[PY, "/y/workers.py", "--go"]))
+        self.seed(MGR, w1=entry(), w2=entry(sid=SID2, resume=[PY, "/y/crew.py", "--go"]))
         self.assertEqual(self.run_main(Server(sessions={"w1": opts(SID)}), "stop", "w1"), (0, "", ""))
         server = Server()
         self.assertEqual(self.run_main(server, "attach", "--resume")[0], 0)
-        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/y/workers.py", "--go"]])
+        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/y/crew.py", "--go"]])
 
 
 class ResumeTest(RosterCase):
-    """workers.py attach --resume, mgr attaching: every live session shown (no reopen); the recovery commands run on
+    """crew.py attach --resume, mgr attaching: every live session shown (no reopen); the recovery commands run on
     Server."""
     RUN = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
            "errors": "replace"}
@@ -2111,14 +2115,14 @@ class ResumeTest(RosterCase):
         os.mkdir(finished)
         with open(os.path.join(finished, "run.jsonl"), "w") as f:
             f.write(result(outcome={"status": "done"}))
-        entries = {"b": entry(cwd="/w/b", resume=[PY, "/x/b/workers.py", "start", "b"]),
-                   "a": entry(cwd=cwd, resume=[PY, "/x/a/workers.py", "; rm -rf ~"]),
+        entries = {"b": entry(cwd="/w/b", resume=[PY, "/x/b/crew.py", "start", "b"]),
+                   "a": entry(cwd=cwd, resume=[PY, "/x/a/crew.py", "; rm -rf ~"]),
                    "B": entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
                    "p1": entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--issue", "TASK-1"]),
                    "f1": entry("pipeline", cwd=finished), "live": entry(sid=SID2)}
         self.seed(MGR, **entries)
-        results = {"/x/b/workers.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
-                   "/x/a/workers.py": (0, "  a \n\n  \n"), "/x/drive.py": (0, "drive.py: session x\n"),
+        results = {"/x/b/crew.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
+                   "/x/a/crew.py": (0, "  a \n\n  \n"), "/x/drive.py": (0, "drive.py: session x\n"),
                    "/x/router.py": (0, "")}
         plain = Server(sessions={"live": opts(SID2)}, clients={"live": SHOWN})
         rc, listed, err = self.run_main(plain, "attach")
@@ -2137,12 +2141,12 @@ class ResumeTest(RosterCase):
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
-        self.seed(MGR, a1=entry(resume=[PY, "/x/a1/workers.py"]), a2=entry(resume=[PY, "/x/a2/workers.py"]),
-                  a3=entry("role", sid=None), a4=entry(resume=[PY, "/x/a4/workers.py"]),
-                  p1=entry("pipeline", resume=[PY, "/x/router.py"]), w1=entry(resume=[PY, "/x/w1/workers.py"]))
-        results = {"/x/a1/workers.py": (1, "workers: a1: session ended at once\n"),
-                   "/x/a2/workers.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
-                   "/x/a4/workers.py": ValueError("embedded null byte"),
+        self.seed(MGR, a1=entry(resume=[PY, "/x/a1/crew.py"]), a2=entry(resume=[PY, "/x/a2/crew.py"]),
+                  a3=entry("role", sid=None), a4=entry(resume=[PY, "/x/a4/crew.py"]),
+                  p1=entry("pipeline", resume=[PY, "/x/router.py"]), w1=entry(resume=[PY, "/x/w1/crew.py"]))
+        results = {"/x/a1/crew.py": (1, "workers: a1: session ended at once\n"),
+                   "/x/a2/crew.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
+                   "/x/a4/crew.py": ValueError("embedded null byte"),
                    "/x/router.py": (1, refusal + "\n")}
         server = Server(results=results)
         rc, out, err = self.run_main(server, "attach", "--resume")
@@ -2155,8 +2159,8 @@ class ResumeTest(RosterCase):
             f"resumed p1: exit 1: {refusal}",
             "resumed w1: exit 0")), out)
         self.assertEqual([argv[1] for argv, _, _ in server.recoveries],
-                         ["/x/a1/workers.py", "/x/a2/workers.py", "/x/a4/workers.py", "/x/router.py",
-                          "/x/w1/workers.py"])
+                         ["/x/a1/crew.py", "/x/a2/crew.py", "/x/a4/crew.py", "/x/router.py",
+                          "/x/w1/crew.py"])
 
     def test_one_failed_recovery_of_any_kind_exits_1(self):
         cases = {"exit 1": ((1, "boom\n"), "exit 1: boom"), "exit 255": ((255, ""), "exit 255"),
@@ -2166,9 +2170,9 @@ class ResumeTest(RosterCase):
                  "no sid": (None, "not run: no sid")}
         for why, (failure, line) in cases.items():
             with self.subTest(why):
-                bad = entry("role", sid=None) if failure is None else entry(resume=[PY, "/x/bad/workers.py"])
-                self.seed(MGR, bad=bad, ok=entry(resume=[PY, "/x/ok/workers.py"]))
-                server = Server(results={} if failure is None else {"/x/bad/workers.py": failure})
+                bad = entry("role", sid=None) if failure is None else entry(resume=[PY, "/x/bad/crew.py"])
+                self.seed(MGR, bad=bad, ok=entry(resume=[PY, "/x/ok/crew.py"]))
+                server = Server(results={} if failure is None else {"/x/bad/crew.py": failure})
                 rc, out, err = self.run_main(server, "attach", "--resume")
                 self.assertEqual((rc, err), (1, ""))
                 self.assertTrue(out.endswith(tail(self.mdir) + nl(f"resumed bad: {line}", "resumed ok: exit 0")), out)
@@ -2179,16 +2183,16 @@ class ResumeTest(RosterCase):
         with open(os.path.join(asking, "run.jsonl"), "w") as f:
             f.write(result(outcome={"status": "needs_input", "questions": ["Which?"]}))
         self.seed(MGR, r1=entry("role", cwd=asking), p1=entry("pipeline", cwd=asking),
-                  w1=entry(cwd=asking, resume=[PY, "/x/w1/workers.py"]))
+                  w1=entry(cwd=asking, resume=[PY, "/x/w1/crew.py"]))
         server = Server()
         rc, out, err = self.run_main(server, "attach", "--resume")
         self.assertEqual((rc, err), (0, ""))
         self.assertEqual(out, HEADER + nl(f"p1\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
                                           f"r1\trole\t{SID}\twaiting\t-\t{asking}\t-",
                                           f"w1\tworker\t{SID}\tgone\t-\t{asking}\t-",
-                                          f"resume w1: {PY} /x/w1/workers.py") + tail(self.mdir)
+                                          f"resume w1: {PY} /x/w1/crew.py") + tail(self.mdir)
                          + "resumed w1: exit 0\n")
-        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/x/w1/workers.py"]])
+        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/x/w1/crew.py"]])
         self.assertEqual({n: e["state"] for n, e in self.entries().items()},
                          {"p1": "waiting", "r1": "waiting", "w1": "gone"})
 
@@ -2197,14 +2201,14 @@ class CursorTest(RosterCase):
     """attach and next-event record the cursor; attach rotates and prints the backlog and the arm commands. mgr holds
     the lease; next_event is a fake recording (events, after, the roster's cursor while it runs) in self.waits."""
     BIG = SPAN * 11 // 10   # the lines of a 1.1 MiB events file
-    ROTATE = "workers: rotate: run workers.py attach, then arm with its N and GEN\n"
+    ROTATE = "workers: rotate: run crew.py attach, then arm with its N and GEN\n"
 
     def setUp(self):
         super().setUp()
         self.mevents = os.path.join(self.mdir, "events")
         self.old = self.mevents + ".1"
         self.waits = []
-        p = mock.patch.object(workers, "next_event", side_effect=self.wait)
+        p = mock.patch.object(crew, "next_event", side_effect=self.wait)
         p.start()
         self.addCleanup(p.stop)
 
@@ -2236,7 +2240,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = shlex.quote(os.path.abspath(workers.__file__))
+        me = shlex.quote(os.path.abspath(crew.__file__))
         self.assertEqual(self.attach(), (0, HEADER + nl(
             f"4 {events[3]}", f"5 {events[4]}", "N=3 GEN=0", f"monitor: tail -n +4 -F {self.mevents}",
             f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0 --resume",
@@ -2249,11 +2253,18 @@ class CursorTest(RosterCase):
         self.assertEqual(self.attach(), (0, HEADER + tail(self.mdir, 1, 0, "4 12:00:04 w1 café �",
                                                           "5 12:00:05 w2 blocked"), ""))
 
+    def test_attach_names_crew_py(self):
+        rc, out, err = self.attach()
+        self.assertEqual((rc, err), (0, ""))
+        lines = out.splitlines()[-2:]
+        self.assertEqual([line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"])
+        self.assertEqual([shlex.split(line.split(": ", 1)[1])[1] for line in lines], [CREW, CREW])
+
     def test_attach_quotes_the_paths_it_prints(self):
         home = os.path.join(self.dir, "it's a home")
         os.mkdir(home)
-        script = os.path.join(self.dir, "my scripts", "workers.py")
-        with mock.patch.dict(os.environ, {"HOME": home}), mock.patch.object(workers, "__file__", script):
+        script = os.path.join(self.dir, "my scripts", "crew.py")
+        with mock.patch.dict(os.environ, {"HOME": home}), mock.patch.object(crew, "__file__", script):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
         self.assertEqual([shlex.split(line.split(": ", 1)[1]) for line in out.splitlines()[-3:]],
@@ -2273,9 +2284,9 @@ class CursorTest(RosterCase):
 
     def test_attach_refuses_stale_line_numbers_writing_nothing(self):
         cases = {"an old gen": (["--after", "7", "--gen", "0"],
-                                "stale line numbers (gen 0, now 1): run workers.py attach"),
+                                "stale line numbers (gen 0, now 1): run crew.py attach"),
                  "past the end": (["--after", "10", "--gen", "1"],
-                                  f"line 10 is past the end of {self.mevents} (9 lines): run workers.py attach")}
+                                  f"line 10 is past the end of {self.mevents} (9 lines): run crew.py attach")}
         for why, (argv, msg) in cases.items():
             with self.subTest(why):
                 before = self.fill(numbered(9), cursor=2, gen=1)
@@ -2283,13 +2294,13 @@ class CursorTest(RosterCase):
                 self.assertEqual(self.bytes(), before)
 
     def test_attach_after_and_gen_go_together_as_numbers(self):
-        alone = "workers.py: error: --after and --gen go together\n"
+        alone = "crew.py: error: --after and --gen go together\n"
         for argv, want in ((["--after", "3"], alone), (["--gen", "0"], alone), (["--after", "end", "--gen", "0"], None),
                            (["--after", "-1", "--gen", "0"], None), (["--after", "1", "--gen", "x"], None)):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
-                    workers.main(["attach", "--manager", "mgr", *argv])
+                    crew.main(["attach", "--manager", "mgr", *argv])
                 self.assertEqual(cm.exception.code, 2)
                 if want:
                     self.assertTrue(err.getvalue().endswith(want), err.getvalue())
@@ -2313,7 +2324,7 @@ class CursorTest(RosterCase):
                 self.sleep.assert_called_once_with(manager.SETTLE)
         before = self.bytes()
         self.assertEqual(self.attach("--after", "2", "--gen", "0"),
-                         (1, "", "workers: stale line numbers (gen 0, now 1): run workers.py attach\n"))
+                         (1, "", "workers: stale line numbers (gen 0, now 1): run crew.py attach\n"))
         self.assertEqual(self.bytes(), before)
 
     def test_attach_refuses_a_symlinked_events_1_renaming_nothing(self):
@@ -2354,8 +2365,8 @@ class CursorTest(RosterCase):
         self.assertEqual(self.waits, [(self.mevents, 3, 3), (self.mevents, 5, 5)])
 
     def test_next_event_refuses_stale_line_numbers_on_stdout_writing_nothing(self):
-        cases = {"past the end": (9, 2, f"line 9 is past the end of {self.mevents} (5 lines): run workers.py attach"),
-                 "an old gen": (3, 1, "stale line numbers (gen 1, now 2): run workers.py attach")}
+        cases = {"past the end": (9, 2, f"line 9 is past the end of {self.mevents} (5 lines): run crew.py attach"),
+                 "an old gen": (3, 1, "stale line numbers (gen 1, now 2): run crew.py attach")}
         for why, (after, gen, msg) in cases.items():
             with self.subTest(why):
                 before = self.fill(numbered(5), cursor=2, gen=2)
@@ -2401,7 +2412,7 @@ class CursorTest(RosterCase):
         """FR-15: next-event --after 12 interrupted, the lease released, another session's attach resumes after 12."""
         data = numbered(15)
         self.fill(data)
-        with mock.patch.object(workers, "next_event", side_effect=KeyboardInterrupt), \
+        with mock.patch.object(crew, "next_event", side_effect=KeyboardInterrupt), \
                 self.assertRaises(KeyboardInterrupt):
             self.next_event(12)
         self.assertEqual(self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", ""))

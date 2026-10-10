@@ -1,4 +1,4 @@
-"""workers.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
+"""crew.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
 breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker and a killed
@@ -21,18 +21,18 @@ import unittest
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SCRIPTS)
-import workers  # noqa: E402
-TESTS = os.path.join(workers.CORE, "src", "tests")
+import crew  # noqa: E402
+TESTS = os.path.join(crew.CORE, "src", "tests")
 sys.path[:0] = [TESTS, os.path.join(TESTS, "integration")]
 import hermetic  # noqa: E402
 import fake_claude  # noqa: E402
 import live_tmux  # noqa: E402
-tui_claude = workers.tui_claude
-manager = workers.manager
+tui_claude = crew.tui_claude
+manager = crew.manager
 
-WORKERS = os.path.join(SCRIPTS, "workers.py")
-TUI = os.path.join(workers.CORE, "src", "tui_claude.py")
-DRIVE = os.path.join(workers.CORE, "src", "drive.py")
+CREW = os.path.join(SCRIPTS, "crew.py")
+TUI = os.path.join(crew.CORE, "src", "tui_claude.py")
+DRIVE = os.path.join(crew.CORE, "src", "drive.py")
 ROLE = "dummy-tester"
 ROLE_SID = "26700000-0000-4000-8000-000000000005"
 ROLE_TUI = f"{ROLE}-{ROLE_SID[:8]}"
@@ -84,7 +84,7 @@ drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.di
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
     started and shown in a client, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
-    mgr's manager directory (core/src/manager.py), which mgr attaches to (`workers.py attach`) unless ATTACH is False.
+    mgr's manager directory (core/src/manager.py), which mgr attaches to (`crew.py attach`) unless ATTACH is False.
     Commands run as processes in mgr's pane unless `inside` names another session (None: no pane, Server.env()
     alone)."""
     ATTACH = True
@@ -117,10 +117,10 @@ class Live(unittest.TestCase):
                               stdin=subprocess.DEVNULL, timeout=TIMEOUT)
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
-        return self.call(sys.executable, WORKERS, *args, **kw)
+        return self.call(sys.executable, CREW, *args, **kw)
 
     def attach(self, *args: str, **kw) -> subprocess.CompletedProcess:
-        """`workers.py attach args…`, which start and next-event need first; fails unless it exits 0."""
+        """`crew.py attach args…`, which start and next-event need first; fails unless it exits 0."""
         return self.ok(self.workers("attach", *args, **kw))
 
     def tui(self, *args: str, **kw) -> subprocess.CompletedProcess:
@@ -135,7 +135,7 @@ class Live(unittest.TestCase):
 
     def start(self, name: str, *args: str, steps: list | None = None, turns: list | tuple = (),
               inside: str | None = MANAGER) -> subprocess.CompletedProcess:
-        """`workers.py start <name> --cwd … --prompt hi args…`, its fake's scenario `steps` (default one
+        """`crew.py start <name> --cwd … --prompt hi args…`, its fake's scenario `steps` (default one
         text, `Hi from <name>.`) and `turns`, logging to self.log."""
         with open(self.scenario(name), "w") as f:
             json.dump({"steps": [f"Hi from {name}."] if steps is None else steps, "turns": list(turns),
@@ -146,7 +146,7 @@ class Live(unittest.TestCase):
     def started(self, name: str, *args: str, **kw) -> str:
         """start's session id; fails unless it exits 0 printing `<name> <sid>`."""
         res = self.ok(self.start(name, *args, **kw))
-        m = re.fullmatch(rf"{re.escape(name)} ({workers.SESSION_ID.pattern})\n", res.stdout)
+        m = re.fullmatch(rf"{re.escape(name)} ({crew.SESSION_ID.pattern})\n", res.stdout)
         self.assertIsNotNone(m, res.stdout)
         return m[1]
 
@@ -228,7 +228,7 @@ class Live(unittest.TestCase):
 
 
 def is_event(line: str, name: str, kind: str) -> bool:
-    return bool(workers.EVENT.fullmatch(line)) and line.split(" ")[1:] == [name, kind]
+    return bool(crew.EVENT.fullmatch(line)) and line.split(" ")[1:] == [name, kind]
 
 
 def has_pair(argv: list[str], flag: str, value: str) -> bool:
@@ -239,7 +239,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     """What attach prints after the table for manager directory `directory`: the backlog, N and GEN, the arm
     commands."""
-    me, events, name = shlex.quote(WORKERS), shlex.quote(os.path.join(directory, "events")), os.path.basename(directory)
+    me, events, name = shlex.quote(CREW), shlex.quote(os.path.join(directory, "events")), os.path.basename(directory)
     lines = [*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
              f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
              f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}"]
@@ -266,7 +266,7 @@ class Lifecycle(Live):
         (call,) = self.calls("w1")
         argv = call["argv"]
         self.assertEqual(argv[:1] + argv[2:], ["--settings", "--session-id", sid, "--name", "w1", "--", "hi"])
-        self.assertEqual(json.loads(argv[1]), json.loads(workers.tui_claude.hooks(self.events)))
+        self.assertEqual(json.loads(argv[1]), json.loads(crew.tui_claude.hooks(self.events)))
         (done,) = self.wait_event("w1", "done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
         self.assertEqual(self.next_event(0), (1, done, "Hi from w1."))
@@ -286,7 +286,7 @@ class Lifecycle(Live):
         n, event, content = self.next_event(0)
         self.assertEqual((n, event), (1, lines[0]))
         self.assertTrue(content)
-        self.assertEqual(content, self.pane_text("w1", workers.PANE_LINES))
+        self.assertEqual(content, self.pane_text("w1", crew.PANE_LINES))
 
     def test_dead_restart(self):
         sid = self.started("w1")
@@ -306,7 +306,7 @@ class Lifecycle(Live):
         n, event, content = self.next_event(1)
         self.assertEqual((n, event), (2, dead))
         self.assertTrue(content)
-        self.assertEqual(content, self.pane_text("w1", workers.PANE_LINES))
+        self.assertEqual(content, self.pane_text("w1", crew.PANE_LINES))
         self.ok(self.restart("w1"))
         _, again = self.calls("w1")
         self.assertTrue(has_pair(again["argv"], "--resume", sid), again["argv"])
@@ -323,7 +323,7 @@ class Lifecycle(Live):
         head = "workers: w2: claude exited 2 at once; its pane's last lines:"
         self.assertIn(head, lines, res.stderr)
         at = lines.index(head)
-        # before workers.py's error, only the show's `tui: ` lines (its attach command)
+        # before crew.py's error, only the show's `tui: ` lines (its attach command)
         self.assertTrue(at > 0 and all(line.startswith("tui: ") for line in lines[:at]), res.stderr)
         self.assertIn("claude: error: unrecognized arguments: --bogus", lines[at + 1:])
         self.ok(self.server.tmux("has-session", "-t", "=w2"))
@@ -573,7 +573,7 @@ class Roster(Live):
         h = self.roster()["holder"]
         self.assertEqual(h["session"], holder)
         return (f"workers: manager directory {self.directory}: held by tmux session {holder} since {h['since']}; ask "
-                "that manager to run workers.py release, or end that session\n")
+                "that manager to run crew.py release, or end that session\n")
 
     def refused(self) -> None:
         """SECOND's attach to mgr's directory fails naming mgr, roster.json unchanged."""
@@ -585,7 +585,7 @@ class Roster(Live):
     def taken_over(self) -> None:
         """SECOND's attach to mgr's directory succeeds, SECOND the holder."""
         res = self.attach("--manager", MANAGER, inside=SECOND)
-        self.assertEqual(res.stdout, f"{workers.HEADER}\n{tail(self.directory)}")
+        self.assertEqual(res.stdout, f"{crew.HEADER}\n{tail(self.directory)}")
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
 
     def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:
@@ -595,7 +595,7 @@ class Roster(Live):
 
     def after_w1(self, out: str, rest: str) -> None:
         """out is attach's table, w1's row (start's entry) only, then rest."""
-        self.assertRegex(out, rf"\A{re.escape(workers.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z")
+        self.assertRegex(out, rf"\A{re.escape(crew.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z")
 
     def live(self, *names: str) -> bool:
         return all(self.server.tmux("has-session", "-t", f"={n}").returncode == 0 for n in names)
@@ -620,7 +620,7 @@ class Roster(Live):
 
     def test_concurrent_attaches_one_holds(self):
         self.second()
-        procs = {s: subprocess.Popen([sys.executable, WORKERS, "attach", "--manager", MANAGER],
+        procs = {s: subprocess.Popen([sys.executable, CREW, "attach", "--manager", MANAGER],
                                      env=self.server.env(**self.server.inside(s)), cwd=self.cwd,
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True)
@@ -633,21 +633,21 @@ class Roster(Live):
         self.assertEqual(len(winners), 1, out)
         (winner,) = winners
         (loser,) = set(procs) - {winner}
-        self.assertEqual(out[winner], (f"{workers.HEADER}\n{tail(self.directory)}", ""))
+        self.assertEqual(out[winner], (f"{crew.HEADER}\n{tail(self.directory)}", ""))
         self.assertEqual((procs[loser].returncode, out[loser]), (1, ("", self.held(winner))))
 
     def test_killed_worker_gone_then_recovered(self):
         self.attach()
         sid = self.started("w1")
         pane = self.server.pane_of("w1")
-        resume = [sys.executable, WORKERS, "start", "w1", "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
+        resume = [sys.executable, CREW, "start", "w1", "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
         e = self.roster()["entries"]["w1"]
         self.assertEqual({k: e[k] for k in ("kind", "sid", "cwd", "resume", "pane", "opener", "state")},
                          {"kind": "worker", "sid": sid, "cwd": self.cwd, "resume": resume, "pane": pane,
                           "opener": MANAGER, "state": "working"})
         (done,) = self.wait_event("w1", "done")   # its transcript, which --resume needs
         self.ok(self.kill("w1"))
-        self.assertEqual(self.attach().stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
+        self.assertEqual(self.attach().stdout, f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
                                                f"resume w1: {shlex.join(resume)}\n"
                                                f"{tail(self.directory, 0, 0, f'1 {done}')}")
         self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")
@@ -656,7 +656,7 @@ class Roster(Live):
         self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sid), self.calls("w1")[-1]["argv"])
         self.grid([["w1"]])
         pane = self.server.pane_of("w1")
-        table = f"{workers.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
+        table = f"{crew.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
         out = self.attach().stdout
         self.assertEqual(out[:len(table)], table, out)
         self.assertEqual(list(self.roster()["entries"]), ["w1"])
@@ -709,7 +709,7 @@ class Roster(Live):
         res = self.attach()
         e = self.roster()["entries"][ROLE_DRIVER]
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
-        self.assertEqual(res.stdout, f"{workers.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
+        self.assertEqual(res.stdout, f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
                                      f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
                                      f"{shlex.join(manager.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
         self.assertIn("--input 'Continue the unfinished task.'", res.stdout)
@@ -765,7 +765,7 @@ class Roster(Live):
             line.split(" ")[1:] == [ROLE_DRIVER, "outcome", "needs_input"] for line in live_tmux.events(self.events)),
                        what=f"{ROLE_DRIVER} gone after its outcome needs_input")
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
-        table = f"{workers.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
+        table = f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
         self.assertEqual(self.attach().stdout, table + tail(self.directory, 0, 0, *backlog))
         with open(self.log) as f:
             calls = f.readlines()
@@ -790,7 +790,7 @@ class Roster(Live):
         for d in (os.path.dirname(router), run):
             os.mkdir(d)
         with open(router, "w") as f:
-            f.write(STAND_IN.format(src=os.path.join(workers.CORE, "src"), role=ROLE, sid=PIPE_SID, drive=DRIVE))
+            f.write(STAND_IN.format(src=os.path.join(crew.CORE, "src"), role=ROLE, sid=PIPE_SID, drive=DRIVE))
         scenario = self.echoing("pipeline")
         self.ok(self.call(sys.executable, router, "--issue", PIPE_ISSUE, "--tui", "--events", self.events, "--manager",
                           MANAGER, cwd=run, **scenario))
@@ -826,7 +826,7 @@ class Roster(Live):
         self.assertNotEqual(pane, closed)
         self.grid([["w1"]])
         self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
-        self.assertEqual(res.stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
+        self.assertEqual(res.stdout, f"{crew.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
                                      f"{tail(self.directory, 0, 0, f'1 {done}')}")
         self.assertEqual(res.stderr, "tui: session w1: tmux attach -t '=w1'\n")
         e = self.roster()["entries"]["w1"]
@@ -849,7 +849,7 @@ class Roster(Live):
         self.after_w1(self.attach("--manager", MANAGER, inside=SECOND).stdout, resumed)
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
         self.assertEqual(self.next_event(2, "--manager", MANAGER, inside=SECOND), (3, three, "Three."))
-        waiting = subprocess.Popen([sys.executable, WORKERS, "next-event", "--manager", MANAGER, "--after", "3",
+        waiting = subprocess.Popen([sys.executable, CREW, "next-event", "--manager", MANAGER, "--after", "3",
                                     "--gen", "0"], env=self.server.env(**self.server.inside(SECOND)), cwd=self.cwd,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(waiting.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
@@ -881,7 +881,7 @@ class Roster(Live):
         self.assertEqual((before["cursor"], before["gen"]), (0, 1))
         res = self.workers("next-event", "--after", str(total - 3), "--gen", "0")
         self.assertEqual((res.returncode, res.stdout, res.stderr),
-                         (1, "workers: stale line numbers (gen 0, now 1): run workers.py attach\n", ""))
+                         (1, "workers: stale line numbers (gen 0, now 1): run crew.py attach\n", ""))
         self.assertEqual(self.roster(), before)
         self.ok(self.tui("send", "w1", "more"))
         n, event, content = self.next_event(3, gen=1)
