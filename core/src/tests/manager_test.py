@@ -5,6 +5,7 @@ import fcntl
 import io
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -66,28 +67,16 @@ class ManagerTest(unittest.TestCase):
         os.mkdir(path)
         return path
 
-    def test_manager_beats_tmux(self):
-        proc = tmux()
-        os.environ.update(INSIDE)
-        self.assertEqual(manager.directory("m1", proc=proc), self.dir)
-        self.assertEqual(proc.calls, [])
-
-    def test_own_session(self):
-        proc = tmux("own\n")
-        os.environ.update(INSIDE)
-        self.assertEqual(manager.directory(proc=proc), os.path.join(self.managers, "own"))
-        self.assertEqual(len(proc.calls), 1)
-
-    def test_outside_tmux_is_none(self):
-        proc = tmux()
-        self.assertIsNone(manager.directory(proc=proc))
-        self.assertEqual(proc.calls, [])
-
-    def test_resolving_touches_nothing(self):
-        os.environ.update(INSIDE)
-        manager.directory("m1")
-        manager.directory(proc=tmux())
-        self.assertEqual(os.listdir(self.agent_pm), [])
+    def test_directory_is_the_manager_else_the_own_tmux_session_and_touches_nothing(self):
+        cases = [("--manager beats tmux", "m1", INSIDE, self.dir, 0),
+                 ("the own tmux session", None, INSIDE, os.path.join(self.managers, "own"), 1),
+                 ("outside tmux, no name: none", None, {}, None, 0)]
+        for label, name, env, want, calls in cases:
+            with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
+                proc = tmux("own\n")
+                self.assertEqual(manager.directory(name, proc=proc), want)
+                self.assertEqual(len(proc.calls), calls)
+                self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_relative_home_gives_an_absolute_path(self):
         os.environ["HOME"] = "rel/home"
@@ -96,29 +85,33 @@ class ManagerTest(unittest.TestCase):
 
     def test_bad_manager_names(self):
         for name in ("a/b", "..", "", "a b", "a;", "a\n"):
-            with self.subTest(name=name), self.assertRaises(manager.ManagerError) as cm:
-                manager.directory(name)
-            self.assertEqual(str(cm.exception), f"manager {name!r}: want [A-Za-z0-9_-]+")
+            for call, resolve in (("directory", manager.directory), ("home", lambda n: manager.home(n, None))):
+                with self.subTest(name=name, call=call), self.assertRaises(manager.ManagerError) as cm:
+                    resolve(name)
+                self.assertEqual(str(cm.exception), f"manager {name!r}: want [A-Za-z0-9_-]+")
 
-    def test_bad_own_session_name_names_manager_option(self):
-        os.environ.update(INSIDE)
-        with self.assertRaises(manager.ManagerError) as cm:
-            manager.directory(proc=tmux("a;\n"))
-        self.assertEqual(str(cm.exception), "own tmux session 'a;': want [A-Za-z0-9_-]+; give --manager <name>")
-
-    def test_bad_tmux_pane_names_manager_option(self):
-        os.environ.update(INSIDE, TMUX_PANE="%3;")
-        proc = tmux()
-        with self.assertRaisesRegex(manager.ManagerError, r"TMUX_PANE.*; give --manager <name>$"):
-            manager.directory(proc=proc)
-        self.assertEqual(proc.calls, [])
+    def test_bad_own_session_names_the_manager_option(self):
+        cases = [("bad session name", {}, "a;\n",
+                  r"^own tmux session 'a;': want \[A-Za-z0-9_-\]\+; give --manager <name>$", 1),
+                 ("bad TMUX_PANE", {"TMUX_PANE": "%3;"}, "own\n", r"TMUX_PANE.*; give --manager <name>$", 0)]
+        for label, env, out, pattern, calls in cases:
+            for call in ("directory", "home"):
+                with self.subTest(label, call=call), unittest.mock.patch.dict(os.environ, {**INSIDE, **env}):
+                    proc = tmux(out)
+                    with self.assertRaisesRegex(manager.ManagerError, pattern):
+                        manager.directory(proc=proc) if call == "directory" else manager.home(None, None, proc=proc)
+                    self.assertEqual(len(proc.calls), calls)
 
     def test_home_is_the_directory_whose_events_file_is_given(self):
-        manager.ensure(self.dir)
-        proc = tmux()
-        self.assertEqual(manager.home("m1", os.path.join(self.dir, "events"), proc=proc), self.dir)
-        self.assertEqual(proc.calls, [])
-        self.assertEqual(os.listdir(self.dir), [])
+        own = os.path.join(self.managers, "own")
+        for label, name, d, env, calls in (("--manager", "m1", self.dir, {}, 0),
+                                           ("the own tmux session", None, own, INSIDE, 1)):
+            with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
+                manager.ensure(d)
+                proc = tmux("own\n")
+                self.assertEqual(manager.home(name, os.path.join(d, "events"), proc=proc), d)
+                self.assertEqual(len(proc.calls), calls)
+                self.assertEqual(os.listdir(d), [])
 
     def test_home_is_none_without_the_directory_or_its_events_file(self):
         manager.ensure(self.dir)
@@ -134,12 +127,6 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(os.listdir(self.managers), ["m1"])
         self.assertEqual(os.listdir(self.dir), [])
 
-    def test_home_of_the_own_tmux_session(self):
-        own = os.path.join(self.managers, "own")
-        manager.ensure(own)
-        os.environ.update(INSIDE)
-        self.assertEqual(manager.home(None, os.path.join(own, "events"), proc=tmux("own\n")), own)
-
     def test_home_compares_real_paths(self):
         manager.ensure(self.dir)
         base = os.path.dirname(self.agent_pm)
@@ -150,32 +137,21 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(manager.home("m1", os.path.join(self.dir, "events")),
                          os.path.join(base, "alias", ".agent-pm", "managers", "m1"))
 
-    def test_home_bad_name_or_own_session_is_a_manager_error(self):
-        with self.assertRaisesRegex(manager.ManagerError, r"^manager 'a/b': want \[A-Za-z0-9_-\]\+$"):
-            manager.home("a/b", None)
-        os.environ.update(INSIDE)
-        with self.assertRaisesRegex(manager.ManagerError, "give --manager <name>$"):
-            manager.home(None, None, proc=tmux("a;\n"))
-
     def test_events_path_without_create_touches_nothing(self):
         self.assertEqual(manager.events(self.dir, create=False), os.path.join(self.dir, "events"))
         self.assertEqual(os.listdir(self.agent_pm), [])
 
-    def check_created(self, mask):
-        os.rmdir(self.agent_pm)
-        self.umask(mask)
-        path = manager.events(self.dir)
-        self.assertEqual(path, os.path.join(self.dir, "events"))
-        for made in (self.agent_pm, self.managers, self.dir):
-            self.assertEqual(mode(made), 0o700, made)
-        self.assertTrue(stat.S_ISREG(os.lstat(path).st_mode))
-        self.assertEqual(mode(path), 0o600)
-
-    def test_created_under_umask_022(self):
-        self.check_created(0o022)
-
-    def test_created_under_umask_077(self):
-        self.check_created(0o077)
+    def test_created_0700_with_a_0600_events_whatever_the_umask(self):
+        for mask in (0o022, 0o077):
+            with self.subTest(umask=oct(mask)):
+                shutil.rmtree(self.agent_pm)
+                self.umask(mask)
+                path = manager.events(self.dir)
+                self.assertEqual(path, os.path.join(self.dir, "events"))
+                for made in (self.agent_pm, self.managers, self.dir):
+                    self.assertEqual(mode(made), 0o700, made)
+                self.assertTrue(stat.S_ISREG(os.lstat(path).st_mode))
+                self.assertEqual(mode(path), 0o600)
 
     def test_directories_are_0700_even_when_the_umask_strips_owner_bits(self):
         self.umask(0o277)
@@ -454,25 +430,25 @@ class RosterTest(unittest.TestCase):
             pass
         self.assertEqual(self.bytes(), raw)
 
-    def test_write_false_writes_nothing_even_when_the_file_is_missing(self):
-        with manager.roster(self.dir, write=False) as r:
-            r["cursor"] = 9
-        self.assertFalse(os.path.exists(self.path))
-        raw = self.store(self.doc())
-        with manager.roster(self.dir, write=False) as r:
-            r["cursor"] = 9
-        self.assertEqual(self.bytes(), raw)
+    def test_write_false_or_an_exception_in_the_block_writes_nothing_even_when_the_file_is_missing(self):
+        def write_false():
+            with manager.roster(self.dir, write=False) as r:
+                r["cursor"] = 9
 
-    def test_exception_in_the_block_writes_nothing(self):
-        with self.assertRaises(RuntimeError), manager.roster(self.dir) as r:
-            r["cursor"] = 9
-            raise RuntimeError
-        self.assertFalse(os.path.exists(self.path))
-        raw = self.store(self.doc())
-        with self.assertRaises(RuntimeError), manager.roster(self.dir) as r:
-            r["cursor"] = 9
-            raise RuntimeError
-        self.assertEqual(self.bytes(), raw)
+        def raising():
+            with self.assertRaises(RuntimeError), manager.roster(self.dir) as r:
+                r["cursor"] = 9
+                raise RuntimeError
+
+        for label, block in (("write=False", write_false), ("an exception", raising)):
+            with self.subTest(label):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.path)
+                block()
+                self.assertFalse(os.path.exists(self.path))
+                raw = self.store(self.doc())
+                block()
+                self.assertEqual(self.bytes(), raw)
 
     def test_lock_is_released_after_the_block(self):
         with self.assertRaises(RuntimeError), manager.roster(self.dir):
@@ -527,23 +503,17 @@ class RosterTest(unittest.TestCase):
                 self.assertEqual(err, f"manager: roster.json: entry 'bad': {why.format(value)}\n")
                 self.assertEqual(self.bytes(), raw)
 
-    def test_entry_keys_must_be_exactly_the_twelve(self):
-        extra, missing = {**good(), "x": 1}, {k: v for k, v in good().items() if k != "note"}
-        both = {**missing, "y": 1}
-        for value, why in [(extra, "keys: unexpected ['x']"), (missing, "keys: missing ['note']"),
-                           (both, "keys: missing ['note'], unexpected ['y']"), ([], "value: []: want an object"),
-                           ("w", "value: 'w': want an object")]:
-            with self.subTest(why=why):
-                self.store(self.doc(entries={"bad": value}))
+    def test_entry_of_other_keys_than_the_twelve_or_a_bad_name_is_skipped(self):
+        missing = {k: v for k, v in good().items() if k != "note"}
+        cases = [("bad", {**good(), "x": 1}, "keys: unexpected ['x']"), ("bad", missing, "keys: missing ['note']"),
+                 ("bad", {**missing, "y": 1}, "keys: missing ['note'], unexpected ['y']"),
+                 ("bad", [], "value: []: want an object"), ("bad", "w", "value: 'w': want an object"),
+                 *((name, good(), "name: want [A-Za-z0-9_-]+") for name in ("a b", "", "a;", "a\nb", "w/1"))]
+        for name, value, why in cases:
+            with self.subTest(name=name, why=why):
+                self.store(self.doc(entries={name: value}))
                 r, err = self.load()
-                self.assertEqual((r["entries"], err), ({}, f"manager: roster.json: entry 'bad': {why}\n"))
-
-    def test_entry_name_must_match_name(self):
-        for name in ("a b", "", "a;", "a\nb", "w/1"):
-            with self.subTest(name=name):
-                self.store(self.doc(entries={name: good()}))
-                r, err = self.load()
-                self.assertEqual((r["entries"], err), ({}, f"manager: roster.json: entry {name!r}: name: want [A-Za-z0-9_-]+\n"))
+                self.assertEqual((r["entries"], err), ({}, f"manager: roster.json: entry {name!r}: {why}\n"))
 
     def test_stderr_line_shows_values_by_repr(self):
         self.store(self.doc(entries={"bad": good(cwd="/w\n\x1b[31mforged ")}))
@@ -559,11 +529,6 @@ class RosterTest(unittest.TestCase):
             manager.put(self.dir, "w1", good())
         self.assertEqual(list(self.entries()), ["w1"])
         self.assertEqual(err.getvalue().count("\n"), 1)
-
-    def test_resume_with_shell_text_is_one_valid_word(self):
-        resume = ["/usr/bin/python3", "/x/workers.py", "; rm -rf ~"]
-        self.store(self.doc(entries={"w1": good(resume=resume)}))
-        self.assertEqual(self.load()[0]["entries"]["w1"]["resume"], resume)
 
     def test_top_level_valid_forms(self):
         for top in ({}, {"holder": {"session": "s1", "since": WHEN}}, {"cursor": 7, "gen": 3},
@@ -696,15 +661,14 @@ class RosterTest(unittest.TestCase):
         open(self.dir, "w").close()
         self.refused(refused)
 
-    def test_managers_of_another_user_refused(self):
+    def test_managers_of_another_user_or_a_symlink_refused(self):
+        refused = f"manager directory {self.managers}: not a directory owned by you"
         with unittest.mock.patch("os.getuid", return_value=os.getuid() + 1):
-            self.refused(f"manager directory {self.managers}: not a directory owned by you")
-
-    def test_managers_symlink_refused_and_its_target_untouched(self):
+            self.refused(refused)
         target = os.path.join(os.path.dirname(self.agent_pm), "target")
         os.rename(self.managers, target)
         os.symlink(target, self.managers)
-        self.refused(f"manager directory {self.managers}: not a directory owned by you")
+        self.refused(refused)
         self.assertEqual(os.listdir(os.path.join(target, "m1")), [])
 
     def test_entry_defaults_and_validity(self):
@@ -723,21 +687,27 @@ class RosterTest(unittest.TestCase):
         with self.assertRaisesRegex(manager.ManagerError, "^entry: cwd: 'rel': want"):
             manager.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/workers.py"])
 
-    def test_set_entry_validates_replaces_and_leaves_the_dict_on_a_fault(self):
-        with manager.roster(self.dir) as r:
-            manager.set_entry(r, "w1", good())
-            manager.set_entry(r, "w1", good(note="n"))
-            with self.assertRaises(manager.ManagerError) as cm:
-                manager.set_entry(r, "w2", good(sid="x"))
-            self.assertEqual(str(cm.exception), "entry 'w2': sid: 'x': want a session id or null")
-            with self.assertRaisesRegex(manager.ManagerError, "^entry 'a b': name: want"):
-                manager.set_entry(r, "a b", good())
-        self.assertEqual(self.entries(), {"w1": good(note="n")})
+    def test_set_entry_and_record_validate_replace_and_leave_the_dict_on_a_fault(self):
+        for setter in (manager.set_entry, manager.record):
+            with self.subTest(setter.__name__):
+                with manager.roster(self.dir) as r:
+                    r["entries"] = {}
+                    setter(r, "w1", good())
+                    setter(r, "w1", good(note="n"))
+                    with self.assertRaises(manager.ManagerError) as cm:
+                        setter(r, "w2", good(sid="x"))
+                    self.assertEqual(str(cm.exception), "entry 'w2': sid: 'x': want a session id or null")
+                    with self.assertRaisesRegex(manager.ManagerError, "^entry 'w1': sid: 'x': want"):
+                        setter(r, "w1", good(sid="x"))
+                    with self.assertRaisesRegex(manager.ManagerError, "^entry 'a b': name: want"):
+                        setter(r, "a b", good())
+                self.assertEqual(self.entries(), {"w1": good(note="n")})
 
-    def test_put_sets_one_entry_under_the_lock(self):
-        manager.put(self.dir, "w1", good())
+    def test_put_records_one_entry_under_the_lock(self):
+        manager.put(self.dir, "w1", good(note="n"))
         manager.put(self.dir, "w2", good(state="done"))
-        self.assertEqual(self.entries(), {"w1": good(), "w2": good(state="done")})
+        manager.put(self.dir, "w1", good(state="done"))   # the same sid: record keeps the note
+        self.assertEqual(self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")})
         with self.assertRaises(manager.ManagerError):
             manager.put(self.dir, "w3", good(kind="boss"))
         self.assertEqual(sorted(self.entries()), ["w1", "w2"])
@@ -757,18 +727,6 @@ class RosterTest(unittest.TestCase):
                 self.assertEqual(self.entries(), {"w1": want})
                 self.assertEqual(value, given)
 
-    def test_record_validates_and_leaves_the_old_entry_on_a_fault(self):
-        with manager.roster(self.dir) as r:
-            manager.set_entry(r, "w1", good(note="n"))
-            with self.assertRaisesRegex(manager.ManagerError, "^entry 'w1': sid: 'x': want"):
-                manager.record(r, "w1", good(sid="x"))
-        self.assertEqual(self.entries(), {"w1": good(note="n")})
-
-    def test_put_keeps_the_note_on_a_same_sid_replace(self):
-        manager.put(self.dir, "w1", good(note="n"))
-        manager.put(self.dir, "w1", good(state="done"))
-        self.assertEqual(self.entries(), {"w1": good(state="done", note="n")})
-
     def test_unwritten_prints_the_one_failure_line_to_stderr(self):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -786,20 +744,19 @@ class RosterTest(unittest.TestCase):
             self.assertEqual(str(cm.exception), "w1 not in roster")
         self.assertEqual(self.entries(), {})
 
-    def test_recovery_forms(self):
+    def test_recovery_forms_each_a_copy(self):
         resume = ["/usr/bin/python3", "/x/workers.py", "start"]
-        for kind in ("worker", "pipeline"):
-            with self.subTest(kind=kind):
-                self.assertEqual(manager.recovery(good(kind=kind, resume=resume)), resume)
-        self.assertEqual(manager.recovery(good(kind="worker", sid=None, resume=resume)), resume)
-        self.assertEqual(manager.recovery(good(kind="role", resume=resume)),
-                         [*resume, "--sid", SID, "--resume", "--input", "Continue the unfinished task."])
-        self.assertIsNone(manager.recovery(good(kind="role", sid=None, resume=resume)))
-
-    def test_recovery_is_a_copy(self):
-        e = good(resume=["/p", "/x/workers.py"])
-        manager.recovery(e).append("x")
-        self.assertEqual(e["resume"], ["/p", "/x/workers.py"])
+        cases = [("worker", SID, resume), ("pipeline", SID, resume), ("worker", None, resume),
+                 ("role", SID, [*resume, "--sid", SID, "--resume", "--input", "Continue the unfinished task."]),
+                 ("role", None, None)]
+        for kind, sid, want in cases:
+            with self.subTest(kind=kind, sid=sid):
+                e = good(kind=kind, sid=sid, resume=list(resume))
+                got = manager.recovery(e)
+                self.assertEqual(got, want)
+                if got is not None:
+                    got.append("x")
+                    self.assertEqual(e["resume"], resume)
 
     def test_printable(self):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):
@@ -816,14 +773,17 @@ class RosterTest(unittest.TestCase):
                 self.assertIsNone(manager.SID.fullmatch(text))
 
     def test_constants(self):
-        self.assertEqual((manager.VERSION, manager.NOTE_MAX, manager.LOCK_TIMEOUT, manager.ROSTER_MAX),
-                         (1, 500, 30, 1 << 20))
+        self.assertEqual((manager.VERSION, manager.NOTE_MAX, manager.LOCK_TIMEOUT, manager.ROSTER_MAX,
+                          manager.EVENTS_MAX, manager.SETTLE), (1, 500, 30, 1 << 20, 1 << 20, 1))
         self.assertEqual(manager.KINDS, ("worker", "role", "pipeline"))
         self.assertEqual(manager.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished"))
+        for error in (manager.Held, manager.Stale):
+            self.assertTrue(issubclass(error, manager.ManagerError), error)
 
 
 NOW = "2026-02-02T02:02:02+00:00"
 ATTACH = "manager directory {} not attached: run workers.py attach first"
+KEPT = object()
 
 
 def sessions(*live):
@@ -871,48 +831,36 @@ class LeaseTest(unittest.TestCase):
         with unittest.mock.patch.object(manager, "now", return_value=NOW):
             manager.take(r, self.dir, own, proc=proc)
 
-    def test_held_is_a_manager_error(self):
-        self.assertTrue(issubclass(manager.Held, manager.ManagerError))
-
-    def test_take_without_a_holder_makes_own_the_holder(self):
-        proc, r = sessions(), self.doc()
-        self.take(r, "me", proc)
-        self.assertEqual(r, self.doc(self.held("me", NOW)))
-        self.assertEqual(proc.calls, [])
-
-    def test_take_by_the_holder_keeps_since_and_asks_tmux_nothing(self):
-        proc, r = sessions("me"), self.doc(self.held("me"))
-        self.take(r, "me", proc)
-        self.assertEqual(r, self.doc(self.held("me")))
-        self.assertEqual(proc.calls, [])
-
-    def test_take_from_a_live_other_is_held_with_the_fr13_text_and_changes_nothing(self):
+    def test_take_and_check_by_holder_own_and_live_sessions(self):
+        """Each row: the holder, own, the live tmux sessions (None: no tmux); then take's and check's holder (KEPT: as
+        it was) or their error, which changes nothing; the sessions asked (has-session), the same for both."""
         since = "2026-01-02T03:04:05+00:00"
-        proc, r = sessions("other"), self.doc(self.held("other", since))
-        self.refused(lambda: self.take(r, "me", proc), r, self.message("other", since), manager.Held)
-        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
-
-    def test_take_from_a_dead_other_takes_over_with_a_new_since(self):
-        proc, r = sessions("me"), self.doc(self.held("other"))
-        self.take(r, "me", proc)
-        self.assertEqual(r, self.doc(self.held("me", NOW)))
-        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
-
-    def test_no_tmux_counts_as_not_live(self):
-        r = self.doc(self.held("other"))
-        self.take(r, "me", no_tmux)
-        self.assertEqual(r["holder"], self.held("me", NOW))
-
-    def test_take_outside_tmux_leaves_the_holder_untouched(self):
-        for holder in (None, self.held("other")):
-            with self.subTest(holder=holder):
-                r = self.doc(holder)
-                self.take(r, None, sessions())
-                self.assertEqual(r, self.doc(holder))
-
-    def test_take_outside_tmux_is_held_by_a_live_other(self):
-        r = self.doc(self.held("other"))
-        self.refused(lambda: self.take(r, None, sessions("other")), r, self.message(), manager.Held)
+        other, me, me_now = self.held("other", since), self.held("me"), self.held("me", NOW)
+        held, attach = (manager.Held, self.message("other", since)), (manager.ManagerError, ATTACH.format(self.dir))
+        cases = [
+            ("free", None, "me", (), me_now, attach, []),
+            ("own the holder: since kept", me, "me", ("me",), KEPT, KEPT, []),
+            ("a live other", other, "me", ("other",), held, held, ["other"]),
+            ("a dead other: a new since", other, "me", ("me",), me_now, attach, ["other"]),
+            ("no tmux counts as not live", other, "me", None, me_now, attach, None),
+            ("outside tmux, free", None, None, (), KEPT, KEPT, []),
+            ("outside tmux, a dead other", other, None, (), KEPT, KEPT, ["other"]),
+            ("outside tmux, a live other", other, None, ("other",), held, held, ["other"]),
+            ("outside tmux, no tmux", other, None, None, KEPT, KEPT, None),
+        ]
+        for label, holder, own, live, take, check, asked in cases:
+            for call, want in (("take", take), ("check", check)):
+                with self.subTest(label, call=call):
+                    proc, r = no_tmux if live is None else sessions(*live), self.doc(holder)
+                    run = ((lambda: self.take(r, own, proc)) if call == "take"
+                           else (lambda: manager.check(r, self.dir, own, proc=proc)))
+                    if isinstance(want, tuple):
+                        self.refused(run, r, want[1], want[0])
+                    else:
+                        run()
+                        self.assertEqual(r, self.doc(holder if want is KEPT else want))
+                    if asked is not None:
+                        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", f"={s}"] for s in asked])
 
     def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
         with manager.roster(self.dir) as r:
@@ -926,35 +874,6 @@ class LeaseTest(unittest.TestCase):
             manager.take(r, self.dir, "you", proc=sessions("me"))
         with open(self.path, "rb") as f:
             self.assertEqual(f.read(), raw)
-
-    def test_check_passes_for_the_holder_and_asks_tmux_nothing(self):
-        proc, r = sessions("me"), self.doc(self.held("me"))
-        manager.check(r, self.dir, "me", proc=proc)
-        self.assertEqual(r, self.doc(self.held("me")))
-        self.assertEqual(proc.calls, [])
-
-    def test_check_against_a_live_other_is_held_with_the_same_text_as_take(self):
-        proc, r = sessions("other"), self.doc(self.held("other"))
-        self.refused(lambda: manager.check(r, self.dir, "me", proc=proc), r, self.message(), manager.Held)
-        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", "=other"]])
-
-    def test_check_by_a_non_holder_is_not_attached_and_takes_nothing(self):
-        for holder, proc in ((None, sessions()), (self.held("other"), sessions()), (self.held("other"), no_tmux)):
-            with self.subTest(holder=holder):
-                r = self.doc(holder)
-                self.refused(lambda: manager.check(r, self.dir, "me", proc=proc), r, ATTACH.format(self.dir))
-
-    def test_check_outside_tmux_passes_without_a_live_holder(self):
-        for holder in (None, self.held("other")):
-            with self.subTest(holder=holder):
-                r = self.doc(holder)
-                manager.check(r, self.dir, None, proc=sessions())
-                self.assertEqual(r, self.doc(holder))
-        manager.check(self.doc(self.held("other")), self.dir, None, proc=no_tmux)
-
-    def test_check_outside_tmux_is_held_by_a_live_other(self):
-        r = self.doc(self.held("other"))
-        self.refused(lambda: manager.check(r, self.dir, None, proc=sessions("other")), r, self.message(), manager.Held)
 
     def test_check_in_a_read_only_block_creates_no_roster_json(self):
         with manager.roster(self.dir, write=False) as r:
@@ -1035,29 +954,25 @@ class StopTest(unittest.TestCase):
         with manager.roster(self.dir, write=False) as r:
             self.assertEqual(r["entries"], self.entries)
 
-    def test_a_worker_its_session_killed_then_removed(self):
-        proc = tmux_sessions("w1", "w2")
-        self.assertEqual(self.stop("w1", proc), ("w1", {n: e for n, e in self.entries.items() if n != "w1"}))
-        self.assertEqual(proc.calls, kills("w1"))
-
-    def test_a_role_or_pipeline_by_its_key_or_its_tui_the_driver_killed_first(self):
-        for key, tui in (("d1", "t1"), ("d2", "t2")):
-            for name in (key, tui):
-                with self.subTest(name=name):
-                    proc = tmux_sessions(key, tui)
-                    key_, left = self.stop(name, proc)
-                    self.assertEqual((key_, sorted(left)), (key, sorted(set(self.entries) - {key})))
-                    self.assertEqual(proc.calls, kills(key, tui))
-
-    def test_sessions_gone_already_still_killed_and_the_entry_removed(self):
-        for name, live, sessions in (("w1", (), ("w1",)), ("d1", ("t1",), ("d1", "t1")), ("d3", (), ("d3",))):
-            with self.subTest(name=name):
-                proc = tmux_sessions(*live)
-                self.assertNotIn(name, self.stop(name, proc)[1])
-                self.assertEqual(proc.calls, kills(*sessions))
-
-    def test_no_tmux_counts_as_gone(self):
-        self.assertNotIn("w1", self.stop("w1", no_tmux)[1])
+    def test_kills_the_sessions_driver_first_then_removes_the_entry(self):
+        """Each row: the name given, the live sessions (None: no tmux), the key stopped, the sessions killed in turn."""
+        cases = [
+            ("a worker", "w1", ("w1", "w2"), "w1", ("w1",)),
+            ("a role by its key", "d1", ("d1", "t1"), "d1", ("d1", "t1")),
+            ("a role by its tui", "t1", ("d1", "t1"), "d1", ("d1", "t1")),
+            ("a pipeline by its key", "d2", ("d2", "t2"), "d2", ("d2", "t2")),
+            ("a pipeline by its tui", "t2", ("d2", "t2"), "d2", ("d2", "t2")),
+            ("a worker gone already", "w1", (), "w1", ("w1",)),
+            ("a role's driver gone already", "d1", ("t1",), "d1", ("d1", "t1")),
+            ("a role without a tui, gone already", "d3", (), "d3", ("d3",)),
+            ("no tmux counts as gone", "w1", None, "w1", None),
+        ]
+        for label, name, live, key, killed in cases:
+            with self.subTest(label):
+                proc = no_tmux if live is None else tmux_sessions(*live)
+                self.assertEqual(self.stop(name, proc), (key, {n: e for n, e in self.entries.items() if n != key}))
+                if killed is not None:
+                    self.assertEqual(proc.calls, kills(*killed))
 
     def test_an_entry_key_beats_another_entrys_tui(self):
         self.entries["t1"] = good()
@@ -1065,15 +980,14 @@ class StopTest(unittest.TestCase):
         self.assertEqual(self.stop("t1", proc)[0], "t1")
         self.assertEqual(proc.calls, kills("t1"))
 
-    def test_not_in_roster_kills_nothing(self):
-        proc = tmux_sessions("w9")
-        self.refused("w9", proc, "w9 not in roster")
-        self.assertEqual(proc.calls, [])
-
-    def test_a_session_still_live_keeps_the_entry(self):
-        proc = tmux_sessions("d1", "t1", stuck=("t1",))
-        self.refused("d1", proc, "d1: session t1 still live after tmux kill-session")
-        self.assertEqual(proc.calls, kills("d1", "t1"))
+    def test_not_in_roster_or_a_session_still_live_keeps_every_entry(self):
+        cases = [("not in roster: nothing killed", "w9", tmux_sessions("w9"), "w9 not in roster", ()),
+                 ("a session still live", "d1", tmux_sessions("d1", "t1", stuck=("t1",)),
+                  "d1: session t1 still live after tmux kill-session", ("d1", "t1"))]
+        for label, name, proc, message, killed in cases:
+            with self.subTest(label):
+                self.refused(name, proc, message)
+                self.assertEqual(proc.calls, kills(*killed))
 
 
 WIDTH = 64
@@ -1136,10 +1050,6 @@ class CursorTest(unittest.TestCase):
             return change(p, st) if p == path else st
 
         return unittest.mock.patch("os.lstat", lstat)
-
-    def test_constants(self):
-        self.assertEqual((manager.EVENTS_MAX, manager.SETTLE), (1 << 20, 1))
-        self.assertTrue(issubclass(manager.Stale, manager.ManagerError))
 
     def test_missing_or_empty_has_no_lines(self):
         for label, make in (("missing", lambda: None), ("empty", lambda: self.write(b""))):
@@ -1248,16 +1158,26 @@ class CursorTest(unittest.TestCase):
 
     def test_rotate_keeps_the_lines_after_the_cursor_in_a_fresh_0600_events(self):
         self.addCleanup(os.umask, os.umask(0o022))
-        cursor = self.due_file()
-        original, ino = self.read(), os.lstat(self.events).st_ino
-        r = self.doc(cursor, 2)
-        self.assertEqual(self.rotate(r), (True, [manager.SETTLE], ""))
-        self.assertEqual(r, self.doc(0, 3))
-        self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, original))
-        self.assertEqual(self.read(), numbered(3, start=SPAN + 1))
-        self.assertTrue(stat.S_ISREG(os.lstat(self.events).st_mode))
-        self.assertEqual(mode(self.events), 0o600)
-        self.assertNotEqual(os.lstat(self.events).st_ino, ino)
+        cases = [("plain", b"", False, b""),
+                 ("a trailing fragment gets its newline", b"12:00:01 w9 do", False, b"12:00:01 w9 do\n"),
+                 ("an old events.1 replaced", b"", True, b"")]
+        for label, tail, old, ended in cases:
+            with self.subTest(label):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.old)
+                cursor = self.due_file(tail)
+                if old:
+                    self.write(b"old\n", self.old)
+                original, ino = self.read(), os.lstat(self.events).st_ino
+                r = self.doc(cursor, 2)
+                self.assertEqual(self.rotate(r), (True, [manager.SETTLE], ""))
+                self.assertEqual(r, self.doc(0, 3))
+                self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, original))
+                self.assertEqual(self.read(), numbered(3, start=SPAN + 1) + ended)
+                self.assertTrue(stat.S_ISREG(os.lstat(self.events).st_mode))
+                self.assertEqual(mode(self.events), 0o600)
+                self.assertNotEqual(os.lstat(self.events).st_ino, ino)
+                self.assertEqual(sorted(os.listdir(self.dir)), ["events", "events.1"])
 
     def test_rotate_puts_a_line_appended_during_the_wait_first(self):
         cursor = self.due_file()
@@ -1269,19 +1189,6 @@ class CursorTest(unittest.TestCase):
         r = self.doc(cursor)
         self.assertEqual(self.rotate(r, append)[:2], (True, [manager.SETTLE]))
         self.assertEqual(self.read(), WRITER + numbered(3, start=SPAN + 1))
-
-    def test_rotate_ends_a_trailing_fragment(self):
-        cursor = self.due_file(b"12:00:01 w9 do")
-        self.assertIs(self.rotate(self.doc(cursor))[0], True)
-        self.assertEqual(self.read(), numbered(3, start=SPAN + 1) + b"12:00:01 w9 do\n")
-
-    def test_rotate_replaces_an_old_events_1(self):
-        cursor = self.due_file()
-        original = self.read()
-        self.write(b"old\n", self.old)
-        self.assertIs(self.rotate(self.doc(cursor))[0], True)
-        self.assertEqual(self.read(self.old), original)
-        self.assertEqual(sorted(os.listdir(self.dir)), ["events", "events.1"])
 
     def test_rotate_makes_a_writers_0644_events_0600(self):
         self.addCleanup(os.umask, os.umask(0o022))

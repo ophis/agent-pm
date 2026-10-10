@@ -246,8 +246,9 @@ class Start(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_handover_file(self):
+        # PWD the cwd, given another (as here) or none (test_hooks_events_and_decorations' env)
         env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j",
-               **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
+               "PWD": "/elsewhere", **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
         self.assertEqual(fake.handover, {"argv": [self.tool, "--settings", tui_claude.hooks(), "-x", "a b"],
@@ -257,13 +258,6 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.dir_mode, 0o700)
         self.assertEqual(os.path.dirname(os.path.dirname(fake.path)), self.temp)
         self.assertEqual(os.listdir(self.temp), [])
-
-    def test_pwd_is_the_cwd(self):
-        for given in ({"PATH": self.bin, "PWD": "/elsewhere"}, {"PATH": self.bin}):
-            with self.subTest(given=given):
-                fake = Tmux()
-                self.start(fake, env=given)
-                self.assertEqual(fake.handover["env"]["PWD"], self.cwd)
 
     def test_terminal_keys(self):
         self.assertEqual(set(tui_claude.TERMINAL_KEYS), {
@@ -278,20 +272,20 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.handover["cwd"], self.cwd)
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
 
-    def test_command_resolved_with_the_envs_path(self):
-        fake = Tmux()
-        with self.assertRaisesRegex(tui_claude.TuiError, "sh"):
-            self.start(fake, argv=("sh", "-c", "true"))
-        with self.assertRaisesRegex(tui_claude.TuiError, "no-such-tool"):
-            self.start(fake, argv=("no-such-tool",))
-        self.assertEqual(fake.calls, [])
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_empty_argv(self):
-        fake = Tmux()
-        with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
-            self.start(fake, argv=())
-        self.assertEqual(fake.calls, [])
+    def test_refused_before_tmux(self):
+        # the command resolved with the env's PATH (no sh there); an events file that is no regular file; a --settings
+        # value hooks cannot merge into
+        link = os.path.join(self.root, "link")
+        os.symlink(self.tool, link)
+        for kw, error in (({"argv": ("sh", "-c", "true")}, "sh"), ({"argv": ("no-such-tool",)}, "no-such-tool"),
+                          ({"argv": ()}, "no command"), ({"events": self.cwd}, ""), ({"events": link}, ""),
+                          ({"argv": ("tool", "--settings", "s.json")}, "")):
+            with self.subTest(**kw):
+                fake = Tmux()
+                with self.assertRaisesRegex(tui_claude.TuiError, error):
+                    self.start(fake, **kw)
+                self.assertEqual(fake.calls, [])
+                self.assertEqual(os.listdir(self.temp), [])
 
     def test_handover_file_unwritable(self):
         fake = Tmux()
@@ -421,6 +415,7 @@ class Start(unittest.TestCase):
             with self.subTest(name=name):
                 fake = Tmux()
                 for call in (lambda: self.start(fake, session=name), lambda: tui_claude.status(name, proc=fake),
+                             lambda: tui_claude.decorate(name, proc=fake),
                              lambda: tui_claude.kill(name, proc=fake), lambda: tui_claude.send(name, "x", proc=fake, sleep=self.sleep),
                              lambda: tui_claude.read(name, proc=fake)):
                     with self.assertRaises(tui_claude.TuiError):
@@ -484,20 +479,16 @@ class Start(unittest.TestCase):
         os.chdir(self.root)
         self.addCleanup(os.chdir, here)
         events = os.path.join(self.root, "ev")
-        for given, path in ((None, None), ("ev", events)):
-            with self.subTest(events=given):
+        # the status line is the caller's choice
+        for given, path, status_line, status in ((None, None, False, "off"), ("ev", events, False, "off"),
+                                                 (None, None, True, "on")):
+            with self.subTest(events=given, status_line=status_line):
                 fake = Tmux()
-                self.start(fake, events=given)
+                self.start(fake, env={"PATH": self.bin}, events=given, status_line=status_line)
                 self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks(path), "-x", "a b"])
-                self.assertEqual(fake.calls[2:], decorations("s", path))
+                self.assertEqual(fake.handover["env"], {"PATH": self.bin, "PWD": self.cwd})
+                self.assertEqual(fake.calls[2:], decorations("s", path, status))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
-
-    def test_status_line_is_the_callers_choice(self):
-        for status_line, status in ((False, "off"), (True, "on")):
-            with self.subTest(status_line=status_line):
-                fake = Tmux()
-                self.start(fake, status_line=status_line)
-                self.assertEqual(fake.calls[2:], decorations("s", status=status))
 
     def test_a_failed_decoration_kills_the_session(self):
         fake = Tmux(fail={"set-hook"})
@@ -507,17 +498,6 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=s"])
         self.assertEqual(os.listdir(self.temp), [])
         self.assertEqual(self.stderr.getvalue(), "")
-
-    def test_bad_events_file_or_settings_refused_before_tmux(self):
-        link = os.path.join(self.root, "link")
-        os.symlink(self.tool, link)
-        for kw in ({"events": self.cwd}, {"events": link}, {"argv": ("tool", "--settings", "s.json")}):
-            with self.subTest(**kw):
-                fake = Tmux()
-                with self.assertRaises(tui_claude.TuiError):
-                    self.start(fake, **kw)
-                self.assertEqual(fake.calls, [])
-        self.assertEqual(os.listdir(self.temp), [])
 
 
 class Respawn(unittest.TestCase):
@@ -765,12 +745,6 @@ class Decorate(unittest.TestCase):
                     tui_claude.decorate("s", events, proc=fake)
                 self.assertEqual(len(fake.calls), 1)
 
-    def test_invalid_session_name(self):
-        fake = Tmux()
-        with self.assertRaises(tui_claude.TuiError):
-            tui_claude.decorate("a b", proc=fake)
-        self.assertEqual(fake.calls, [])
-
 
 class Status(unittest.TestCase):
     def test_states(self):
@@ -809,7 +783,6 @@ class Send(unittest.TestCase):
                                       ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"], ("sleep", 0.5),
                                       ["tmux", "send-keys", "-t", "=s:", "Enter"]])
         self.assertEqual(fake.kwargs, [{"capture_output": True, "text": True, "input": "-x hi"}, TMUX_KW, TMUX_KW])
-        self.assertEqual(tui_claude.PAUSE, 0.5)
 
     def test_text_goes_through_stdin_verbatim(self):
         long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
@@ -837,16 +810,14 @@ class Send(unittest.TestCase):
 
 
 class Read(unittest.TestCase):
-    def test_visible_pane(self):
-        fake = Tmux(results={"capture-pane": (0, "a\n  b\n\n \n")})
-        self.assertEqual(tui_claude.read("s", proc=fake), "a\n  b")
-        self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:"]])
-        self.assertEqual(fake.kwargs, [TMUX_KW])
-
-    def test_last_lines(self):
-        fake = Tmux(results={"capture-pane": (0, "1\n2\n\n3\n4\n\n\n")})
-        self.assertEqual(tui_claude.read("s", 3, proc=fake), "\n3\n4")
-        self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:", "-S", "-3"]])
+    def test_visible_pane_or_last_lines(self):
+        for lines, printed, want, extra in ((None, "a\n  b\n\n \n", "a\n  b", []),
+                                            (3, "1\n2\n\n3\n4\n\n\n", "\n3\n4", ["-S", "-3"])):
+            with self.subTest(lines=lines):
+                fake = Tmux(results={"capture-pane": (0, printed)})
+                self.assertEqual(tui_claude.read("s", lines, proc=fake), want)
+                self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:", *extra]])
+                self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_lines_must_be_a_positive_int(self):
         fake = Tmux()
@@ -866,9 +837,6 @@ class Show(unittest.TestCase):
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
             return tui_claude.show(session, template, proc=fake, **kw)
 
-    def test_constants(self):
-        self.assertEqual((tui_claude.SHOW_TIMEOUT, tui_claude.PLACEHOLDERS), (30, {"session"}))
-
     def test_attach_line_then_the_template(self):
         fake = Tmux()
         self.assertIsNone(self.show(fake, "open {{session}} --as {{session}}"))
@@ -886,22 +854,6 @@ class Show(unittest.TestCase):
         fake = Tmux()
         self.show(fake, "open {{session}}", session="a;b c")
         self.assertEqual(fake.calls, [["/bin/sh", "-c", "open 'a;b c'"]])
-
-    def test_template_else_the_split(self):
-        split = [SESSIONS, PGREP, osa("right", "id", "s", "ABC"), *record("w0t0p0:ABC", "NEW")]
-        for template, env, want in (("echo arg", ITERM, [["/bin/sh", "-c", "echo arg"]]),
-                                    (None, ITERM, split)):
-            with self.subTest(template=template, env=env):
-                fake = Tmux(results={"osascript": (0, "ok NEW\n")})
-                self.assertIsNone(self.show(fake, template, env))
-                self.assertEqual(fake.calls, want)
-                self.assertEqual(self.stderr.getvalue(), ATTACH)
-
-    def test_empty_runs_nothing(self):
-        fake = Tmux()
-        self.assertIsNone(self.show(fake, "", ITERM))
-        self.assertEqual(fake.calls, [])
-        self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_failures_printed_and_returned(self):
         missing = FileNotFoundError(2, "No such file or directory", "/bin/sh")
@@ -1061,13 +1013,12 @@ class Pane(unittest.TestCase):
     def test_control_mode_client_gets_a_tmux_split_of_own_pane(self):
         # iTerm2's tmux -CC: the control-mode client's tty is the hidden gateway tab's; iTerm2 draws the tmux split
         clients = self.clients((300, "/dev/ttys009", "%1", "1"), (100, "/dev/ttys001", "%2"))
-        for split, flag, head in ((None, "-h", [OWN, SESSIONS]), ("right", "-h", [OWN, SESSIONS]),
-                                  ("below", "-v", [OWN, SESSIONS])):
+        for split, flag in ((None, "-h"), ("right", "-h"), ("below", "-v")):
             with self.subTest(split=split):
                 fake = Tmux(results={"display-message": (0, "own\n"), "list-clients": clients,
                                      "split-window": (0, "%10\n")})
                 self.assertIsNone(self.show(fake, INSIDE, split=split))
-                self.assertEqual(fake.calls, [*head, clients_of("own"), split_window(flag, "%3"),
+                self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("own"), split_window(flag, "%3"),
                                               *record("own", "%10")])
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
 
@@ -1174,11 +1125,10 @@ class Pane(unittest.TestCase):
                      "split vertically with default profile command", "split horizontally with default profile command",
                      "unique id of s", "tty of s", 'return "ok " & (unique id of newSession)'):
             self.assertIn(part, script)
-
-    def test_panes_end_with_their_tmux_session(self):
-        self.assertEqual(tui_claude.APPLESCRIPT.count("with default profile command paneCommand"), 2)
+        # its panes end with their tmux session
+        self.assertEqual(script.count("with default profile command paneCommand"), 2)
         for word in ("write text", "close"):
-            self.assertNotIn(word, tui_claude.APPLESCRIPT)
+            self.assertNotIn(word, script)
 
 
 def seq(*results):
@@ -1222,24 +1172,19 @@ class Stack(unittest.TestCase):
         self.assertIsNone(self.show(fake, ITERM))
         self.assertEqual(fake.calls, [SESSIONS, PGREP, osa("right", "id", "s", "ABC"), *record("w0t0p0:ABC", "NEW")])
 
-    def test_second_below_the_first(self):
-        fake = self.fake([self.row(1, "a", "%7")], live=["%3", "%7", "%9"])
-        self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, split_window("-v", "%7"), *record("cmd", "%99")])
-
-    def test_newest_closed_goes_below_the_previous_live_one(self):
-        rows = [self.row(9, "a", "%9"), self.row(11, "c", "%11"), self.row(10, "b", "%10")]
-        for live, pane in ((["%9", "%10", "%11"], "%11"), (["%9", "%10"], "%10"), (["%9"], "%9")):
-            with self.subTest(live=live):
+    def test_below_the_newest_live_pane_else_right(self):
+        # the second below the first; the newest closed: below the previous live one; none live: right
+        three = [self.row(9, "a", "%9"), self.row(11, "c", "%11"), self.row(10, "b", "%10")]
+        right = [clients_of("cmd"), HOSTS, PGREP, split_window("-h", "%3")]
+        for rows, live, then in (([self.row(1, "a", "%7")], ["%3", "%7", "%9"], [split_window("-v", "%7")]),
+                                 (three, ["%9", "%10", "%11"], [split_window("-v", "%11")]),
+                                 (three, ["%9", "%10"], [split_window("-v", "%10")]),
+                                 (three, ["%9"], [split_window("-v", "%9")]),
+                                 ([self.row(1, "a", "%7")], ["%3", "%9"], right)):
+            with self.subTest(rows=rows, live=live):
                 fake = self.fake(rows, live)
                 self.assertIsNone(self.show(fake))
-                self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, split_window("-v", pane), *record("cmd", "%99")])
-
-    def test_none_live_goes_right(self):
-        fake = self.fake([self.row(1, "a", "%7")], live=["%3", "%9"])
-        self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, clients_of("cmd"), HOSTS, PGREP, split_window("-h", "%3"),
-                                      *record("cmd", "%99")])
+                self.assertEqual(fake.calls, [OWN, SESSIONS, LIVE, *then, *record("cmd", "%99")])
 
     def test_tmux_liveness_is_an_exact_line(self):
         fake = self.fake([self.row(1, "a", "%1")], live=["%10", " %1", "%1 ", "x%1", "%1\r"])
@@ -1724,27 +1669,26 @@ class GridLayout(unittest.TestCase):
                              [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))])
             self.assertLessEqual(max(cell.h for cell in cells) - min(cell.h for cell in cells), 1)
 
-    def test_fr3_per_column_3(self):
-        for n, want in ((1, "160x48,0,0{79x48,0,0,0,80x48,80,0,1}"),
-                        (2, "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,2]}"),
-                        (4, "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,40x15,80,33,3],"
-                            "39x48,121,0,4}}"),
-                        (7, "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,26x15,80,33,3],"
-                            "26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],26x48,134,0,7}}")):
-            with self.subTest(n=n):
-                root = grid(n)
+    def test_fr3_layouts(self):
+        # the root: the manager, then the columns
+        for per_column, n, want in (
+                (3, 1, "160x48,0,0{79x48,0,0,0,80x48,80,0,1}"),
+                (3, 2, "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,2]}"),
+                (3, 4, "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,40x15,80,33,3],"
+                       "39x48,121,0,4}}"),
+                (3, 7, "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,26x15,80,33,3],"
+                       "26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],26x48,134,0,7}}"),
+                (2, 3, "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2],39x48,121,0,3}}")):
+            with self.subTest(per_column=per_column, n=n):
+                root = grid(n, per_column)
                 self.assertEqual(body(root), want)
-                self.check(root, n, 3)
+                self.check(root, n, per_column)
 
     def test_fr3_any_count(self):
         for per_column in (1, 2, 3, 4):
             for n in range(1, 13):
                 with self.subTest(per_column=per_column, n=n):
                     self.check(grid(n, per_column), n, per_column)
-
-    def test_per_column_2_three_cells(self):
-        self.assertEqual(body(grid(3, 2)),
-                         "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2],39x48,121,0,3}}")
 
     def test_manager_width_kept(self):
         for width in (1, 30, 100):
@@ -1778,35 +1722,27 @@ class GridLayout(unittest.TestCase):
         self.assertIsNone(grid([slot("%1", slot("%2"), slot("%3"))], height=2))
         self.assertIsNone(grid(1, manager_width=0))
 
-    def test_root_is_the_manager_then_the_columns(self):
-        root = grid(4)
-        self.assertEqual([c.kind for c in (root, *root.children)],
-                         [tui_claude.LEFT_RIGHT, tui_claude.LEAF, tui_claude.LEFT_RIGHT])
-        self.assertEqual([c.kind for c in root.children[1].children], [tui_claude.TOP_BOTTOM, tui_claude.LEAF])
-
-    def test_sub_workers_right_half_equal_heights(self):
-        root = grid([slot("%1"), slot("%2", slot("%3"), slot("%4")), slot("%5")])
-        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
-                                     "39x15,121,17[39x7,121,17,3,39x7,121,25,4]},80x15,80,33,5]}")
-        self.tiles(root)
-
-    def test_grandchild_halves_the_childs_cell(self):
-        root = grid([slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")])
-        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
-                                     "39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},"
-                                     "80x15,80,33,5]}")
-        self.tiles(root)
-
-    def test_orphan_group_stacks_full_width(self):
-        root = grid([slot("%1"), slot(None, slot("%3", slot("%6")), slot("%4")), slot("%5")])
-        self.assertEqual(body(root), "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17{"
-                                     "40x7,80,17,3,39x7,121,17,6},80x7,80,25,4],80x15,80,33,5]}")
-        self.tiles(root)
-
-    def test_one_child_or_cell_no_container(self):
-        self.assertEqual(body(grid([slot(None, slot("%3"))])), "160x48,0,0{79x48,0,0,0,80x48,80,0,3}")
-        self.assertEqual(body(grid([slot("%1", slot("%2"))])),
-                         "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0,2}}")
+    def test_sub_cells(self):
+        for case, cells, want in (
+                ("sub-workers: the right half, equal heights",
+                 [slot("%1"), slot("%2", slot("%3"), slot("%4")), slot("%5")],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
+                 "39x15,121,17[39x7,121,17,3,39x7,121,25,4]},80x15,80,33,5]}"),
+                ("a grandchild halves the child's cell",
+                 [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
+                 "39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},80x15,80,33,5]}"),
+                ("an orphan group stacks full width",
+                 [slot("%1"), slot(None, slot("%3", slot("%6")), slot("%4")), slot("%5")],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17{"
+                 "40x7,80,17,3,39x7,121,17,6},80x7,80,25,4],80x15,80,33,5]}"),
+                ("one child: no container", [slot(None, slot("%3"))], "160x48,0,0{79x48,0,0,0,80x48,80,0,3}"),
+                ("one cell: no container", [slot("%1", slot("%2"))],
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0,2}}")):
+            with self.subTest(case):
+                root = grid(cells)
+                self.assertEqual(body(root), want)
+                self.tiles(root)
 
     def test_leaves_depth_first(self):
         root = grid([slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")])
@@ -1825,23 +1761,27 @@ class GridTree(unittest.TestCase):
             layout = tui_claude._parse_layout(layout)
         return tui_claude._grid_tree("%0", panes, [self.MGR, *rows], layout)
 
-    def test_nodes_by_session_name_then_manual_panes(self):
-        rows = [(2, "a", "mgr", "%10"), (3, "b", "mgr", "%2"), (4, "c", "", "%9")]
-        self.assertEqual(self.tree(rows, ["%0", "%10", "%5", "%2", "%9", "%3"]),
-                         [slot("%10"), slot("%2"), slot("%9"), slot("%3"), slot("%5")])
-
-    def test_main_cells_by_role_then_numbers_as_numbers(self):
+    def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = ["pm-TASK-10-a", "engineer-TASK-227-b", "researcher-TASK-3-c", "engineer-TASK-23-d", "pm-TASK-9-e",
                  "engineer-TASK-9-f"]
-        rows = [(i + 2, name, "mgr", f"%{i + 1}") for i, name in enumerate(names)]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5", "%6"]),
-                         [slot(p) for p in ("%6", "%4", "%2", "%5", "%1", "%3")])
-
-    def test_sub_workers_stay_in_their_parents_cell_by_pane_id(self):
-        rows = [(2, "pm-1", "mgr", "%1"), (3, "engineer-2", "mgr", "%2"), (4, "z", "pm-1", "%3"),
-                (5, "a", "pm-1", "%4"), (6, "b", "engineer-2", "%5")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5"]),
-                         [slot("%2", slot("%5")), slot("%1", slot("%3"), slot("%4"))])
+        for case, rows, panes, want in (
+                ("nodes by session name, then manual panes",
+                 [(2, "a", "mgr", "%10"), (3, "b", "mgr", "%2"), (4, "c", "", "%9")],
+                 ["%0", "%10", "%5", "%2", "%9", "%3"], [slot("%10"), slot("%2"), slot("%9"), slot("%3"), slot("%5")]),
+                ("main cells by role, then numbers as numbers",
+                 [(i + 2, name, "mgr", f"%{i + 1}") for i, name in enumerate(names)],
+                 ["%0", "%1", "%2", "%3", "%4", "%5", "%6"], [slot(p) for p in ("%6", "%4", "%2", "%5", "%1", "%3")]),
+                ("sub-workers by pane id",
+                 [(2, "pm-1", "mgr", "%1"), (3, "engineer-2", "mgr", "%2"), (4, "z", "pm-1", "%3"),
+                  (5, "a", "pm-1", "%4"), (6, "b", "engineer-2", "%5")],
+                 ["%0", "%1", "%2", "%3", "%4", "%5"], [slot("%2", slot("%5")), slot("%1", slot("%3"), slot("%4"))]),
+                ("a grandchild in its parent's cell",
+                 [(2, "w1", "mgr", "%1"), (3, "w2", "mgr", "%2"), (4, "a", "w2", "%3"), (5, "b", "w2", "%4"),
+                  (6, "w3", "mgr", "%5"), (7, "c", "a", "%6")],
+                 ["%0", "%1", "%2", "%3", "%4", "%5", "%6"],
+                 [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")])):
+            with self.subTest(case):
+                self.assertEqual(self.tree(rows, panes), want)
 
     def test_a_closed_pane_keeps_the_rest_in_order(self):
         panes = ["%0", "%1", "%3", "%4", "%5", "%6", "%7"]
@@ -1850,12 +1790,6 @@ class GridTree(unittest.TestCase):
         self.assertEqual(cells, [slot(p) for p in panes[1:]])
         self.assertEqual([[c.pane for c in col.children] for col in grid(cells).children[1].children],
                          [["%1", "%3", "%4"], ["%5", "%6", "%7"]])
-
-    def test_sub_workers_in_their_parents_cell(self):
-        rows = [(2, "w1", "mgr", "%1"), (3, "w2", "mgr", "%2"), (4, "a", "w2", "%3"), (5, "b", "w2", "%4"),
-                (6, "w3", "mgr", "%5"), (7, "c", "a", "%6")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%2", "%3", "%4", "%5", "%6"]),
-                         [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")])
 
     def test_openers_that_are_no_node_of_the_window(self):
         rows = [(2, "x", "mgr", "%77"), (3, "y", "x", "%1"), (4, "z", "mgr", "%0"), (5, "v", "z", "%2"),
@@ -1886,28 +1820,34 @@ class GridTree(unittest.TestCase):
             with self.subTest(panes=panes):
                 self.assertEqual(self.tree(rows, panes, layout), want)
 
-    def test_orphans_take_the_killed_parents_main_cell(self):
-        # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
-        layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}"
-        rows = [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
-                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3")])
-
-    def test_orphans_take_the_killed_parents_place_by_name(self):
-        # pm-1 (with a %4 and b %5) killed, its orphans' cell last
-        layout = "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33[80x7,80,33,4,80x7,80,41,5]]}"
-        rows = [(2, "engineer-1", "mgr", "%1"), (4, "researcher-1", "mgr", "%3"), (5, "a", "pm-1", "%4"),
-                (6, "b", "pm-1", "%5")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
-                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3")])
-
-    def test_orphans_take_the_killed_parents_sub_cell(self):
-        # w1 (%1) has children c (%2, killed; its children a %4, b %5) and d (%3)
-        layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,4,"
-                  "39x11,121,13,5],39x23,121,25,3]}}")
-        rows = [(2, "w1", "mgr", "%1"), (4, "d", "w1", "%3"), (5, "a", "c", "%4"), (6, "b", "c", "%5")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5"], layout),
-                         [slot("%1", slot(None, slot("%4"), slot("%5")), slot("%3"))])
+    def test_orphans_take_the_killed_parents_cell(self):
+        orphans = slot(None, slot("%4"), slot("%5"))
+        for case, layout, rows, panes, want in (
+                # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
+                ("main cell",
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}",
+                 [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")],
+                 ["%0", "%1", "%3", "%4", "%5"], [slot("%1"), orphans, slot("%3")]),
+                # pm-1 (with a %4 and b %5) killed, its orphans' cell last
+                ("place by name",
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33[80x7,80,33,4,80x7,80,41,5]]}",
+                 [(2, "engineer-1", "mgr", "%1"), (4, "researcher-1", "mgr", "%3"), (5, "a", "pm-1", "%4"),
+                  (6, "b", "pm-1", "%5")],
+                 ["%0", "%1", "%3", "%4", "%5"], [slot("%1"), orphans, slot("%3")]),
+                # w1 (%1) has children c (%2, killed; its children a %4, b %5) and d (%3)
+                ("sub cell",
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,4,"
+                 "39x11,121,13,5],39x23,121,25,3]}}",
+                 [(2, "w1", "mgr", "%1"), (4, "d", "w1", "%3"), (5, "a", "c", "%4"), (6, "b", "c", "%5")],
+                 ["%0", "%1", "%3", "%4", "%5"], [slot("%1", orphans, slot("%3"))]),
+                # w2 killed as in the main cell case, manual pane %9 beside its orphans: they skip %9's cell
+                ("skipping a manual pane's cell",
+                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
+                 "39x7,121,25,5]},80x15,80,33,3]}",
+                 [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")],
+                 ["%0", "%1", "%3", "%4", "%5", "%9"], [slot("%1"), orphans, slot("%3"), slot("%9")])):
+            with self.subTest(case):
+                self.assertEqual(self.tree(rows, panes, layout), want)
 
     def test_orphans_beside_a_one_pane_first_column_stay_main(self):
         # P (%2; c1 %3, c2 %4) killed. N=1: main [a, P, b]; N=2: main [a, x, P, b], x and P killed together
@@ -1931,13 +1871,6 @@ class GridTree(unittest.TestCase):
                 self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%6", "%7"], layout),
                                  [slot("%1"), *want])
 
-    def test_orphans_skip_a_manual_panes_cell(self):
-        layout = ("160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
-                  "39x7,121,25,5]},80x15,80,33,3]}")
-        rows = [(2, "w1", "mgr", "%1"), (4, "w3", "mgr", "%3"), (5, "a", "w2", "%4"), (6, "b", "w2", "%5")]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%3", "%4", "%5", "%9"], layout),
-                         [slot("%1"), slot(None, slot("%4"), slot("%5")), slot("%3"), slot("%9")])
-
     def test_orphans_spanning_main_cells_dissolve(self):
         # the manager's session renamed from old to mgr
         for panes, per_column in ((["%0", "%1", "%2", "%3"], 3), (["%0", "%1", "%2", "%3"], 2), (["%0", "%1"], 3)):
@@ -1949,13 +1882,6 @@ class GridTree(unittest.TestCase):
 
 
 class Swaps(unittest.TestCase):
-    def test_none_when_in_order(self):
-        self.assertEqual(tui_claude._swaps(["%0", "%1", "%2"], ["%0", "%1", "%2"]), [])
-
-    def test_example(self):
-        self.assertEqual(tui_claude._swaps(["%0", "%1", "%2", "%3"], ["%0", "%3", "%1", "%2"]),
-                         [("%3", "%1"), ("%1", "%2")])
-
     def test_every_order_of_four_correct_and_minimal(self):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
@@ -1976,15 +1902,6 @@ class Swaps(unittest.TestCase):
 
 
 class LayoutString(unittest.TestCase):
-    def test_constants(self):
-        self.assertEqual((tui_claude.PER_COLUMN, tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN,
-                          tui_claude.GRID_HOOKS),
-                         (3, "@grid-manager", "@grid-per-column",
-                          ("pane-exited", "window-resized", "window-layout-changed")))
-        self.assertTrue(tui_claude.WINDOW.fullmatch("@12"))
-        for value in ("@", "%1", "@1a", "1"):
-            self.assertFalse(tui_claude.WINDOW.fullmatch(value), value)
-
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
@@ -2078,10 +1995,6 @@ class Tile(unittest.TestCase):
             "select-layout", "-t", "@3", "ac6e,160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,"
                                          "40x15,80,17,2,40x15,80,33,3],39x48,121,0,4}}"],
             ["tmux", "set-option", "-u", "-w", "-t", "@3", "@grid-busy"]])
-
-    def test_the_managers_width_kept_no_swap_when_in_order(self):
-        fake = self.tile(*self.WIDE)
-        self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
 
     def test_a_hook_run_returns_at_once_while_another_tile_holds_the_lock(self):
         release = hold(self, self.lock)
@@ -2307,7 +2220,7 @@ class Tile(unittest.TestCase):
 
     def test_bad_window_or_per_column_raises_before_tmux(self):
         cases = [("3", {}, "invalid window id '3': want @[0-9]+"),
-                 *((window, {}, "invalid window id") for window in ("@3;", "%3", "@", " @3")),
+                 *((window, {}, "invalid window id") for window in ("@3;", "%3", "@", " @3", "@1a")),
                  ("@3", {"per_column": 0}, "per_column must be an int from 1 to 9999, not 0"),
                  *(("@3", {"per_column": n}, "per_column") for n in (10000, True, "3", 2.0))]
         for window, kw, error in cases:
