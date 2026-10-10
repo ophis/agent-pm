@@ -1433,7 +1433,7 @@ class Server:
     command, or a command with its target (`list-clients -t =w1`), to the stderr it fails with (an OSError: raised);
     kill-session ends a session. The caller's pane is in session `own` (None: outside tmux). Any other program is a
     recovery command: recorded in `recoveries` as (argv, its keywords, whether roster.lock at `lock` was free), it
-    exits as `results` maps its argv[1] ((code, output), or an OSError raised; default (0, ""))."""
+    exits as `results` maps its argv[1] ((code, output), or an exception raised; default (0, ""))."""
 
     def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra="", results=None, lock=None):
         self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
@@ -1445,7 +1445,7 @@ class Server:
         if argv[0] != "tmux":
             self.recoveries.append((argv, kw, self.lock is None or lock_free(self.lock)))
             result = self.results.get(argv[1], (0, ""))
-            if isinstance(result, OSError):
+            if isinstance(result, Exception):
                 raise result
             return subprocess.CompletedProcess(argv, result[0], result[1])
         self.calls.append(argv)
@@ -1659,6 +1659,20 @@ class AttachTest(RosterCase):
         self.assertEqual(self.entries()["w1"]["state"], "gone")
         self.assertEqual(self.shows, [])
 
+    def test_a_worker_without_a_session_is_gone_whatever_run_record_its_cwd_holds(self):
+        entries = {}
+        for status in ("needs_input", "done", "failed"):
+            cwd = os.path.join(self.dir, status)
+            os.mkdir(cwd)
+            with open(os.path.join(cwd, "run.jsonl"), "w") as f:
+                f.write(result(outcome={"status": status}))
+            entries[status] = entry(cwd=cwd)
+        self.seed(**entries)
+        out = self.synced(Server())
+        self.assertEqual({n: e["state"] for n, e in self.entries().items()}, dict.fromkeys(entries, "gone"))
+        self.assertEqual([line.split(":")[0] for line in out.splitlines() if line.startswith("resume ")],
+                         [f"resume {name}" for name in sorted(entries)])
+
     def test_a_role_or_pipeline_is_live_by_its_driver_or_tui_session(self):
         """Driver only: working, placement kept; tui: its state and placement, the driver live or not."""
         for kind in ("role", "pipeline"):
@@ -1677,8 +1691,9 @@ class AttachTest(RosterCase):
                                   "t3": ("blocked", "%8", "mgr"), "b4": ("done", "%6", None)})
                 self.assertEqual([c[3] for c in server.ran("list-clients")], ["=t4", "=t3t"])
 
-    def test_a_role_or_pipeline_without_a_session_is_finished_or_gone_by_its_run_record(self):
+    def test_a_role_or_pipeline_without_a_session_is_finished_waiting_or_gone_by_its_run_record(self):
         done, failed, tail = result(outcome={"status": "done"}), result(outcome={"status": "failed"}), workers.RUN_TAIL
+        asking = result(outcome={"status": "needs_input"})
         pad = ("x" * 99 + "\n") * (tail // 100 + 1)
         cut = tail - len(done)
         records = {
@@ -1687,13 +1702,19 @@ class AttachTest(RosterCase):
                                     "finished"),
             "last-result-wins": (done + result(error="stopped: KeyboardInterrupt"), "gone"),
             "failed-after-an-error": (result(error="boom") + failed, "finished"),
-            "needs-input": (result(outcome={"status": "needs_input"}), "gone"),
+            "needs-input": (asking, "waiting"),
+            "answered": (asking + done, "finished"),
+            "asking-after-done": (done + asking, "waiting"),
+            "needs-input-after-an-error": (result(error="boom") + asking, "waiting"),
+            "error-after-needs-input": (asking + result(error="stopped: KeyboardInterrupt"), "gone"),
             "error": (result(error="boom"), "gone"),
             "malformed": ("{\nnot json\n\udcff\n", "gone"),
             "empty": ("", "gone"),
             "outcome-a-string": (result(outcome="done"), "gone"),
             "outcome-a-list": (result(outcome=[{"status": "done"}]), "gone"),
             "status-a-list": (result(outcome={"status": ["done"]}), "gone"),
+            "status-an-object": (result(outcome={"status": {"needs_input": 1}}), "gone"),
+            "status-other": (result(outcome={"status": "waiting"}), "gone"),
             "no-status": (result(outcome={}), "gone"),
             "kind-outcome": (json.dumps({"kind": "outcome", "outcome": {"status": "done"}}) + "\n", "gone"),
             "a-list-line": (json.dumps([{"kind": "result", "outcome": {"status": "done"}}]) + "\n", "gone"),
@@ -1792,19 +1813,20 @@ class AttachTest(RosterCase):
         self.assertEqual(server.ran("list-panes"), [["tmux", "list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]])
         self.assertEqual(self.shows, [])
 
-    def test_table_and_recovery_commands(self):
+    def test_table_and_recovery_commands_none_for_a_waiting_run(self):
         cwd = os.path.join(self.dir, "it's a role")
-        finished = os.path.join(self.dir, "finished")
-        for d in (cwd, finished):
+        finished, asking = os.path.join(self.dir, "finished"), os.path.join(self.dir, "asking")
+        for d, status in ((cwd, None), (finished, "done"), (asking, "needs_input")):
             os.mkdir(d)
-        with open(os.path.join(finished, "run.jsonl"), "w") as f:
-            f.write(result(outcome={"status": "done"}))
+            if status:
+                with open(os.path.join(d, "run.jsonl"), "w") as f:
+                    f.write(result(outcome={"status": status}))
         self.seed(b=entry(note="check the logs", pane="%4"),
                   a=entry(sid=None, resume=[PY, "/x/workers.py", "; rm -rf ~"]),
                   B=entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
                   C=entry("role", sid=None, cwd=cwd),
                   p1=entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--plan", "/p q"]),
-                  f1=entry("pipeline", cwd=finished))
+                  f1=entry("pipeline", cwd=finished), n1=entry("role", cwd=asking), n2=entry("pipeline", cwd=asking))
         out = self.synced(Server(sessions={"b": opts(SID, "working", "%4")}, clients={"b": SHOWN},
                                  panes="/dev/ttys001\tmgr\n"))
         role = (f"cd {shlex.quote(cwd)} && {PY} /x/drive.py --role pm --sid {SID} --resume "
@@ -1814,6 +1836,8 @@ class AttachTest(RosterCase):
                                           "a\tworker\t-\tgone\t-\t/w\t-",
                                           f"b\tworker\t{SID}\tworking\tcheck the logs\t/w\t%4\tshown in mgr",
                                           f"f1\tpipeline\t{SID}\tfinished\t-\t{finished}\t-",
+                                          f"n1\trole\t{SID}\twaiting\t-\t{asking}\t-",
+                                          f"n2\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
                                           f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
                                           f"resume B: {role}",
                                           "resume C: none (no sid)",
@@ -2273,25 +2297,62 @@ class ResumeTest(RosterCase):
         self.assertEqual({n: shlex.split(cmd) for n, cmd in printed.items()},
                          {**ran, "B": ["cd", cwd, "&&", *ran["B"]]})
 
-    def test_a_failing_recovery_stops_none(self):
+    def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
         self.seed(MGR, a1=entry(resume=[PY, "/x/a1/workers.py"]), a2=entry(resume=[PY, "/x/a2/workers.py"]),
-                  a3=entry("role", sid=None), p1=entry("pipeline", resume=[PY, "/x/router.py"]),
-                  w1=entry(resume=[PY, "/x/w1/workers.py"]))
+                  a3=entry("role", sid=None), a4=entry(resume=[PY, "/x/a4/workers.py"]),
+                  p1=entry("pipeline", resume=[PY, "/x/router.py"]), w1=entry(resume=[PY, "/x/w1/workers.py"]))
         results = {"/x/a1/workers.py": (1, "workers: a1: session ended at once\n"),
                    "/x/a2/workers.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
+                   "/x/a4/workers.py": ValueError("embedded null byte"),
                    "/x/router.py": (1, refusal + "\n")}
         server = Server(results=results)
         rc, out, err = self.run_main(server, "attach", "--resume")
-        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual((rc, err), (1, ""))
         self.assertTrue(out.endswith(tail(self.mdir) + nl(
             "resumed a1: exit 1: workers: a1: session ended at once",
             "resumed a2: not run: No such file or directory",
             "resumed a3: not run: no sid",
+            "resumed a4: not run: ValueError: embedded null byte",
             f"resumed p1: exit 1: {refusal}",
             "resumed w1: exit 0")), out)
         self.assertEqual([argv[1] for argv, _, _ in server.recoveries],
-                         ["/x/a1/workers.py", "/x/a2/workers.py", "/x/router.py", "/x/w1/workers.py"])
+                         ["/x/a1/workers.py", "/x/a2/workers.py", "/x/a4/workers.py", "/x/router.py",
+                          "/x/w1/workers.py"])
+
+    def test_one_failed_recovery_of_any_kind_exits_1(self):
+        cases = {"exit 1": ((1, "boom\n"), "exit 1: boom"), "exit 255": ((255, ""), "exit 255"),
+                 "an OSError": (PermissionError(errno.EACCES, "denied"), "not run: denied"),
+                 "a ValueError": (ValueError("embedded null byte"), "not run: ValueError: embedded null byte"),
+                 "a TypeError": (TypeError("bad argv"), "not run: TypeError: bad argv"),
+                 "no sid": (None, "not run: no sid")}
+        for why, (failure, line) in cases.items():
+            with self.subTest(why):
+                bad = entry("role", sid=None) if failure is None else entry(resume=[PY, "/x/bad/workers.py"])
+                self.seed(MGR, bad=bad, ok=entry(resume=[PY, "/x/ok/workers.py"]))
+                server = Server(results={} if failure is None else {"/x/bad/workers.py": failure})
+                rc, out, err = self.run_main(server, "attach", "--resume")
+                self.assertEqual((rc, err), (1, ""))
+                self.assertTrue(out.endswith(tail(self.mdir) + nl(f"resumed bad: {line}", "resumed ok: exit 0")), out)
+
+    def test_a_waiting_run_is_left_alone(self):
+        asking = os.path.join(self.dir, "asking")
+        os.mkdir(asking)
+        with open(os.path.join(asking, "run.jsonl"), "w") as f:
+            f.write(result(outcome={"status": "needs_input", "questions": ["Which?"]}))
+        self.seed(MGR, r1=entry("role", cwd=asking), p1=entry("pipeline", cwd=asking),
+                  w1=entry(cwd=asking, resume=[PY, "/x/w1/workers.py"]))
+        server = Server()
+        rc, out, err = self.run_main(server, "attach", "--resume")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(out, HEADER + nl(f"p1\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
+                                          f"r1\trole\t{SID}\twaiting\t-\t{asking}\t-",
+                                          f"w1\tworker\t{SID}\tgone\t-\t{asking}\t-",
+                                          f"resume w1: {PY} /x/w1/workers.py") + tail(self.mdir)
+                         + "resumed w1: exit 0\n")
+        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/x/w1/workers.py"]])
+        self.assertEqual({n: e["state"] for n, e in self.entries().items()},
+                         {"p1": "waiting", "r1": "waiting", "w1": "gone"})
 
 
 class CursorTest(RosterCase):

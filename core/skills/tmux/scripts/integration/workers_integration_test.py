@@ -4,7 +4,8 @@ state, events, blocked, dead, restart, early death; the manager directory the ev
 breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker and a killed
 role run gone, then back by their recovery commands, `attach --resume` bringing back a killed worker but not a stopped
 one, and a worker, a role run and a pipeline run (STAND_IN) after the tmux server is lost, a role run stopped by its tui
-session, an unshown worker reopened, a take-over resuming from the event cursor, events rotation)."""
+session, a role run ended on needs_input waiting, which `attach --resume` leaves alone, an unshown worker reopened, a
+take-over resuming from the event cursor, events rotation)."""
 import contextlib
 import functools
 import json
@@ -748,6 +749,32 @@ class Roster(Live):
         self.assertEqual(self.ok(self.workers("stop", ROLE_TUI)).stdout, "")
         self.assertTrue(self.gone(ROLE_DRIVER, ROLE_TUI))
         self.assertEqual(self.roster()["entries"], {})
+
+    def test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume(self):
+        self.attach()
+        work = os.path.join(self.server.root, "role-work")
+        os.mkdir(work)
+        asking = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which greeting?"]}
+        with open(self.scenario(ROLE), "w") as f:
+            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."},
+                                 {"kind": "outcome", "outcome": asking}], "log": self.log}, f)
+        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--input", "Hello.", "--out", "out.md", "--workdir",
+                          ".", "--runner", "headless", "--detach", "--sid", ROLE_SID, cwd=work,
+                          **{fake_claude.ENV: self.scenario(ROLE)}))
+        live_tmux.wait(lambda: self.gone(ROLE_DRIVER) and any(
+            line.split(" ")[1:] == [ROLE_DRIVER, "outcome", "needs_input"] for line in live_tmux.events(self.events)),
+                       what=f"{ROLE_DRIVER} gone after its outcome needs_input")
+        backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
+        table = f"{workers.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
+        self.assertEqual(self.attach().stdout, table + tail(self.directory, 0, 0, *backlog))
+        with open(self.log) as f:
+            calls = f.readlines()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.attach("--resume").stdout, table + tail(self.directory, 0, 0, *backlog))
+        self.assertTrue(self.gone(ROLE_DRIVER))
+        with open(self.log) as f:
+            self.assertEqual(f.readlines(), calls)
+        self.assertEqual(self.roster()["entries"][ROLE_DRIVER]["state"], "waiting")
 
     def test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker(self):
         """A worker, a role run and a pipeline run in the roster, a second worker stopped; the server killed and started

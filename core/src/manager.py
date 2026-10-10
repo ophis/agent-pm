@@ -31,7 +31,7 @@ it):
   pane              tui_claude.PANE or tui_claude.ITERM_ID, or null
   split             right | below | null
   split_from, tui   NAME or null
-  state             working | done | blocked | dead | gone | finished
+  state             working | done | blocked | dead | gone | waiting | finished
   started           time
 time: an ISO 8601 string with a UTC offset, printable. printable: no control character (Unicode Cc) and no U+2028 or
 U+2029, so a printed field stays one table cell or one command.
@@ -66,7 +66,7 @@ ROOT = "~/.agent-pm/managers"
 SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 VERSION = 1
 KINDS = ("worker", "role", "pipeline")
-STATES = ("working", "done", "blocked", "dead", "gone", "finished")
+STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
 SCRIPTS = ("workers.py", "drive.py", "router.py")
 TOP = ("version", "holder", "cursor", "gen", "entries")
