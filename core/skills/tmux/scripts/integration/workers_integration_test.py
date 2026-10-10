@@ -1,8 +1,8 @@
 """workers.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
-breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker gone, an unshown
-worker reopened)."""
+breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker and a killed
+role run gone, then back by their recovery commands, an unshown worker reopened)."""
 import contextlib
 import functools
 import json
@@ -28,6 +28,11 @@ manager = workers.manager
 
 WORKERS = os.path.join(SCRIPTS, "workers.py")
 TUI = os.path.join(workers.CORE, "src", "tui_claude.py")
+DRIVE = os.path.join(workers.CORE, "src", "drive.py")
+ROLE = "dummy-tester"
+ROLE_SID = "26700000-0000-4000-8000-000000000005"
+ROLE_TUI = f"{ROLE}-{ROLE_SID[:8]}"
+ROLE_DRIVER = f"{ROLE_TUI}-drive"
 MANAGER = "mgr"
 SECOND = "mgr2"
 TIMEOUT = 60   # seconds, per process
@@ -66,10 +71,12 @@ class Live(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}")
         return res
 
-    def call(self, *argv: str, inside: str | None = MANAGER, **extra: str) -> subprocess.CompletedProcess:
-        """argv (argv[0] found on the env's PATH) as a process in `inside`'s pane, env Server.env() plus `extra`."""
+    def call(self, *argv: str, inside: str | None = MANAGER, cwd: str | None = None,
+             **extra: str) -> subprocess.CompletedProcess:
+        """argv (argv[0] found on the env's PATH) as a process in `inside`'s pane, in `cwd` (default self.cwd), env
+        Server.env() plus `extra`."""
         env = self.server.env(**(self.server.inside(inside) if inside else {}), **extra)
-        return subprocess.run(list(argv), env=env, cwd=self.cwd, capture_output=True, text=True,
+        return subprocess.run(list(argv), env=env, cwd=cwd or self.cwd, capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, timeout=TIMEOUT)
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
@@ -489,7 +496,7 @@ class Splits(Live):
 
 class Roster(Live):
     """mgr's roster.json and its lease against live sessions: core/skills/tmux/SKILL.md › Start 1. A second manager is
-    session SECOND, shown in a client. A worker's entry is seeded with manager.put, as start does not write one yet."""
+    session SECOND, shown in a client."""
     ATTACH = False
 
     def setUp(self):
@@ -524,11 +531,16 @@ class Roster(Live):
         self.assertEqual(res.stdout, f"{workers.HEADER}\n")
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
 
-    def seed(self, name: str, sid: str) -> list[str]:
-        """Worker `name`'s entry, its resume `workers.py start --resume`; returns that resume."""
-        resume = [sys.executable, WORKERS, "start", name, "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
-        manager.put(self.directory, name, manager.entry("worker", sid=sid, cwd=self.cwd, resume=resume))
-        return resume
+    def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:
+        """Entry `name`'s recovery argv (manager.recovery), no shell, in its cwd, as call() runs it in mgr's pane."""
+        e = self.roster()["entries"][name]
+        return self.call(*manager.recovery(e), cwd=e["cwd"], **extra)
+
+    def live(self, *names: str) -> bool:
+        return all(self.server.tmux("has-session", "-t", f"={n}").returncode == 0 for n in names)
+
+    def gone(self, *names: str) -> bool:
+        return not any(self.live(n) for n in names)
 
     def test_second_manager_after_release(self):
         self.attach()
@@ -563,21 +575,78 @@ class Roster(Live):
         self.assertEqual(out[winner], (f"{workers.HEADER}\n", ""))
         self.assertEqual((procs[loser].returncode, out[loser]), (1, ("", self.held(winner))))
 
-    def test_killed_worker_gone(self):
+    def test_killed_worker_gone_then_recovered(self):
         self.attach()
         sid = self.started("w1")
-        resume = self.seed("w1", sid)
+        pane = self.server.pane_of("w1")
+        resume = [sys.executable, WORKERS, "start", "w1", "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
+        e = self.roster()["entries"]["w1"]
+        self.assertEqual({k: e[k] for k in ("kind", "sid", "cwd", "resume", "pane", "opener", "state")},
+                         {"kind": "worker", "sid": sid, "cwd": self.cwd, "resume": resume, "pane": pane,
+                          "opener": MANAGER, "state": "working"})
+        self.wait_event("w1", "done")   # its transcript, which --resume needs
         self.ok(self.kill("w1"))
-        self.assertEqual(self.attach().stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t-\n"
+        self.assertEqual(self.attach().stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
                                                f"resume w1: {shlex.join(resume)}\n")
         self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")
+        res = self.ok(self.recover("w1", **{fake_claude.ENV: self.scenario("w1")}))
+        self.assertEqual(res.stdout, f"w1 {sid}\n")
+        self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sid), self.calls("w1")[-1]["argv"])
+        self.grid([["w1"]])
+        pane = self.server.pane_of("w1")
+        self.assertEqual(self.attach().stdout,
+                         f"{workers.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n")
+        self.assertEqual(list(self.roster()["entries"]), ["w1"])
+
+    def test_killed_role_run_gone_then_recovered(self):
+        self.attach()
+        work = os.path.join(self.server.root, "role-work")
+        os.mkdir(work)
+        out = os.path.join(work, "out.md")
+        # turn 1 reports its start; the nudge's turn ends without an outcome: the driver then waits, both sessions up
+        with open(self.scenario(ROLE), "w") as f:
+            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."}], "log": self.log}, f)
+        scenario = {fake_claude.ENV: self.scenario(ROLE)}
+        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--runner", "tui", "--detach", "--input", "Hello.",
+                          "--out", out, "--workdir", work, "--sid", ROLE_SID, **scenario))
+        resume = [sys.executable, DRIVE, f"--role={ROLE}", f"--out={out}", f"--workdir={work}", "--runner=tui",
+                  "--detach", f"--manager={MANAGER}"]
+        [(name, e)] = self.roster()["entries"].items()
+        self.assertEqual((name, {k: e[k] for k in ("kind", "sid", "cwd", "tui", "opener", "resume", "state")}),
+                         (ROLE_DRIVER, {"kind": "role", "sid": ROLE_SID, "cwd": self.cwd, "tui": ROLE_TUI,
+                                        "opener": MANAGER, "resume": resume, "state": "working"}))
+        self.wait_event(ROLE_TUI, "done")   # turn 1's end: its transcript, which --resume needs
+        self.ok(self.kill(ROLE_DRIVER))
+        self.kill(ROLE_TUI)   # the driver, stopping, may kill it first
+        # the old driver's last act is its outcome line, after it kills the TUI session: none of it may hit the new run
+        live_tmux.wait(lambda: self.gone(ROLE_DRIVER, ROLE_TUI) and any(
+            line.split(" ")[1:3] == [ROLE_DRIVER, "outcome"] for line in live_tmux.events(self.events)),
+                       what=f"{ROLE_DRIVER} and {ROLE_TUI} gone, the driver's outcome line")
+        res = self.attach()
+        e = self.roster()["entries"][ROLE_DRIVER]
+        self.assertEqual(res.stdout, f"{workers.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
+                                     f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
+                                     f"{shlex.join(manager.recovery(e))}\n")
+        self.assertIn("--input 'Continue the unfinished task.'", res.stdout)
+        self.ok(self.recover(ROLE_DRIVER, **scenario))
+        live_tmux.wait(lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back")
+        self.grid([[ROLE_TUI]])
+
+        def resumed():
+            try:
+                return [c for c in self.calls(ROLE_TUI) if has_pair(c["argv"], "--resume", ROLE_SID)]
+            except ValueError:   # a line half appended
+                return None
+        live_tmux.wait(resumed, what=f"{ROLE_TUI}'s claude --resume {ROLE_SID}")
+        again = self.roster()["entries"]
+        self.assertEqual(list(again), [ROLE_DRIVER])
+        self.assertEqual({**again[ROLE_DRIVER], "started": None}, {**e, "state": "working", "started": None})
 
     def test_unshown_worker_reopened(self):
         self.attach()
         sid = self.started("w1")
         self.wait_event("w1", "done")
         self.grid([["w1"]])
-        self.seed("w1", sid)
         closed = self.server.pane_of("w1")
         self.ok(self.server.tmux("kill-pane", "-t", closed))
         live_tmux.wait(lambda: not self.ok(self.server.tmux("list-clients", "-t", "=w1")).stdout,

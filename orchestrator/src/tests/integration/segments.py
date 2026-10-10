@@ -3,8 +3,10 @@ its expected changes to the snapshot (track, expect, expect_session, expect_runs
 checks against the fake Linear, runs.jsonl, the ledgers and the failed requests as the step ends."""
 import contextlib
 import copy
+import json
 import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -15,6 +17,7 @@ import config
 import attended
 import drive
 import linear
+import manager
 import router
 import sessions
 from flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT, RESEARCH_DIR, TIMEOUT, Flow,
@@ -197,12 +200,13 @@ class Segment(Flow):
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
         return Script(outcome, [*steps, {"kind": "outcome", "outcome": report}], [], {text: TEXT_KINDS[outcome]})
 
-    def launch(self, ident, role, script, resumed, tui=False):
-        """router.py --issue ident, script's scene held at a fresh gate; tui: attended (--tui --split-from MANAGER), a
-        control-mode client showing MANAGER (attached once). Exit 0, one runs.jsonl line added; waits for the fake
-        claude's log line, by when run.py has closed the TUI session a tui run of ident left open (one tui-closed
-        event, that session gone), else logged no tui- event. Registers the texts, makes the run pending. Returns (that
-        line, the fake's argv, the events logged meanwhile)."""
+    def launch(self, ident, role, script, resumed, tui=False, managed=False, entry=None):
+        """router.py --issue ident, script's scene held at a fresh gate; tui: attended (--tui --split-from MANAGER, plus
+        --manager MANAGER when managed), a control-mode client showing MANAGER (attached once); entry: a name in
+        MANAGER's roster whose recovery command runs instead (run_recovery). Exit 0, one runs.jsonl line added; waits
+        for the fake claude's log line, by when run.py has closed the TUI session a tui run of ident left open (one
+        tui-closed event, that session gone), else logged no tui- event. Registers the texts, makes the run pending.
+        Returns (that line, the fake's argv, the events logged meanwhile)."""
         if self.pending:
             self.fail(f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first")
         if tui and not self.server.clients:
@@ -211,7 +215,11 @@ class Segment(Flow):
         gate = os.path.join(self.server.root, f"gate-{self.n_gates}")
         self.scene(steps=script.steps, turns=script.turns, gate=gate)
         calls, events, runs = len(self.calls()), len(self.logged()), len(self.runs())
-        res = self.router("--issue", ident, *(("--tui", "--split-from", MANAGER) if tui else ()))
+        if entry is not None:
+            res = self.run_recovery(entry)
+        else:
+            flags = ("--tui", "--split-from", MANAGER, *(("--manager", MANAGER) if managed else ())) if tui else ()
+            res = self.router("--issue", ident, *flags)
         if res.returncode != 0:
             self.fail(f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}")
         added = self.runs()[runs:]
@@ -275,6 +283,19 @@ class Segment(Flow):
                 changes.update(state=state, history=[("in_progress", state, account)])
             self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
 
+    def roster(self):
+        """MANAGER's roster.json entries (core/src/manager.py), each without its `started`."""
+        with open(os.path.join(self.apm, "managers", MANAGER, "roster.json")) as f:
+            entries = json.load(f)["entries"]
+        return {n: {k: v for k, v in e.items() if k != "started"} for n, e in entries.items()}
+
+    def run_recovery(self, name):
+        """Roster entry `name`'s recovery command (manager.recovery), no shell, in its cwd, as its manager runs it: from
+        MANAGER's pane (env() plus that pane's TMUX and TMUX_PANE)."""
+        e = self.roster()[name]
+        return subprocess.run(manager.recovery(e), cwd=e["cwd"], env={**self.env(), **self.server.inside(MANAGER)},
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
+
     # Step helpers
 
     def backlog_issue(self, role, title, description, labels=()):
@@ -325,12 +346,20 @@ class Segment(Flow):
         """Step `human: handoff`: human_say to Handoff."""
         self.human_say(ident, text, "handoff", "human: handoff")
 
-    def claim(self, ident, role, script, task=None, tui=False):
+    def kill_tui(self, ident):
+        """Step `human: kill the TUI session` agent_run() left running of ident's attended run, its driver session
+        already gone: the run has no session left, so the next launch's run.py closes none."""
+        with self.step("human: kill the TUI session"):
+            tui = self.tuis.pop(ident)
+            self.assertEqual(self.server.tmux("kill-session", "-t", f"={tui}").returncode, 0)
+            self.assertFalse(self.live(tui))
+
+    def claim(self, ident, role, script, task=None, tui=False, managed=False):
         """Step `router: claim` of the Todo issue ident with script (agent_run() runs it): a new sid's start line, the
         claim event's task `task`, no transient event; In Progress by the harness; its session comment running.
-        tui: attended (launch). Returns the sid."""
+        tui, managed: attended (launch). Returns the sid."""
         with self.step("router: claim"):
-            line, argv, events = self.launch(ident, role, script, False, tui)
+            line, argv, events = self.launch(ident, role, script, False, tui, managed)
             sid = line["sid"]
             self.assertEqual((line["kind"], line["issue"], line["role"]), ("start", ident, role))
             self.assertNotIn(sid, self.sids())
@@ -344,11 +373,12 @@ class Segment(Flow):
             self.expect_session(ident, sid, "running")
         return sid
 
-    def resume(self, ident, role, sid, script):
+    def resume(self, ident, role, sid, script, entry=None):
         """Step `router: resume` of sid with script (agent_run() runs it), headless: a resume line, the fake's argv
-        `--resume <sid>`, no `--session-id`; sid's session comment running again. Returns sid."""
-        with self.step("router: resume"):
-            line, argv, _ = self.launch(ident, role, script, True)
+        `--resume <sid>`, no `--session-id`; sid's session comment running again. entry: step `manager: recover`, the
+        recovery command of MANAGER's roster entry `entry` (launch) instead, attended. Returns sid."""
+        with self.step("router: resume" if entry is None else "manager: recover"):
+            line, argv, _ = self.launch(ident, role, script, True, tui=entry is not None, entry=entry)
             self.assertEqual((line["kind"], line["issue"], line["sid"], line["role"]), ("resume", ident, sid, role))
             self.assertNotIn("--session-id", argv)
             self.assertIn("--resume", argv)
