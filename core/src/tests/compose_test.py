@@ -1017,12 +1017,55 @@ class RealCore(unittest.TestCase):
 
     def test_fixed_labels_are_translated_and_template_headings_say_so(self):
         prompt, _ = composed("researcher")
-        self.assertIn("- Reports and PRDs, headings and fixed labels included (e.g. `Check:`, `Confidence:`, a type line "
-                      "such as `Light Research. Angles: …`), are in Chinese.", prompt)
+        self.assertIn("- Reports and PRDs, headings and fixed labels included, are in Chinese; a `<X, translated>` in a "
+                      "template or task is X in Chinese.", prompt)
+        for role, task in ALL:
+            text = composed(role, task)[0]
+            for literal in ("`Check:`", "Check:", "Confidence:", "`Light Research. Angles: "):
+                self.assertNotIn(literal, text, (role, task, literal))
         for role, task in [(r, None) for r in ROLES] + ALL:
             g = guide(composed(role, task)[0])
             self.assertIn("Its headings are fixed apart from their language ([Principles › Writing](#writing))", g,
                           (role, task))
+
+    def test_writing_has_the_one_gloss_and_diagram_rules_and_no_length_cap(self):
+        for role, task in RUNS:
+            prompt = composed(role, task)[0]
+            writing = section(prompt, "Writing")
+            self.assertNotIn("the first mention adds the", prompt, (role, task))
+            self.assertIn("A term's first mention adds one gloss, its Chinese rendering (for an acronym, of its full "
+                          "name); none when the term is common in Chinese, and none in a heading.", writing)
+            diagrams = item(writing, "Diagrams and tables")
+            for literal in ("a Mermaid diagram", "`flowchart`", "`sequenceDiagram`", "`timeline`", "short node labels",
+                            "a table", "a list", "a caption", "delete the text the diagram replaces"):
+                self.assertIn(literal, diagrams, (role, task, literal))
+            for cap in ("3000 words", "5 sentences"):
+                self.assertNotIn(cap, prompt, (role, task, cap))
+
+    def test_templates_put_the_summary_first_one_fact_per_item_and_point_to_the_diagram_rule(self):
+        pm, light = composed("pm", "product-design")[0], composed("researcher", "light-research")[0]
+        point = "[Principles › Writing › Diagrams and tables](#writing)"
+        for text in (pm, light):
+            self.assertIn("One fact per list item", text)
+            self.assertIn("never repeats `[Reference]`", text)
+        self.assertIn("Opens with one sentence", section(pm, "Problem and goals"))
+        self.assertIn(point, section(pm, "User flow"))
+        self.assertIn(point, section(pm, "Approach and trade-offs"))
+        self.assertIn("`- FR-<n>: <the requirement>` on one line, then one indented sub-item `  - <Check, translated>: ", pm)
+        self.assertIn("Opens with one sentence", section(light, "Conclusion and recommendation"))
+        self.assertIn(point, section(light, "Comparison table"))
+        findings = section(light, "Findings")
+        self.assertIn(point, findings)
+        self.assertIn("`(<confidence: high, medium or low>; [n]…; <single-source or unverified, when so>)`", findings)
+        self.assertIn("`1. <URL or code permalink> (primary|secondary|code)`", section(light, "Sources"))
+        self.assertEqual(light.count("type line"), 1)   # the Template's, deep research only
+        self.assertIn("Deep research's type line (light research gives its own)", light)
+        self.assertEqual(task_text("light-research").count("`<Light Research type line, translated>`"), 1)
+
+    def test_pm_and_researcher_point_to_writing_for_concision(self):
+        for role, doc in (("pm", "the PRD"), ("researcher", "the report")):
+            self.assertIn(f"- **Concise**: after writing {doc}, cut repetition and preamble "
+                          "([Principles › Writing](#writing)); length follows content.", composed(role)[0])
 
     def test_echo_summary_overrides_outputs_length(self):
         with open(os.path.join(CORE, "team", "tasks", "echo.md")) as f:
@@ -1274,9 +1317,9 @@ class RealCore(unittest.TestCase):
                 ("builds fail without push permission", engineer, "`push` false → `failed`"),
                 ("light-build's cutoff skips merge commits", task_text("light-build"),
                  "`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`"),
-                ("research hand-off phrases", task_text("light-research"), "`Light Research. Angles: "),
+                ("research hand-off phrases", task_text("light-research"), "`<Light Research type line, translated>`"),
                 ("research hand-off phrases", task_text("light-research"), "`Suggest upgrading to Deep Research: "),
-                ("research hand-off phrases", task_text("deep-research"), "`Light Research.` type line"),
+                ("research hand-off phrases", task_text("deep-research"), "its Light Research type line"),
                 # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
                 ("a read-only task's branch is <id>-<task>", researcher,
                  "`<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`"),

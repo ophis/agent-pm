@@ -11,6 +11,7 @@ Pick the task below that fits the input; unsure → `product-design` (`<tasks>/p
 ## Standards
 
 - The user's instructions are hard constraints.
+- **Concise**: after writing the PRD, cut repetition and preamble ([Principles › Writing](#writing)); length follows content.
 - What the product already has goes under Done; other sections hold only what's left. When revising, move newly finished items there.
 
 ## Boundaries
