@@ -32,6 +32,7 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - Message a worker with the text alone, no sender label.
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
 - Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `/agent-pm:tmux` › Direct › Stop, the only way to close its pane.
+- The user saying to stop everything: `/agent-pm:tmux` › Direct › Stop all.
 - Hand-over to another commander: you stop listening and run `workers.py release`; the one taking over attaches (`/agent-pm:tmux` › Start).
 - Kill your own live-test sessions as soon as the test ends.
 - Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `/agent-pm:tmux` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.jsonl`, transcripts).

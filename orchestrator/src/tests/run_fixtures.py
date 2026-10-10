@@ -170,7 +170,7 @@ class Base(unittest.TestCase):
         self.gql = Gql(node(comments=[USER_NOTE]))
         self.run = Run(ENG_RUN)
         self.sh_calls, self.tmux_error, self.missing, self.keychain_calls = [], None, set(), []
-        self.handovers = {}
+        self.handovers, self.options = {}, []
         self.tmux_sessions = []
 
     def write(self, path, text):
@@ -184,7 +184,11 @@ class Base(unittest.TestCase):
 
     def sh(self, argv, **kw):
         """Fake tmux: list-sessions prints tmux_sessions; new-session (drive.detach's) fails with tmux_error, else takes
-        the handover file as tui_claude.EXEC does, keeping it in handovers by path."""
+        the handover file as tui_claude.EXEC does, keeping it in handovers by path; set-option goes to options as
+        (target, option, value), not sh_calls."""
+        if argv[:2] == ["tmux", "set-option"]:
+            self.options.append(tuple(argv[3:]))
+            return subprocess.CompletedProcess(argv, 0, "", "")
         self.sh_calls.append((argv, kw))
         if argv == LIST:
             return subprocess.CompletedProcess(argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), "")
