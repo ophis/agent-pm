@@ -7,13 +7,14 @@ allowed-tools:
   - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/crew.py attach *)
   - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/crew.py note *)
   - Bash(python3 ${CLAUDE_SKILL_DIR}/../../src/tui_claude.py read *)
+  - Bash(python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py --list)
 ---
 
 # tmux
 
 Starting workers adds no authority: you have only what you were given, nothing inherited from the session that started you; the user's commander guidelines (`/agent-pm:manage`) apply only where the user invoked them.
 
-You, the commander, run each worker as an interactive `claude` in its own tmux session, shown in a pane beside yours, and each role run (Role runs) through `drive.py`. Below, `crew.py` means `python3 ${CLAUDE_SKILL_DIR}/scripts/crew.py`, `tui_claude.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/tui_claude.py` and `drive.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py`; write them out exactly so, since the pre-approved `crew.py reply`, `crew.py next-event`, `crew.py attach`, `crew.py note` and `tui_claude.py read` match that text.
+You, the commander, run each worker as an interactive `claude` in its own tmux session, shown in a pane beside yours, and each role run (Role runs) through `drive.py`. Below, `crew.py` means `python3 ${CLAUDE_SKILL_DIR}/scripts/crew.py`, `tui_claude.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/tui_claude.py` and `drive.py` means `python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py`; write them out exactly so, since the pre-approved `crew.py reply`, `crew.py next-event`, `crew.py attach`, `crew.py note`, `tui_claude.py read` and `drive.py --list` match that text.
 
 ## Start
 
@@ -62,7 +63,7 @@ Events are hints: confirm each by reading, as below. After a `next-event` event 
 
 A core role doing one task (`${CLAUDE_SKILL_DIR}/../../CLAUDE.md`): `--runner tui` in a tmux session and pane, to watch or step in; `--runner headless` only the result. To run one in this conversation instead: `/agent-pm:act-as`.
 
-1. Pick the role and, optionally, its task (none: the run picks one from the role's task index). Each role, its destination type and its index, from the merged core config: `python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1]); import compose, repo; [print(r + "  " + compose.load_run(compose.ROOT, r).output["type"], *(f"  {t}: {d}" for t, d in compose.index(compose.ROOT, r).items()), sep="\n") for r in repo.read_config(os.path.join(compose.ROOT, compose.CONFIG))["roles"]]' ${CLAUDE_SKILL_DIR}/../../src`. What the input must hold: `${CLAUDE_SKILL_DIR}/../../team/roles/<role>.md` and its tasks' `${CLAUDE_SKILL_DIR}/../../team/tasks/<task>.md` (`## Input processing`, else its first steps). A task on a repo takes it in the input: a `Repo: <owner>/<name>` line, a repo URL or a local clone path; `--repo <dir>` only fills a `read`/`write` entry `repo`, which no role in `${CLAUDE_SKILL_DIR}/../../config.toml` has.
+1. Pick the role and, optionally, its task (none: the run picks one from the role's task index). Each role, its destination type and its tasks: `python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py --list` prints each role (core's first, then those of `${CLAUDE_SKILL_DIR}/../../config.toml`'s `team_dirs`), its destination type and source (`built-in` or its charter's path), then each of its tasks with its description and source; exit 2 names a config error. What the input must hold: the charter and task files at the paths `--list` prints (`built-in`: `${CLAUDE_SKILL_DIR}/../../team/roles/<role>.md`, `${CLAUDE_SKILL_DIR}/../../team/tasks/<task>.md`): `## Input processing`, else its first steps. A task on a repo takes it in the input: a `Repo: <owner>/<name>` line, a repo URL or a local clone path; `--repo <dir>` only fills a `read`/`write` entry `repo`, which no role in `${CLAUDE_SKILL_DIR}/../../config.toml` has.
 2. `mkdir -p <workdir>`, `<workdir>` a new `~/.agent-pm/adhoc/<YYYY-MM-DD>-<role>[-<task>]-<short name>/` per run: under the trusted `~/.agent-pm`, so no trust dialog; prune never cleans it. No input file: step 3 passes the input as text.
 3. The command, run from the workdir so it is the run's cwd (`[--manager <manager>]`: Start 1). `--input -` reads the input text from stdin: end the command with `<<'EOF'`, then the text, then a line `EOF` (quoted, so the shell expands nothing in it); a text without `'` can go as `--input '<text>'` instead.
    - tui: `cd <workdir> && drive.py --role <role> [--task <task>] --input - --out out.md --workdir . --runner tui [--manager <manager>] --detach [--split right|below] [--split-from <session>] [--prefix <prefix>] <<'EOF'`, placement as for a worker.

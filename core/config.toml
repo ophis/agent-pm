@@ -31,6 +31,18 @@
 #   grid_retile     local, global only: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all"
 #                   (also a drag or a window resize), "off" (never by itself: core/src/tui_claude.py tile @N);
 #                   unset → "open-close"
+#   team_dirs       local, global only: dirs of your own roles, tasks and templates (absolute or ~ path, matched by
+#                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold
+#                   roles/, tasks/ and templates/ (each optional) of <name>.md files ([a-z0-9-] names) in team/'s
+#                   formats (core/CLAUDE.md › Rules). Add-only: a name core or another team dir defines stops the run,
+#                   naming both files. roles/<role>.md of a new role is its charter (`# ` title, intro, ## Tasks
+#                   index) and needs no [roles.<role>] (unset: the global run keys); for a defined role, a file of only
+#                   ## Tasks task lines adds them after its index. Any role's index or templates may name any task or
+#                   template. The files hold text only, no config (no --- front matter). drive.py checks each team dir
+#                   file a run uses as core's text is checked (drive.py --list: every one), and refuses a dir in a
+#                   temp dir, overlapping the workdir, the cwd or a write dir, or writable by group or others. A role
+#                   with a team dir charter or task reads its tasks from copies in <workdir>/tasks/ (the task view;
+#                   /agent-pm:act-as: a new temp dir). The orchestrator's runs ignore it
 tier = 2
 effort = "high"
 language = "English"
@@ -42,6 +54,7 @@ language = "English"
 # local: status_line = true
 # local: workers_per_column = 2
 # local: grid_retile = "all"
+# local: team_dirs = ["~/.agent-pm/team"]
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on
@@ -58,7 +71,8 @@ type = "local"
 # table holding the old task-level keys is an error (README › Task labels: Upgrade).
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
 #   read          extra dirs the agent run reads; `repo` is drive.py's --repo dir, {{methods}} core's team/methods/
-#                 dir; core's team/tasks/ is always read. Read-only by the prompt only: no deny rules. unset → none
+#                 dir; core's team/tasks/ (or its task view: team_dirs) is always read. Read-only by the prompt
+#                 only: no deny rules. unset → none
 #   write         extra dirs the agent run writes; the workdir is always reachable; unset → none
 #   commands      shell commands the driver pre-approves, in the client's rule syntax (a trailing ` *` matches any
 #                 arguments); {{scripts}} is core's src/ dir, {{workdir}} the agent run's workdir; unset → none

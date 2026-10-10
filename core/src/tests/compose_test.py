@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
+import drive  # noqa: E402
 
 class Plain:
     """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
@@ -1345,7 +1346,8 @@ class RealCore(unittest.TestCase):
     def test_local_lines_uncommented_are_a_valid_local_file(self):
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             local = tomllib.loads("".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: ")))
-        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column", "grid_retile"}, set(local))
+        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column", "grid_retile", "team_dirs"},
+                             set(local))
         self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
         for role, table in local["roles"].items():
             compose.check_old_keys(table, role)
@@ -1673,16 +1675,22 @@ class RealCore(unittest.TestCase):
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
 
-    def test_the_tmux_skills_role_listing_gives_descriptions_without_paths(self):
-        with open(os.path.join(CORE, "skills", "tmux", "SKILL.md")) as f:
-            cmd = re.search(r"`(python3 -c '.*?' \$\{CLAUDE_SKILL_DIR\}/\.\./\.\./src)`", f.read()).group(1)
-        code, src = shlex.split(cmd.replace("${CLAUDE_SKILL_DIR}", os.path.join(CORE, "skills", "tmux")))[2:]
+    def test_drive_list_gives_descriptions_without_paths(self):
         out = io.StringIO()
-        with mock.patch.object(sys, "argv", ["-c", src]), mock.patch.object(sys, "path", list(sys.path)), \
-                redirect_stdout(out):
-            exec(code, {})
+        with redirect_stdout(out):
+            self.assertEqual(drive.main(["--list"], root=CORE), 0)
         self.assertIn("\n  build: a PRD into a pull request with `/autopilot:build` (", out.getvalue())
         self.assertNotIn("<tasks>", out.getvalue())
+
+    def test_both_skills_list_roles_with_drive_list(self):
+        rule = "  - Bash(python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py --list)\n"
+        for skill in ("act-as", "tmux"):
+            with open(os.path.join(CORE, "skills", skill, "SKILL.md")) as f:
+                text = f.read()
+            with self.subTest(skill):
+                self.assertIn(rule, re.match(r"---\n(.*?\n)---\n", text, re.S).group(1))
+                self.assertIn("`python3 ${CLAUDE_SKILL_DIR}/../../src/drive.py --list`", text)
+        self.assertNotIn("python3 -c", text)
 
     def test_only_the_user_loads_the_manager_guidelines(self):
         with open(os.path.join(CORE, "skills", "manage", "SKILL.md")) as f:

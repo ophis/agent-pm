@@ -18,6 +18,13 @@ Rules every role follows; precedence: `core/team/guide.md`.
 **Charter**:
 A role's text: its task index and the rules shared by all of that role's tasks.
 
+**Team dir**:
+A dir listed in core config's `team_dirs`, outside the plugin, adding roles, tasks and templates to the core pack's, never replacing them.
+_Avoid_: custom pack
+
+**Task view**:
+The per-run dir of copies of a role's task files that the prompt's `<tasks>` names when the role or one of its tasks comes from a team dir.
+
 **Agent run**:
 One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
