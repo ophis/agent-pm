@@ -13,6 +13,7 @@ python3 -m unittest discover -s core/skills/tmux/scripts/integration -p "*_integ
 python3 -m unittest discover -s orchestrator/src/tests/integration -p "*_integration_test.py"
 claude --plugin-dir core                                  # this checkout's plugin as agent-pm@inline; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
+./gen-preview.sh                                          # every role × task's composed prompt into previews/ (gitignored)
 ```
 
 CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (the three suites) and Integration tests (each suite's `integration/`; installs tmux); a test must pass on Linux too.
