@@ -208,16 +208,15 @@ class Gather(unittest.TestCase):
         self.assertEqual(src.earlier.url, BASE + "Product%20Design/2026-09-01-PM-9-mine.md")
         self.assertEqual([d.path for d in src.docs], ["Product Design/2026-08-01-PM-1-x.md"])
 
-    def test_design_without_any_design_link_has_no_earlier(self):
-        gh = Gh({endpoint("Product%20Design"): listing(), endpoint("Research/r.md"): ok("r")})
-        src = inputs.gather(issue(f"{BASE}Research/r.md", ident="PM-9"), "pm", DOCS, run=gh)
-        self.assertIsNone(src.earlier)
-
-    def test_research_does_not_fall_back_to_design_links(self):
-        gh = Gh({endpoint("Research"): listing(), endpoint("Product%20Design/p.md"): ok("p")})
-        src = inputs.gather(issue(f"{BASE}Product%20Design/p.md"), "researcher", DOCS, run=gh)
-        self.assertIsNone(src.earlier)
-        self.assertEqual([d.path for d in src.docs], ["Product Design/p.md"])
+    def test_no_listing_hit_and_no_design_link_of_a_design_role_means_no_earlier(self):
+        """A design role without a design link, and a research role with one (no fallback): no earlier version."""
+        for role, ident, listed, link, path in (("pm", "PM-9", "Product%20Design", "Research/r.md", "Research/r.md"),
+                                                ("researcher", "RES-4", "Research", "Product%20Design/p.md", "Product Design/p.md")):
+            with self.subTest(role=role):
+                gh = Gh({endpoint(listed): listing(), endpoint(link): ok("x")})
+                src = inputs.gather(issue(f"{BASE}{link}", ident=ident), role, DOCS, run=gh)
+                self.assertIsNone(src.earlier)
+                self.assertEqual([d.path for d in src.docs], [path])
 
     def test_build_lists_nothing_and_keeps_every_link(self):
         prd = BASE + "Product%20Design/2026-09-01-PM-9-x.md"
@@ -261,20 +260,15 @@ class RenderResearch(unittest.TestCase):
             "### `Research/2026-08-01-RES-2-queues.md`", "", fenced("# Queues"), "",
             "## Earlier version: `Research/2026-09-01-RES-4-q.md`", "", fenced("# Earlier")))
 
-    def test_minimal_without_repo_or_optional_sections(self):
-        got = inputs.render(issue("Which?"), "researcher", inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
-        self.assertEqual(got, lines("Reference: RES-4", "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "", "## Question", "", "Compare queues", "",
-                                    "Which?"))
-
-    def test_golden_repo_names_the_local_clone(self):
-        got = inputs.render(issue("Which?"), "researcher", inputs.Sources((), None), humans=HUMANS,
-                            target=target.Target("ophis", "agent-pm", clone="/x/agent-pm"), docs=DOCS)
-        self.assertEqual(got, lines("Reference: RES-4", "Repo: /x/agent-pm", "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "",
-                                    "## Question", "", "Compare queues", "", "Which?"))
-
-    def test_empty_description_leaves_only_the_title(self):
-        got = inputs.render(issue(""), "researcher", inputs.Sources((), None), humans=HUMANS, target=None, docs=DOCS)
-        self.assertTrue(got.endswith("## Question\n\nCompare queues"))
+    def test_golden_without_optional_sections(self):
+        """No repo or the local clone as Repo; an empty description leaves only the title."""
+        for description, t, repo_line in (("Which?", None, ()),
+                                          ("Which?", target.Target("ophis", "agent-pm", clone="/x/agent-pm"), ("Repo: /x/agent-pm",)),
+                                          ("", None, ())):
+            with self.subTest(description=description, target=t):
+                got = inputs.render(issue(description), "researcher", inputs.Sources((), None), humans=HUMANS, target=t, docs=DOCS)
+                self.assertEqual(got, lines("Reference: RES-4", *repo_line, "Checkout: RES-4", "", RESEARCH_PRECEDENCE, "",
+                                            "## Question", "", "Compare queues", *(("", description) if description else ())))
 
     def test_user_notes_are_matched_case_insensitively_and_use_email_without_name(self):
         ns = (issues.Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None),
@@ -294,13 +288,12 @@ class Fence(unittest.TestCase):
         src = inputs.Sources((inputs.Doc(BASE + "Research/a.md", "Research/a.md", text),), None)
         return inputs.render(issue("Q"), "researcher", src, humans=HUMANS, target=None, docs=DOCS)
 
-    def test_fence_is_longer_than_any_backtick_run_in_the_text(self):
-        for text, fence in (("plain", "```"), ("a ``` b", "````"), ("`` and ```` and `", "`````"), ("`x`", "```")):
+    def test_fence_is_longer_than_any_backtick_run_and_trailing_newlines_add_no_blank_lines(self):
+        for text, fence, shown in (("plain", "```", "plain"), ("a ``` b", "````", "a ``` b"),
+                                   ("`` and ```` and `", "`````", "`` and ```` and `"), ("`x`", "```", "`x`"),
+                                   ("a\n\n", "```", "a")):
             with self.subTest(text=text):
-                self.assertTrue(self.render_doc(text).endswith(f"### `Research/a.md`\n\n{fence}markdown\n{text}\n{fence}"))
-
-    def test_trailing_newlines_do_not_add_blank_lines(self):
-        self.assertTrue(self.render_doc("a\n\n").endswith("```markdown\na\n```"))
+                self.assertTrue(self.render_doc(text).endswith(f"### `Research/a.md`\n\n{fence}markdown\n{shown}\n{fence}"))
 
 
 class RenderDesign(unittest.TestCase):
@@ -387,30 +380,23 @@ class RenderBuild(unittest.TestCase):
             "- integration, 2026-09-07T00:00:00.000Z:", "  > bot late"))
 
     def test_golden_handoff_without_prd(self):
-        d = lines("Handoff from PM-9: u", "", "## Source", f"- PRD: {BASE}Product%20Design/p.md", "",
-                  "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.", "",
-                  "## Comments", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")
-        iss = issue(d, ident="ENG-7", title="ENG: Registry")
-        got = inputs.render(iss, "engineer", inputs.Sources((), None), humans=HUMANS, target=self.TARGET, docs=DOCS)
-        self.assertEqual(got, lines(
-            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: ophis/agent-pm", "Checkout: ENG-7",
-            "Branch: ENG-7-session-registry",
-            "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
-            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild the PRD.", "",
-            "## PRD", "", "None linked.", "",
-            "## Comments on PM-9 (context)", "", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi"))
-
-    def test_golden_repo_names_the_local_clone(self):
-        d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.")
-        t = target.Target("ophis", "agent-pm", "ENG-7-session-registry", "/x/agent-pm")
-        got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "engineer", inputs.Sources((), None),
-                            humans=HUMANS, target=t, docs=DOCS)
-        self.assertEqual(got, lines(
-            "Reference: ENG-7", "Title: ENG-7: Registry", "Repo: /x/agent-pm", "Checkout: ENG-7",
-            "Branch: ENG-7-session-registry",
-            "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
-            "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild the PRD.", "",
-            "## PRD", "", "None linked."))
+        """With the source's comments and the GitHub repo; without them and with the local clone as Repo."""
+        head = lines("Handoff from PM-9: u", "", "## Source", f"- PRD: {BASE}Product%20Design/p.md", "",
+                     "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.")
+        comments = lines("", "## Comments", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")
+        clone = target.Target("ophis", "agent-pm", "ENG-7-session-registry", "/x/agent-pm")
+        for d, t, repo_line, tail in ((head + "\n" + comments, self.TARGET, "ophis/agent-pm",
+                                       ("", "## Comments on PM-9 (context)", "", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")),
+                                      (head, clone, "/x/agent-pm", ())):
+            with self.subTest(target=t):
+                got = inputs.render(issue(d, ident="ENG-7", title="ENG: Registry"), "engineer", inputs.Sources((), None),
+                                    humans=HUMANS, target=t, docs=DOCS)
+                self.assertEqual(got, lines(
+                    "Reference: ENG-7", "Title: ENG-7: Registry", f"Repo: {repo_line}", "Checkout: ENG-7",
+                    "Branch: ENG-7-session-registry",
+                    "Links: https://linear.app/t/issue/ENG-7", "", BUILD_PRECEDENCE, "",
+                    "## The user's instructions", "", "Ann, 2026-09-01T00:00:00.000Z:\nBuild the PRD.", "",
+                    "## PRD", "", "None linked.", *tail))
 
     def test_handoff_prd_and_link_line(self):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")

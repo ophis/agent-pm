@@ -181,16 +181,18 @@ class SayAndApprove(Base):
 
 class FinishGolden(Base):
     def outcomes(self, role, spec, plan):
-        kind = config.TASKS[role].kind
+        """Every role's outcomes name the spec and plan: only a files role posts them."""
+        kind, files = config.TASKS[role].kind, [plan, spec]
         if kind == "research":
-            return {"done": outcome("done", summary="Three queues compared.\nRedis streams fit best.", url=DOC),
-                    "needs_input": outcome("needs_input", questions=["Which repo?", "Which version?"], url=DOC),
-                    "failed": outcome("failed", summary="gh api failed", url=DOC)}
+            return {"done": outcome("done", summary="Three queues compared.\nRedis streams fit best.", url=DOC, files=files),
+                    "needs_input": outcome("needs_input", questions=["Which repo?", "Which version?"], url=DOC,
+                                           files=files),
+                    "failed": outcome("failed", summary="gh api failed", url=DOC, files=files)}
         if kind == "design":
-            return {"done": outcome("done", "Session Registry", "PRD for the registry.", url=PRD),
-                    "needs_input": outcome("needs_input", "Session Registry", questions=["Who uses it?", "Web or CLI?"]),
-                    "failed": outcome("failed", "Session Registry", "Could not publish.")}
-        files = [plan, spec]
+            return {"done": outcome("done", "Session Registry", "PRD for the registry.", url=PRD, files=files),
+                    "needs_input": outcome("needs_input", "Session Registry", questions=["Who uses it?", "Web or CLI?"],
+                                           files=files),
+                    "failed": outcome("failed", "Session Registry", "Could not publish.", files=files)}
         return {"done": outcome("done", "ENG-7: Session registry", "Adds the registry.\nVerify: python3 -m unittest",
                                 url=PR, files=files),
                 "needs_input": outcome("needs_input", "ENG-7: Session registry", questions=["Keep the old API?"],
@@ -328,12 +330,6 @@ class FinishLedger(Base):
 
 
 class FinishSteps(Base):
-    def test_failed_build_names_its_pr_in_the_comment_unattached(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql)
-        self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "check test failing", url=PR)))
-        self.assertEqual(gql.calls, expect(body=f"Build failed: check test failing\n\n{PR}", state="in_review"))
-
     def test_attach_skipped_when_already_attached(self):
         gql = Gql(attachments=[PR])
         ctx = self.ctx(gql=gql)
@@ -358,21 +354,17 @@ class FinishSteps(Base):
         self.assertEqual(gql.calls[-1][0], "attach")
         self.assertEqual(self.lines()[-1], f"step-error {ID} step=attach:{PR} error=SystemExit: linear api error: boom")
 
-    def test_state_already_target(self):
-        gql = Gql(states=[STATES["in_review"]])
-        ctx = self.ctx(gql=gql)
-        self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
-        self.assertEqual(gql.calls[-1], reread())
-        self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
-        self.assertIn("move:in_review", self.ledger(ctx)[SID])
-
-    def test_state_never_overrides_a_user_move(self):
-        gql = Gql(states=[STATES["handoff"]])
-        ctx = self.ctx(gql=gql)
-        self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
-        self.assertEqual(gql.calls[-1], reread())
-        self.assertIn(f"skip {ID} reason=move to in_review: issue is {STATES['handoff']}", self.lines())
-        self.assertIn("move:in_review", self.ledger(ctx)[SID])
+    def test_no_move_from_another_state(self):
+        """Already the target: no move, no log; a user's move: never overridden, the skip logged. The step is done."""
+        for state, skip in (("in_review", None), ("handoff", f"skip {ID} reason=move to in_review: issue is {STATES['handoff']}")):
+            with self.subTest(state=state):
+                gql = Gql(states=[STATES[state]])
+                ctx = self.ctx(gql=gql)
+                self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
+                self.assertEqual(gql.calls[-1], reread())
+                self.assertEqual([line for line in self.lines() if line.startswith("skip")], [skip] if skip else [])
+                self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
+                self.assertIn("move:in_review", self.ledger(ctx)[SID])
 
     def test_subscribe_failures_noted_and_finish_continues(self):
         def fail(name, v):
@@ -398,109 +390,92 @@ class FinishSteps(Base):
         self.assertIn(f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=SystemExit: linear api error: body too long",
                       self.lines())
 
-    def test_files_only_for_files_roles(self):
-        gql = Gql()
-        ctx = self.ctx("pm", gql=gql, target=None)
-        spec, plan = self.files(ctx)
-        writeback.finish(ctx, outcome("failed", "Session Registry", "Could not publish.", files=[spec, plan]))
-        self.assertEqual(gql.calls, expect(body="Could not publish.", state="in_review"))
-
 
 class FileRecheck(Base):
+    """_read_file's checks on the open fd: an outcome file the agent run could swap is skipped and noted."""
     def finish_with(self, ctx, path):
         gql = Gql()
         writeback.finish(replace(ctx, gql=gql), outcome("failed", "ENG-7: x", "push not permitted", files=[path]))
         posted = [c for c in gql.calls if c[0] == "comment"]
-        self.assertEqual(len(posted), 1, posted)
-        return posted[0][1]["b"]
+        return gql, posted[-1][1]["b"]
 
-    def assert_skipped(self, ctx, path, reason):
-        name = os.path.basename(path)
-        self.assertEqual(self.finish_with(ctx, path),
-                         f"Build failed: push not permitted\n\nCould not post the file `{name}`: {reason}")
-
-    def test_symlink(self):
-        ctx = self.ctx()
+    def symlink(self, ctx):
         spec, _ = self.files(ctx)
-        link = os.path.join(ctx.workdir, "link.md")
-        os.symlink(spec, link)
-        body = self.finish_with(ctx, link)
-        self.assertTrue(body.startswith("Build failed: push not permitted\n\nCould not post the file `link.md`: OSError: "), body)
+        os.symlink(spec, os.path.join(ctx.workdir, "link.md"))
+        return os.path.join(ctx.workdir, "link.md")
 
-    def test_hard_link(self):
-        ctx = self.ctx()
+    def hard_link(self, ctx):
         spec, _ = self.files(ctx)
         os.link(spec, os.path.join(ctx.workdir, "copy.md"))
-        self.assert_skipped(ctx, spec, "ValueError: not a single-link file")
+        return spec
 
-    def test_not_md(self):
-        ctx = self.ctx()
-        self.assert_skipped(ctx, self.write(ctx, "notes.txt", "x"), "ValueError: not a .md file")
-
-    def test_outside_workdir(self):
-        ctx = self.ctx()
+    def outside(self, ctx):
         outside = os.path.join(self.tmp, "outside.md")
         with open(outside, "w") as f:
             f.write("secret")
-        self.assert_skipped(ctx, outside, "ValueError: not under the workdir")
+        return outside
 
-    def test_outside_through_a_linked_dir(self):
-        ctx = self.ctx()
+    def linked_dir(self, ctx):
         os.makedirs(os.path.join(self.tmp, "away"))
         with open(os.path.join(self.tmp, "away", "x.md"), "w") as f:
             f.write("secret")
         os.symlink(os.path.join(self.tmp, "away"), os.path.join(ctx.workdir, "away"))
-        self.assert_skipped(ctx, os.path.join(ctx.workdir, "away", "x.md"), "ValueError: not under the workdir")
+        return os.path.join(ctx.workdir, "away", "x.md")
 
-    def test_too_big(self):
-        ctx = self.ctx()
-        self.assert_skipped(ctx, self.write(ctx, "big.md", "x" * 1_000_001), "ValueError: over 1000000 bytes")
+    def fifo(self, ctx):
+        os.mkfifo(os.path.join(ctx.workdir, "pipe.md"))
+        return os.path.join(ctx.workdir, "pipe.md")
 
-    def test_at_the_limit_posts(self):
-        ctx = self.ctx()
-        path = self.write(ctx, "big.md", "x" * 1_000_000)
-        gql = Gql()
-        writeback.finish(replace(ctx, gql=gql), outcome("failed", "ENG-7: x", "push not permitted", files=[path]))
-        self.assertEqual(gql.calls[1], comment(f"**Spec** `big.md`\n\n---\n\n{'x' * 1_000_000}"))
+    def test_skipped(self):
+        for name, make, reason in (
+                ("symlink", self.symlink, "OSError: "),
+                ("hard link", self.hard_link, "ValueError: not a single-link file"),
+                ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "ValueError: not a .md file"),
+                ("outside the workdir", self.outside, "ValueError: not under the workdir"),
+                ("outside through a linked dir", self.linked_dir, "ValueError: not under the workdir"),
+                ("too big", lambda ctx: self.write(ctx, "big.md", "x" * 1_000_001), "ValueError: over 1000000 bytes"),
+                ("fifo, without blocking", self.fifo, "ValueError: not a regular file")):
+            with self.subTest(name):
+                ctx = self.ctx()
+                path = make(ctx)
+                gql, body = self.finish_with(ctx, path)
+                self.assertEqual([c for c in gql.calls if c[0] == "comment"], [comment(body)])
+                note = f"Build failed: push not permitted\n\nCould not post the file `{os.path.basename(path)}`: {reason}"
+                self.assertTrue(body.startswith(note) if reason == "OSError: " else body == note, body)
 
-    def test_fifo_does_not_block(self):
-        ctx = self.ctx()
-        fifo = os.path.join(ctx.workdir, "pipe.md")
-        os.mkfifo(fifo)
-        self.assert_skipped(ctx, fifo, "ValueError: not a regular file")
-
-    def test_invalid_utf8_replaced(self):
-        ctx = self.ctx()
-        path = os.path.join(ctx.workdir, "spec.md")
-        with open(path, "wb") as f:
-            f.write(b"ok \xff")
-        gql = Gql()
-        writeback.finish(replace(ctx, gql=gql), outcome("failed", "ENG-7: x", "push not permitted", files=[path]))
-        self.assertEqual(gql.calls[1], comment("**Spec** `spec.md`\n\n---\n\nok \ufffd"))
+    def test_posted(self):
+        def invalid_utf8(ctx):
+            path = os.path.join(ctx.workdir, "spec.md")
+            with open(path, "wb") as f:
+                f.write(b"ok \xff")
+            return path
+        for name, make, posted in (
+                ("at the limit", lambda ctx: self.write(ctx, "big.md", "x" * 1_000_000),
+                 f"**Spec** `big.md`\n\n---\n\n{'x' * 1_000_000}"),
+                ("invalid utf-8 replaced", invalid_utf8, "**Spec** `spec.md`\n\n---\n\nok \ufffd")):
+            with self.subTest(name):
+                ctx = self.ctx()
+                gql, _ = self.finish_with(ctx, make(ctx))
+                self.assertEqual(gql.calls[1], comment(posted))
 
 
 class UrlCheck(Base):
-    def test_other_repo_dropped(self):
+    def test_an_engineering_url_must_be_on_the_target(self):
         evil = "https://github.com/ophis/agent-pm-evil/pull/1"
-        gql = Gql()
-        ctx = self.ctx(gql=gql)
-        writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=evil))
-        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
-        self.assertEqual(self.lines()[0], f"skip {ID} reason=url not on ophis/agent-pm")
-
-    def test_case_insensitive_match(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql, target=("Ophis", "Agent-PM"))
-        writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
-        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review", attach=PR,
-                                           attach_title="ENG-7: x"))
-
-    def test_no_target_drops_every_url(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql, target=None)
-        writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted", url=TREE))
-        self.assertEqual(gql.calls, expect(body="Build failed: push not permitted", state="in_review"))
-        self.assertEqual(self.lines()[0], f"skip {ID} reason=url not on a target repo")
+        for name, target, o, calls, skip in (
+                ("other repo dropped", TARGET, outcome("done", "ENG-7: x", "Ready.", url=evil),
+                 expect(body="Build ready: Ready.", state="in_review"), f"skip {ID} reason=url not on ophis/agent-pm"),
+                ("case-insensitive match", ("Ophis", "Agent-PM"), outcome("done", "ENG-7: x", "Ready.", url=PR),
+                 expect(body="Build ready: Ready.", state="in_review", attach=PR, attach_title="ENG-7: x"), None),
+                ("no target drops every url", None, outcome("failed", "ENG-7: x", "push not permitted", url=TREE),
+                 expect(body="Build failed: push not permitted", state="in_review"),
+                 f"skip {ID} reason=url not on a target repo")):
+            with self.subTest(name):
+                gql = Gql()
+                before = len(logged())
+                writeback.finish(self.ctx(gql=gql, target=target), o)
+                self.assertEqual(gql.calls, calls)
+                self.assertEqual([line for line in self.lines()[before:] if line.startswith("skip ")], [skip] if skip else [])
 
 
 class Sink(Base):
@@ -516,24 +491,18 @@ class Sink(Base):
         writeback.sink(replace(ctx, sid=OTHER_SID))(start)
         self.assertEqual(len(gql.calls), 2)
 
-    def test_build_started_matches_the_cutoff(self):
-        gql = Gql()
-        writeback.sink(self.ctx(gql=gql))(drive.Event("progress", name="start"))
-        self.assertEqual(gql.calls, [comment("Build started")])
-        self.assertTrue(issues.BUILD_STARTED.match(gql.calls[0][1]["b"]))
-
-    def test_start_leads(self):
-        for role, body in (("researcher", "Research started: budget 2 rounds"), ("pm", "PRD started: budget 2 rounds")):
-            with self.subTest(role=role):
-                gql = Gql()
-                writeback.sink(self.ctx(role, gql=gql))(drive.Event("progress", text="budget 2 rounds", name="start"))
-                self.assertEqual(gql.calls, [comment(body)])
-
-    def test_the_start_comment_is_the_roles_lead_and_the_runs_pick(self):
-        gql = Gql()
+    def test_start_comment_is_the_roles_lead_and_the_runs_pick(self):
         pick = "light-build: a template wording tweak, like TASK-226."
-        writeback.sink(self.ctx("engineer", gql=gql))(drive.Event("progress", text=pick, name="start"))
-        self.assertEqual(gql.calls, [comment(f"Build started: {pick}")])
+        for role, text, body in (("researcher", "budget 2 rounds", "Research started: budget 2 rounds"),
+                                 ("pm", "budget 2 rounds", "PRD started: budget 2 rounds"),
+                                 ("engineer", pick, f"Build started: {pick}"),
+                                 ("engineer", "", "Build started")):
+            with self.subTest(role=role, text=text):
+                gql = Gql()
+                writeback.sink(self.ctx(role, gql=gql))(drive.Event("progress", text=text, name="start"))
+                self.assertEqual(gql.calls, [comment(body)])
+                if role == "engineer":  # issues.build_cutoff's `Build started` cutoff
+                    self.assertTrue(issues.BUILD_STARTED.match(body))
 
     def test_ignores_text_and_outcome(self):
         gql = Gql()
@@ -659,23 +628,19 @@ class Bounce(Base):
         return ("Question: repo check failed: " + reason
                 + ". Fix the description's `Repo:` line, then move this issue back to Todo.")
 
-    def test_not_a_handoff_question_path(self):
-        gql = Gql()
-        writeback.bounce(self.ctx(gql=gql), issue("Repo: nope\n\nBuild it."), "unreadable Repo line: 'nope'")
-        self.assertEqual(gql.calls, [sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("unreadable Repo line: 'nope'")),
-                                     reread(), move("in_review")])
-
-    def test_src_in_another_team_question_path(self):
-        gql = Gql(issue=self.src(team="00000000-0000-4000-8000-0000000000ff"))
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
-        self.assertEqual(gql.calls, [("id", {"i": "PRD-3"}), sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("r")),
-                                     reread(), move("in_review")])
-
-    def test_src_missing_question_path(self):
-        gql = Gql(issue=None)
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
-        self.assertEqual(gql.calls[1:], [sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question("r")), reread(),
-                                         move("in_review")])
+    def test_question_path(self):
+        """Not a handoff, or its source missing or in another team: a `Question:` and In Review."""
+        reason = "unreadable Repo line: 'nope'"
+        for name, description, src, lookup in (
+                ("not a handoff", "Repo: nope\n\nBuild it.", None, []),
+                ("source in another team", HANDOFF, self.src(team="00000000-0000-4000-8000-0000000000ff"),
+                 [("id", {"i": "PRD-3"})]),
+                ("source missing", HANDOFF, None, [("id", {"i": "PRD-3"})])):
+            with self.subTest(name):
+                gql = Gql(issue=src)
+                writeback.bounce(self.ctx(gql=gql), issue(description), reason)
+                self.assertEqual(gql.calls, [*lookup, sub(HUMANS[0]), sub(HUMANS[1]), comment(self.question(reason)),
+                                             reread(), move("in_review")])
 
     def test_question_subscribe_failure_noted(self):
         gql = Gql(fail=lambda name, v: False if name == "subscribe" and v["e"] == HUMANS[0] else None)

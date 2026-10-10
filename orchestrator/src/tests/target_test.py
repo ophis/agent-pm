@@ -88,29 +88,20 @@ class PrTitle(unittest.TestCase):
 class ResearchRepo(unittest.TestCase):
     REPOS = {PROJ: "ophis/agent-pm"}
 
-    def test_mapping_when_no_repo_line(self):
-        self.assertEqual(target.research_repo(issue("no repo here", project=PROJ), self.REPOS),
-                         target.Target("ophis", "agent-pm"))
-        self.assertEqual(target.research_repo(issue("", project=PROJ), self.REPOS), target.Target("ophis", "agent-pm"))
-
-    def test_repo_line_wins(self):
-        self.assertIsNone(target.research_repo(issue("Repo: ophis/other", project=PROJ), self.REPOS))
-
-    def test_a_bad_repo_line_is_not_replaced_by_the_mapping(self):
-        for d in ("Repo: nope", "Repo: ophis/a\nRepo: ophis/b"):
-            with self.subTest(d=d):
-                self.assertIsNone(target.research_repo(issue(d, project=PROJ), self.REPOS))
-
-    def test_none_without_a_mapped_project(self):
-        for project in ("other", None):
-            with self.subTest(project=project):
-                self.assertIsNone(target.research_repo(issue("no repo here", project=project), self.REPOS))
-        self.assertIsNone(target.research_repo(issue("no repo here", project=PROJ), {}))
+    def test_mapped_repo_only_without_a_repo_line(self):
+        for desc, project, repos, want in (("no repo here", PROJ, self.REPOS, target.Target("ophis", "agent-pm")),
+                                           ("", PROJ, self.REPOS, target.Target("ophis", "agent-pm")),
+                                           ("Repo: ophis/other", PROJ, self.REPOS, None), ("Repo: nope", PROJ, self.REPOS, None),
+                                           ("Repo: ophis/a\nRepo: ophis/b", PROJ, self.REPOS, None),
+                                           ("no repo here", "other", self.REPOS, None), ("no repo here", None, self.REPOS, None),
+                                           ("no repo here", PROJ, {}, None)):
+            with self.subTest(desc=desc, project=project, repos=repos):
+                self.assertEqual(target.research_repo(issue(desc, project=project), repos), want)
 
 class Check(unittest.TestCase):
     REPOS = {PROJ: "ophis/agent-pm"}
     MAPPED = {"desc": "no repo here", "repos": REPOS, "project": PROJ}
-    ISSUES = (("Repo line", {}, ""), ("Repo line, mapped project", {"repos": REPOS, "project": PROJ}, ""), ("mapped project", MAPPED, target.MAPPED))
+    ISSUES = (("Repo line", {}, ""), ("Repo line, mapped project", {"repos": REPOS, "project": PROJ}, ""), ("mapped project", MAPPED, "project mapping "))
 
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
@@ -140,28 +131,38 @@ class Check(unittest.TestCase):
     def argvs(self):
         return [c[0] for c in self.run_.calls]
 
-    def test_constants(self):
-        self.assertEqual(target.MAPPED, "project mapping ")
-        self.assertEqual(target.Target("o", "n"), target.Target("o", "n", ""))
-        self.assertEqual(target.Target("o", "n").clone, "")
-
     def test_ok_without_a_local_clone_asks_the_remote(self):
         self.assertEqual(self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
         self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), (tuple(self.ls_remote), repo.SHORT)])
 
-    def test_local_clone_branches_come_first(self):
-        self.git_dir()
-        r = self.check(local=ok("TASK-26-old-name\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-old-name"))
-        self.assertEqual(self.run_.calls, [
-            (("gh", "api", "repos/ophis/agent-pm"), repo.SHORT),
-            (self.branch_list(), repo.SHORT)])
+    def test_where_the_branches_are_read(self):
+        """In the agent run's own clone (a real .git dir) first, else on GitHub; git never runs in a worktree, behind a
+        symlinked .git, at a legacy checkout path or without the clone dir."""
+        elsewhere = os.path.join(self.work, "elsewhere")
+        os.makedirs(os.path.join(elsewhere, ".git"))
 
-    def test_local_clone_without_branches_falls_back_to_the_remote(self):
-        self.git_dir()
-        r = self.check(remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-        self.assertEqual(r.branch, "TASK-26-remote")
-        self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
+        def link(dest):
+            os.makedirs(self.clone)
+            os.symlink(dest, os.path.join(self.clone, ".git"))
+
+        def at(*parts):
+            return lambda: os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], *parts))
+        local, remote = [(self.branch_list(), repo.SHORT)], [(tuple(self.ls_remote), repo.SHORT)]
+        cases = [("clone with branches", self.git_dir, "TASK-26-local", local),
+                 ("clone without branches", self.git_dir, "", local + remote),
+                 ("worktree", self.git_file, "TASK-26-planted", remote),
+                 ("symlinked .git", lambda: link(os.path.join(elsewhere, ".git")), "TASK-26-planted", remote),
+                 ("dangling .git symlink", lambda: link(os.path.join(elsewhere, "gone")), "TASK-26-planted", remote),
+                 ("legacy agent-pm", at("agent-pm", ".git"), "TASK-26-old", remote),
+                 ("legacy ophis/agent-pm", at("ophis", "agent-pm", ".git"), "TASK-26-old", remote),
+                 ("no clone dir", at("ophis"), "TASK-26-old", remote)]
+        for label, setup, out, calls in cases:
+            with self.subTest(label):
+                shutil.rmtree(os.path.join(self.work, "TASK-26"), ignore_errors=True)
+                setup()
+                r = self.check(local=ok(out + "\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
+                self.assertEqual(r.branch, "TASK-26-local" if out == "TASK-26-local" else "TASK-26-remote")
+                self.assertEqual(self.run_.calls[1:], calls)
 
     def test_remote_names_are_taken_after_refs_heads(self):
         r = self.check(remote=ok("abc\trefs/heads/TASK-26-a\nabc\trefs/tags/x\n"))
@@ -169,73 +170,30 @@ class Check(unittest.TestCase):
         self.assertEqual(self.check(remote=ok("abc\trefs/heads/TASK-26-a\nabc\trefs/heads/TASK-26-b\n")),
                          target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
 
-    def test_a_worktrees_branches_are_read_on_github(self):
-        self.git_file()
-        r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-        self.assertEqual(r.branch, "TASK-26-remote")
-        self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
-
-    def test_symlinked_git_is_not_run(self):
-        os.makedirs(self.clone)
-        elsewhere = os.path.join(self.work, "elsewhere")
-        os.makedirs(os.path.join(elsewhere, ".git"))
-        for target_ in (os.path.join(elsewhere, ".git"), os.path.join(elsewhere, "gone")):
-            git = os.path.join(self.clone, ".git")
-            os.symlink(target_, git)
-            with self.subTest(target_):
-                r = self.check(local=ok("TASK-26-planted\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-                self.assertEqual(r.branch, "TASK-26-remote")
-                self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
-            os.unlink(git)
-
-    def test_legacy_checkout_paths_are_not_read(self):
-        for parts in (("agent-pm",), ("ophis", "agent-pm")):
-            with self.subTest(parts=parts):
-                legacy = os.path.join(self.work, "TASK-26", config.CLONES[0], *parts)
-                os.makedirs(os.path.join(legacy, ".git"))
-                r = self.check(local=ok("TASK-26-old\n"), remote=ok("abc\trefs/heads/TASK-26-remote\n"))
-                self.assertEqual(r.branch, "TASK-26-remote")
-                self.assertEqual(self.argvs()[1:], [tuple(self.ls_remote)])
-                shutil.rmtree(legacy)
-
     def test_read_only_task_branches_are_not_the_build_branch(self):
-        read_only = ["TASK-26-deep-research", "TASK-26-light-research", "TASK-26-product-design"]
+        """Exactly the read-only tasks' <ID>-<task> names are dropped; none left: GitHub's branches."""
+        read_only = "TASK-26-deep-research\nTASK-26-light-research\nTASK-26-product-design\n"
         self.git_dir()
-        r = self.check(local=ok("\n".join(["TASK-26-session-registry", *read_only]) + "\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-        self.assertEqual(self.argvs()[1:], [self.branch_list()])
-        r = self.check(local=ok("\n".join(read_only) + "\n"), remote=ok(""))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-        self.assertEqual(self.argvs()[1:], [self.branch_list(), tuple(self.ls_remote)])
-
-    def test_only_the_exact_read_only_names_are_dropped(self):
-        self.git_dir()
-        r = self.check(local=ok("TASK-26-light-research-2\nTASK-26-light-research\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-light-research-2"))
-        r = self.check(local=ok("TASK-26-build\nTASK-26-light-research\n"))
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-build"))
-
-    def test_no_clone_dir_runs_no_local_git(self):
-        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
-        self.check()
-        self.assertFalse(any(a[:len(LOCAL)] == LOCAL for a in self.argvs()))
+        for out, branch, remote in (("TASK-26-session-registry\n" + read_only, "TASK-26-session-registry", False),
+                                    (read_only, "TASK-26-session-registry", True),
+                                    ("TASK-26-light-research-2\nTASK-26-light-research\n", "TASK-26-light-research-2", False),
+                                    ("TASK-26-build\nTASK-26-light-research\n", "TASK-26-build", False)):
+            with self.subTest(out=out):
+                self.assertEqual(self.check(local=ok(out)), target.Target("ophis", "agent-pm", branch))
+                self.assertEqual(self.argvs()[1:], [self.branch_list()] + [tuple(self.ls_remote)] * remote)
 
     def test_slug_default_and_branch_validation(self):
         self.git_dir()
         self.assertEqual(self.check(title="Fix: it's 骨架").branch, "TASK-26-fix-it-s")
+        names = [f"TASK-26-{c}" + "a" * 40 for c in "abcdef"]
         for over, want in (({"local": ok("TASK-26-a\nTASK-26-b\n")}, target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b")),
                            ({"local": ok("TASK-26-Bad$(x)\n")}, target.Invalid("existing branch name 'TASK-26-Bad$(x)' is not TASK-26-<lowercase slug>")),
                            ({"local": ok("TASK-26-" + "a" * 41 + "\n")}, target.Invalid(f"existing branch name {'TASK-26-' + 'a' * 41!r} is not TASK-26-<lowercase slug>")),
                            ({"local": ok("TASK-26-" + "a" * 40 + "\n")}, target.Target("ophis", "agent-pm", "TASK-26-" + "a" * 40)),
-                           ({"local": ok("TASK-27-x\n")}, target.Invalid("existing branch name 'TASK-27-x' is not TASK-26-<lowercase slug>"))):
+                           ({"local": ok("TASK-27-x\n")}, target.Invalid("existing branch name 'TASK-27-x' is not TASK-26-<lowercase slug>")),
+                           ({"local": ok("".join(n + "\n" for n in names))}, target.Invalid("several TASK-26-* branches: " + ", ".join(names)[:200]))):
             with self.subTest(want=want):
                 self.assertEqual(self.check(**over), want)
-
-    def test_several_branch_names_are_cut_at_200(self):
-        self.git_dir()
-        names = [f"TASK-26-{c}" + "a" * 40 for c in "abcdef"]
-        r = self.check(local=ok("\n".join(names) + "\n"))
-        self.assertEqual(r, target.Invalid("several TASK-26-* branches: " + ", ".join(names)[:200]))
 
     def test_branch_lookup_failures_are_transient(self):
         self.git_dir()
@@ -248,34 +206,22 @@ class Check(unittest.TestCase):
             with self.subTest(issue_label):
                 self.assertEqual(self.check(remote=ok(code=128, stderr="no remote"), **extra), target.Transient("git ls-remote: no remote"))
 
-    def test_mapping_without_repo_line(self):
-        r = self.check(**self.MAPPED)
-        self.assertEqual(r, target.Target("ophis", "agent-pm", "TASK-26-session-registry"))
-        self.assertIn((("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), self.run_.calls)
-
-    def test_repo_line_wins_over_mapping(self):
-        r = self.check(repos={PROJ: "ophis/other"}, project=PROJ)
-        self.assertEqual((r.owner, r.name), ("ophis", "agent-pm"))
-        self.assertNotIn(("gh", "api", "repos/ophis/other"), self.argvs())
-
-    def test_bad_repo_line_is_not_replaced_by_mapping(self):
-        self.assertEqual(self.check("Repo: nope", repos=self.REPOS, project=PROJ), target.Invalid("unreadable Repo line: 'nope'"))
-        self.assertEqual(self.check("Repo: ophis/a\nRepo: ophis/b", repos=self.REPOS, project=PROJ), target.Invalid("several different Repo: values"))
-        self.assertEqual(self.run_.calls, [])
-
-    def test_no_mapping_for_the_project_is_invalid(self):
-        for project in ("other", None):
-            with self.subTest(project=project):
-                self.assertEqual(self.check("no repo here", repos=self.REPOS, project=project), NO_LINE)
-        self.assertEqual(self.check("no repo here", project=PROJ), NO_LINE)
-        self.assertEqual(self.run_.calls, [])
-
-    def test_mapping_that_is_not_owner_name_is_invalid(self):
-        for value, shown in (("nope", "'nope'"), (42, "'42'")):
-            with self.subTest(value=value):
-                self.assertEqual(self.check("no repo here", repos={PROJ: value}, project=PROJ),
-                                 target.Invalid(f"{target.MAPPED}{shown}: not <owner>/<name>"))
-        self.assertEqual(self.run_.calls, [])
+    def test_repo_line_or_project_mapping(self):
+        """A Repo: line, good or bad, wins over the mapping; without one, the project's mapping, else no line. Invalid: no call."""
+        found = target.Target("ophis", "agent-pm", "TASK-26-session-registry")
+        gh = ("gh", "api", "repos/ophis/agent-pm")
+        for desc, repos, project, want in (
+                ("no repo here", self.REPOS, PROJ, found), ("Repo: ophis/agent-pm", {PROJ: "ophis/other"}, PROJ, found),
+                ("Repo: nope", self.REPOS, PROJ, target.Invalid("unreadable Repo line: 'nope'")),
+                ("Repo: ophis/a\nRepo: ophis/b", self.REPOS, PROJ, target.Invalid("several different Repo: values")),
+                ("no repo here", self.REPOS, "other", NO_LINE), ("no repo here", self.REPOS, None, NO_LINE),
+                ("no repo here", {}, PROJ, NO_LINE),
+                ("no repo here", {PROJ: "nope"}, PROJ, target.Invalid("project mapping 'nope': not <owner>/<name>")),
+                ("no repo here", {PROJ: 42}, PROJ, target.Invalid("project mapping '42': not <owner>/<name>"))):
+            with self.subTest(desc=desc, repos=repos, project=project):
+                self.assertEqual(self.check(desc, repos=repos, project=project), want)
+                self.assertEqual(self.argvs()[:1], [gh] if want == found else [])
+                self.assertNotIn(("gh", "api", "repos/ophis/other"), self.argvs())
 
     def test_access_and_response_failures(self):
         default = lambda name: api(default=name, push=True)
@@ -381,16 +327,12 @@ class WithClone(unittest.TestCase):
         os.rename(self.checkout, os.path.join(os.path.dirname(self.checkout), "agent-pm"))
         self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
 
-    def test_without_a_checkout_the_table_entry_is_found_case_insensitively(self):
+    def test_without_a_checkout_the_table_entry_found_case_insensitively(self):
         y = self.clone("y")
-        for key in ("ophis/agent-pm", "Ophis/Agent-PM"):
-            with self.subTest(key):
-                self.assertEqual(self.run_({"ophis/other": "/o", key: y}), self.want(y))
-
-    def test_without_a_checkout_and_without_an_entry_there_is_no_clone(self):
-        for clones in ({}, {"ophis/other": "/o", "ophis/agent-pm-2": "/p"}):
+        for clones, want in (({"ophis/other": "/o", "ophis/agent-pm": y}, y), ({"ophis/other": "/o", "Ophis/Agent-PM": y}, y),
+                             ({}, ""), ({"ophis/other": "/o", "ophis/agent-pm-2": "/p"}, "")):
             with self.subTest(clones):
-                self.assertEqual(self.run_(clones), self.want(""))
+                self.assertEqual(self.run_(clones), self.want(want))
         os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
         self.assertEqual(self.run_({}), self.want(""))
 
@@ -399,16 +341,14 @@ class WithClone(unittest.TestCase):
         self.assertEqual(self.run_({"ophis/agent-pm": self.clone("y")}), self.want(""))
 
     def test_a_worktree_of_the_targets_clone_beats_the_table(self):
-        x, y = self.clone("x"), self.clone("y")
-        self.worktree(x)
-        for clones in ({"ophis/agent-pm": y}, {}):
-            with self.subTest(clones):
-                self.assertEqual(self.run_(clones), self.want(x))
-
-    def test_the_clones_origin_is_matched_case_insensitively(self):
-        x = self.clone("x", "git@github.com:Ophis/Agent-PM.git")
-        self.worktree(x)
-        self.assertEqual(self.run_({}), self.want(x))
+        """Its origin matched case-insensitively."""
+        y = self.clone("y")
+        for name, origin in (("x", self.HTTPS), ("x-scp", "git@github.com:Ophis/Agent-PM.git")):
+            x = self.clone(name, origin)
+            self.worktree(x)
+            for clones in ({"ophis/agent-pm": y}, {}):
+                with self.subTest(origin=origin, clones=clones):
+                    self.assertEqual(self.run_(clones), self.want(x))
 
     def test_the_only_git_run_is_the_guarded_origin_read_of_the_clone(self):
         x = self.clone("x")

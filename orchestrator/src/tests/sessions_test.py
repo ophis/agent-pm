@@ -55,29 +55,32 @@ def end(gql, rec, rc, ended_at=T2):
 
 
 class Record(unittest.TestCase):
-    def test_start_creates_one_running_comment(self):
-        linear = FakeLinear()
-        self.assertIsNone(start(linear, record()))
-        self.assertEqual(linear.calls, ["comments", "commentCreate"])
-        c = linear.only()
-        self.assertEqual(c["body"], f"Run {SID} · running · {T1}\n\n```\n{CMD}\n```")
+    def test_post_writes_one_comment_per_status(self):
+        """Start: running; end: done (exit 0) or interrupted, with start and end times and the exit code."""
+        for rc, line in ((None, f"running · {T1}"), (0, f"done · {T1} → {T2} · exit 0"),
+                         (3, f"interrupted · {T1} → {T2} · exit 3")):
+            with self.subTest(rc=rc):
+                linear = FakeLinear()
+                self.assertIsNone(start(linear, record()))
+                if rc is not None:
+                    self.assertIsNone(end(linear, record(), rc))
+                ended = ["comments", "commentUpdate"] if rc is not None else []
+                self.assertEqual(linear.calls, ["comments", "commentCreate", *ended])
+                self.assertEqual(linear.only()["body"], f"Run {SID} · {line}\n\n```\n{CMD}\n```")
 
-    def test_record_is_sid_workdir_and_start(self):
-        self.assertEqual(record(), {"sid": SID, "workdir": "/w/TASK-12", "started_at": T1})
-
-    def test_command_quotes_the_workdir(self):
-        workdir = "/Users/x/my work/it's/TASK-12"
-        self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
-                         ["cd", workdir, "&&", "claude", "--resume", SID])
-
-    def test_command_runs_in_the_recorded_cwd_never_the_recorded_command(self):
-        with tempfile.TemporaryDirectory() as workdir:
+    def test_command(self):
+        """The workdir is quoted; a run.jsonl session entry gives the cwd, never the command (the agent run can write
+        it)."""
+        with tempfile.TemporaryDirectory() as tmp:
             cwd = "/data/my repo"
-            with open(os.path.join(workdir, "run.jsonl"), "w") as f:
+            with open(os.path.join(tmp, "run.jsonl"), "w") as f:
                 f.write(json.dumps({"ts": "t", "kind": "session", "sid": SID, "cwd": cwd, "project": True,
                                     "resume": "rm -rf ~"}) + "\n")
-            self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))),
-                             ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", workdir])
+            quoted = "/Users/x/my work/it's/TASK-12"
+            for workdir, want in ((quoted, ["cd", quoted, "&&", "claude", "--resume", SID]),
+                                  (tmp, ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", tmp])):
+                with self.subTest(workdir=workdir):
+                    self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))), want)
 
     def test_recover_resume_updates_the_one_comment(self):
         linear = FakeLinear()
@@ -87,14 +90,6 @@ class Record(unittest.TestCase):
         body = linear.only()["body"]
         self.assertEqual(body.splitlines()[0], f"Run {SID} · running · {T2}")
         self.assertEqual(body, sessions.body(record(started_at=T2)))
-
-    def test_end_sets_status_times_and_exit(self):
-        for rc, status in ((0, "done"), (3, "interrupted")):
-            with self.subTest(rc=rc):
-                linear = FakeLinear()
-                start(linear, record())
-                self.assertIsNone(end(linear, record(), rc))
-                self.assertEqual(linear.only()["body"], f"Run {SID} · {status} · {T1} → {T2} · exit {rc}\n\n```\n{CMD}\n```")
 
     def test_end_defaults_to_now(self):
         linear = FakeLinear()
