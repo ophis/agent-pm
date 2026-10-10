@@ -269,7 +269,8 @@ VALID = {
     "kind": ["worker", "role", "pipeline"],
     "sid": [SID, None],
     "cwd": ["/w", "/w with space/é日", "/w ​"],
-    "resume": [["/usr/bin/python3", "/x/crew.py", "; rm -rf ~"], ["/p", "/x/drive.py"], ["/p", "/x/router.py", "a", "b"]],
+    "resume": [["/usr/bin/python3", "/x/crew.py", "; rm -rf ~"], ["/p", "/x/drive.py"], ["/p", "/x/router.py", "a", "b"],
+               ["/p", "/x/workers.py", "start"]],
     "note": [None, "", "x" * 500, "né ​"],
     "opener": [None, "mgr", "w0t0p0:5E1B-C0FFEE"],
     "pane": [None, "%3", "5E1B-C0FFEE"],
@@ -299,6 +300,7 @@ INVALID = [
     ("resume", ["/p", "crew.py"], f"resume[1]: 'crew.py': want {RESUME_1}"),
     ("resume", ["/p", "/x/other.py"], f"resume[1]: '/x/other.py': want {RESUME_1}"),
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
+    ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"), ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
     ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"), ("note", "a b", f"note: {{!r}}: want {NOTE}"),
     ("note", 5, f"note: {{!r}}: want {NOTE}"),
@@ -757,6 +759,18 @@ class RosterTest(unittest.TestCase):
                 if got is not None:
                     got.append("x")
                     self.assertEqual(e["resume"], resume)
+
+    def test_recovery_runs_this_crew_py_for_a_legacy_workers_py_entry(self):
+        crew = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(manager.__file__))),
+                            "skills", "tmux", "scripts", "crew.py")
+        self.assertTrue(os.path.isfile(crew))
+        resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
+        for kind in ("worker", "pipeline", "role"):
+            with self.subTest(kind=kind):
+                e = good(kind=kind, resume=list(resume))
+                got = manager.recovery(e)
+                self.assertEqual(got[:4], ["/usr/bin/python3", crew, "start", "w1"])
+                self.assertEqual(e["resume"], resume)
 
     def test_printable(self):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):

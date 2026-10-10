@@ -25,7 +25,7 @@ it):
   sid               SID or null
   cwd               an absolute path, printable
   resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to crew.py, drive.py or
-                    router.py
+                    router.py (or LEGACY)
   note              null, or printable with at most NOTE_MAX characters
   opener            tui_claude.OPENER or null
   pane              tui_claude.PANE or tui_claude.ITERM_ID, or null
@@ -69,6 +69,9 @@ KINDS = ("worker", "role", "pipeline")
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
+# crew.py's name before TASK-284: an entry an older plugin version wrote still validates, and recovery runs CREW
+LEGACY = "workers.py"
+CREW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills", "tmux", "scripts", "crew.py")
 TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = ("kind", "sid", "cwd", "resume", "note", "opener", "pane", "split", "split_from", "tui", "state", "started")
 NOTE_MAX = 500
@@ -234,7 +237,7 @@ def _resume_fault(resume) -> str | None:
         return _want("resume", resume, "a list of 2 or more printable strings")
     if not os.path.isabs(resume[0]):
         return _want("resume[0]", resume[0], "an absolute path")
-    if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in SCRIPTS):
+    if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
         return _want("resume[1]", resume[1], f"an absolute path named {_or(SCRIPTS)}")
     return None
 
@@ -516,8 +519,10 @@ def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
 
 def recovery(entry: dict) -> list[str] | None:
     """The argv that resumes the entry, run in entry["cwd"]: a worker's or pipeline's `resume`; a role's plus its sid
-    and `--resume`; None for a role without a sid."""
+    and `--resume`; None for a role without a sid. A LEGACY resume[1] becomes CREW."""
     resume = list(entry["resume"])
+    if os.path.basename(resume[1]) == LEGACY:
+        resume[1] = CREW
     if entry["kind"] != "role":
         return resume
     if entry["sid"] is None:
