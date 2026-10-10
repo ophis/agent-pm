@@ -15,11 +15,11 @@ client = clients.get("claude", compose.ROOT)
 workdir = "/agent-pm-preview/work"
 n = 0
 for role in repo.read_config(os.path.join(compose.ROOT, compose.CONFIG))["roles"]:
-    for task in (None, *compose.index(compose.ROOT, role)):
+    for task in compose.index(compose.ROOT, role):
         run = compose.load_run(compose.ROOT, role, task, layers=[client.config])
         text = ("Repo: <owner>/<name>. " if run.output["type"] == "pull-request" else "") + "(input text here)"
         params = compose.RunParams(input=text, out=os.path.join(workdir, "out.md"), workdir=workdir)
-        with open(os.path.join(sys.argv[2], f"{role}-{task}.md" if task else f"{role}.md"), "w") as f:
+        with open(os.path.join(sys.argv[2], f"{role}-{task}.md"), "w") as f:
             f.write(compose.render(compose.ROOT, run, params, client=client))
         n += 1
 print(f"{n} prompts in {sys.argv[2]}")
