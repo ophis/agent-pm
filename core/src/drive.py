@@ -630,11 +630,13 @@ def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.
 
 
 def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iterm: str, proc=subprocess.run,
-           sleep=time.sleep) -> None:
+           sleep=time.sleep, roster: tuple[str, dict] | None = None) -> None:
     """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
     its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
-    argv unblocks them (main). Raises RunnerError."""
+    argv unblocks them (main). Raises RunnerError. With roster (a manager directory, manager.entry's keyword
+    arguments), once the session runs it writes that entry as `name` (manager.put, no lease check); an entry write
+    failure only prints its line (manager.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken
         if "\0" in arg:
             raise RunnerError("an argv item holds a NUL character")
@@ -642,7 +644,7 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
             os.fsencode(arg)
         except UnicodeEncodeError:
             raise RunnerError("an argv item cannot be encoded") from None
-    tmp = None
+    tmp, started = None, False
     try:
         tmp = tempfile.mkdtemp()
         path = os.path.join(tmp, "handover.json")
@@ -658,16 +660,24 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
             raise RunnerError(f"tmux: {(res.stderr or '').strip()}")
         for _ in range(round(tui_claude.HANDOVER_TIMEOUT / tui_claude.POLL)):
             if not os.path.exists(path):
-                return
+                started = True
+                break
             sleep(tui_claude.POLL)
     except OSError as e:
         raise RunnerError(f"driver session: {e}") from e
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late start finds no file to run
-    with contextlib.suppress(tui_claude.TuiError):
-        tui_claude.kill(name, proc=proc)
-    raise RunnerError(f"session {name} did not start")
+    if not started:
+        with contextlib.suppress(tui_claude.TuiError):
+            tui_claude.kill(name, proc=proc)
+        raise RunnerError(f"session {name} did not start")
+    if roster is not None:
+        directory, fields = roster
+        try:
+            manager.put(directory, name, manager.entry(**fields))
+        except manager.ManagerError as e:
+            manager.unwritten(name, e)
 
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
@@ -907,8 +917,9 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
 
 
 def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: str, proc) -> int:
-    """--detach: this command, as the driver, in tmux session `driver`; 2 when the pane has no place or the events file
-    is bad, 3 when the session fails to start."""
+    """--detach: this command, as the driver, in tmux session `driver`, its role entry written there when the events
+    file is a manager directory's (manager.home); 2 when the pane has no place or the events file is bad, 3 when the
+    session fails to start."""
     try:
         layout = caller_layout(a.split, a.split_from, proc=proc) if a.runner == "tui" else None
         events = tui_claude.events_file(a.events)
@@ -925,13 +936,26 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
     # leaves it no pane, as the caller has none.
     iterm = os.environ.get("ITERM_SESSION_ID", "") if opener else ""
     try:
-        detach(driver, argv, cwd=os.getcwd(), env=os.environ, iterm=iterm, proc=proc)
+        d = manager.home(a.manager, events, proc=proc)
+    except manager.ManagerError as e:
+        manager.unwritten(driver, e)
+        d = None
+    cwd = os.getcwd()
+    tui = tui_session(run.role, params.sid, params.prefix) if a.runner == "tui" else None
+    roster = None if d is None else (d, {
+        "kind": "role", "sid": params.sid, "cwd": cwd, "tui": tui, "opener": opener, "split": a.split,
+        "split_from": a.split_from,
+        "resume": [sys.executable, os.path.abspath(__file__),
+                   *(f"--{k}={given[k]}" for k in ("role", "task", "out", "workdir", "repo", "client", "runner",
+                                                   "split", "split-from", "prefix") if given[k] is not None),
+                   "--detach", f"--manager={os.path.basename(d)}"]})
+    try:
+        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster=roster)
     except RunnerError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 3
     print(f"drive.py: driver session {driver}: {tui_claude.attach_command(driver)}", file=sys.stderr)
-    if a.runner == "tui":
-        tui = tui_session(run.role, params.sid, params.prefix)
+    if tui is not None:
         print(f"drive.py: tui session {tui}: {tui_claude.attach_command(tui)}", file=sys.stderr)
     return 0
 
