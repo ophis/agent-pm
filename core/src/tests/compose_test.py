@@ -244,7 +244,7 @@ class Index(Fake):
 
     def test_a_listed_task_without_its_file(self):
         os.remove(os.path.join(self.root, "team", "tasks", "long-note.md"))
-        with self.assertRaisesRegex(compose.ConfigError, "roles/writer.md lists 'long-note' without tasks/long-note.md"):
+        with self.assertRaisesRegex(compose.ConfigError, "roles/writer.md: lists 'long-note' without tasks/long-note.md"):
             compose.index(self.root, "writer")
         for task in (None, "short-note"):
             self.fails("without tasks/long-note.md", task=task)
@@ -303,7 +303,7 @@ class Validate(Fake):
         self.fails(self.TIER, "editor")
 
     def test_a_missing_rule_file(self):
-        for rel, msg, role in (("roles/editor.md", "missing file roles/editor.md", "editor"),
+        for rel, msg, role in (("roles/editor.md", "roles.editor: no charter roles/editor.md in core or team_dirs", "editor"),
                                ("guide.md", "missing file guide.md", "writer")):
             with self.subTest(rel=rel):
                 self.write(FILES)
@@ -480,74 +480,305 @@ def heading_anchors(prompt):
     return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
 
 
-CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
-LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
-FILE_REF = re.compile(r"`<(tasks|methods)>/(<task>|[\w-]+)\.md`")
-PAREN = re.compile(r"\(([^()]*)\)")
-SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
+POET = ("# Poet\n\nRhyme.\n\n## Tasks\n\n" + INTRO.format("verse") +
+        "- `verse` (`<tasks>/verse.md`): a verse; always; light.\n")
+STEPS = "\n## Steps\n\n1. **Report progress**:\n   [agent-pm-progress:start] the topic.\n\n## Resume\n\nGo on.\n"
+VERSE = "# Verse\n" + STEPS
+TINY = "# Tiny Note\n" + STEPS
+EXT = "## Tasks\n\n- `tiny-note` (`<tasks>/tiny-note.md`): a tiny note; rarely; light.\n"
+FRONT = "---\ncommands: [\"rm *\"]\n---\n"
 
 
-def task_path(after, paths):
-    """The longest of `paths` (tuples of titles) that `after`, the text following a file's code span, opens with
-    ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
-    best = None
-    for path in paths:
-        want = " › " + " › ".join(path)
-        if after.startswith(want) and not re.match(r"\w", after[len(want):]) and (not best or len(want) > len(best)):
-            best = want
-    return best
+class TeamDirs(Fake):
+    """Team dirs under a hermetic HOME, passed to compose as a Team."""
+    def setUp(self):
+        super().setUp()
+        self.home = hermetic.home(self)
 
+    def local(self, text):
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(text)
 
-def reference_errors(own, tasks, methods):
-    """What is wrong with the section references of a prompt's own text `own`, the role's task files `tasks` {task:
-    text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
-    label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
-    `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
-    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task or method file reference, the code
-    span `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) or `<methods>/<m>.md` (`methods/<m>.md` of
-    `methods`) then ` › ` and a path of each of them, their `# ` title dropped, the longest that matches; (4) no `›`
-    left once those, code spans and links are removed; (5) no `(name)` left, `name` the last title of a path of
-    `own` (a section named in parentheses, not linked)."""
-    outline = compose.outline(own)
-    anchors = {a for _, _, a, _ in outline if a}
-    entries, titles = {}, {path[-1] for _, path, _, _ in outline}
-    for _, path, a, _ in outline:
-        entries.setdefault(path, set()).add(a)
-    inside = {(kind, name): {path[1:] for _, path, _, _ in compose.outline(text) if len(path) > 1}
-              for kind, files in (("tasks", tasks), ("methods", methods)) for name, text in files.items()}
-    named = {"tasks": list(tasks), "methods": []}
-    errors = []
-    for label, text in ({"prompt": own} | {f"tasks/{t}.md": x for t, x in tasks.items()} | dict(methods)).items():
-        for _, line in compose.unfenced(text):
-            kept, pos = [], 0
-            for m in CODE_SPAN.finditer(line):
-                kept.append(line[pos:m.start()] + " ")
-                pos = m.end()
-                if not (ref := FILE_REF.fullmatch(m[0])) or not line.startswith(" › ", pos):
-                    continue
-                kind = ref[1]
-                names = [(kind, n) for n in named[kind]] if ref[2] == "<task>" else [
-                    (kind, ref[2] if kind == "tasks" else f"methods/{ref[2]}.md")]
-                found = names and all(n in inside for n in names)
-                best = task_path(line[pos:], set.intersection(*(inside[n] for n in names))) if found else None
-                if not best or line[pos + len(best):].startswith(" › "):
-                    errors.append(f"{label}: no such {kind[:-1]} file path: {line.strip()}")
-                    pos = len(line)
-                    break
-                pos += len(best)
-            left = "".join(kept) + line[pos:]
-            for t, target in LINK.findall(left):
-                if target.startswith("#"):
-                    if target[1:] not in anchors:
-                        errors.append(f"{label}: no such anchor: [{t}]({target})")
-                    elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
-                        errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
-                elif not SCHEME.match(target):
-                    errors.append(f"{label}: relative link target: [{t}]({target})")
-            plain = LINK.sub(" ", left)
-            if "›" in plain or any(name in titles for name in PAREN.findall(plain)):
-                errors.append(f"{label}: bare reference: {line.strip()}")
-    return errors
+    def team_dir(self, files, name="team"):
+        """Writes {rel: text} under <home>/<name> (files 0o644, dirs 0o755) and returns its real path."""
+        top = os.path.realpath(os.path.join(self.home, name))
+        for rel, text in files.items():
+            path = os.path.join(top, rel)
+            for d in (top, os.path.dirname(path)):
+                os.makedirs(d, exist_ok=True)
+                os.chmod(d, 0o755)
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, 0o644)
+        return top
+
+    def team(self, files, name="team"):
+        return compose.team(self.root, (self.team_dir(files, name),))
+
+    def go(self, team, role="writer", task=None, layers=()):
+        run = compose.load_run(self.root, role, task, layers=layers, team=team)
+        return compose.render(self.root, run, PARAMS, client=Plain(), team=team), run
+
+    def refused(self, team, msg, role="writer", task=None):
+        with self.assertRaises(compose.ConfigError) as cm:
+            self.go(team, role, task)
+        self.assertIn(msg, str(cm.exception))
+        return str(cm.exception)
+
+    def path(self, rel, name="team"):
+        return os.path.join(os.path.realpath(os.path.join(self.home, name)), rel)
+
+    def cfg(self):
+        return compose.repo.read_config(os.path.join(self.root, compose.CONFIG))
+
+    # FR-1
+    def test_team_dirs_values(self):
+        self.assertEqual(compose.team_dirs(self.root), ())
+        top = self.team_dir({"roles/poet.md": POET})
+        self.local('team_dirs = ["~/.agent-pm/team"]\n')
+        self.assertEqual(compose.team_dirs(self.root), (top,))
+        for value, msg in (('"x"', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
+                           ('["rel"]', "team_dirs: 'rel' is not an absolute or ~ path"),
+                           ('[1]', "team_dirs: 1 is not an absolute or ~ path"),
+                           ('["~nobody-here-x/t"]', "team_dirs: '~nobody-here-x/t' is not an absolute or ~ path"),
+                           ('["~/missing"]', "team_dirs: ~/missing is not a directory"),
+                           (f'["~/.agent-pm/team", "{top}"]', f"team_dirs: {top} is listed twice")):
+            with self.subTest(value=value):
+                self.local(f"team_dirs = {value}\n")
+                with self.assertRaises(compose.ConfigError) as cm:
+                    compose.team_dirs(self.root)
+                self.assertEqual(str(cm.exception), msg)
+
+    def test_team_dirs_in_config_toml_or_a_role_table(self):
+        self.config('team_dirs = ["/x"]\n' + CONFIG)
+        with self.assertRaisesRegex(compose.ConfigError,
+                                    r"^team_dirs: set it in ~/\.agent-pm/core\.local\.toml, not config\.toml$"):
+            compose.team_dirs(self.root)
+        self.config(CONFIG)
+        self.local('[roles.writer]\nteam_dirs = ["/x"]\n')
+        self.fails("unknown key 'team_dirs' in roles.writer")
+        self.local('team_dirs = []\n')
+        self.assertEqual(compose.team_dirs(self.root), ())
+        self.compose()
+
+    def test_no_team_dir_is_found_from_the_cwd(self):
+        cwd = os.path.join(self.home, "cwd")
+        self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE}, "cwd/.agent-pm/team")
+        here = os.getcwd()
+        os.chdir(cwd)
+        self.addCleanup(os.chdir, here)
+        self.assertEqual(compose.team_dirs(self.root), ())
+        self.assertIsNone(compose.team(self.root, compose.team_dirs(self.root)).lookup("roles", "poet"))
+        self.fails("unknown role 'poet'", "poet")
+
+    # FR-2
+    def test_a_new_role_without_a_table_takes_the_global_keys(self):
+        team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE})
+        prompt, run = self.go(team, "poet")
+        self.assertEqual((run.tier, run.effort, run.output, run.templates, run.role_title),
+                         (2, "high", {"type": "local"}, [], "Poet"))
+        self.assertIn("\n# Poet\n\nRhyme.\n\n## Tasks\n\n" + INTRO.format("verse"), prompt)
+        self.assertIn("- `verse` (`<tasks>/verse.md`): a verse; always; light.\n", prompt)
+        self.assertEqual(compose.index(self.root, "poet", team), {"verse": "a verse; always; light."})
+        self.assertEqual(self.go(team, "poet", "verse")[1].task, "verse")
+        self.fails("unknown role 'poet'", "poet")
+
+    # FR-3
+    def test_an_extension_appends_task_lines_to_a_roles_index_in_team_dirs_order(self):
+        team = self.team({"roles/writer.md": EXT, "tasks/tiny-note.md": TINY})
+        self.assertEqual(list(compose.index(self.root, "writer", team)), ["short-note", "long-note", "tiny-note"])
+        prompt, _ = self.go(team, task="tiny-note")
+        self.assertIn(INTRO.format("short-note"), prompt)
+        self.assertIn("- `long-note` (`<tasks>/long-note.md`): a long note; when asked; heavy.\n"
+                      "- `tiny-note` (`<tasks>/tiny-note.md`): a tiny note; rarely; light.\n\n## Style\n", prompt)
+        second = self.team_dir({"roles/writer.md": EXT.replace("tiny-note", "wee-note"),
+                                "tasks/wee-note.md": TINY}, "team2")
+        team = compose.team(self.root, (self.path(""), second))
+        self.assertEqual(list(compose.index(self.root, "writer", team)),
+                         ["short-note", "long-note", "tiny-note", "wee-note"])
+        self.assertIn("a tiny note; rarely; light.\n- `wee-note` (`<tasks>/wee-note.md`)", self.go(team)[0])
+
+    def test_a_task_listed_twice(self):
+        team = self.team({"roles/writer.md": EXT.replace("tiny-note", "long-note")})
+        self.refused(team, f"{self.path('roles/writer.md')}: lists 'long-note', already in writer's index")
+
+    def test_an_extension_holds_only_task_lines(self):
+        for text in (EXT + "\nMore words.\n", EXT + "\n## Style\n", EXT.replace("(`<tasks>/tiny-note.md`)", ""),
+                     EXT.replace("<tasks>/tiny-note.md", "<tasks>/x.md"), "## Tasks\n"):
+            with self.subTest(text=text):
+                team = self.team({"roles/writer.md": text, "tasks/tiny-note.md": TINY})
+                self.refused(team, f"{self.path('roles/writer.md')}: an extension holds only a ## Tasks section of "
+                                   "- `<task>` (`<tasks>/<task>.md`): … lines")
+
+    # FR-4
+    def test_a_custom_role_runs_a_built_in_task_and_a_custom_template_keeps_its_heading(self):
+        team = self.team({"roles/poet.md": POET.replace("verse", "long-note"), "templates/card.md": "# Card\n"})
+        self.assertEqual(list(compose.index(self.root, "poet", team)), ["long-note"])
+        self.go(team, "poet", "long-note")
+        self.local('[roles.writer]\ntemplates = ["note", "card"]\n')
+        prompt, _ = self.go(team)
+        self.assertIn("# Template: `templates/note.md`\n", prompt)
+        self.assertIn("# Template: `templates/card.md`\n\n```markdown\n# Card\n```\n", prompt)
+
+    # FR-5
+    def test_a_name_defined_twice_names_both_files(self):
+        builtin = os.path.join(self.root, "team")
+        for files, role, kind, name, first in (
+                ({"roles/editor.md": "# Editor\n"}, "editor", "role", "editor", f"{builtin}/roles/editor.md"),
+                ({"tasks/long-note.md": VERSE}, "writer", "task", "long-note", f"{builtin}/tasks/long-note.md"),
+                ({"templates/note.md": "# N\n"}, "writer", "template", "note", f"{builtin}/templates/note.md")):
+            with self.subTest(kind=kind):
+                team = self.team(files, kind)
+                rel = next(iter(files))
+                self.refused(team, f"{self.path(rel, kind)}: {kind} {name!r} is also defined by {first}; "
+                                   "team dir files only add", role)
+                with self.assertRaisesRegex(compose.ConfigError, "is also defined by"):
+                    team.check_all(self.cfg())
+        a = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE}, "a")
+        b = self.team_dir({"roles/poet.md": POET}, "b")
+        team = compose.team(self.root, (a, b))
+        self.refused(team, f"{b}/roles/poet.md: role 'poet' is also defined by {a}/roles/poet.md", "poet")
+
+    def test_an_extension_of_an_undefined_role_and_a_misnamed_file_only_stop_list(self):
+        team = self.team({"roles/ghost.md": EXT, "tasks/tiny-note.md": TINY, "tasks/Big_Note.md": TINY})
+        self.go(team)
+        self.refused(team, "unknown role 'ghost'", "ghost")
+        with self.assertRaises(compose.ConfigError) as cm:
+            team.check_all(self.cfg())
+        self.assertEqual(str(cm.exception), f"{self.path('tasks/Big_Note.md')}: name 'Big_Note': want [a-z0-9-]+")
+        os.remove(self.path("tasks/Big_Note.md"))
+        team = compose.team(self.root, (self.path(""),))
+        with self.assertRaises(compose.ConfigError) as cm:
+            team.check_all(self.cfg())
+        self.assertEqual(str(cm.exception), f"{self.path('roles/ghost.md')}: extends role 'ghost', which neither core "
+                                            "nor a team dir defines")
+        self.team_dir({"roles/ghost.md": POET.replace("Poet", "Ghost").replace("verse", "long-note")}, "two")
+        both = compose.team(self.root, (self.path(""), self.path("", "two")))
+        both.check_all(self.cfg())
+        self.assertEqual(list(compose.index(self.root, "ghost", both)), ["long-note", "tiny-note"])
+
+    def test_a_defect_in_another_roles_file_leaves_this_role_loading(self):
+        team = self.team({"roles/poet.md": FRONT + POET, "tasks/verse.md": "no title\n", "roles/editor.md": "# E\n",
+                          "templates/card.md": "{{x}}\n"})
+        self.go(team)
+        with self.assertRaises(compose.ConfigError):
+            team.check_all(self.cfg())
+
+    def test_roles_without_a_charter(self):
+        self.local("[roles.ghost]\ntier = 3\n")
+        team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE})
+        self.go(team, "editor", "long-note")
+        self.refused(team, "roles.ghost: no charter roles/ghost.md in core or team_dirs", "ghost")
+        with self.assertRaisesRegex(compose.ConfigError, "^roles.ghost: no charter roles/ghost.md in core or team_dirs$"):
+            compose.roles(self.root, team, self.cfg())
+        self.local("")
+        self.assertEqual(compose.roles(self.root, team, self.cfg()), ["writer", "editor", "poet"])
+
+    # FR-6
+    def test_front_matter_in_any_team_dir_file(self):
+        self.local('[roles.writer]\ntemplates = ["note", "card"]\n')
+        for files, rel, role in (({"roles/poet.md": POET, "tasks/verse.md": FRONT + VERSE}, "tasks/verse.md", "poet"),
+                                 ({"roles/poet.md": FRONT + POET, "tasks/verse.md": VERSE}, "roles/poet.md", "poet"),
+                                 ({"roles/writer.md": FRONT + EXT, "tasks/tiny-note.md": TINY}, "roles/writer.md",
+                                  "writer"),
+                                 ({"templates/card.md": FRONT + "# Card\n"}, "templates/card.md", "writer")):
+            with self.subTest(rel=rel):
+                team = self.team(files, rel.replace("/", "-"))
+                self.refused(team, f"{self.path(rel, rel.replace('/', '-'))}: front matter (---) is not read: team dir "
+                                   "files hold text only; run keys go in ~/.agent-pm/core.local.toml", role)
+
+    # FR-7
+    def test_each_defect_of_a_team_dir_file_names_it(self):
+        task, charter = self.path("tasks/verse.md"), self.path("roles/poet.md")
+        for verse, poet, msg in (
+                ("Verse\n" + STEPS, POET, f"{task}: must start with a '# ' heading"),
+                (VERSE, POET.replace("# Poet", "Poet"), f"{charter}: must start with a '# ' heading"),
+                (VERSE + "{{x}}\n", POET, f"{task}: unfilled placeholder {{{{x}}}}"),
+                (VERSE, POET + "{{role}}\n", f"{charter}: unfilled placeholder {{{{role}}}}"),
+                (VERSE, POET + "\n[x](#nope)\n", f"{charter}: no such anchor: [x](#nope)"),
+                (VERSE + "\n[x](#nope)\n", POET, f"{task}: no such anchor: [x](#nope)"),
+                (VERSE.replace("[agent-pm-progress:start] the topic.", "the topic."), POET,
+                 f"{task}: has 0 [agent-pm-progress:start] lines, not 1"),
+                (VERSE + "\n[agent-pm-progress:start] again.\n", POET,
+                 f"{task}: has 2 [agent-pm-progress:start] lines, not 1"),
+                (VERSE.replace("## Resume", "## Later"), POET, f"{task}: has no ## Resume section"),
+                (VERSE.replace("## Resume", "```\n## Resume\n```"), POET, f"{task}: has no ## Resume section"),
+                (VERSE + "\nUse `<methods>/nope.md`.\n", POET,
+                 f"{task}: names <methods>/nope.md, which core has no file for")):
+            with self.subTest(msg=msg):
+                team = self.team({"roles/poet.md": poet, "tasks/verse.md": verse})
+                with self.assertRaises(compose.ConfigError) as cm:
+                    self.go(team, "poet")
+                self.assertEqual(str(cm.exception), msg)
+
+    def test_a_custom_task_lacking_a_path_a_built_in_reference_needs_leads(self):
+        steps = "\n## Steps\n\n1. **Write:** it.\n"
+        self.write({"team/roles/writer.md": WRITER.replace("## Style", "See `<tasks>/<task>.md` › Steps › Write.\n\n"
+                                                                     "## Style"),
+                    "team/tasks/short-note.md": FILES["team/tasks/short-note.md"] + steps,
+                    "team/tasks/long-note.md": FILES["team/tasks/long-note.md"] + steps})
+        self.compose()
+        team = self.team({"roles/writer.md": EXT, "tasks/tiny-note.md": TINY})
+        msg = self.refused(team, "breaks a reference in roles/writer.md: no such task file path: See")
+        self.assertTrue(msg.startswith(f"{self.path('tasks/tiny-note.md')}: breaks a reference in "), msg)
+        team = self.team({"roles/writer.md": EXT, "tasks/tiny-note.md": TINY.replace("## Resume", steps + "\n## Resume")},
+                         "fixed")
+        self.go(team)
+
+    def test_a_custom_heading_a_built_in_text_names_in_parentheses_leads(self):
+        self.write({"team/principles.md": "# Principles\n\nKeep it short (Rhyme).\n"})
+        self.compose()
+        team = self.team({"roles/poet.md": POET.replace("## Tasks", "## Rhyme\n\nWell.\n\n## Tasks"),
+                          "tasks/verse.md": VERSE})
+        msg = self.refused(team, "breaks a reference in principles.md: bare reference: Keep it short (Rhyme).", "poet")
+        self.assertTrue(msg.startswith(f"{self.path('roles/poet.md')}: "), msg)
+
+    # FR-8
+    def test_view_files(self):
+        self.assertEqual(compose.view_files(compose.team(self.root), "writer"), {})
+        team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE, "roles/editor.md": EXT,
+                          "tasks/tiny-note.md": TINY})
+        self.assertEqual(compose.view_files(team, "writer"), {})
+        self.assertEqual(compose.view_files(team, "poet"), {"verse": self.path("tasks/verse.md")})
+        builtin = os.path.join(self.root, "team", "tasks")
+        self.assertEqual(list(compose.view_files(team, "editor").items()),
+                         [("long-note", f"{builtin}/long-note.md"), ("tiny-note", self.path("tasks/tiny-note.md"))])
+
+    # NFR-1
+    def test_without_a_team_dir_for_this_role_every_prompt_is_unchanged(self):
+        other = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"})
+        self.assertEqual(compose.team(self.root, ()), compose.team(self.root))
+        for role in ("writer", "editor"):
+            for task in (None, *compose.index(self.root, role)):
+                with self.subTest(role=role, task=task):
+                    want = self.compose(role, task)[0]
+                    for team in (compose.team(self.root), other):
+                        self.assertEqual(self.go(team, role, task)[0], want)
+                    run = compose.load_run(self.root, role, task)
+                    self.assertEqual(compose.render(self.root, run, client=Plain(inline_workdir="a temp dir")),
+                                     compose.render(self.root, run, client=Plain(inline_workdir="a temp dir"),
+                                                    team=other, tasks=None))
+        self.assertEqual(compose.team(self.root).used("writer", ["note"]), [])
+        self.assertEqual(other.used("writer", ["note"]), [])
+        self.assertEqual(other.used("poet", ["note", "card"]),
+                         [self.path("roles/poet.md"), self.path("tasks/verse.md"), self.path("templates/card.md")])
+
+    def test_tasks_names_the_tasks_dir(self):
+        team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE})
+        run = compose.load_run(self.root, "poet", team=team)
+        prompt = compose.render(self.root, run, PARAMS, client=Plain(), team=team, tasks="/w/tasks")
+        self.assertEqual(parameters(prompt)["<tasks>"], "`/w/tasks`")
+
+    def test_labels_and_sources(self):
+        team = self.team({"roles/poet.md": POET})
+        builtin = os.path.join(self.root, "team", "roles", "writer.md")
+        self.assertEqual((team.label("roles", "writer", builtin), team.source(builtin), team.custom(builtin)),
+                         ("roles/writer.md", "built-in", False))
+        poet = self.path("roles/poet.md")
+        self.assertEqual((team.label("roles", "poet", poet), team.source(poet), team.custom(poet)), (poet, poet, True))
+        self.assertEqual(team.read("tasks", "long-note"), ("# Long Note\n\nWrite a long note.\n", "tasks/long-note.md"))
+        with self.assertRaisesRegex(compose.ConfigError, r"^missing file tasks/nope\.md$"):
+            team.read("tasks", "nope")
 
 
 class Anchors(Fake):
@@ -579,7 +810,7 @@ class Anchors(Fake):
         own = own_text(self.compose()[0])
         for text, want in (("[Output › Style](#output-style)", True), ("[Writer › Style](#style)", True),
                            ("[Output › Style](#style)", False), ("[Writer › Style](#output-style)", False)):
-            self.assertEqual(reference_errors(f"{own}{text}\n", {}, {}) == [], want, text)
+            self.assertEqual(compose.reference_errors(f"{own}{text}\n", {}, {}) == [], want, text)
 
     def test_a_role_heading_input_makes_the_input_heading_input_2(self):
         self.write({"team/roles/writer.md": WRITER + "\n## Input\n\nWhat you get.\n"})
@@ -940,7 +1171,7 @@ class References(unittest.TestCase):
     def errors(self, text):
         """The errors in `text` as a method file beside the real engineer prompt and task files."""
         own, tasks, methods = role_sources("engineer")
-        return [e for e in reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
+        return [e for e in compose.reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
 
     def test_a_link_to_a_path_of_the_prompt_and_a_task_file_reference_pass(self):
         for text in ("[Engineer › Repo › Merge](#repo), then", "[Engineer › Repo](#repo) step 1",
@@ -964,7 +1195,7 @@ class References(unittest.TestCase):
             self.assertTrue(self.errors(text), text)
 
     def test_errors_name_the_file_and_the_offender(self):
-        errors = reference_errors("# R\n\n## S\n\nR › S\n", {"x": "# X\n\n[A](b.md)\n"},
+        errors = compose.reference_errors("# R\n\n## S\n\nR › S\n", {"x": "# X\n\n[A](b.md)\n"},
                                   {"m.md": "[A › B](#nope)\n"})
         self.assertEqual(errors, ["prompt: bare reference: R › S", "tasks/x.md: relative link target: [A](b.md)",
                                   "m.md: no such anchor: [A › B](#nope)"])
@@ -973,14 +1204,14 @@ class References(unittest.TestCase):
         tasks = {"a": "# A\n\n## Steps\n\n1. **Go:** x\n", "b": "# B\n\n## Steps\n"}
         for text, want in (("`<tasks>/<task>.md` › Steps", True), ("`<tasks>/<task>.md` › Steps › Go", False),
                            ("`<tasks>/a.md` › Steps › Go", True), ("`<tasks>/b.md` › Steps › Go", False)):
-            self.assertEqual(reference_errors("# R\n", tasks, {"m": text}) == [], want, text)
+            self.assertEqual(compose.reference_errors("# R\n", tasks, {"m": text}) == [], want, text)
 
     def test_a_method_file_path_must_exist_in_that_method_file(self):
         methods = {"methods/a.md": "# A\n\n## Rules\n\n- **Voting**: x\n"}
         for text, want in (("`<methods>/a.md` › Rules › Voting", True), ("`<methods>/a.md` › Rules", True),
                            ("`<methods>/a.md` › Rules › Nope", False), ("`<methods>/b.md` › Rules", False),
                            ("`<methods>/<task>.md` › Rules", False)):
-            self.assertEqual(reference_errors("# R\n", {}, methods | {"m": text}) == [], want, text)
+            self.assertEqual(compose.reference_errors("# R\n", {}, methods | {"m": text}) == [], want, text)
 
     def test_a_section_name_of_the_prompt_in_parentheses_is_a_bare_reference(self):
         for text in ("decide it (Repo).", "(Merge)", "see (Finish) first", "(Worktree)", "(Autopilot)"):
@@ -988,6 +1219,17 @@ class References(unittest.TestCase):
         for text in ("(local, mixed)", "([Engineer › Repo](#repo))", "(`Repo`)", "(the Repo)", "(Repo step 1)",
                      "```\n(Repo)\n```"):
             self.assertEqual(self.errors(text), [], text)
+
+    def test_texts_checks_only_the_given_texts_against_owns_anchors(self):
+        own = "# R\n\n## S\n\nR › S\n"
+        errors = compose.reference_errors(own, {}, {}, texts={"a": "[x](#s)\n", "b": "[y](#nope)\n"})
+        self.assertEqual(errors, ["b: no such anchor: [y](#nope)"])
+
+    def test_labels_relabel_a_tasks_errors(self):
+        errors = compose.reference_errors("# R\n", {"x": "[A](b.md)\n", "y": "[B](c.md)\n"}, {},
+                                          labels={"x": "/t/x.md"})
+        self.assertEqual(errors, ["/t/x.md: relative link target: [A](b.md)",
+                                  "tasks/y.md: relative link target: [B](c.md)"])
 
 class Tickets(unittest.TestCase):
     def test_an_id_beyond_the_examples_is_caught(self):
@@ -1142,7 +1384,7 @@ class RealCore(unittest.TestCase):
             text = task_text(name.removesuffix(".md"))
             self.assertTrue(text.startswith("# "), name)
             self.assertNotIn("{{", text, name)
-            self.assertEqual(len(re.findall(r"^\s*\[agent-pm-progress:start\] \S", text, re.M)), 1, name)
+            self.assertEqual(len(compose.START.findall(text)), 1, name)
             self.assertNotIn("agent-pm-progress:budget", text, name)
 
     def test_local_and_orchestrator_destinations_have_the_deliverable_line_once(self):
@@ -1160,7 +1402,7 @@ class RealCore(unittest.TestCase):
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role in ROLES:
             for client in clients.REGISTRY:
-                self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
+                self.assertEqual(compose.reference_errors(*role_sources(role, client)), [], (role, client))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
         for role, task in RUNS:

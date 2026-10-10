@@ -309,7 +309,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_an_index_task_without_its_file_stops_the_caller(self):
         self.researcher_line("light-research", "- `ghost` (`<tasks>/ghost.md`): a task; when; light.\n")
-        self.fails("core: roles/researcher.md lists 'ghost' without tasks/ghost.md")
+        self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md")
 
     def test_overlay_fills_root(self):
         self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
