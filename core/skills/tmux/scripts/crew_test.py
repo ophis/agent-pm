@@ -2111,12 +2111,12 @@ class StopAllTest(RosterCase):
         live = {"mgr": {"opener": ""}, "w1": {"opener": "mgr"}, "w2": {"opener": "mgr"}, "w3": {"opener": "w1"},
                 "w4": {"opener": "w3"}, "x": {"opener": "other"}, "y": {"opener": "x"}, "z": {"opener": ""},
                 "loop": {"opener": "loop"}, "back": {"opener": "w4"}}
-        self.assertEqual(workers.opened("mgr", live), ["back", "w4", "w3", "w1", "w2"])
-        self.assertEqual(workers.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"])
-        self.assertEqual(workers.opened("nobody", live), [])
+        self.assertEqual(crew.opened("mgr", live), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(crew.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(crew.opened("nobody", live), [])
         entries = {"mgr": {"x": entry(), "w9": entry(tui="t9"), "w1": entry()}}
         live = {**live, "w9": {"opener": ""}, "t9": {"opener": "mgr"}}   # x: another manager's, its name reused
-        self.assertEqual(workers.opened("mgr", live, lambda s: entries.get(s, {})),
+        self.assertEqual(crew.opened("mgr", live, lambda s: entries.get(s, {})),
                          ["back", "w4", "w3", "t9", "w1", "w2", "w9"])
 
     def sessions(self):
