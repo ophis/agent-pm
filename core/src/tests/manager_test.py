@@ -887,7 +887,7 @@ class LeaseTest(unittest.TestCase):
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for own in ("a", "b")]
         for p in procs:
             p.stdin.write("\n")
-            p.stdin.close()
+            p.stdin.flush()   # communicate closes it: on 3.11 it flushes stdin first, so a closed one raises
         out = {}
         for own, p in zip("ab", procs):
             out[own] = p.communicate(timeout=60)
