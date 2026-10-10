@@ -12,6 +12,7 @@ import unittest.mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import repo  # noqa: E402
+import tui_claude  # noqa: E402
 
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
@@ -223,6 +224,21 @@ class WorkersPerColumn(unittest.TestCase):
         for v in (0, -1, 10000, True, "3", 2.5):
             with self.subTest(v=v), self.assertRaisesRegex(ValueError, "^workers_per_column: want an integer from 1 to 9999$"):
                 repo.workers_per_column({"workers_per_column": v})
+
+
+class GridRetile(unittest.TestCase):
+    def test_unset_is_none_and_each_mode_passes(self):
+        self.assertIsNone(repo.grid_retile({}))
+        for mode in ("all", "open-close", "off"):
+            self.assertEqual(repo.grid_retile({"grid_retile": mode}), mode)
+
+    def test_anything_else_is_refused(self):
+        for v in ("x", True, 1, ""):
+            with self.subTest(v=v), self.assertRaisesRegex(ValueError, "^grid_retile: want one of all, open-close, off$"):
+                repo.grid_retile({"grid_retile": v})
+
+    def test_the_modes_are_tui_claudes(self):
+        self.assertEqual(repo.RETILES, tui_claude.RETILES)
 
 
 class Worktree(Base):

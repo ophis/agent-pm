@@ -201,7 +201,7 @@ class StartTest(unittest.TestCase):
         argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
         env = {k: v for k, v in self.env.items() if k not in workers.STRIP}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         split_from=None, per_column=None, status_line=False, proc=fake)
+                                         split_from=None, per_column=None, retile=None, status_line=False, proc=fake)
         self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
 
     def test_resume(self):
@@ -368,10 +368,11 @@ class StartTest(unittest.TestCase):
         self.assertIn("no space for a new session", self.assert_fails(fake))
         self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
 
-    def test_status_line_and_per_column_from_core_config(self):
+    def test_status_line_per_column_and_retile_from_core_config(self):
         for text, key, value, calls in (("status_line = true\n", "status_line", True,
                                          [["tmux", "set-option", "-t", "=w1:", "status", "on"]]),
-                                        ("workers_per_column = 2\n", "per_column", 2, [])):
+                                        ("workers_per_column = 2\n", "per_column", 2, []),
+                                        ('grid_retile = "off"\n', "retile", "off", [])):
             with self.subTest(text):
                 local(self, text)
                 fake = Fake()
@@ -382,7 +383,8 @@ class StartTest(unittest.TestCase):
 
     def test_a_bad_core_config_starts_nothing(self):
         for text, msg in (('status_line = "yes"\n', "status_line: want true or false"),
-                          ("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999")):
+                          ("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
+                          ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off")):
             with self.subTest(text):
                 local(self, text)
                 fake = Fake()
@@ -804,6 +806,14 @@ class MainTest(WorkerCase):
     def entries(self):
         with open(os.path.join(os.path.dirname(self.default), "roster.json")) as f:
             return json.load(f)["entries"]
+
+    def test_start_with_a_bad_core_config_exits_1(self):
+        with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
+            f.write('grid_retile = "x"\n')
+        fake = Fake()
+        self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--prompt", "go"], fake),
+                         (1, "", "workers: core config: grid_retile: want one of all, open-close, off\n"))
+        self.assertEqual(fake.new_sessions(), [])
 
     def test_start(self):
         fake = Fake()
@@ -1449,10 +1459,12 @@ class AttachTest(RosterCase):
         self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_a_bad_core_config_exits_1_before_anything_is_made(self):
-        self.config("workers_per_column = 0\n")
-        self.assertEqual(self.attach(Server()),
-                         (1, "", "workers: core config: workers_per_column: want an integer from 1 to 9999\n"))
-        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "managers")))
+        for text, msg in (("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
+                          ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off")):
+            with self.subTest(text):
+                self.config(text)
+                self.assertEqual(self.attach(Server()), (1, "", f"workers: core config: {msg}\n"))
+                self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "managers")))
 
     def test_a_worker_renamed_in_tmux_is_rekeyed_by_its_sid(self):
         old = entry(resume=[PY, SCRIPT["worker"], "start", "w1"], state="gone")
@@ -1595,7 +1607,7 @@ class AttachTest(RosterCase):
                          {n: (p, o) for n, (_, _, p, o) in cases.items()})
 
     def test_a_live_session_no_client_shows_is_reopened_with_the_lock_free(self):
-        self.config("workers_per_column = 2\n")
+        self.config('workers_per_column = 2\ngrid_retile = "all"\n')
         self.seed(w1=entry(split="below", split_from="mgr"), r1=entry("role", tui="r1-tui", split="right"),
                   w2=entry(), w3=entry(sid=SID2), r2=entry("role", sid=SID2, cwd=self.dir, tui="r2-tui"))
         server = Server(sessions={"w1": opts(SID), "r1-tui": opts(state="done"), "w2": opts(SID), "r2": opts()},
@@ -1603,8 +1615,8 @@ class AttachTest(RosterCase):
         with mock.patch.object(manager, "roster", wraps=manager.roster) as roster:
             out = self.synced(server)
         self.assertEqual(self.shows, [
-            ("r1-tui", {"split": "right", "split_from": None, "per_column": 2, "proc": server}, True),
-            ("w1", {"split": "below", "split_from": "mgr", "per_column": 2, "proc": server}, True)])
+            ("r1-tui", {"split": "right", "split_from": None, "per_column": 2, "retile": "all", "proc": server}, True),
+            ("w1", {"split": "below", "split_from": "mgr", "per_column": 2, "retile": "all", "proc": server}, True)])
         self.assertEqual(roster.call_count, 2)
         self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
                          {"w1": ("%9", "mgr"), "r1": ("%9", "mgr"), "w2": (None, None), "w3": (None, None),
@@ -1617,10 +1629,10 @@ class AttachTest(RosterCase):
             self.synced(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
         self.assertEqual((roster.call_count, self.shows), (1, []))
 
-    def test_the_default_per_column(self):
+    def test_the_default_per_column_and_retile(self):
         self.seed(w1=entry())
         self.synced(Server(sessions={"w1": opts(SID)}))
-        self.assertEqual([kw["per_column"] for _, kw, _ in self.shows], [None])
+        self.assertEqual([(kw["per_column"], kw["retile"]) for _, kw, _ in self.shows], [(None, None)])
 
     def test_placement_is_recorded_only_for_an_entry_still_the_same(self):
         def drop():

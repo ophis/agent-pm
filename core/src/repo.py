@@ -155,6 +155,17 @@ def workers_per_column(cfg: dict) -> int | None:
     return v
 
 
+RETILES = ("all", "open-close", "off")   # tui_claude.RETILES, which repo.py must not import
+
+
+def grid_retile(cfg: dict) -> str | None:
+    """The global `grid_retile`: when a tmux grid re-tiles; unset → None (tui_claude's default)."""
+    v = cfg.get("grid_retile")
+    if v is not None and (not isinstance(v, str) or v not in RETILES):
+        raise ValueError("grid_retile: want one of all, open-close, off")
+    return v
+
+
 def temp_dirs() -> tuple[str, ...]:
     """Realpaths of the dirs any process, an agent run included, may write: TMPDIR, Python's temp dir, /tmp, /var/tmp
     and macOS's per-user one."""
