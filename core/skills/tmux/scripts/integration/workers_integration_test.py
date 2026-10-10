@@ -2,8 +2,9 @@
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
 breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker and a killed
-role run gone, then back by their recovery commands, an unshown worker reopened, a take-over resuming from the event
-cursor, events rotation)."""
+role run gone, then back by their recovery commands, `attach --resume` bringing back a killed worker but not a stopped
+one, and a worker, a role run and a pipeline run (STAND_IN) after the tmux server is lost, a role run stopped by its tui
+session, an unshown worker reopened, a take-over resuming from the event cursor, events rotation)."""
 import contextlib
 import functools
 import json
@@ -45,6 +46,38 @@ BREAKER_TIMEOUT = 30   # seconds a forced re-tile loop may run before the breake
 RETILE_WAIT = 0.5   # seconds the loop waits for a re-tile of its hand layout
 PACE = 0.02   # seconds between the loop's looks
 WIDTH = 64   # bytes of a filler event line, its newline included
+PIPE_ISSUE = "TASK-1"
+PIPE_SID = "26800000-0000-4000-8000-000000000007"
+PIPE_DRIVER = f"agent-pm-{ROLE}-{PIPE_ISSUE}"
+PIPE_TUI = f"{ROLE}-{PIPE_ISSUE}-{PIPE_SID[:8]}"
+STAND_IN = '''"""Stands in for orchestrator/src/router.py --issue ID --tui --events FILE --manager NAME, which needs Linear:
+what it does to tmux and the roster. Its driver session live: router.py's refusal. Else drive.detach starts driver session
+agent-pm-<role>-<ID> and writes its pipeline entry, as router.outer does; the driver runs drive.py --runner tui (router.py's
+runs run.py, whose drive.start this is) as session SID, resumed once the cwd has a run.jsonl (router.py: the issue is In
+Progress)."""
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, {src!r})
+import drive  # noqa: E402
+import manager  # noqa: E402
+import tui_claude  # noqa: E402
+
+ROLE, SID, DRIVE = {role!r}, {sid!r}, {drive!r}
+args = sys.argv[1:]
+issue, events, name = (args[args.index(flag) + 1] for flag in ("--issue", "--events", "--manager"))
+driver, prefix, cwd = f"agent-pm-{{ROLE}}-{{issue}}", f"{{ROLE}}-{{issue}}", os.getcwd()
+if subprocess.run(["tmux", "has-session", "-t", f"={{driver}}"], capture_output=True).returncode == 0:
+    sys.exit(f"router.py: {{issue}} has a live agent run: {{tui_claude.attach_command(driver)}}")
+opener = drive.caller_layout(None, None).opener
+argv = [sys.executable, DRIVE, f"--role={{ROLE}}", "--input=Hello.", "--out=out.md", "--workdir=.", f"--sid={{SID}}",
+        "--runner=tui", f"--prefix={{prefix}}", f"--events={{events}}", f"--opener={{opener}}", f"--driver={{driver}}",
+        *(["--resume"] if os.path.exists("run.jsonl") else [])]
+drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.directory(name), {{
+    "kind": "pipeline", "sid": SID, "cwd": cwd, "note": issue, "tui": f"{{prefix}}-{{SID[:8]}}", "opener": opener,
+    "resume": [sys.executable, os.path.abspath(__file__), *args]}}))
+'''
 
 
 class Live(unittest.TestCase):
@@ -93,7 +126,7 @@ class Live(unittest.TestCase):
         return self.call(sys.executable, TUI, *args, **kw)
 
     def kill(self, name: str, **kw) -> subprocess.CompletedProcess:
-        """SKILL.md › Direct › Stop's command."""
+        """`tmux kill-session` of `name`, as a user's by hand."""
         return self.call("tmux", "kill-session", "-t", f"={name}", **kw)
 
     def scenario(self, name: str) -> str:
@@ -207,7 +240,7 @@ def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     commands."""
     me, events, name = shlex.quote(WORKERS), shlex.quote(os.path.join(directory, "events")), os.path.basename(directory)
     lines = [*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
-             f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen}",
+             f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
              f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}"]
     return "".join(f"{line}\n" for line in lines)
 
@@ -627,15 +660,36 @@ class Roster(Live):
         self.assertEqual(out[:len(table)], table, out)
         self.assertEqual(list(self.roster()["entries"]), ["w1"])
 
+    def echoing(self, name: str) -> dict[str, str]:
+        """Scenario `name` for a tui run: turn 1 reports its start; the nudge's turn ends without an outcome, so the
+        driver then waits, both sessions up. Returns the env naming it."""
+        with open(self.scenario(name), "w") as f:
+            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."}], "log": self.log}, f)
+        return {fake_claude.ENV: self.scenario(name)}
+
+    def role_run(self) -> str:
+        """A dummy-tester tui run of session ROLE_SID (echoing), as SKILL.md › Role runs 3 starts it from mgr's pane, in
+        a workdir of its own; returns the workdir once turn 1 has ended (its transcript, which --resume needs)."""
+        work = os.path.join(self.server.root, "role-work")
+        os.mkdir(work)
+        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--input", "Hello.", "--out", "out.md", "--workdir",
+                          ".", "--runner", "tui", "--detach", "--sid", ROLE_SID, cwd=work, **self.echoing(ROLE)))
+        self.wait_event(ROLE_TUI, "done")
+        return work
+
+    def resumed(self, session: str, sid: str) -> list[dict]:
+        """The fake's log entries for `session` that resume sid; none while a line is half appended."""
+        try:
+            return [c for c in self.calls(session) if has_pair(c["argv"], "--resume", sid)]
+        except ValueError:
+            return []
+
     def test_killed_role_run_gone_then_recovered(self):
         self.attach()
         work = os.path.join(self.server.root, "role-work")
         os.mkdir(work)
         out = os.path.join(work, "out.md")
-        # turn 1 reports its start; the nudge's turn ends without an outcome: the driver then waits, both sessions up
-        with open(self.scenario(ROLE), "w") as f:
-            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."}], "log": self.log}, f)
-        scenario = {fake_claude.ENV: self.scenario(ROLE)}
+        scenario = self.echoing(ROLE)
         self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--runner", "tui", "--detach", "--input", "Hello.",
                           "--out", out, "--workdir", work, "--sid", ROLE_SID, **scenario))
         resume = [sys.executable, DRIVE, f"--role={ROLE}", f"--out={out}", f"--workdir={work}", "--runner=tui",
@@ -661,16 +715,75 @@ class Roster(Live):
         self.ok(self.recover(ROLE_DRIVER, **scenario))
         live_tmux.wait(lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back")
         self.grid([[ROLE_TUI]])
-
-        def resumed():
-            try:
-                return [c for c in self.calls(ROLE_TUI) if has_pair(c["argv"], "--resume", ROLE_SID)]
-            except ValueError:   # a line half appended
-                return None
-        live_tmux.wait(resumed, what=f"{ROLE_TUI}'s claude --resume {ROLE_SID}")
+        live_tmux.wait(lambda: self.resumed(ROLE_TUI, ROLE_SID), what=f"{ROLE_TUI}'s claude --resume {ROLE_SID}")
         again = self.roster()["entries"]
         self.assertEqual(list(again), [ROLE_DRIVER])
         self.assertEqual({**again[ROLE_DRIVER], "started": None}, {**e, "state": "working", "started": None})
+
+    def test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one(self):
+        self.attach()
+        sids = {name: self.started(name) for name in ("w1", "w2")}
+        for name in sids:
+            self.wait_event(name, "done")   # its transcript, which --resume needs
+        self.ok(self.kill("w1"))
+        self.assertEqual(self.ok(self.workers("stop", "w2")).stdout, "")
+        self.assertTrue(self.gone("w1", "w2"))
+        self.assertEqual(list(self.roster()["entries"]), ["w1"])
+        out = self.attach().stdout
+        self.assertIn("\nresume w1: ", out)
+        self.assertNotIn("resumed", out)
+        self.assertTrue(self.gone("w1"))
+        out = self.attach("--resume", **{fake_claude.ENV: self.scenario("w1")}).stdout
+        self.assertRegex(out, rf"\nnext-event: [^\n]+\nresumed w1: exit 0: w1 {sids['w1']}\n\Z")
+        self.assertTrue(self.live("w1") and self.gone("w2"))
+        self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sids["w1"]), self.calls("w1")[-1]["argv"])
+        self.grid([["w1"]])
+        self.attach()
+        self.assertEqual({n: e["state"] for n, e in self.roster()["entries"].items()}, {"w1": "working"})
+
+    def test_stop_a_role_run_by_its_tui_session(self):
+        self.attach()
+        self.role_run()
+        self.assertEqual(list(self.roster()["entries"]), [ROLE_DRIVER])
+        self.assertEqual(self.ok(self.workers("stop", ROLE_TUI)).stdout, "")
+        self.assertTrue(self.gone(ROLE_DRIVER, ROLE_TUI))
+        self.assertEqual(self.roster()["entries"], {})
+
+    def test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker(self):
+        """A worker, a role run and a pipeline run in the roster, a second worker stopped; the server killed and started
+        again: attach --resume brings the three back, resumed, and not the stopped one. The pipeline run is STAND_IN's
+        (router.py needs Linear: orchestrator/src/tests/integration B8 recovers a real one by the same argv)."""
+        self.attach()
+        sids = {name: self.started(name) for name in ("w1", "w2")}
+        for name in sids:
+            self.wait_event(name, "done")
+        self.role_run()
+        router = os.path.join(self.server.root, "orchestrator", "router.py")
+        run = os.path.join(self.server.root, "pipeline-run")
+        for d in (os.path.dirname(router), run):
+            os.mkdir(d)
+        with open(router, "w") as f:
+            f.write(STAND_IN.format(src=os.path.join(workers.CORE, "src"), role=ROLE, sid=PIPE_SID, drive=DRIVE))
+        scenario = self.echoing("pipeline")
+        self.ok(self.call(sys.executable, router, "--issue", PIPE_ISSUE, "--tui", "--events", self.events, "--manager",
+                          MANAGER, cwd=run, **scenario))
+        self.wait_event(PIPE_TUI, "done")
+        self.ok(self.workers("stop", "w2"))
+        self.assertEqual(sorted(self.roster()["entries"]), [PIPE_DRIVER, ROLE_DRIVER, "w1"])
+        self.server.kill()
+        self.server.start(MANAGER)
+        self.server.attach(MANAGER)
+        out = self.attach("--resume", **scenario).stdout
+        self.assertRegex(out, rf"\nresumed {PIPE_DRIVER}: exit 0\nresumed {ROLE_DRIVER}: exit 0: [^\n]+\n"
+                              rf"resumed w1: exit 0: w1 {sids['w1']}\n\Z")
+        live_tmux.wait(lambda: self.live("w1", ROLE_DRIVER, ROLE_TUI, PIPE_DRIVER, PIPE_TUI), what="all three back")
+        for session, sid in (("w1", sids["w1"]), (ROLE_TUI, ROLE_SID), (PIPE_TUI, PIPE_SID)):
+            live_tmux.wait(lambda s=session, i=sid: self.resumed(s, i), what=f"{session}'s claude --resume {sid}")
+        self.assertTrue(self.gone("w2"))
+        self.attach()
+        entries = self.roster()["entries"]
+        self.assertEqual(sorted(entries), [PIPE_DRIVER, ROLE_DRIVER, "w1"])
+        self.assertNotIn("gone", [e["state"] for e in entries.values()])
 
     def test_unshown_worker_reopened(self):
         self.attach()

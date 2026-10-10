@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Iterator
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(CORE, "src"))
@@ -511,13 +512,14 @@ def _backlog(events: str, cursor: int) -> list[str]:
 
 
 def attach(directory: str, own: str | None, *, after: int | None = None, gen: int | None = None,
-           proc=subprocess.run) -> str:
+           proc=subprocess.run) -> tuple[str, dict]:
     """Attaches the manager in tmux session `own` (None: outside tmux, no lease) to its directory, made with its events
     file. In one roster() block: takes the lease (manager.take); with `after`, line `after` of generation `gen` (the
     Monitor re-arm), records it (manager.advance; stale: refused, nothing written); rotates the events file when due
     (manager.rotate); syncs the entries (_sync); reads the backlog (_backlog), cursor and gen. Then, the lock released,
     reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
-    same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands."""
+    same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands; and the
+    entries as the table shows them."""
     per_column = _per_column()
     try:
         events = manager.events(directory)
@@ -543,9 +545,31 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
         raise WorkersError(str(e)) from e
     me, name = shlex.quote(os.path.abspath(__file__)), shlex.quote(os.path.basename(os.path.dirname(events)))
     arm = [f"N={cursor} GEN={gen}", f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
-           f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen}",
+           f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
            f"next-event: python3 {me} next-event --manager {name} --after {cursor} --gen {gen}"]
-    return _table(r["entries"], shown) + "".join(f"{line}\n" for line in backlog + arm)
+    return _table(r["entries"], shown) + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
+
+
+def recover(entries: dict, *, proc=subprocess.run) -> Iterator[str]:
+    """Runs each gone entry's recovery argv (manager.recovery), by name, in the entry's cwd, never through a shell;
+    yields a line per entry as it ends: `resumed <name>: exit <code>[: <its last output line>]` (stdout and stderr
+    together), or `resumed <name>: not run: <why>`. One failing stops none."""
+    for name in sorted(entries):
+        e = entries[name]
+        if e["state"] != "gone":
+            continue
+        argv = manager.recovery(e)
+        if argv is None:
+            yield f"resumed {name}: not run: no sid"
+            continue
+        try:
+            res = proc(argv, cwd=e["cwd"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, errors="replace")
+        except OSError as err:
+            yield f"resumed {name}: not run: {err.strerror or err}"
+            continue
+        last = next((line.strip() for line in reversed(res.stdout.splitlines()) if line.strip()), "")
+        yield f"resumed {name}: exit {res.returncode}" + (f": {last}" if last else "")
 
 
 @contextlib.contextmanager
@@ -572,6 +596,13 @@ def note(directory: str, own: str | None, name: str, text: str, *, proc=subproce
         if name not in r["entries"]:
             raise WorkersError(f"{name} not in roster")
         r["entries"][name]["note"] = _note_text(text)
+
+
+def stop(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
+    """Kills entry `name`'s sessions and removes it (manager.stop)."""
+    _check(name)
+    with _leased(directory, own, proc) as r:
+        manager.stop(r, name, proc=proc)
 
 
 def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
@@ -664,11 +695,15 @@ def main(argv=None) -> int:
     p.add_argument("--manager", help="manager directory to attach to (default: your tmux session's)")
     p.add_argument("--after", type=_number, metavar="LINE", help="the line of the last event handled; with --gen")
     p.add_argument("--gen", type=_number, metavar="G", help="the generation of that line; with --after")
+    p.add_argument("--resume", action="store_true", help="then run each gone entry's recovery command")
     p = sub.add_parser("release")
     p.add_argument("--manager", help="manager directory to release (default: your tmux session's)")
     p = sub.add_parser("note")
     p.add_argument("name")
     p.add_argument("text", help="'' clears it")
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
+    p = sub.add_parser("stop")
+    p.add_argument("name", help="a roster entry, or its tui session")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p = sub.add_parser("forget")
     p.add_argument("name")
@@ -678,13 +713,19 @@ def main(argv=None) -> int:
         ap.error("--after and --gen go together")
     try:
         if a.cmd == "attach":
-            print(attach(_directory(a.manager), _own(), after=a.after, gen=a.gen, proc=subprocess.run), end="")
+            text, entries = attach(_directory(a.manager), _own(), after=a.after, gen=a.gen, proc=subprocess.run)
+            print(text, end="", flush=True)
+            if a.resume:
+                for line in recover(entries, proc=subprocess.run):
+                    print(line, flush=True)
         elif a.cmd == "release":
             directory = _directory(a.manager)
             release(directory, _own(), proc=subprocess.run)
             print(f"workers: released {directory}")
         elif a.cmd == "note":
             note(_directory(a.manager), _own(), a.name, a.text, proc=subprocess.run)
+        elif a.cmd == "stop":
+            stop(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "forget":
             forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "start":

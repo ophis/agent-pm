@@ -1393,7 +1393,7 @@ def tail(directory, n=0, gen=0, *backlog):
     me, events = shlex.quote(os.path.abspath(workers.__file__)), shlex.quote(os.path.join(directory, "events"))
     name = os.path.basename(directory)
     return nl(*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
-              f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen}",
+              f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
               f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}")
 
 
@@ -1430,15 +1430,24 @@ def within(seconds=10):
 class Server:
     """A fake tmux server for the roster commands. `sessions` maps a session to its opts(); `extra` is appended to
     list-sessions' rows; `clients` maps a session to its list-clients output; `panes` is list-panes -a's; `fail` maps a
-    command, or a command with its target (`list-clients -t =w1`), to the stderr it fails with (an OSError: raised).
-    The caller's pane is in session `own` (None: outside tmux)."""
+    command, or a command with its target (`list-clients -t =w1`), to the stderr it fails with (an OSError: raised);
+    kill-session ends a session. The caller's pane is in session `own` (None: outside tmux). Any other program is a
+    recovery command: recorded in `recoveries` as (argv, its keywords, whether roster.lock at `lock` was free), it
+    exits as `results` maps its argv[1] ((code, output), or an OSError raised; default (0, ""))."""
 
-    def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra=""):
+    def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra="", results=None, lock=None):
         self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
         self.sessions = {**({own: opts()} if own else {}), **(sessions or {})}
-        self.calls = []
+        self.results, self.lock = results or {}, lock
+        self.calls, self.recoveries = [], []
 
     def __call__(self, argv, **kw):
+        if argv[0] != "tmux":
+            self.recoveries.append((argv, kw, self.lock is None or lock_free(self.lock)))
+            result = self.results.get(argv[1], (0, ""))
+            if isinstance(result, OSError):
+                raise result
+            return subprocess.CompletedProcess(argv, result[0], result[1])
         self.calls.append(argv)
         cmd, out, rc = argv[1], "", 0
         fail = self.fail.get(cmd, self.fail.get(" ".join(argv[1:4])))
@@ -1450,6 +1459,8 @@ class Server:
             out = f"{self.own}\n"
         elif cmd == "has-session":
             rc = 0 if argv[3][1:] in self.sessions else 1
+        elif cmd == "kill-session":
+            rc = 0 if self.sessions.pop(argv[3][1:], None) is not None else 1
         elif cmd == "list-sessions":
             out = "".join("\t".join((name, *o)) + "\n" for name, o in self.sessions.items()) + self.extra
         elif cmd == "list-clients":
@@ -2076,8 +2087,8 @@ class StartEntryTest(RosterCase):
 
 
 class RosterCommandsTest(RosterCase):
-    """release, note and forget, the caller in tmux session mgr unless a test says otherwise."""
-    CMDS = (["release"], ["note", "w1", "x"], ["forget", "w1"])
+    """release, note, forget and stop, the caller in tmux session mgr unless a test says otherwise."""
+    CMDS = (["release"], ["note", "w1", "x"], ["forget", "w1"], ["stop", "w1"])
 
     def test_refused_without_the_lease_writing_nothing(self):
         cases = {"another live holder": (OTHER, {"other": opts()}, self.held()),
@@ -2086,8 +2097,10 @@ class RosterCommandsTest(RosterCase):
         for why, (holder, sessions, msg) in cases.items():
             for cmd in self.CMDS:
                 with self.subTest(why, cmd=cmd[0]):
-                    before = self.seed(holder, w1=entry(state="gone"))
-                    self.assertEqual(self.run_main(Server(sessions=sessions), *cmd), (1, "", msg))
+                    before = self.seed(holder, w1=entry())
+                    server = Server(sessions={**sessions, "w1": opts(SID)})
+                    self.assertEqual(self.run_main(server, *cmd), (1, "", msg))
+                    self.assertEqual(server.ran("kill-session"), [])
                     self.assertEqual(self.bytes(), before)
 
     def test_refused_when_the_directory_is_missing_which_stays_missing(self):
@@ -2130,15 +2143,16 @@ class RosterCommandsTest(RosterCase):
                 self.assertEqual(self.run_main(Server(), "note", "w1", text), (1, "", f"workers: {msg}\n"))
                 self.assertEqual(self.bytes(), before)
 
-    def test_note_and_forget_need_an_entry(self):
-        for cmd in (["note", "w9", "x"], ["forget", "w9"]):
+    def test_note_forget_and_stop_need_an_entry_killing_nothing(self):
+        for cmd in (["note", "w9", "x"], ["forget", "w9"], ["stop", "w9"]):
             with self.subTest(cmd=cmd[0]):
                 before = self.seed(MGR, w1=entry())
-                self.assertEqual(self.run_main(Server(), *cmd), (1, "", "workers: w9 not in roster\n"))
-                self.assertEqual(self.bytes(), before)
+                server = Server(sessions={"w9": opts(), "w1": opts(SID)})
+                self.assertEqual(self.run_main(server, *cmd), (1, "", "workers: w9 not in roster\n"))
+                self.assertEqual((self.bytes(), server.ran("kill-session")), (before, []))
 
-    def test_note_and_forget_check_the_name(self):
-        for cmd in (["note", "a b", "x"], ["forget", "a b"]):
+    def test_note_forget_and_stop_check_the_name(self):
+        for cmd in (["note", "a b", "x"], ["forget", "a b"], ["stop", "a b"]):
             with self.subTest(cmd=cmd[0]):
                 before = self.seed(MGR, w1=entry())
                 self.assertEqual(self.run_main(Server(), *cmd),
@@ -2168,6 +2182,116 @@ class RosterCommandsTest(RosterCase):
         self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "forget", "w1"),
                          (1, "", "workers: tmux list-sessions: boom\n"))
         self.assertEqual(self.bytes(), before)
+
+
+class StopTest(RosterCase):
+    """workers.py stop, mgr the holder unless a test says otherwise (its refusals: RosterCommandsTest)."""
+
+    def stopped(self, server, name, *argv):
+        """stop's (exit code, stdout, stderr), the targets it killed and the entries left."""
+        res = self.run_main(server, "stop", name, *argv)
+        return res, [c[3] for c in server.ran("kill-session")], set(self.entries())
+
+    def test_a_worker(self):
+        self.seed(MGR, w1=entry(), w2=entry(sid=SID2))
+        server = Server(sessions={"w1": opts(SID), "w2": opts(SID2)})
+        self.assertEqual(self.stopped(server, "w1"), ((0, "", ""), ["=w1"], {"w2"}))
+        self.assertEqual(set(server.sessions), {"mgr", "w2"})
+
+    def test_a_role_or_pipeline_by_its_key_or_tui_its_driver_then_tui(self):
+        for kind in ("role", "pipeline"):
+            for name in ("d1", "t1"):
+                with self.subTest(kind=kind, name=name):
+                    self.seed(MGR, d1=entry(kind, tui="t1"), w1=entry())
+                    server = Server(sessions={"d1": opts(), "t1": opts(), "w1": opts(SID)})
+                    self.assertEqual(self.stopped(server, name), ((0, "", ""), ["=d1", "=t1"], {"w1"}))
+                    self.assertEqual(set(server.sessions), {"mgr", "w1"})
+
+    def test_sessions_gone_already(self):
+        self.seed(MGR, w1=entry(state="gone"), d1=entry("role", tui="t1", state="finished"), d2=entry("role"),
+                  w2=entry())
+        for name, killed, left in (("w1", ["=w1"], {"d1", "d2", "w2"}), ("t1", ["=d1", "=t1"], {"d2", "w2"}),
+                                   ("d2", ["=d2"], {"w2"})):
+            with self.subTest(name=name):
+                self.assertEqual(self.stopped(Server(), name), ((0, "", ""), killed, left))
+
+    def test_a_session_outliving_its_kill_exits_1_keeping_the_entry(self):
+        before = self.seed(MGR, w1=entry())
+        server = Server(sessions={"w1": opts(SID)}, fail={"kill-session": "boom\n"})
+        self.assertEqual(self.run_main(server, "stop", "w1"),
+                         (1, "", "workers: w1: session w1 still live after tmux kill-session\n"))
+        self.assertEqual(self.bytes(), before)
+
+    def test_outside_tmux_without_a_live_holder(self):
+        for holder in (None, OTHER):
+            with self.subTest(holder=holder):
+                self.seed(holder, w1=entry(), w2=entry(sid=SID2))
+                server = Server(None, sessions={"w1": opts(SID)})
+                self.assertEqual(self.stopped(server, "w1", "--manager", "mgr"), ((0, "", ""), ["=w1"], {"w2"}))
+                self.assertEqual(json.loads(self.bytes())["holder"], holder)
+
+    def test_a_stopped_entry_is_not_resumed(self):
+        self.seed(MGR, w1=entry(), w2=entry(sid=SID2, resume=[PY, "/y/workers.py", "--go"]))
+        self.assertEqual(self.run_main(Server(sessions={"w1": opts(SID)}), "stop", "w1"), (0, "", ""))
+        server = Server()
+        self.assertEqual(self.run_main(server, "attach", "--resume")[0], 0)
+        self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/y/workers.py", "--go"]])
+
+
+class ResumeTest(RosterCase):
+    """workers.py attach --resume, mgr attaching: every live session shown (no reopen); the recovery commands run on
+    Server."""
+    RUN = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
+           "errors": "replace"}
+
+    def test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order(self):
+        cwd, finished = os.path.join(self.dir, "it's a role"), os.path.join(self.dir, "finished")
+        os.mkdir(finished)
+        with open(os.path.join(finished, "run.jsonl"), "w") as f:
+            f.write(result(outcome={"status": "done"}))
+        entries = {"b": entry(cwd="/w/b", resume=[PY, "/x/b/workers.py", "start", "b"]),
+                   "a": entry(cwd=cwd, resume=[PY, "/x/a/workers.py", "; rm -rf ~"]),
+                   "B": entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
+                   "p1": entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--issue", "TASK-1"]),
+                   "f1": entry("pipeline", cwd=finished), "live": entry(sid=SID2)}
+        self.seed(MGR, **entries)
+        results = {"/x/b/workers.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
+                   "/x/a/workers.py": (0, "  a \n\n  \n"), "/x/drive.py": (0, "drive.py: session x\n"),
+                   "/x/router.py": (0, "")}
+        plain = Server(sessions={"live": opts(SID2)}, clients={"live": SHOWN})
+        rc, listed, err = self.run_main(plain, "attach")
+        self.assertEqual((rc, err, plain.recoveries), (0, "", []))
+        server = Server(sessions={"live": opts(SID2)}, clients={"live": SHOWN}, results=results, lock=self.lock)
+        self.assertEqual(self.run_main(server, "attach", "--resume"),
+                         (0, listed + nl("resumed B: exit 0: drive.py: session x", "resumed a: exit 0: a",
+                                         f"resumed b: exit 0: b {SID}", "resumed p1: exit 0"), ""))
+        ran = {name: manager.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
+        self.assertEqual(server.recoveries, [(argv, {"cwd": entries[name]["cwd"], **self.RUN}, True)
+                                             for name, argv in ran.items()])
+        printed = dict(line.removeprefix("resume ").split(": ", 1) for line in listed.splitlines()
+                       if line.startswith("resume "))
+        self.assertEqual({n: shlex.split(cmd) for n, cmd in printed.items()},
+                         {**ran, "B": ["cd", cwd, "&&", *ran["B"]]})
+
+    def test_a_failing_recovery_stops_none(self):
+        refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
+        self.seed(MGR, a1=entry(resume=[PY, "/x/a1/workers.py"]), a2=entry(resume=[PY, "/x/a2/workers.py"]),
+                  a3=entry("role", sid=None), p1=entry("pipeline", resume=[PY, "/x/router.py"]),
+                  w1=entry(resume=[PY, "/x/w1/workers.py"]))
+        results = {"/x/a1/workers.py": (1, "workers: a1: session ended at once\n"),
+                   "/x/a2/workers.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
+                   "/x/router.py": (1, refusal + "\n")}
+        server = Server(results=results)
+        rc, out, err = self.run_main(server, "attach", "--resume")
+        self.assertEqual((rc, err), (0, ""))
+        self.assertTrue(out.endswith(tail(self.mdir) + nl(
+            "resumed a1: exit 1: workers: a1: session ended at once",
+            "resumed a2: not run: No such file or directory",
+            "resumed a3: not run: no sid",
+            f"resumed p1: exit 1: {refusal}",
+            "resumed w1: exit 0")), out)
+        self.assertEqual([argv[1] for argv, _, _ in server.recoveries],
+                         ["/x/a1/workers.py", "/x/a2/workers.py", "/x/router.py", "/x/w1/workers.py"])
 
 
 class CursorTest(RosterCase):
@@ -2216,7 +2340,7 @@ class CursorTest(RosterCase):
         me = shlex.quote(os.path.abspath(workers.__file__))
         self.assertEqual(self.attach(), (0, HEADER + nl(
             f"4 {events[3]}", f"5 {events[4]}", "N=3 GEN=0", f"monitor: tail -n +4 -F {self.mevents}",
-            f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0",
+            f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0 --resume",
             f"next-event: python3 {me} next-event --manager mgr --after 3 --gen 0"), ""))
         self.assertEqual(self.cursor(), (3, 0))
 
@@ -2235,7 +2359,7 @@ class CursorTest(RosterCase):
         self.assertEqual((rc, err), (0, ""))
         self.assertEqual([shlex.split(line.split(": ", 1)[1]) for line in out.splitlines()[-3:]],
                          [["tail", "-n", "+1", "-F", os.path.join(home, ".agent-pm", "managers", "mgr", "events")],
-                          ["python3", script, "attach", "--manager", "mgr", "--after", "LINE", "--gen", "0"],
+                          ["python3", script, "attach", "--manager", "mgr", "--after", "LINE", "--gen", "0", "--resume"],
                           ["python3", script, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0"]])
 
     def test_attach_after_records_the_cursor_which_only_moves_forward(self):
