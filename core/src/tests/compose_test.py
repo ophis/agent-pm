@@ -1060,7 +1060,7 @@ class RealCore(unittest.TestCase):
     def test_local_lines_uncommented_are_a_valid_local_file(self):
         with open(os.path.join(CORE, compose.CONFIG)) as f:
             local = tomllib.loads("".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: ")))
-        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column"}, set(local))
+        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "workers_per_column", "grid_retile"}, set(local))
         self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
         for role, table in local["roles"].items():
             compose.check_old_keys(table, role)
