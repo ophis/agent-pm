@@ -614,13 +614,15 @@ def stop(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> 
 
 
 def opened(own: str, live: dict[str, dict], entries=lambda session: {}) -> list[str]:
-    """The live sessions own opened, by @opener or as a session (key, tui) of an entry in entries(own), and,
-    recursively, those they opened; deepest first, then by name; own never."""
+    """The live sessions own opened, by @opener or as a session (key, tui) of an entry in entries(own) with no other
+    @opener (a gone entry's name reused by another manager's session stays), and, recursively, those they opened;
+    deepest first, then by name; own never."""
     depth, level, todo = {}, 0, {own}
     while todo:
         level += 1
         found = {n for n, o in live.items() if o["opener"] in todo}
-        found.update(n for s in todo for k, e in entries(s).items() for n in (k, e["tui"]) if n in live)
+        found.update(n for s in todo for k, e in entries(s).items() for n in (k, e["tui"])
+                     if n in live and live[n]["opener"] in ("", s))
         todo = found - set(depth) - {own}
         depth.update((n, level) for n in todo)
     return sorted(depth, key=lambda n: (-depth[n], n))
