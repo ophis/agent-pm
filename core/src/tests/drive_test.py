@@ -22,6 +22,7 @@ import hermetic  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
+import manager  # noqa: E402
 import report  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2097,15 +2098,18 @@ class Detach(Base):
         return ["--role", "dummy-tester", "--input", "Hello.",
                 "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID, *extra]
 
-    def outer(self, *extra, rc=0, proc=None, events=True):
+    def outer(self, *extra, rc=0, proc=None, events=True, own="mgr"):
         """drive.main --detach (--events self.events unless not `events`), tmux through `proc`, else a fake that takes
-        the handover file and names the caller's session mgr; (exit code, stderr, the tmux calls, the handover)."""
+        the handover file, names the caller's session `own` and has a control-mode client show every session; (exit
+        code, stderr, the tmux calls, the handover)."""
         calls, handover = [], {}
 
         def fake(argv, **kw):
             calls.append(argv)
             if argv[1] == "display-message":
-                return subprocess.CompletedProcess(argv, 0, "mgr\n", "")
+                return subprocess.CompletedProcess(argv, 0, f"{own}\n", "")
+            if argv[1] == "list-clients":
+                return subprocess.CompletedProcess(argv, 0, "100 /dev/ttys001 %1 1 /tmp/tmux-501/default\n", "")
             if argv[1] == "new-session" and rc == 0:
                 with open(argv[-1]) as f:
                     handover.update(json.load(f))
@@ -2131,6 +2135,12 @@ class Detach(Base):
         for line in lines:
             self.assertRegex(line, r"^\d\d:\d\d:\d\d ")
         return [line[9:] for line in lines]
+
+    @staticmethod
+    def entries(name):
+        """Manager `name`'s roster entries, validated."""
+        with manager.roster(manager.directory(name), write=False) as r:
+            return r["entries"]
 
     def test_the_driver_session_never_matches_a_tui_session_or_the_reserved_name(self):
         reserved = re.compile(r"[a-z][a-z0-9-]*-[A-Z][A-Z0-9]*-\d+-[0-9a-f]{8}")   # <role>-<ID>-<8 hex>
@@ -2318,6 +2328,113 @@ class Detach(Base):
             drive.detach("d", [sys.executable, "--input=a\ud800b"], cwd=self.tmp.name, env={}, iterm="", proc=proc)
         proc.assert_not_called()
         mkdtemp.assert_not_called()
+
+    def test_a_tui_run_detached_from_an_attached_session_gets_its_role_entry_under_the_driver_name(self):
+        hermetic.home(self)
+        manager.events(manager.directory("mgr"))   # as workers.py attach
+        os.environ.update(INSIDE)
+        code, err, _, handover = self.outer("--runner", "tui", "--task", "echo", "--repo", self.repo, "--client",
+                                            "claude", "--split", "below", "--split-from", "s", "--prefix", "p",
+                                            events=False)
+        self.assertEqual(code, 0, err)
+        self.assertIn("--input=Hello.", handover["argv"])
+        (name, e), = self.entries("mgr").items()
+        del e["started"]   # validated by entries
+        self.assertEqual((name, e), (f"p-{SID[:8]}-drive", {
+            "kind": "role", "sid": SID, "cwd": os.getcwd(), "note": None, "opener": "mgr", "pane": None,
+            "split": "below", "split_from": "s", "tui": f"p-{SID[:8]}", "state": "working",
+            "resume": [sys.executable, os.path.abspath(drive.__file__), "--role=dummy-tester", "--task=echo",
+                       f"--out={self.work}/out.md", f"--workdir={self.work}", f"--repo={self.repo}", "--client=claude",
+                       "--runner=tui", "--split=below", "--split-from=s", "--prefix=p", "--detach", "--manager=mgr"]}))
+
+    def test_a_headless_role_entry_has_no_tui_or_opener_and_its_default_runner(self):
+        hermetic.home(self)
+        code, err, _, _ = self.outer("--manager", "m1", events=False)
+        self.assertEqual(code, 0, err)
+        (name, e), = self.entries("m1").items()
+        self.assertEqual((name, e["tui"], e["opener"], e["split"], e["split_from"]),
+                         (self.DRIVER, None, None, None, None))
+        self.assertEqual(e["resume"][2:], ["--role=dummy-tester", f"--out={self.work}/out.md", f"--workdir={self.work}",
+                                           "--runner=headless", "--detach", "--manager=m1"])
+
+    def test_a_role_entrys_resume_keeps_a_dash_leading_value_one_item_and_never_the_input(self):
+        hermetic.home(self)
+        code, err, _, handover = self.outer("--manager", "m1", "--out=--input=x", "--inp", "Other.", events=False)
+        self.assertEqual(code, 0, err)
+        self.assertIn("--input=Other.", handover["argv"])   # the abbreviation reached the driver as --input
+        (e,) = self.entries("m1").values()
+        self.assertEqual(e["resume"][2:], ["--role=dummy-tester", "--out=--input=x", f"--workdir={self.work}",
+                                           "--runner=headless", "--detach", "--manager=m1"])
+
+    def test_no_role_entry_for_another_events_file_a_dry_run_or_a_failed_start(self):
+        hermetic.home(self)
+        d = manager.directory("m1")
+        manager.events(d)
+        for extra, kw, want in ((("--manager", "m1"), {}, 0),   # --events self.events
+                                (("--manager", "m1", "--dry-run"), {"events": False}, 0),
+                                (("--manager", "m1"), {"events": False, "rc": 1}, 3)):
+            with self.subTest(extra=extra, kw=kw):
+                self.assertEqual(self.outer(*extra, **kw)[0], want)
+                self.assertFalse(os.path.exists(os.path.join(d, "roster.json")))
+
+    def test_detach_writes_the_entry_it_is_given_once_the_session_runs_never_when_it_fails_to_start(self):
+        hermetic.home(self)
+        d = manager.directory("m1")
+        manager.ensure(d)
+        path = os.path.join(d, "roster.json")
+        fields = {"kind": "role", "sid": SID, "cwd": self.tmp.name,
+                  "resume": [sys.executable, os.path.abspath(drive.__file__), "--detach"]}
+
+        def taken(argv, **kw):
+            self.assertFalse(os.path.exists(path))   # not before the session runs
+            os.unlink(argv[-1])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        def failed(argv, **kw):
+            return subprocess.CompletedProcess(argv, 1, "", "duplicate session: d\n")
+
+        def untaken(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        for proc, want in ((failed, "tmux: duplicate session: d"), (untaken, "session d did not start")):
+            with self.subTest(want=want):
+                with self.assertRaisesRegex(drive.RunnerError, want):
+                    drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=proc,
+                                 sleep=lambda s: None, roster=(d, fields))
+                self.assertFalse(os.path.exists(path))
+        drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=taken, roster=(d, fields))
+        (name, e), = self.entries("m1").items()
+        self.assertEqual((name, e), ("d", manager.entry(**fields, started=e["started"])))
+        os.unlink(path)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=taken,
+                         roster=(d, {**fields, "cwd": "rel"}))
+        self.assertEqual(err.getvalue(), "manager: entry d not written: entry: cwd: 'rel': want an absolute printable "
+                                         "path\n")
+        self.assertFalse(os.path.exists(path))
+
+    def test_an_entry_write_failure_prints_one_line_and_the_run_goes_on(self):
+        hermetic.home(self)
+        d = manager.directory("m1")
+        manager.ensure(d)
+        with open(os.path.join(d, "roster.json"), "w") as f:
+            f.write("{")
+        code, err, _, _ = self.outer("--manager", "m1", events=False)
+        failures = [line for line in err.splitlines() if line.startswith("manager: ")]
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(failures), 1, err)
+        self.assertTrue(failures[0].startswith(f"manager: entry {self.DRIVER} not written: {d}/roster.json: invalid "
+                                               "JSON: "), failures)
+        self.assertIn(f"drive.py: driver session {self.DRIVER}: ", err)
+        with open(os.path.join(d, "roster.json")) as f:
+            self.assertEqual(f.read(), "{")
+        os.environ.update(INSIDE)   # the roster directory's own failure: a bad own session name
+        code, err, _, _ = self.outer(own="a b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([line for line in err.splitlines() if line.startswith("manager: ")],
+                         [f"manager: entry {self.DRIVER} not written: own tmux session 'a b': want "
+                          f"{drive.tui_claude.NAME.pattern}; give --manager <name>"])
 
     def test_the_driver_appends_one_outcome_line_when_it_ends(self):
         needs = {"status": "needs_input", "title": "T", "summary": "S", "questions": ["Which?"]}

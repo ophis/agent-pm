@@ -12,7 +12,9 @@ ManagerError.
 
 roster.json: a regular file of the caller's, at most ROSTER_MAX bytes (a symlink, a FIFO or a foreign file is refused),
 JSON (indent 2, sorted keys), written through a temp file and os.replace. Missing: version 1, holder null, cursor 0,
-gen 0, no entries.
+gen 0, no entries. An entry is written by the script that starts the subordinate, at start, replacing one of the same
+name (record): workers.py start (a worker, under its name), drive.detach for drive.py --detach (a role) and
+router.py --tui (a pipeline), keyed by the driver session.
   {"version": 1, "holder": null | {"session": NAME, "since": time}, "cursor": int >= 0, "gen": int >= 0,
    "entries": {NAME: entry}}
 Exactly these keys (holder's: session, since), else ManagerError and the file untouched. An entry has exactly these
@@ -152,6 +154,15 @@ def events(directory: str, *, create: bool = True) -> str:
         except tui_claude.TuiError as e:
             raise ManagerError(str(e)) from e
     return path
+
+
+def home(name: str | None, events: str | None, *, proc=subprocess.run) -> str | None:
+    """The roster directory of a run given `events`: directory(name) when it exists and events is its `events` file
+    (real paths compared); else None. Touches nothing; a bad name or a failing own_session: ManagerError."""
+    d = directory(name, proc=proc)
+    if d is None or not os.path.isdir(d) or events is None:
+        return None
+    return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
 
 
 def printable(text: str) -> bool:
@@ -455,10 +466,24 @@ def set_entry(r: dict, name: str, value: dict) -> None:
     r["entries"][name] = value
 
 
+def record(r: dict, name: str, value: dict) -> None:
+    """set_entry, except that a value with note None replacing an entry of the same non-null sid takes that entry's
+    note."""
+    old = r["entries"].get(name)
+    set_entry(r, name, value)
+    if value["note"] is None and old is not None and old["sid"] is not None and old["sid"] == value["sid"]:
+        r["entries"][name] = {**value, "note": old["note"]}
+
+
 def put(directory: str, name: str, value: dict) -> None:
-    """roster() + set_entry, for a caller in no roster() block."""
+    """roster() + record, for a caller in no roster() block."""
     with roster(directory) as r:
-        set_entry(r, name, value)
+        record(r, name, value)
+
+
+def unwritten(name: str, error: Exception) -> None:
+    """Prints an entry write failure's one stderr line."""
+    print(f"manager: entry {name} not written: {error}", file=sys.stderr)
 
 
 def remove(r: dict, name: str) -> dict:

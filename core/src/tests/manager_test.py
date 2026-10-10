@@ -113,6 +113,50 @@ class ManagerTest(unittest.TestCase):
             manager.directory(proc=proc)
         self.assertEqual(proc.calls, [])
 
+    def test_home_is_the_directory_whose_events_file_is_given(self):
+        manager.ensure(self.dir)
+        proc = tmux()
+        self.assertEqual(manager.home("m1", os.path.join(self.dir, "events"), proc=proc), self.dir)
+        self.assertEqual(proc.calls, [])
+        self.assertEqual(os.listdir(self.dir), [])
+
+    def test_home_is_none_without_the_directory_or_its_events_file(self):
+        manager.ensure(self.dir)
+        events = os.path.join(self.dir, "events")
+        cases = {"events another file": ("m1", os.path.join(self.outside("x"), "events")),
+                 "events a sibling file": ("m1", os.path.join(self.dir, "roster.json")),
+                 "events None": ("m1", None),
+                 "directory missing": ("m2", os.path.join(self.managers, "m2", "events")),
+                 "outside tmux, no name": (None, events)}
+        for why, (name, given) in cases.items():
+            with self.subTest(why):
+                self.assertIsNone(manager.home(name, given, proc=tmux()))
+        self.assertEqual(os.listdir(self.managers), ["m1"])
+        self.assertEqual(os.listdir(self.dir), [])
+
+    def test_home_of_the_own_tmux_session(self):
+        own = os.path.join(self.managers, "own")
+        manager.ensure(own)
+        os.environ.update(INSIDE)
+        self.assertEqual(manager.home(None, os.path.join(own, "events"), proc=tmux("own\n")), own)
+
+    def test_home_compares_real_paths(self):
+        manager.ensure(self.dir)
+        base = os.path.dirname(self.agent_pm)
+        os.symlink(self.dir, os.path.join(base, "link"))
+        self.assertEqual(manager.home("m1", os.path.join(base, "link", "events")), self.dir)
+        os.symlink(base, os.path.join(base, "alias"))
+        os.environ["HOME"] = os.path.join(base, "alias")
+        self.assertEqual(manager.home("m1", os.path.join(self.dir, "events")),
+                         os.path.join(base, "alias", ".agent-pm", "managers", "m1"))
+
+    def test_home_bad_name_or_own_session_is_a_manager_error(self):
+        with self.assertRaisesRegex(manager.ManagerError, r"^manager 'a/b': want \[A-Za-z0-9_-\]\+$"):
+            manager.home("a/b", None)
+        os.environ.update(INSIDE)
+        with self.assertRaisesRegex(manager.ManagerError, "give --manager <name>$"):
+            manager.home(None, None, proc=tmux("a;\n"))
+
     def test_events_path_without_create_touches_nothing(self):
         self.assertEqual(manager.events(self.dir, create=False), os.path.join(self.dir, "events"))
         self.assertEqual(os.listdir(self.agent_pm), [])
@@ -209,6 +253,7 @@ class ManagerTest(unittest.TestCase):
 
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
+SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
 SRC = os.path.dirname(os.path.abspath(manager.__file__))
 CHILD = """
@@ -696,6 +741,40 @@ class RosterTest(unittest.TestCase):
         with self.assertRaises(manager.ManagerError):
             manager.put(self.dir, "w3", good(kind="boss"))
         self.assertEqual(sorted(self.entries()), ["w1", "w2"])
+
+    def test_record_keeps_the_note_of_a_replaced_entry_of_the_same_sid(self):
+        cases = {"same sid, note None": (good(note="n"), good(state="done"), good(state="done", note="n")),
+                 "new sid": (good(note="n"), good(sid=SID2), good(sid=SID2)),
+                 "both sids null": (good(sid=None, note="n"), good(sid=None), good(sid=None)),
+                 "a given note wins": (good(note="n"), good(note="m"), good(note="m")),
+                 "no old entry": (None, good(), good())}
+        for why, (old, value, want) in cases.items():
+            with self.subTest(why):
+                given = dict(value)
+                with manager.roster(self.dir) as r:
+                    r["entries"] = {} if old is None else {"w1": old}
+                    manager.record(r, "w1", value)
+                self.assertEqual(self.entries(), {"w1": want})
+                self.assertEqual(value, given)
+
+    def test_record_validates_and_leaves_the_old_entry_on_a_fault(self):
+        with manager.roster(self.dir) as r:
+            manager.set_entry(r, "w1", good(note="n"))
+            with self.assertRaisesRegex(manager.ManagerError, "^entry 'w1': sid: 'x': want"):
+                manager.record(r, "w1", good(sid="x"))
+        self.assertEqual(self.entries(), {"w1": good(note="n")})
+
+    def test_put_keeps_the_note_on_a_same_sid_replace(self):
+        manager.put(self.dir, "w1", good(note="n"))
+        manager.put(self.dir, "w1", good(state="done"))
+        self.assertEqual(self.entries(), {"w1": good(state="done", note="n")})
+
+    def test_unwritten_prints_the_one_failure_line_to_stderr(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            manager.unwritten("w1", manager.ManagerError("/d/roster.lock: busy"))
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "manager: entry w1 not written: /d/roster.lock: busy\n")
 
     def test_remove_returns_the_entry_or_refuses_a_missing_one(self):
         with manager.roster(self.dir) as r:

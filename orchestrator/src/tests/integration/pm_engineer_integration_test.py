@@ -11,7 +11,7 @@ sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
 import hermetic  # noqa: E402,F401
 import issues  # noqa: E402
 import promote  # noqa: E402
-from flow_fixtures import HARNESS_EMAIL, fake_linear  # noqa: E402
+from flow_fixtures import HARNESS_EMAIL, MANAGER, ROUTER, fake_linear  # noqa: E402
 from segments import BUILD, REPORT, Segment  # noqa: E402
 
 REWORK = "Add a section on stale sessions."
@@ -135,6 +135,26 @@ class PmToEngineer(Segment):
             self.expect(ident, state="todo", history=[("in_progress", "todo", HARNESS_EMAIL)],
                         comments=[(HARNESS_EMAIL, "interrupted")])
         self.pm_done(ident)
+
+    def test_b8_a_managed_attended_run_is_recovered_from_the_roster(self):
+        """B8: B6's give-up, claimed with --manager MANAGER: its pipeline entry in MANAGER's roster.json, under the
+        driver session, notes the issue, cwd the run dir, resume `router.py --issue <ID> --tui --events <its events>
+        --manager MANAGER`. Its TUI session killed, that entry's recovery command, run from MANAGER's pane, resumes the
+        session attended (no --split-from: MANAGER the opener) and rewrites the entry; that run ends in review."""
+        ident = self.pm_ready()
+        sid = self.claim(ident, "pm", self.script("pm", "give_up", ident), tui=True, managed=True)
+        driver, tui = self.driver("pm", ident), self.pending.tui
+        events = os.path.join(self.apm, "managers", MANAGER, "events")
+        entry = {"kind": "pipeline", "sid": sid, "cwd": os.path.realpath(self.workdir(ident)), "note": ident,
+                 "tui": tui, "pane": None, "split": None, "state": "working",
+                 "resume": [sys.executable, ROUTER, "--issue", ident, "--tui", "--events", events,
+                            "--manager", MANAGER]}
+        self.assertEqual(self.roster(), {driver: {**entry, "opener": None, "split_from": MANAGER}})
+        self.agent_run()
+        self.kill_tui(ident)
+        self.resume(ident, "pm", sid, self.script("pm", "done", ident), entry=driver)
+        self.assertEqual(self.roster(), {driver: {**entry, "opener": MANAGER, "split_from": None}})
+        self.agent_run()
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ import router  # noqa: E402
 import target  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
+import manager  # noqa: E402
 import repo  # noqa: E402
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
@@ -967,10 +968,11 @@ class Blockers(Base):
             self.assertEqual(fake.mutations, [], argv)
 
 
-def outer_args(ident, project, assignee, sid, task, mode, runner="headless", split=None, split_from=None, events=None):
+def outer_args(ident, project, assignee, sid, task, mode, runner="headless", split=None, split_from=None, events=None,
+               manager=None):
     """The outer's arguments the router passes."""
     return argparse.Namespace(issue=ident, project=project, assignee=assignee, sid=sid, task=task, mode=mode, runner=runner,
-                              split=split, split_from=split_from, events=events)
+                              split=split, split_from=split_from, events=events, manager=manager)
 
 
 class FakeShell:
@@ -2310,9 +2312,11 @@ class ClaimLinear(FakeLinear):
 
 class AttendedEntry(OuterBase):
     """router.py --issue ID --tui: the claim on a fake Linear, then the real outer with the tui runner. Outside tmux: the
-    stderr hint (no manager directory) is left out of self.err and noted in self.hinted."""
+    stderr hint (no manager directory) is left out of self.err and noted in self.hinted. A HOME of its own."""
     def setUp(self):
         super().setUp()
+        self.managers = os.path.join(hermetic.home(self), "managers")
+        self.owns = []
         self.todo = issue(ID, "Todo", "engineer")
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.gql = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
@@ -2325,9 +2329,18 @@ class AttendedEntry(OuterBase):
         self.addCleanup(p.stop)
 
     def sh(self, argv, **kw):
-        """RunBase's, noting runs.jsonl's text when the driver session starts."""
+        """RunBase's, noting runs.jsonl's text when the driver session starts; display-message prints the next of
+        owns (the caller's tmux session) while one is left; the usage probe answers five_hour 0.2."""
         if argv[1] == "new-session":
             self.at_launch.append(self.read(self.runs))
+        if argv[:2] == ["tmux", "display-message"] and self.owns:
+            self.sh_calls.append((argv, kw))
+            return subprocess.CompletedProcess(argv, 0, self.owns.pop(0) + "\n", "")
+        if argv[0] == "claude":
+            self.sh_calls.append((argv, kw))
+            ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
+                "five_hour": {"utilization": 0.2}, "seven_day": {"utilization": 0.1}}}}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(ev) + "\n", "")
         return super().sh(argv, **kw)
 
     def main(self, argv, tty=False):
@@ -2480,6 +2493,102 @@ class AttendedEntry(OuterBase):
                 self.assertIn(said, self.said("router"))
                 self.assertEqual((self.todo["state"], self.sh_calls), (state, [(LIST, {"capture_output": True, "text": True})]))
         self.assertFalse(os.path.exists(self.runs))
+
+    def fresh(self):
+        """ID back in Todo, no runs.jsonl, no tmux call yet."""
+        self.todo["state"], self.sh_calls, self.gql.mutations, self.at_launch = "Todo", [], [], []
+        if os.path.exists(self.runs):
+            os.remove(self.runs)
+
+    def detached(self, argv):
+        """main(argv), drive.detach called once: (exit code, the roster drive.detach got)."""
+        with mock.patch.object(drive, "detach", wraps=drive.detach) as detach:
+            rc = self.main(argv)
+        (call,) = detach.call_args_list
+        return rc, call.kwargs.get("roster")
+
+    def pipeline(self, sid, d, opener, split):
+        """drive.detach's roster for ID's run sid, split from dev: d and the pipeline entry's fields."""
+        return d, {"kind": "pipeline", "sid": sid, "cwd": self.rd, "note": ID, "tui": f"engineer-{ID}-{sid[:8]}",
+                   "opener": opener, "split": split, "split_from": "dev",
+                   "resume": [sys.executable, os.path.abspath(router.__file__), "--issue", ID, "--tui", "--events",
+                              os.path.join(d, "events"), "--manager", os.path.basename(d)]}
+
+    def attach_lines(self, sid):
+        return [f"router.py: driver: tmux attach -t '=agent-pm-engineer-{ID}'",
+                f"router.py: tui: tmux attach -t '=engineer-{ID}-{sid[:8]}'"]
+
+    def test_a_manager_directory_gets_the_pipeline_entry_through_drive_detach(self):
+        m1, mgr = os.path.join(self.managers, "m1"), os.path.join(self.managers, "mgr")
+        iterm = "w0t0p0:ABC"
+        cases = [(["--issue", ID, "--tui", "--manager", "m1", "--split", "below", "--split-from", "dev"], False, m1,
+                  iterm, "below"),
+                 (["--now", "--tui", "--manager=m1", "--split=below", "--split-from=dev"], False, m1, iterm, "below"),
+                 (["--issue", ID, "--tui", "--split-from", "dev"], True, mgr, "mine", None)]
+        for argv, tmux, d, opener, split in cases:
+            with self.subTest(argv=argv):
+                self.fresh()
+                if tmux:
+                    os.environ.update(TMUX="/tmp/tmux-501/default,1,0", TMUX_PANE="%3", ITERM_SESSION_ID="")
+                    self.owns = ["mgr", "mgr"]
+                else:
+                    os.environ["ITERM_SESSION_ID"] = iterm
+                rc, roster = self.detached(argv)
+                self.assertEqual(rc, 0)
+                sid = self.started()
+                self.assertEqual(roster, self.pipeline(sid, d, opener, split))
+                tail = [*([f"--split={split}"] if split else []), "--split-from=dev", f"--opener={opener}",
+                        f"--events={d}/events"]
+                self.assertEqual(self.handover(iterm="" if tmux else iterm),
+                                 inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid), "--runner=tui", *tail))
+                with manager.roster(d, write=False) as r:
+                    self.assertEqual(r["entries"], {f"agent-pm-engineer-{ID}": {**roster[1], "pane": None,
+                                                                                "state": "working", "started": mock.ANY}})
+                self.assertEqual((self.err.splitlines(), self.owns), (self.attach_lines(sid), []))
+
+    def test_without_a_roster_directory_drive_detach_gets_no_roster(self):
+        m1 = os.path.join(self.managers, "m1")
+        manager.ensure(m1)
+        cases = [["--issue", ID, "--tui", "--split-from", "dev", "--manager", "m1", "--events",
+                  os.path.join(self.tmp, "events.log")],
+                 ["--issue", ID, "--tui", "--split-from", "dev", "--events", os.path.join(m1, "events")],
+                 ["--issue", ID, "--tui", "--split-from", "dev"],
+                 ["--issue", ID]]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                self.fresh()
+                self.assertEqual(self.detached(argv), (0, None))
+                self.started()
+                self.assertNotIn("roster.json", os.listdir(m1))
+
+    def test_an_entry_write_failure_is_one_line_and_the_run_goes_on(self):
+        m1 = os.path.join(self.managers, "m1")
+        manager.ensure(m1)
+        path = os.path.join(m1, "roster.json")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
+            f.write("{")
+        try:
+            json.loads("{")
+        except ValueError as e:
+            why = f"{path}: invalid JSON: {e}"
+        self.at_launch = []
+        rc, roster = self.detached(["--issue", ID, "--tui", "--manager", "m1", "--split-from", "dev"])
+        self.assertEqual(rc, 0)
+        sid = self.started()
+        self.assertEqual(roster, self.pipeline(sid, m1, None, None))
+        self.assertEqual(self.err.splitlines(),
+                         [*self.attach_lines(sid), f"manager: entry agent-pm-engineer-{ID} not written: {why}"])
+        self.assertEqual(self.read(path), "{")
+
+    def test_a_roster_directory_that_cannot_be_resolved_is_one_line_and_the_run_goes_on(self):
+        os.environ.update(TMUX="/tmp/tmux-501/default,1,0", TMUX_PANE="%3")
+        self.owns, self.at_launch = ["mgr", "a b"], []
+        self.assertEqual(self.detached(["--issue", ID, "--tui", "--split-from", "dev"]), (0, None))
+        sid = self.started()
+        self.assertEqual(self.err.splitlines(),
+                         [*self.attach_lines(sid), f"manager: entry agent-pm-engineer-{ID} not written: own tmux session "
+                                                   "'a b': want [A-Za-z0-9_-]+; give --manager <name>"])
+        self.assertNotIn("roster.json", os.listdir(os.path.join(self.managers, "mgr")))
 
 
 if __name__ == "__main__":
