@@ -32,6 +32,13 @@ it):
   started           time
 time: an ISO 8601 string with a UTC offset, printable. printable: no control character (Unicode Cc) and no U+2028 or
 U+2029, so a printed field stays one table cell or one command.
+
+cursor: the number of the last `events` line handled (lines count from 1, each ending in a newline: a trailing fragment
+is not one yet; 0: none). gen: the generation of `events`, + 1 per rotation; a line number means something only with its
+gen. `workers.py next-event --after N --gen G` and `workers.py attach --after N --gen G` (the Monitor re-arm) move the
+cursor (advance), only forward; a rotation sets it 0. Rotation (rotate) runs only inside `attach`, under roster.lock, when
+due (due): `events` becomes `events.1`, the previous generation (replaced by the next rotation), and a fresh `events` gets
+its lines after the cursor.
 """
 from __future__ import annotations
 
@@ -63,6 +70,9 @@ TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = ("kind", "sid", "cwd", "resume", "note", "opener", "pane", "split", "split_from", "tui", "state", "started")
 NOTE_MAX = 500
 ROSTER_MAX = 1 << 20
+EVENTS_MAX = 1 << 20
+SETTLE = 1
+BLOCK = 1 << 16
 LOCK_TIMEOUT = 30
 POLL = 0.1
 CONTINUE = "Continue the unfinished task."
@@ -74,6 +84,10 @@ class ManagerError(Exception):
 
 class Held(ManagerError):
     """Another live tmux session holds the directory."""
+
+
+class Stale(ManagerError):
+    """Line numbers not of `events` now."""
 
 
 def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
@@ -464,3 +478,145 @@ def recovery(entry: dict) -> list[str] | None:
     if entry["sid"] is None:
         return None
     return [*resume, "--sid", entry["sid"], "--resume", "--input", CONTINUE]
+
+
+@contextlib.contextmanager
+def _reading(path: str) -> Iterator:
+    """path open for binary reads through _open (O_NONBLOCK: a FIFO never blocks), None when missing; a read error is a
+    ManagerError."""
+    fd = _open(path, os.O_RDONLY | os.O_NONBLOCK)
+    if fd is None:
+        yield None
+        return
+    with os.fdopen(fd, "rb") as f:
+        try:
+            yield f
+        except OSError as e:
+            raise ManagerError(f"{path}: {e.strerror}") from e
+
+
+def _offset(f, n: int) -> int:
+    pos = 0
+    while block := f.read(BLOCK):
+        parts = block.split(b"\n", n)
+        if len(parts) > n:
+            return pos + len(block) - len(parts[-1])
+        n -= len(parts) - 1
+        pos += len(block)
+    return pos
+
+
+def lines(path: str) -> int:
+    """path's complete lines (its newline count); 0 when missing."""
+    with _reading(path) as f:
+        return 0 if f is None else sum(block.count(b"\n") for block in iter(lambda: f.read(BLOCK), b""))
+
+
+def offset(path: str, n: int) -> int:
+    """The byte offset just after path's n-th newline: 0 when n is 0 or path is missing, its size when it has fewer."""
+    with _reading(path) as f:
+        return 0 if f is None else _offset(f, n)
+
+
+def following(path: str, n: int) -> bytes:
+    """path's bytes from offset(path, n) on."""
+    with _reading(path) as f:
+        if f is None:
+            return b""
+        f.seek(_offset(f, n))
+        return f.read()
+
+
+def due(r: dict, directory: str) -> bool:
+    """Whether a rotation is due, inside a roster() block: `events` is over EVENTS_MAX bytes (os.lstat) and at least
+    EVENTS_MAX // 2 of them are handled (offset to the cursor). A rotation then drops at least that much: unhandled lines
+    alone past EVENTS_MAX never make one due, nor does each handled event after."""
+    path = events(directory, create=False)
+    try:
+        size = os.lstat(path).st_size
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        raise ManagerError(f"{path}: {e.strerror}") from e
+    return size > EVENTS_MAX and offset(path, r["cursor"]) >= EVENTS_MAX // 2
+
+
+def advance(r: dict, directory: str, after: int | None, gen: int) -> int:
+    """Records line `after` of `events` (None: its last complete line now) as handled, inside a roster() block: the cursor
+    becomes the larger; returns `after` resolved. Stale when gen is not the roster's (checked first) or `after` is past
+    the end."""
+    if gen != r["gen"]:
+        raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run workers.py attach")
+    path = events(directory, create=False)
+    n = lines(path)
+    if after is None:
+        after = n
+    elif after > n:
+        raise Stale(f"line {after} is past the end of {path} ({n} lines): run workers.py attach")
+    r["cursor"] = max(r["cursor"], after)
+    return after
+
+
+@contextlib.contextmanager
+def _writing(path: str, flags: int) -> Iterator[int]:
+    """An fd of path through _open; missing, or an OSError in the block: ManagerError."""
+    fd = _open(path, flags)
+    if fd is None:
+        raise ManagerError(f"{path}: {os.strerror(errno.ENOENT)}")
+    try:
+        yield fd
+    except OSError as e:
+        raise ManagerError(f"{path}: {e.strerror}") from e
+    finally:
+        os.close(fd)
+
+
+def _refill(path: str, old: str, cursor: int, sleep) -> None:
+    """rotate's steps after the rename; every failure is a ManagerError."""
+    try:
+        tui_claude.events_file(path)
+    except tui_claude.TuiError as e:
+        raise ManagerError(str(e)) from e
+    with _writing(path, os.O_WRONLY | os.O_NONBLOCK) as fd:
+        os.fchmod(fd, 0o600)   # a writer's `>>` may have made it in between, with its umask
+    sleep(SETTLE)
+    data = following(old, cursor)
+    if data and not data.endswith(b"\n"):
+        data += b"\n"
+    with _writing(path, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK) as fd:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+
+
+def rotate(r: dict, directory: str, *, sleep=None) -> bool:
+    """Rotates `events`, inside a roster() block; False, nothing touched, unless due. `events` or a present `events.1`
+    not a regular file of the caller's (os.lstat): ManagerError, nothing renamed. Then: `events` to `events.1`; a fresh
+    `events`, 0600; sleep(SETTLE) for in-flight appends (None: time.sleep, looked up at the call); the lines of `events.1`
+    after the cursor appended (a final fragment gets its newline); cursor 0, gen + 1. After the rename it never raises: a
+    failure prints one stderr line, leaves those lines in `events.1` and still sets cursor and gen, so the roster never
+    numbers the new file by the old one."""
+    if not due(r, directory):
+        return False
+    path = events(directory, create=False)
+    old = path + ".1"
+    for p in (path, old):
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            raise ManagerError(f"{p}: {e.strerror}") from e
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise ManagerError(f"{p}: {_NOT_REGULAR}")
+    try:
+        os.replace(path, old)
+    except OSError as e:
+        raise ManagerError(f"{path}: {e.strerror}") from e
+    cursor = r["cursor"]
+    try:
+        _refill(path, old, cursor, sleep or time.sleep)
+    except ManagerError as e:
+        print(f"manager: rotate: {e}: lines after {cursor} of {old} not copied", file=sys.stderr)
+    r["cursor"], r["gen"] = 0, r["gen"] + 1
+    return True
