@@ -1,12 +1,14 @@
 """workers.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
-breaker) and a split outside it."""
+breaker) and a split outside it; the roster (two managers' lease, concurrent attaches, a killed worker gone, an unshown
+worker reopened)."""
 import contextlib
 import functools
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -22,10 +24,12 @@ import hermetic  # noqa: E402
 import fake_claude  # noqa: E402
 import live_tmux  # noqa: E402
 tui_claude = workers.tui_claude
+manager = workers.manager
 
 WORKERS = os.path.join(SCRIPTS, "workers.py")
 TUI = os.path.join(workers.CORE, "src", "tui_claude.py")
 MANAGER = "mgr"
+SECOND = "mgr2"
 TIMEOUT = 60   # seconds, per process
 BORDER = " #{session_name} #{@state} "
 IGNORED = "tui: show: grid: --split/--split-from ignored"
@@ -37,9 +41,11 @@ PACE = 0.02   # seconds between the loop's looks
 
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
-    started and attached, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
-    mgr's manager directory (core/src/manager.py). Commands run as processes in mgr's pane unless `inside` names
-    another session (None: no pane, Server.env() alone)."""
+    started and shown in a client, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
+    mgr's manager directory (core/src/manager.py), which mgr attaches to (`workers.py attach`) unless ATTACH is False.
+    Commands run as processes in mgr's pane unless `inside` names another session (None: no pane, Server.env()
+    alone)."""
+    ATTACH = True
 
     def setUp(self):
         self.agent_pm = hermetic.home(self)
@@ -50,6 +56,8 @@ class Live(unittest.TestCase):
         self.events = self.events_of(MANAGER)
         self.log, self.cwd = (os.path.join(root, n) for n in ("log.jsonl", "work"))
         os.mkdir(self.cwd)
+        if self.ATTACH:
+            self.attach()
 
     def events_of(self, manager: str) -> str:
         return os.path.join(self.agent_pm, "managers", manager, "events")
@@ -66,6 +74,10 @@ class Live(unittest.TestCase):
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call(sys.executable, WORKERS, *args, **kw)
+
+    def attach(self, *args: str, **kw) -> subprocess.CompletedProcess:
+        """`workers.py attach args…`, which start and next-event need first; fails unless it exits 0."""
+        return self.ok(self.workers("attach", *args, **kw))
 
     def tui(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call(sys.executable, TUI, *args, **kw)
@@ -286,6 +298,7 @@ class Grid(Live):
         for i, name in enumerate(("m1", "m2", "m3"), 1):
             self.started(name)
             self.grid([[f"m{k}" for k in range(1, i + 1)]])
+        self.attach(inside="m2")
         self.started("z1", inside="m2")
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
@@ -417,7 +430,9 @@ class Settle(Live):
 
 
 class Managers(Live):
-    """Where a worker's events go: core/skills/tmux/SKILL.md › Start 1."""
+    """Where a worker's events go: core/skills/tmux/SKILL.md › Start 1. Each test attaches only the directories it
+    uses."""
+    ATTACH = False
 
     def done_lines(self, path: str, name: str) -> list[str]:
         """`path`'s lines once one is `HH:MM:SS <name> done`."""
@@ -428,9 +443,11 @@ class Managers(Live):
         return live_tmux.wait(check, what=f"`{name} done` in {path}")
 
     def test_own_session_and_worker_in_worker(self):
+        self.attach()
         self.started("w1")
         self.assertEqual(self.server.option("w1", "@events"), self.events)
         self.done_lines(self.events, "w1")
+        self.attach(inside="w1")
         self.started("w2", inside="w1")
         inner = self.events_of("w1")
         self.assertEqual(self.server.option("w2", "@events"), inner)
@@ -438,6 +455,7 @@ class Managers(Live):
         self.assertEqual([x.split(" ")[1:] for x in live_tmux.events(self.events)], [["w1", "done"]])
 
     def test_manager_flag(self):
+        self.attach("--manager", "other")
         self.started("w1", "--manager", "other")
         other = self.events_of("other")
         self.assertEqual(self.server.option("w1", "@events"), other)
@@ -454,8 +472,11 @@ class Managers(Live):
 
 
 class Splits(Live):
+    ATTACH = False
+
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
+        self.attach("--manager", MANAGER, inside=None)   # outside tmux: no lease, so start from there may run
         self.started("w1", "--manager", MANAGER, "--split-from", MANAGER, "--split", "below", inside=None)
         pane = self.server.pane_of("w1")
         panes = self.server.panes(f"={MANAGER}:")
@@ -464,6 +485,112 @@ class Splits(Live):
         self.assertEqual(x, mx)
         self.assertGreater(y, my)
         self.assertEqual([self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")], ["", ""])
+
+
+class Roster(Live):
+    """mgr's roster.json and its lease against live sessions: core/skills/tmux/SKILL.md › Start 1. A second manager is
+    session SECOND, shown in a client. A worker's entry is seeded with manager.put, as start does not write one yet."""
+    ATTACH = False
+
+    def setUp(self):
+        super().setUp()
+        self.directory = os.path.dirname(self.events)
+
+    def second(self) -> None:
+        self.ok(self.server.tmux("new-session", "-d", "-s", SECOND, *live_tmux.IDLE))
+        self.server.attach(SECOND)
+
+    def roster(self) -> dict:
+        with open(os.path.join(self.directory, "roster.json")) as f:
+            return json.load(f)
+
+    def held(self, holder: str) -> str:
+        """FR-13's refusal naming `holder`, roster.json's holder."""
+        h = self.roster()["holder"]
+        self.assertEqual(h["session"], holder)
+        return (f"workers: manager directory {self.directory}: held by tmux session {holder} since {h['since']}; ask "
+                "that manager to run workers.py release, or end that session\n")
+
+    def refused(self) -> None:
+        """SECOND's attach to mgr's directory fails naming mgr, roster.json unchanged."""
+        before = self.roster()
+        res = self.workers("attach", "--manager", MANAGER, inside=SECOND)
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", self.held(MANAGER)))
+        self.assertEqual(self.roster(), before)
+
+    def taken_over(self) -> None:
+        """SECOND's attach to mgr's directory succeeds, SECOND the holder."""
+        res = self.attach("--manager", MANAGER, inside=SECOND)
+        self.assertEqual(res.stdout, f"{workers.HEADER}\n")
+        self.assertEqual(self.roster()["holder"]["session"], SECOND)
+
+    def seed(self, name: str, sid: str) -> list[str]:
+        """Worker `name`'s entry, its resume `workers.py start --resume`; returns that resume."""
+        resume = [sys.executable, WORKERS, "start", name, "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
+        manager.put(self.directory, name, manager.entry("worker", sid=sid, cwd=self.cwd, resume=resume))
+        return resume
+
+    def test_second_manager_after_release(self):
+        self.attach()
+        self.second()
+        self.refused()
+        self.assertEqual(self.ok(self.workers("release")).stdout, f"workers: released {self.directory}\n")
+        self.assertIsNone(self.roster()["holder"])
+        self.taken_over()
+
+    def test_second_manager_after_the_holder_ends(self):
+        self.attach()
+        self.second()
+        self.refused()
+        self.ok(self.server.tmux("kill-session", "-t", f"={MANAGER}"))
+        self.taken_over()
+
+    def test_concurrent_attaches_one_holds(self):
+        self.second()
+        procs = {s: subprocess.Popen([sys.executable, WORKERS, "attach", "--manager", MANAGER],
+                                     env=self.server.env(**self.server.inside(s)), cwd=self.cwd,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True)
+                 for s in (MANAGER, SECOND)}
+        for p in procs.values():
+            self.addCleanup(p.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
+            self.addCleanup(p.kill)
+        out = {s: p.communicate(timeout=TIMEOUT) for s, p in procs.items()}
+        winners = [s for s, p in procs.items() if p.returncode == 0]
+        self.assertEqual(len(winners), 1, out)
+        (winner,) = winners
+        (loser,) = set(procs) - {winner}
+        self.assertEqual(out[winner], (f"{workers.HEADER}\n", ""))
+        self.assertEqual((procs[loser].returncode, out[loser]), (1, ("", self.held(winner))))
+
+    def test_killed_worker_gone(self):
+        self.attach()
+        sid = self.started("w1")
+        resume = self.seed("w1", sid)
+        self.ok(self.kill("w1"))
+        self.assertEqual(self.attach().stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t-\n"
+                                               f"resume w1: {shlex.join(resume)}\n")
+        self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")
+
+    def test_unshown_worker_reopened(self):
+        self.attach()
+        sid = self.started("w1")
+        self.wait_event("w1", "done")
+        self.grid([["w1"]])
+        self.seed("w1", sid)
+        closed = self.server.pane_of("w1")
+        self.ok(self.server.tmux("kill-pane", "-t", closed))
+        live_tmux.wait(lambda: not self.ok(self.server.tmux("list-clients", "-t", "=w1")).stdout,
+                       what="w1 shown by no client")
+        res = self.attach()
+        pane = self.server.pane_of("w1")
+        self.assertNotEqual(pane, closed)
+        self.grid([["w1"]])
+        self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
+        self.assertEqual(res.stdout, f"{workers.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n")
+        self.assertEqual(res.stderr, "tui: session w1: tmux attach -t '=w1'\n")
+        e = self.roster()["entries"]["w1"]
+        self.assertEqual((e["pane"], e["opener"]), (pane, MANAGER))
 
 
 if __name__ == "__main__":

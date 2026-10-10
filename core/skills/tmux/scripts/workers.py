@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import glob
 import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -24,7 +26,7 @@ EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 STRIP = (*tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
          "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
-SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+SESSION_ID = manager.SID
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 EARLY = 5
 POLL = 0.5
@@ -33,6 +35,13 @@ REPLY_LINES = 80
 PANE_LINES = 40
 BLOCK = 1 << 16
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
+RUN_TAIL = 1 << 20
+LIVE = "#{session_name}\t#{@sid}\t#{@state}\t#{@pane}\t#{@opener}"
+NO_SERVER = ("no server running", "error connecting to")
+LIVE_STATES = ("working", "done", "blocked", "dead")
+CLIENTS = "#{client_activity} #{client_tty}"
+HOSTS = "#{pane_tty}\t#{session_name}"
+HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
 
 
 class WorkersError(Exception):
@@ -300,15 +309,242 @@ def content(event: str, *, proc=subprocess.run, config: str | None = None) -> st
         raise WorkersError(str(e)) from e
 
 
-def _events(name: str | None) -> str:
-    """The events file of manager `name`'s directory, made on first use; `name` None: the caller's tmux session's
+def _query(argv: list, proc) -> str:
+    """A tmux command's stdout; WorkersError when it fails."""
+    res = _run(proc, argv)
+    if res.returncode != 0:
+        raise WorkersError(f"tmux {argv[1]}: {(res.stderr or '').strip()}")
+    return res.stdout
+
+
+def _live(proc) -> dict[str, dict]:
+    """The live tmux sessions named by NAME, each to its LIVE options (sid, state, pane, opener); none when no tmux
+    server runs."""
+    res = _run(proc, ["tmux", "list-sessions", "-F", LIVE])
+    if res.returncode != 0:
+        err = (res.stderr or "").strip()
+        if err.startswith(NO_SERVER):
+            return {}
+        raise WorkersError(f"tmux list-sessions: {err}")
+    rows = (line.split("\t", 4) for line in res.stdout.split("\n"))
+    return {f[0]: dict(zip(("sid", "state", "pane", "opener"), f[1:]))
+            for f in rows if len(f) == 5 and NAME.fullmatch(f[0])}
+
+
+def _finished(cwd: str) -> bool:
+    """Whether the last `result` line in the last RUN_TAIL bytes of <cwd>/run.jsonl (a regular file, never through a
+    symlink) has an outcome whose status is done or failed; anything else, an unreadable file included, is False."""
+    try:
+        fd = os.open(os.path.join(cwd, "run.jsonl"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            at = max(0, st.st_size - RUN_TAIL)
+            f.seek(max(0, at - 1))
+            # from the byte before the tail: its first piece is the line the tail cuts, or empty
+            lines = f.read(RUN_TAIL + 1).split(b"\n")[1 if at else 0:]
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    for raw in reversed(lines):
+        try:
+            line = json.loads(raw)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(line, dict) and line.get("kind") == "result":
+            outcome = line.get("outcome")
+            return isinstance(outcome, dict) and outcome.get("status") in ("done", "failed")
+    return False
+
+
+def _place(r: dict, name: str, options: dict) -> None:
+    """Entry `name`'s pane and opener from a live session's, each only when valid (manager.set_entry)."""
+    for key in ("pane", "opener"):
+        with contextlib.suppress(manager.ManagerError):
+            manager.set_entry(r, name, {**r["entries"][name], key: options[key]})
+
+
+def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
+    """Entry `name`'s live sessions, None where not live: its pane session (a worker's own, a role's or pipeline's tui)
+    and a role's or pipeline's driver (the session of its name). Either live: the entry is."""
+    pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
+    return (pane if pane in live else None), (driver if driver in live else None)
+
+
+def _sync(r: dict, live: dict) -> dict[str, str]:
+    """Syncs roster r's entries with the live sessions; returns each live entry's pane session (_sessions) by entry
+    name. A worker whose session is gone takes the name of the one live session with its sid, when no entry has that
+    name."""
+    entries = r["entries"]
+    for name in sorted(entries):
+        sid = entries[name]["sid"]
+        if entries[name]["kind"] == "worker" and sid is not None and name not in live:
+            to = [n for n, o in live.items() if o["sid"] == sid]
+            if len(to) == 1 and to[0] not in entries:
+                entries[to[0]] = entries.pop(name)
+    panes = {}
+    for name in sorted(entries):
+        e = entries[name]
+        pane, driver = _sessions(name, e, live)
+        if pane is None and driver is None:
+            e["state"] = "gone" if e["kind"] == "worker" or not _finished(e["cwd"]) else "finished"
+            continue
+        state = live[pane]["state"] if pane else "working"
+        e["state"] = state if state in LIVE_STATES else "working"
+        if pane:
+            _place(r, name, live[pane])
+            panes[name] = pane
+    return panes
+
+
+def _reopen(panes: dict, entries: dict, per_column: int | None, proc) -> tuple[dict, list]:
+    """Reopens each pane session no client shows (tui_claude.show, beside the caller). Returns, by entry name, where
+    each other one is shown: the session of the tmux pane its most recently active client runs in, when a NAME, else
+    (list-panes failing too) `a terminal`; and the reopened entries' (name, kind, sid, session). A session whose
+    list-clients fails is skipped."""
+    shown, opened, hosts = {}, [], None
+    for name in sorted(panes):
+        session, e = panes[name], entries[name]
+        try:
+            out = _query(["tmux", "list-clients", "-t", f"={session}", "-F", CLIENTS], proc)
+        except WorkersError:
+            continue
+        clients = [line.partition(" ") for line in out.split("\n") if line]
+        if not clients:
+            try:
+                tui_claude.show(session, split=e["split"], split_from=e["split_from"], per_column=per_column, proc=proc)
+            except tui_claude.TuiError as err:
+                raise WorkersError(str(err)) from err
+            opened.append((name, e["kind"], e["sid"], session))
+            continue
+        if hosts is None:
+            try:
+                rows = _query(["tmux", "list-panes", "-a", "-F", HOSTS], proc).split("\n")
+            except WorkersError:
+                rows = []
+            hosts = dict(row.split("\t", 1) for row in rows if "\t" in row)
+        tty = max(clients, key=lambda c: int(c[0]) if c[0].isascii() and c[0].isdigit() else -1)[2]
+        host = hosts.get(tty, "") if tty else ""
+        shown[name] = host if NAME.fullmatch(host) else "a terminal"
+    return shown, opened
+
+
+def _recovery(e: dict) -> str:
+    """The printed command that resumes gone entry e (manager.recovery)."""
+    argv = manager.recovery(e)
+    if argv is None:
+        return "none (no sid)"
+    return f"cd {shlex.quote(e['cwd'])} && {shlex.join(argv)}" if e["kind"] == "role" else shlex.join(argv)
+
+
+def _table(entries: dict, shown: dict) -> str:
+    """HEADER, a row per entry by name (null: -), `shown in <where>` last where shown says, then a `resume` line per
+    gone entry."""
+    lines = [HEADER]
+    for name in sorted(entries):
+        e = entries[name]
+        cells = [name, *("-" if e[k] is None else e[k] for k in HEADER.split("\t")[1:])]
+        lines.append("\t".join(cells + ([f"shown in {shown[name]}"] if name in shown else [])))
+    lines += [f"resume {name}: {_recovery(entries[name])}" for name in sorted(entries)
+              if entries[name]["state"] == "gone"]
+    return "".join(f"{line}\n" for line in lines)
+
+
+def attach(directory: str, own: str | None, *, proc=subprocess.run) -> str:
+    """Attaches the manager in tmux session `own` (None: outside tmux, no lease) to its directory, made with its events
+    file: in one roster() block takes the lease (manager.take) and syncs the entries (_sync); then, the lock released,
+    reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
+    same kind and sid. Returns the table (_table)."""
+    per_column = _per_column()
+    try:
+        manager.events(directory)
+        with manager.roster(directory) as r:
+            manager.take(r, directory, own, proc=proc)
+            if own is None:
+                print(f"workers: not in tmux: no lease on {directory}; another manager may attach", file=sys.stderr)
+            panes = _sync(r, _live(proc))
+        shown, opened = _reopen(panes, r["entries"], per_column, proc)
+        if opened:
+            live = _live(proc)
+            with manager.roster(directory) as r:
+                for name, kind, sid, session in opened:
+                    e = r["entries"].get(name)
+                    if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
+                        _place(r, name, live[session])
+    except manager.ManagerError as e:
+        raise WorkersError(str(e)) from e
+    return _table(r["entries"], shown)
+
+
+@contextlib.contextmanager
+def _leased(directory: str, own: str | None, proc, *, write: bool = True):
+    """directory's roster() block, its lease checked first (manager.check); a ManagerError as a WorkersError."""
+    try:
+        with manager.roster(directory, write=write) as r:
+            manager.check(r, directory, own, proc=proc)
+            yield r
+    except manager.ManagerError as e:
+        raise WorkersError(str(e)) from e
+
+
+def release(directory: str, own: str | None, *, proc=subprocess.run) -> None:
+    """Gives up the lease on directory: no holder, the cursor kept."""
+    with _leased(directory, own, proc) as r:
+        r["holder"] = None
+
+
+def note(directory: str, own: str | None, name: str, text: str, *, proc=subprocess.run) -> None:
+    """Sets entry `name`'s note to text; "" clears it."""
+    _check(name)
+    with _leased(directory, own, proc) as r:
+        if name not in r["entries"]:
+            raise WorkersError(f"{name} not in roster")
+        if len(text) > manager.NOTE_MAX:
+            raise WorkersError(f"note: {len(text)} characters: want at most {manager.NOTE_MAX}")
+        if not manager.printable(text):
+            raise WorkersError(f"note: {text!r}: want printable text (no control character, U+2028 or U+2029)")
+        r["entries"][name]["note"] = text or None
+
+
+def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
+    """Removes entry `name`; refused, nothing written, while a session keeps it live (_sessions)."""
+    _check(name)
+    with _leased(directory, own, proc) as r:
+        pane, driver = _sessions(name, manager.remove(r, name), _live(proc))
+        if pane or driver:
+            raise WorkersError(f"{name}: session {pane or driver} is live")
+
+
+def _directory(name: str | None) -> str:
+    """Manager `name`'s directory, the filesystem untouched; `name` None: the caller's tmux session's
     (manager.directory). Raises outside tmux without a name."""
     try:
         directory = manager.directory(name, proc=subprocess.run)
-        if directory is None:
-            raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
-        return manager.events(directory)
     except manager.ManagerError as e:
+        raise WorkersError(str(e)) from e
+    if directory is None:
+        raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
+    return directory
+
+
+def _events(name: str | None) -> str:
+    """The events file of _directory(name), once its lease check passes (_leased); makes nothing but roster.lock."""
+    directory = _directory(name)
+    with _leased(directory, _own(), subprocess.run, write=False):
+        pass
+    return manager.events(directory, create=False)
+
+
+def _own() -> str | None:
+    """The caller's tmux session (tui_claude.own_session); None outside tmux."""
+    try:
+        return tui_claude.own_session(proc=subprocess.run)
+    except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
 
 
@@ -341,9 +577,30 @@ def main(argv=None) -> int:
     p = sub.add_parser("next-event")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p.add_argument("--after", type=_after, required=True)
+    p = sub.add_parser("attach")
+    p.add_argument("--manager", help="manager directory to attach to (default: your tmux session's)")
+    p = sub.add_parser("release")
+    p.add_argument("--manager", help="manager directory to release (default: your tmux session's)")
+    p = sub.add_parser("note")
+    p.add_argument("name")
+    p.add_argument("text", help="'' clears it")
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
+    p = sub.add_parser("forget")
+    p.add_argument("name")
+    p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     a = ap.parse_args(argv)
     try:
-        if a.cmd == "start":
+        if a.cmd == "attach":
+            print(attach(_directory(a.manager), _own(), proc=subprocess.run), end="")
+        elif a.cmd == "release":
+            directory = _directory(a.manager)
+            release(directory, _own(), proc=subprocess.run)
+            print(f"workers: released {directory}")
+        elif a.cmd == "note":
+            note(_directory(a.manager), _own(), a.name, a.text, proc=subprocess.run)
+        elif a.cmd == "forget":
+            forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
+        elif a.cmd == "start":
             sid = start(a.name, _events(a.manager), cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
                         env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
