@@ -1,4 +1,4 @@
-"""A private tmux server per test, for integration tests that run workers.py, tui_claude.py and drive.py as processes
+"""A private tmux server per test, for integration tests that run crew.py, tui_claude.py and drive.py as processes
 against real tmux: Server (its socket and env, a control-mode client that shows a session, readers), events, wait and
 assert_grid. Stdlib only, importing no core module."""
 import os

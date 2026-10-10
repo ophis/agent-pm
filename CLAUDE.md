@@ -22,7 +22,7 @@ Integration tests (real processes end to end) go in a suite's `integration/` as 
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
-A change to `tui_claude.py`, `drive.py`, `workers.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); say in the PR what ran and what it showed.
+A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); say in the PR what ran and what it showed.
 
 ## Architecture
 

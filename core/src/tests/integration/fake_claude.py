@@ -1,4 +1,4 @@
-"""A stand-in `claude` for tests that run drive.py as a process, or workers.py and tui_claude.py through tmux; install()
+"""A stand-in `claude` for tests that run drive.py as a process, or crew.py and tui_claude.py through tmux; install()
 puts it on PATH. Stdlib only, importing no core module: it models Claude Code's CLI and `--settings` hooks, never
 drive.py's flags or a role/task.
 
