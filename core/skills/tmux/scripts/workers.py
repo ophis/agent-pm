@@ -113,22 +113,57 @@ def _early(name: str, proc) -> None:
         raise WorkersError(str(e)) from e
 
 
-def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=(), env: dict,
-          resume: str | None = None, split_from: str | None = None, split: str | None = None,
-          proc=subprocess.run) -> str:
-    """Start worker `name`, record its options on the tmux session; returns the session id.
-    `resume` (a session id) resumes that session instead of starting a new one. `split_from` or `split` replaces
-    tui_claude's automatic placement outside a tmux grid, which ignores them; it defaults the other. Its status line
-    and grid column size: core config's status_line and workers_per_column. A claude that exits within EARLY seconds
-    raises, the session kept (see _early)."""
+def _note_text(text: str) -> str | None:
+    """A note's text, checked (manager.NOTE_MAX, manager.printable); "" is None."""
+    if len(text) > manager.NOTE_MAX:
+        raise WorkersError(f"note: {len(text)} characters: want at most {manager.NOTE_MAX}")
+    if not manager.printable(text):
+        raise WorkersError(f"note: {text!r}: want printable text (no control character, U+2028 or U+2029)")
+    return text or None
+
+
+def _record(name: str, directory: str, own: str | None, *, sid: str, cwd: str, note: str | None, flags,
+            split: str | None, split_from: str | None, proc) -> None:
+    """Writes worker `name`'s roster entry (manager.record) in one lease-checked block: its recovery argv, start
+    --resume <sid>, and its session's placement (_placed). A failure only prints its line (manager.unwritten)."""
+    resume = [sys.executable, os.path.abspath(__file__), "start", name, "--manager", os.path.basename(directory),
+              "--resume", sid, "--cwd", cwd, *(["--split", split] if split is not None else []),
+              *(["--split-from", split_from] if split_from is not None else []), *(["--", *flags] if flags else [])]
+    try:
+        row = _live(proc).get(name)
+    except WorkersError:
+        row = None
+    try:
+        with _leased(directory, own, proc) as r:
+            value = manager.entry("worker", sid=sid, cwd=cwd, resume=resume, note=note, split=split,
+                                  split_from=split_from)
+            manager.record(r, name, value if row is None else _placed(value, row))
+    except WorkersError as e:
+        manager.unwritten(name, e)
+
+
+def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str | None = None,
+          note: str | None = None, flags=(), env: dict, resume: str | None = None, split_from: str | None = None,
+          split: str | None = None, proc=subprocess.run) -> str:
+    """Start worker `name` for manager directory `directory`, its lease checked for `own` (_leased) and its events
+    file used; record its options on the tmux session, then its roster entry (_record); returns the session id.
+    `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the entry's.
+    `split_from` or `split` replaces tui_claude's automatic placement outside a tmux grid, which ignores them; it
+    defaults the other. Its status line and grid column size: core config's status_line and workers_per_column. A
+    claude that exits within EARLY seconds raises, the session and the entry kept (see _early)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
     if resume is not None and not SESSION_ID.fullmatch(resume):
         raise WorkersError(f"--resume {resume}: not a session id")
     _refuse(flags)
+    if note is not None:
+        note = _note_text(note)
+    with _leased(directory, own, proc, write=False):
+        pass
+    events = manager.events(directory, create=False)
     status_line, per_column = _status_line(), _per_column()
-    events, cwd = os.path.abspath(events), os.path.abspath(cwd)
+    cwd = os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
     claude = shutil.which("claude", path=env.get("PATH"))
@@ -154,6 +189,8 @@ def start(name: str, events: str, *, cwd: str, prompt: str | None = None, flags=
             except WorkersError:
                 pass
             raise WorkersError(f"{e}; start undone") from e
+    _record(name, directory, own, sid=sid, cwd=cwd, note=note, flags=flags, split=split, split_from=split_from,
+            proc=proc)
     _early(name, proc)
     return sid
 
@@ -362,11 +399,17 @@ def _finished(cwd: str) -> bool:
     return False
 
 
-def _place(r: dict, name: str, options: dict) -> None:
-    """Entry `name`'s pane and opener from a live session's, each only when valid (manager.set_entry)."""
+def _placed(e: dict, options: dict) -> dict:
+    """Entry e with a live session's pane and opener, each only when valid (manager.entry)."""
     for key in ("pane", "opener"):
         with contextlib.suppress(manager.ManagerError):
-            manager.set_entry(r, name, {**r["entries"][name], key: options[key]})
+            e = manager.entry(**{**e, key: options[key]})
+    return e
+
+
+def _place(r: dict, name: str, options: dict) -> None:
+    """Entry `name`'s pane and opener from a live session's (_placed)."""
+    r["entries"][name] = _placed(r["entries"][name], options)
 
 
 def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
@@ -504,11 +547,7 @@ def note(directory: str, own: str | None, name: str, text: str, *, proc=subproce
     with _leased(directory, own, proc) as r:
         if name not in r["entries"]:
             raise WorkersError(f"{name} not in roster")
-        if len(text) > manager.NOTE_MAX:
-            raise WorkersError(f"note: {len(text)} characters: want at most {manager.NOTE_MAX}")
-        if not manager.printable(text):
-            raise WorkersError(f"note: {text!r}: want printable text (no control character, U+2028 or U+2029)")
-        r["entries"][name]["note"] = text or None
+        r["entries"][name]["note"] = _note_text(text)
 
 
 def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
@@ -570,6 +609,7 @@ def main(argv=None) -> int:
     p.add_argument("--cwd")
     p.add_argument("--prompt")
     p.add_argument("--resume", metavar="SID", help="a session id")
+    p.add_argument("--note", help="its roster note, as workers.py note sets it")
     p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
     for cmd in ("restart", "reply"):
@@ -601,8 +641,9 @@ def main(argv=None) -> int:
         elif a.cmd == "forget":
             forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "start":
-            sid = start(a.name, _events(a.manager), cwd=a.cwd or os.getcwd(), prompt=a.prompt, flags=flags,
-                        env=dict(os.environ), resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
+            sid = start(a.name, _directory(a.manager), own=_own(), cwd=a.cwd or os.getcwd(), prompt=a.prompt,
+                        note=a.note, flags=flags, env=dict(os.environ), resume=a.resume, split_from=a.split_from,
+                        split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, env=dict(os.environ), proc=subprocess.run)
