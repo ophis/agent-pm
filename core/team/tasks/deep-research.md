@@ -16,7 +16,7 @@ Run research workflows, then write the report yourself.
    - **Report progress** at each round's end:
      [agent-pm-progress:round] the round and its agent count
 4. **Failure** ([Researcher › Failure](#failure)).
-5. **Report** ([Researcher › Standards](#standards)). Revising a Light Research report (its `Light Research.` type line marks it, in whatever language it was written) → drop that line.
+5. **Report** ([Researcher › Standards](#standards)). Revising a Light Research report (its Light Research type line marks it, in whatever language it was written) → replace that line with the Template's.
 6. **Finish.** `status: done`.
 
 ## Resume
