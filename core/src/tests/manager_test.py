@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import errno
 import fcntl
 import io
 import json
@@ -31,6 +32,20 @@ def tmux(out="own\n"):
 
 def mode(path):
     return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+@contextlib.contextmanager
+def within(seconds=10):
+    def fire(*_):
+        raise AssertionError("blocked")
+
+    old = signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
 
 
 class ManagerTest(unittest.TestCase):
@@ -413,19 +428,6 @@ class RosterTest(unittest.TestCase):
 
         return unittest.mock.patch("os.fstat", fstat)
 
-    @contextlib.contextmanager
-    def within(self, seconds=10):
-        def fire(*_):
-            raise AssertionError("blocked")
-
-        old = signal.signal(signal.SIGALRM, fire)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old)
-
     def test_fresh_roster_is_written_0600_with_the_lock(self):
         self.addCleanup(os.umask, os.umask(0))
         with manager.roster(self.dir) as r:
@@ -595,7 +597,7 @@ class RosterTest(unittest.TestCase):
 
     def test_roster_json_fifo_refused_without_blocking(self):
         os.mkfifo(self.path)
-        with self.within():
+        with within():
             self.refused(f"{self.path}: not a regular file owned by you")
             self.refused(f"{self.path}: not a regular file owned by you", write=False)
         self.assertTrue(stat.S_ISFIFO(os.lstat(self.path).st_mode))
@@ -978,6 +980,309 @@ class LeaseTest(unittest.TestCase):
             holder = json.load(f)["holder"]
         self.assertEqual(holder["session"], winners[0])
         self.assertEqual(out[loser][0].strip(), self.message(winners[0], holder["since"]))
+
+
+WIDTH = 64
+SPAN = manager.EVENTS_MAX // WIDTH
+WRITER = b"12:00:00 w9 done\n"
+NOT_REGULAR = "{}: not a regular file owned by you"
+
+
+def numbered(count, *, start=1, first=WIDTH):
+    """count lines `line <i>` from i = start, dot-padded to WIDTH bytes with their newline (the first to `first`)."""
+    return b"".join(f"line {i}".ljust((first if i == start else WIDTH) - 1, ".").encode() + b"\n"
+                    for i in range(start, start + count))
+
+
+class CursorTest(unittest.TestCase):
+    def setUp(self):
+        self.agent_pm = hermetic.home(self)
+        self.dir = os.path.join(self.agent_pm, "managers", "m1")
+        self.events = os.path.join(self.dir, "events")
+        self.old = self.events + ".1"
+        self.path = os.path.join(self.dir, "roster.json")
+        manager.ensure(self.dir)
+
+    def doc(self, cursor=0, gen=0):
+        return {"version": 1, "holder": None, "cursor": cursor, "gen": gen, "entries": {}}
+
+    def write(self, data, path=None):
+        with open(path or self.events, "wb") as f:
+            f.write(data)
+        os.chmod(path or self.events, 0o600)
+        return data
+
+    def read(self, path=None):
+        with open(path or self.events, "rb") as f:
+            return f.read()
+
+    def due_file(self, tail=b""):
+        """events over EVENTS_MAX with tail after SPAN + 3 lines; returns the cursor leaving the last 3 unhandled."""
+        self.write(numbered(SPAN + 3) + tail)
+        return SPAN
+
+    def rotate(self, r, during=lambda: None):
+        """manager.rotate with a fake sleep running `during`: (its result, the seconds slept, stderr)."""
+        slept, err = [], io.StringIO()
+
+        def sleep(seconds):
+            slept.append(seconds)
+            during()
+
+        with contextlib.redirect_stderr(err):
+            result = manager.rotate(r, self.dir, sleep=sleep)
+        return result, slept, err.getvalue()
+
+    def lstat_as(self, path, change):
+        """os.lstat answering for path with change(path, its real lstat)."""
+        real = os.lstat
+
+        def lstat(p, *args, **kw):
+            st = real(p, *args, **kw)
+            return change(p, st) if p == path else st
+
+        return unittest.mock.patch("os.lstat", lstat)
+
+    def test_constants(self):
+        self.assertEqual((manager.EVENTS_MAX, manager.SETTLE), (1 << 20, 1))
+        self.assertTrue(issubclass(manager.Stale, manager.ManagerError))
+
+    def test_missing_or_empty_has_no_lines(self):
+        for label, make in (("missing", lambda: None), ("empty", lambda: self.write(b""))):
+            with self.subTest(label):
+                make()
+                self.assertEqual(manager.lines(self.events), 0)
+                self.assertEqual([manager.offset(self.events, n) for n in (0, 3)], [0, 0])
+                self.assertEqual([manager.following(self.events, n) for n in (0, 3)], [b"", b""])
+
+    def test_a_trailing_fragment_is_not_a_line_and_follows_as_is(self):
+        self.write(b"a\nbb\nccc")
+        self.assertEqual(manager.lines(self.events), 2)
+        self.assertEqual([manager.offset(self.events, n) for n in range(5)], [0, 2, 5, 8, 8])
+        self.assertEqual([manager.following(self.events, n) for n in range(4)], [b"a\nbb\nccc", b"bb\nccc", b"ccc", b""])
+
+    def test_lines_offset_and_following_across_blocks(self):
+        data = self.write(numbered(3 * SPAN // 2))
+        self.assertEqual(manager.lines(self.events), 3 * SPAN // 2)
+        self.assertEqual(manager.offset(self.events, 12345), 12345 * WIDTH)
+        self.assertEqual(manager.following(self.events, 12345), data[12345 * WIDTH:])
+        self.assertEqual(manager.following(self.events, 3 * SPAN // 2 - 2), numbered(2, start=3 * SPAN // 2 - 1))
+
+    def test_symlink_and_fifo_refused_without_blocking(self):
+        target = os.path.join(os.path.dirname(self.agent_pm), "target")
+        with open(target, "wb") as f:
+            f.write(b"a\nb\n")
+        reads = (manager.lines, lambda p: manager.offset(p, 1), lambda p: manager.following(p, 1))
+        os.symlink(target, self.events)
+        for kind in ("symlink", "fifo"):
+            if kind == "fifo":
+                os.unlink(self.events)
+                os.mkfifo(self.events)
+            for read in reads:
+                with self.subTest(kind), within(), self.assertRaises(manager.ManagerError) as cm:
+                    read(self.events)
+                self.assertEqual(str(cm.exception), NOT_REGULAR.format(self.events))
+        with open(target, "rb") as f:
+            self.assertEqual(f.read(), b"a\nb\n")
+
+    def test_due_boundaries(self):
+        half = manager.EVENTS_MAX // 2
+        cases = [
+            ("exactly EVENTS_MAX, all handled", numbered(SPAN), SPAN, manager.EVENTS_MAX, False),
+            ("over, handled one byte short", numbered(SPAN + 1, first=WIDTH - 1), SPAN // 2, half - 1, False),
+            ("over, handled exactly half", numbered(SPAN + 1), SPAN // 2, half, True),
+            ("over, cursor 0", numbered(2 * SPAN), 0, 0, False),
+        ]
+        for label, data, cursor, handled, want in cases:
+            with self.subTest(label):
+                self.write(data)
+                self.assertEqual(manager.offset(self.events, cursor), handled)
+                r = self.doc(cursor)
+                self.assertIs(manager.due(r, self.dir), want)
+                self.assertEqual(r, self.doc(cursor))
+        os.unlink(self.events)
+        self.assertIs(manager.due(self.doc(5), self.dir), False)
+
+    def test_advance_checks_the_gen_first(self):
+        self.write(numbered(5))
+        r = self.doc(2, 1)
+        for after in (3, 9, None):
+            with self.subTest(after=after), self.assertRaises(manager.Stale) as cm:
+                manager.advance(r, self.dir, after, 0)
+            self.assertEqual(str(cm.exception), "stale line numbers (gen 0, now 1): run workers.py attach")
+        self.assertEqual(r, self.doc(2, 1))
+
+    def test_advance_past_the_end_is_stale(self):
+        self.write(numbered(5) + b"line 6")
+        r = self.doc(2, 1)
+        with self.assertRaises(manager.Stale) as cm:
+            manager.advance(r, self.dir, 6, 1)
+        self.assertEqual(str(cm.exception), f"line 6 is past the end of {self.events} (5 lines): run workers.py attach")
+        self.assertEqual(r, self.doc(2, 1))
+        os.unlink(self.events)
+        with self.assertRaisesRegex(manager.Stale, r"^line 1 is past the end of .* \(0 lines\)"):
+            manager.advance(r, self.dir, 1, 1)
+
+    def test_advance_moves_the_cursor_forward_only_and_returns_the_line(self):
+        self.write(numbered(5) + b"line 6")
+        cases = [(0, 3, 3, 3), (3, 1, 3, 1), (3, 4, 4, 4), (3, 5, 5, 5), (0, None, 5, 5), (5, None, 5, 5), (0, 0, 0, 0)]
+        for cursor, after, moved, resolved in cases:
+            with self.subTest(cursor=cursor, after=after):
+                r = self.doc(cursor, 2)
+                self.assertEqual(manager.advance(r, self.dir, after, 2), resolved)
+                self.assertEqual(r, self.doc(moved, 2))
+
+    def test_advance_on_a_missing_events_file(self):
+        r = self.doc()
+        self.assertEqual([manager.advance(r, self.dir, after, 0) for after in (0, None)], [0, 0])
+        self.assertEqual(r, self.doc())
+
+    def test_rotate_not_due_touches_nothing(self):
+        for label, data, cursor in (("exactly EVENTS_MAX", numbered(SPAN), SPAN), ("cursor 0", numbered(2 * SPAN), 0),
+                                    ("missing", None, 0)):
+            with self.subTest(label):
+                if data is None:
+                    os.unlink(self.events)
+                else:
+                    self.write(data)
+                r = self.doc(cursor, 2)
+                self.assertEqual(self.rotate(r), (False, [], ""))
+                self.assertEqual(r, self.doc(cursor, 2))
+                self.assertEqual(os.listdir(self.dir), [] if data is None else ["events"])
+                if data is not None:
+                    self.assertEqual(self.read(), data)
+
+    def test_rotate_keeps_the_lines_after_the_cursor_in_a_fresh_0600_events(self):
+        self.addCleanup(os.umask, os.umask(0o022))
+        cursor = self.due_file()
+        original, ino = self.read(), os.lstat(self.events).st_ino
+        r = self.doc(cursor, 2)
+        self.assertEqual(self.rotate(r), (True, [manager.SETTLE], ""))
+        self.assertEqual(r, self.doc(0, 3))
+        self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, original))
+        self.assertEqual(self.read(), numbered(3, start=SPAN + 1))
+        self.assertTrue(stat.S_ISREG(os.lstat(self.events).st_mode))
+        self.assertEqual(mode(self.events), 0o600)
+        self.assertNotEqual(os.lstat(self.events).st_ino, ino)
+
+    def test_rotate_puts_a_line_appended_during_the_wait_first(self):
+        cursor = self.due_file()
+
+        def append():
+            with open(self.events, "ab") as f:
+                f.write(WRITER)
+
+        r = self.doc(cursor)
+        self.assertEqual(self.rotate(r, append)[:2], (True, [manager.SETTLE]))
+        self.assertEqual(self.read(), WRITER + numbered(3, start=SPAN + 1))
+
+    def test_rotate_ends_a_trailing_fragment(self):
+        cursor = self.due_file(b"12:00:01 w9 do")
+        self.assertIs(self.rotate(self.doc(cursor))[0], True)
+        self.assertEqual(self.read(), numbered(3, start=SPAN + 1) + b"12:00:01 w9 do\n")
+
+    def test_rotate_replaces_an_old_events_1(self):
+        cursor = self.due_file()
+        original = self.read()
+        self.write(b"old\n", self.old)
+        self.assertIs(self.rotate(self.doc(cursor))[0], True)
+        self.assertEqual(self.read(self.old), original)
+        self.assertEqual(sorted(os.listdir(self.dir)), ["events", "events.1"])
+
+    def test_rotate_makes_a_writers_0644_events_0600(self):
+        self.addCleanup(os.umask, os.umask(0o022))
+        cursor = self.due_file()
+        real, made = os.replace, []
+
+        def replace(src, dst, *args, **kw):
+            real(src, dst, *args, **kw)
+            if dst == self.old:
+                with open(self.events, "ab") as f:
+                    f.write(WRITER)
+                made.append(mode(self.events))
+
+        with unittest.mock.patch("os.replace", replace):
+            self.assertIs(self.rotate(self.doc(cursor))[0], True)
+        self.assertEqual(made, [0o644])
+        self.assertEqual(mode(self.events), 0o600)
+        self.assertEqual(self.read(), WRITER + numbered(3, start=SPAN + 1))
+
+    def test_rotate_failing_after_the_rename_still_resets_the_cursor_and_bumps_the_gen(self):
+        cursor = self.due_file()
+        original = self.read()
+        with manager.roster(self.dir) as r:
+            r.update(cursor=cursor, gen=2)
+        real = os.open
+
+        def open_(path, flags, *args, **kw):
+            if path == self.events and flags & os.O_APPEND and flags & os.O_NONBLOCK:
+                raise OSError(errno.EIO, "Input/output error")
+            return real(path, flags, *args, **kw)
+
+        err = io.StringIO()
+        with unittest.mock.patch("os.open", open_), contextlib.redirect_stderr(err), manager.roster(self.dir) as r:
+            self.assertIs(manager.rotate(r, self.dir, sleep=lambda seconds: None), True)
+        self.assertEqual(err.getvalue(), f"manager: rotate: {self.events}: Input/output error: lines after {cursor} of "
+                                         f"{self.old} not copied\n")
+        with manager.roster(self.dir, write=False) as r:
+            self.assertEqual((r["cursor"], r["gen"]), (0, 3))
+        self.assertEqual((self.read(self.old), self.read()), (original, b""))
+        self.assertEqual(mode(self.events), 0o600)
+
+    def test_rotate_failing_to_rename_changes_nothing(self):
+        cursor = self.due_file()
+        original = self.read()
+        r = self.doc(cursor, 2)
+        with unittest.mock.patch("os.replace", side_effect=OSError(errno.EIO, "Input/output error")), \
+                self.assertRaises(manager.ManagerError) as cm:
+            self.rotate(r)
+        self.assertEqual(str(cm.exception), f"{self.events}: Input/output error")
+        self.assertEqual(r, self.doc(cursor, 2))
+        self.assertEqual((os.listdir(self.dir), self.read()), (["events"], original))
+
+    def test_rotate_refuses_a_symlink_fifo_or_foreign_events_or_events_1(self):
+        target = os.path.join(os.path.dirname(self.agent_pm), "target")
+
+        def foreign(path, st):
+            return types.SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1, st_size=st.st_size)
+
+        cases = [
+            ("events.1 a symlink", self.old, lambda: os.symlink(target, self.old), None),
+            ("events.1 a fifo", self.old, lambda: os.mkfifo(self.old), None),
+            ("events.1 foreign", self.old, lambda: self.write(b"old\n", self.old), foreign),
+            ("events foreign", self.events, lambda: None, foreign),
+            ("events a symlink, lstat seeing its target", self.events,
+             lambda: (os.rename(self.events, target), os.symlink(target, self.events)), lambda path, st: os.stat(path)),
+        ]
+        for label, path, make, change in cases:
+            with self.subTest(label):
+                for p in (self.events, self.old, target):
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(p)
+                cursor = self.due_file()
+                make()
+                inodes = {name: os.lstat(os.path.join(self.dir, name)).st_ino for name in os.listdir(self.dir)}
+                r = self.doc(cursor, 2)
+                with self.lstat_as(path, change) if change else contextlib.nullcontext(), within(), \
+                        self.assertRaises(manager.ManagerError) as cm:
+                    self.rotate(r)
+                self.assertEqual(str(cm.exception), NOT_REGULAR.format(path))
+                self.assertEqual(r, self.doc(cursor, 2))
+                self.assertEqual({name: os.lstat(os.path.join(self.dir, name)).st_ino for name in os.listdir(self.dir)},
+                                 inodes)
+
+    def test_a_refusal_inside_roster_leaves_roster_json_unchanged(self):
+        cursor = self.due_file()
+        with manager.roster(self.dir) as r:
+            r.update(cursor=cursor, gen=2)
+        with open(self.path, "rb") as f:
+            raw = f.read()
+        os.symlink(os.path.join(os.path.dirname(self.agent_pm), "target"), self.old)
+        with self.assertRaises(manager.ManagerError), manager.roster(self.dir) as r:
+            manager.rotate(r, self.dir, sleep=lambda seconds: None)
+        with open(self.path, "rb") as f:
+            self.assertEqual(f.read(), raw)
+        self.assertTrue(os.path.islink(self.old))
 
 
 if __name__ == "__main__":
