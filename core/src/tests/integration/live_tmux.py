@@ -49,7 +49,7 @@ class Server:
         os.mkdir(self.bin)
         self.path = fake_claude.install(self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin")
         case.addCleanup(self._close_clients)
-        case.addCleanup(self._kill)
+        case.addCleanup(self.kill)
         if len(os.fsencode(self.socket)) > SOCKET_MAX:
             case.fail(f"tmux socket path over {SOCKET_MAX} bytes: {self.socket}")
 
@@ -136,7 +136,8 @@ class Server:
             self.case.fail(f"tmux {' '.join(args)}: exit {res.returncode}: {res.stderr.strip()}")
         return res.stdout
 
-    def _kill(self) -> None:
+    def kill(self) -> None:
+        """Kills the server; returns once it and its panes' processes have ended. start() starts it again."""
         res = self.tmux("list-panes", "-a", "-F", "#{pid} #{pane_pid}")
         self.tmux("kill-server")
         pids = {int(p) for p in res.stdout.split() if p.isdigit()} if res.returncode == 0 else set()
