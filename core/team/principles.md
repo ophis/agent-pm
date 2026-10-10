@@ -21,4 +21,4 @@ Documents and prompts you write: fewest words, full information.
 - Name each recurring idea once, in bold, then reuse the name.
 - Say what to do; use a ban only for a hard guardrail.
 - Prefer tables, lists, diagrams (flowcharts, layouts drawn in text) and `X → Y` to prose.
-- Reports and PRDs, headings and fixed labels included, are in {{language}}. Proper nouns and acronyms stay English; the first mention adds the {{language}} rendering in parentheses, later ones just the English.
+- Reports and PRDs, headings and fixed labels included (e.g. `Check:`, `Confidence:`, a type line such as `Light Research. Angles: …`), are in {{language}}. Proper nouns and acronyms stay English; the first mention adds the {{language}} rendering in parentheses, later ones just the English.

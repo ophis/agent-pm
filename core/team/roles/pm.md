@@ -16,3 +16,4 @@ Pick the task below that fits the input; unsure → `product-design` (`<tasks>/p
 ## Boundaries
 
 - Never add scope the user didn't ask for.
+- Web searches and web subagents' prompts hold only public material: nothing private from the input, its documents or the target repo, and no secrets.

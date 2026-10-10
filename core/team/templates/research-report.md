@@ -6,7 +6,7 @@ The type; for local or mixed, each `<repo>` at `<commit>`.
 One paragraph of ≤ 5 sentences. The first answers the question, with an overall confidence; then the findings it rests on and the recommendation, labeled as your synthesis.
 
 ## Comparison table
-Optional; omit when the deliverable asks for no comparison. Labeled as your synthesis.
+Optional; omit when the input asks for no comparison. Labeled as your synthesis.
 
 ## Findings
 One subsection per part of the question. One line per finding: the finding, `Confidence: high | medium | low`, its sources (`[n]`), and `single-source` or `unverified` when so. Sources disagree → name both and which you favor, and why; confidence at most medium.
