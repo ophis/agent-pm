@@ -19,7 +19,7 @@ Tests: a unit test of module `<m>` is `tests/unit/<pkg>/<m>_test.py`, an integra
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
-A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); say in the PR what ran and what it showed.
+A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and `codex` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); a change to a client's worker capability (`worker()`, `worker_reply()`, `command_env`, `worker_dialogs`) or to `core/src/clients/_codex_hook.py` also needs a live worker of that client: `crew.py start --client <it> --prompt …`, its `done` and `reply`, a follow-up, `restart`. Say in the PR what ran and what it showed.
 
 ## Architecture
 
