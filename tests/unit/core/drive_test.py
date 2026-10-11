@@ -29,6 +29,7 @@ import compose
 import drive
 import manager
 import report
+import tui_claude
 from clients import codex
 
 CORE = os.path.join(ROOT, "core")
@@ -233,6 +234,75 @@ assert "clients.skill" not in sys.modules
         self.assertIs(cm.exception.__cause__, failure)
 
 
+class ClientWorkers(unittest.TestCase):
+    """The worker interface's defaults, and the configured clients a crew.py start picks from."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.agent_pm = hermetic.home(self)
+
+    def config(self, text):
+        with open(os.path.join(self.tmp.name, "config.toml"), "w") as f:
+            f.write(text)
+
+    def test_a_client_without_the_worker_capability_refuses(self):
+        spec = clients.WorkerSpec(name="w1", sid=SID, cwd=self.tmp.name, flags=(), prompt=None,
+                                  events=os.path.join(self.tmp.name, "events"), resume=False, env={})
+        for client in (clients.Client({}), SkillClient({})):
+            name = type(client).__name__
+            with self.subTest(name):
+                with self.assertRaisesRegex(compose.ConfigError, f"^{name} has no worker command$"):
+                    client.worker(spec)
+                with self.assertRaisesRegex(compose.ConfigError, f"^{name} has no worker reply$"):
+                    client.worker_reply(SID)
+        self.assertEqual((clients.Client.session_env, dict(clients.Client.command_env), clients.Client.worker_dialogs),
+                         ("", {}, ()))
+        self.assertEqual(clients.WorkerCommand(["/x"]).env, {})
+
+    def test_configured_names_the_client_tables_sorted_the_local_file_on_top(self):
+        self.config('[clients.skill]\nimplementation = "SkillClient"\n'
+                    '[clients.claude]\nimplementation = "ClaudeClient"\n')
+        self.assertEqual(clients.configured(self.tmp.name), ["claude", "skill"])
+        self.assertEqual(clients.configured(CORE), ["claude", "codex", "skill"])
+        with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
+            f.write('[clients.extra]\nimplementation = "ExtraClient"\n')
+        self.assertEqual(clients.configured(self.tmp.name), ["claude", "extra", "skill"])
+
+    def test_configured_without_a_config_or_a_clients_table(self):
+        with self.assertRaisesRegex(compose.ConfigError, "^no core config "):
+            clients.configured(self.tmp.name)
+        for text in ("tier = 1\n", "clients = 1\n"):
+            with self.subTest(text):
+                self.config(text)
+                self.assertEqual(clients.configured(self.tmp.name), [])
+        self.config("[clients\n")
+        with self.assertRaisesRegex(compose.ConfigError, "^core config "):
+            clients.configured(self.tmp.name)
+
+    def test_loaded_leaves_out_a_client_whose_definition_fails_with_one_stderr_line(self):
+        self.config('[clients.skill]\nimplementation = "SkillClient"\n[clients.broken]\nimplementation = "X"\n'
+                    '[clients.claude]\nimplementation = "ClaudeClient"\n[clients.codex]\n')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(clients.loaded(self.tmp.name), {"claude": ClaudeClient, "skill": SkillClient})
+        self.assertEqual(err.getvalue(), "clients: broken skipped: client 'broken' has no module clients.broken\n"
+                                         "clients: codex skipped: [clients.codex].implementation must name a class "
+                                         "in clients.codex\n")
+
+    def test_caller_is_the_client_whose_session_marker_the_env_holds(self):
+        a = type("AClient", (clients.Client,), {"session_env": "A_SESSION"})
+        b = type("BClient", (clients.Client,), {"session_env": "B_SESSION"})
+        classes = {"a": a, "b": b, "plain": clients.Client}
+        for env, want in (({"PATH": "/bin", "": "1"}, None), ({"A_SESSION": "1"}, "a"), ({"B_SESSION": ""}, "b")):
+            with self.subTest(env=env):
+                self.assertEqual(clients.caller(env, classes), want)
+        with self.assertRaises(compose.ConfigError) as cm:
+            clients.caller({"A_SESSION": "1", "B_SESSION": "1"}, classes)
+        self.assertEqual(str(cm.exception), "the caller runs inside more than one client's session "
+                                            "(a: A_SESSION, b: B_SESSION): pass --client")
+        self.assertEqual(clients.caller({"CLAUDECODE": "1"}, clients.loaded(CORE)), "claude")
+
+
 class Claude(Base):
     def test_the_prompt_names_the_file_the_agent_writes_the_deliverable_to(self):
         elsewhere = os.path.join(self.tmp.name, "elsewhere", "out.md")
@@ -399,6 +469,205 @@ class Claude(Base):
             launch = self.plan(client="claude", cwd=self.repo)
         self.assertEqual(launch.resume, f"cd {self.repo} && claude --resume {SID} --add-dir {self.work}")
         self.assertEqual(launch.transcript, claude_client.transcript(self.repo, SID))
+
+
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
+TOOL = {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}
+
+
+def record(kind, *blocks, mid=None):
+    """A transcript line: a `kind` record whose message holds blocks, its id mid."""
+    message = {"content": list(blocks)}
+    if mid:
+        message["id"] = mid
+    return json.dumps({"type": kind, "message": message}, ensure_ascii=False) + "\n"
+
+
+def text_block(t):
+    return {"type": "text", "text": t}
+
+
+class ClaudeWorker(unittest.TestCase):
+    """ClaudeClient's worker capability: crew.py's claude command and a worker's reply."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.bin = os.path.join(self.root, "bin")
+        os.mkdir(self.bin)
+        self.exe = os.path.join(self.bin, "claude")
+        with open(self.exe, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(self.exe, 0o755)
+        self.events = os.path.join(self.root, "events")
+        self.cfg = os.path.join(self.root, "cfg")
+        self.client = claude()
+
+    def spec(self, **kw):
+        return clients.WorkerSpec(**{"name": "w1", "sid": SID, "cwd": self.root, "flags": (), "prompt": None,
+                                     "events": self.events, "resume": False, "env": {"PATH": self.bin}, **kw})
+
+    def test_session_marker_and_context_variables(self):
+        self.assertEqual(ClaudeClient.session_env, "CLAUDECODE")
+        self.assertEqual(dict(ClaudeClient.command_env), dict.fromkeys((
+            *tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")))
+        with self.assertRaises(TypeError):
+            ClaudeClient.command_env["X"] = "1"
+
+    def test_the_start_and_restart_argv(self):
+        """crew.py's start argv (a new session, with or without a prompt, or a resumed one: one `--` however the prompt
+        starts) and its restart argv (resumed, no prompt, the stored claude), tui_claude's hooks writing the events."""
+        flags = ("--model", "m c")
+        head = [self.exe, "--session-id", SID, "--name", "w1", *flags]
+        cases = (({}, head), ({"prompt": ""}, head), ({"prompt": "do it"}, [*head, "--", "do it"]),
+                 ({"prompt": "-x --model"}, [*head, "--", "-x --model"]),
+                 ({"resume": True, "prompt": "p"}, [self.exe, "--resume", SID, "--name", "w1", *flags, "--", "p"]),
+                 ({"resume": True, "exe": "/stored/claude", "env": {}},
+                  ["/stored/claude", "--resume", SID, "--name", "w1", *flags]))
+        for kw, argv in cases:
+            with self.subTest(**kw):
+                self.assertEqual(self.client.worker(self.spec(flags=flags, **kw)),
+                                 clients.WorkerCommand(tui_claude.with_hooks(argv, self.events)))
+
+    def test_own_settings_merged_with_the_hooks(self):
+        own = {"type": "command", "command": "mine"}
+        flags = ("--settings", json.dumps({"model": "x", "hooks": {"Stop": [{"hooks": [own]}]}}))
+        argv = self.client.worker(self.spec(flags=flags)).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        settings = json.loads(argv[argv.index("--settings") + 1])
+        self.assertEqual(settings["hooks"]["Stop"],
+                         [{"hooks": [own]}, *json.loads(tui_claude.hooks(self.events))["hooks"]["Stop"]])
+        with self.assertRaisesRegex(compose.ConfigError, "^--settings"):
+            self.client.worker(self.spec(flags=("--settings", "[]")))
+
+    def test_claude_resolved_on_the_specs_path(self):
+        here = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, here)
+        self.assertEqual(self.client.worker(self.spec(env={"PATH": "bin"})).argv[0], self.exe)
+        for env in ({"PATH": os.path.join(self.root, "empty")}, {"PATH": ""}):
+            with self.subTest(env=env), self.assertRaisesRegex(compose.ConfigError, "^claude not found on PATH$"):
+                self.client.worker(self.spec(env=env))
+
+    def test_flags_that_pick_the_session_are_refused_before_a_bare_dashdash(self):
+        empty = {"PATH": os.path.join(self.root, "empty")}
+        for flag in REFUSED:
+            for given in [(flag, "x")] + ([(f"{flag}=x",)] if flag.startswith("--") else []):
+                for resume in (False, True):
+                    with self.subTest(given=given, resume=resume):
+                        with self.assertRaises(compose.ConfigError) as cm:
+                            self.client.worker(self.spec(flags=("--model", "m", *given), resume=resume, env=empty))
+                        self.assertEqual(str(cm.exception),
+                                         f"{flag}: crew.py picks the session; use start --resume <sid>")
+                        argv = self.client.worker(self.spec(flags=("--model", "m", "--", *given), resume=resume)).argv
+                        self.assertEqual(argv[-len(given) - 1:], ["--", *given])
+
+    def transcript(self, *lines, sid=SID, project="-p"):
+        d = os.path.join(self.cfg, "projects", project)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            f.write("".join(lines))
+
+    def reply(self, sid=SID):
+        with unittest.mock.patch.object(claude_client, "config_dir", return_value=self.cfg):
+            return self.client.worker_reply(sid)
+
+    def test_reply_is_the_last_text_bearing_assistant_message(self):
+        """Its text blocks, from each of its records (one id; none: a message of its own), other records between them
+        skipped; a line without its newline counts only when whole."""
+        cases = {
+            "the last assistant text wins": ((record("assistant", text_block("first")), record("user", text_block("q")),
+                                              record("assistant", text_block("a"), TOOL, text_block("b")),
+                                              record("assistant", TOOL), "not json\n",
+                                              record("user", text_block("later"))), "a\nb"),
+            "blocks of one message joined": ((record("assistant", text_block("old"), mid="m0"),
+                                              record("assistant", text_block("a"), mid="m1"),
+                                              record("assistant", TOOL, mid="m1"),
+                                              record("assistant", text_block("b"), mid="m1"),
+                                              record("assistant", TOOL, mid="m2")), "a\nb"),
+            "lines without id are own messages": ((record("assistant", text_block("a")),
+                                                   record("assistant", text_block("b"))), "b"),
+            "other records inside a message skipped": ((record("assistant", text_block("old"), mid="m0"),
+                                                        record("assistant", text_block("a"), mid="m1"),
+                                                        record("user", text_block("result")), "not json\n",
+                                                        record("assistant", text_block("b"), mid="m1")), "a\nb"),
+            "a cut last line": ((record("assistant", text_block("a"), mid="m1"),
+                                 record("assistant", text_block("cut"), mid="m2")[:-10]), "a"),
+            "a whole last line without its newline": ((record("assistant", text_block("a"), mid="m1"),
+                                                       record("assistant", text_block("whole"), mid="m2").rstrip("\n")),
+                                                      "whole"),
+            "none yet": ((record("user", text_block("q")), record("assistant", TOOL)), ""),
+            "empty": ((), ""),
+            "blank lines": (("\n", "\n"), ""),
+            "no text, a fragment last": ((record("user", text_block("q")), record("assistant", TOOL, mid="m1"), "x"),
+                                         ""),
+        }
+        for why, (lines, want) in cases.items():
+            with self.subTest(why):
+                self.transcript(*lines)
+                self.assertEqual(self.reply(), want)
+
+    def test_a_long_transcript_read_from_its_end(self):
+        """The last message's records span several reads, one starting inside a UTF-8 character; the reads stop at
+        the record before that message."""
+        big = "é" * 40000
+        earlier = [record("assistant", text_block(f"old {i} " + "x" * 1000), mid=f"m{i}") for i in range(300)]
+        last = [record("assistant", text_block("a " + big), mid="mL"), record("assistant", TOOL, mid="mL"),
+                record("assistant", text_block("b " + big), mid="mL"),
+                record("assistant", text_block("c " + big), mid="mL")]
+        tail = [record("user", text_block("q")), record("assistant", TOOL, mid="mN")]
+        data = "".join([*earlier, *last, *tail]).encode()
+        if data[len(data) - clients.base.BLOCK] & 0xC0 != 0x80:
+            tail[0] = record("user", text_block("qq"))
+            data = "".join([*earlier, *last, *tail]).encode()
+        self.assertEqual(data[len(data) - clients.base.BLOCK] & 0xC0, 0x80)
+        self.transcript(*earlier, *last, *tail)
+        reads = []
+
+        def spy(*args, **kw):
+            f = open(*args, **kw)
+            read = f.read
+            f.read = lambda n=-1: reads.append(read(n)) or reads[-1]
+            return f
+        with unittest.mock.patch.object(claude_client, "open", side_effect=spy, create=True):
+            self.assertEqual(self.reply(), "\n".join(("a " + big, "b " + big, "c " + big)))
+        self.assertGreater(len(reads), 3)
+        self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + clients.base.BLOCK)
+
+    def test_no_transcript_of_its_session(self):
+        """None at all, or only another session's."""
+        for sids in ((), ("2" + SID[1:],)):
+            with self.subTest(sids=sids):
+                for sid in sids:
+                    self.transcript(record("assistant", text_block("x")), sid=sid)
+                with self.assertRaises(compose.ConfigError) as cm:
+                    self.reply()
+                self.assertEqual(str(cm.exception), f"no transcript for {SID}: started with a leaked Claude Code "
+                                                    "variable?")
+
+    def test_a_bad_session_id_before_any_glob(self):
+        self.transcript(record("assistant", text_block("x")), sid="evil")
+        with unittest.mock.patch.object(claude_client.glob, "glob") as g:
+            for sid in ("*", "evil", "A" + SID[1:], f"../{SID}", SID + "\n"):
+                with self.subTest(sid=sid), self.assertRaisesRegex(compose.ConfigError, "^bad session id "):
+                    self.reply(sid)
+            g.assert_not_called()
+
+    def test_an_unreadable_transcript(self):
+        self.transcript(record("assistant", text_block("x")))
+        path = os.path.join(self.cfg, "projects", "-p", SID + ".jsonl")
+        with unittest.mock.patch.object(claude_client, "open", side_effect=PermissionError(13, "Permission denied"),
+                                        create=True), \
+                self.assertRaisesRegex(compose.ConfigError, f"^transcript {re.escape(path)}: Permission denied$"):
+            self.reply()
+
+    def test_the_config_dir_from_the_env_else_home(self):
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.cfg}):
+            self.assertEqual(claude_client.config_dir(), self.cfg)
+        with unittest.mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "HOME": self.root}):
+            self.assertEqual(claude_client.config_dir(), os.path.join(self.root, ".claude"))
 
 
 class Codex(Base):

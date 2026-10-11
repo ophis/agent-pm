@@ -16,7 +16,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
-from contextlib import contextmanager, redirect_stderr, redirect_stdout, suppress
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
 import tui_claude
 
@@ -508,6 +508,20 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.calls[2:], decorations("s", path, status))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
 
+    def test_without_claude_hooks_the_argv_is_handed_over_as_given(self):
+        """A client-hooked argv: no --settings added or merged into; the events file still checked and decorated."""
+        events = os.path.join(self.root, "ev")
+        for argv in (("tool", "-x", "a b"), ("tool", "--settings", "s.json")):
+            with self.subTest(argv=argv):
+                fake = Tmux()
+                self.start(fake, argv=argv, env={"PATH": self.bin}, events=events, claude_hooks=False)
+                self.assertEqual(fake.handover["argv"], [self.tool, *argv[1:]])
+                self.assertEqual(fake.calls[2:], decorations("s", events))
+        fake = Tmux()
+        with self.assertRaisesRegex(tui_claude.TuiError, "^events file "):
+            self.start(fake, events=self.cwd, claude_hooks=False)
+        self.assertEqual(fake.calls, [])
+
     def test_a_failed_decoration_kills_the_session(self):
         fake = Tmux(fail={"set-hook"})
         with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
@@ -699,6 +713,82 @@ class WithHooks(unittest.TestCase):
                 tui_claude.with_hooks(argv)
         with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
             tui_claude.with_hooks([])
+
+
+MARK_KW = {**TMUX_KW, "timeout": 5}
+
+
+class Mark(unittest.TestCase):
+    """hooks()' event protocol written from Python: the pane's @state, and done or blocked lines in the events file."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.events = os.path.join(self.root, "events")
+        with open(self.events, "w") as f:
+            f.write("old\n")
+        self.enterContext(environ(TMUX_PANE="%1"))
+
+    def text(self):
+        with open(self.events) as f:
+            return f.read()
+
+    def test_working_sets_the_state_only(self):
+        fake = Tmux(pane="w1")
+        tui_claude.mark("working", self.events, proc=fake)
+        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", "working"]])
+        self.assertEqual(fake.kwargs, [MARK_KW])
+        self.assertEqual(self.text(), "old\n")
+
+    def test_done_and_blocked_set_the_state_and_append_a_line_through_the_given_tmux(self):
+        for word in ("done", "blocked"):
+            with self.subTest(word):
+                fake = Tmux(pane="w1")
+                tui_claude.mark(word, self.events, pane="%2", tmux=TMUX, proc=fake)
+                self.assertEqual(fake.calls, [[TMUX, "set-option", "-t", "%2", "@state", word],
+                                              [TMUX, "display-message", "-p", "-t", "%2", "#S"]])
+                self.assertEqual(fake.kwargs, [MARK_KW] * 2)
+        self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n\d\d:\d\d:\d\d w1 blocked\n$")
+
+    def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
+        fake = Tmux(pane="w1")
+        tui_claude.mark("done", self.events, proc=fake)
+        self.assertEqual([c[c.index("-t") + 1] for c in fake.calls], ["%1", "%1"])
+        for env in ({}, {"TMUX_PANE": ""}):
+            with self.subTest(env=env), environ(**env):
+                fake = Tmux(pane="w1")
+                tui_claude.mark("done", self.events, proc=fake)
+                self.assertEqual(fake.calls, [])
+        self.assertEqual(len(self.text().splitlines()), 2)
+
+    def test_refuses_an_events_file_not_a_regular_file_of_the_callers(self):
+        link = os.path.join(self.root, "link")
+        os.symlink(self.events, link)
+        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
+        for path, patches, error in ((link, (), ""), (self.root, (), ""),
+                                     (os.path.join(self.root, "missing"), (), "No such file"),
+                                     (self.events, ("os.getuid", os.getuid() + 1), "owned by you"),
+                                     (self.events, ("os.fstat", fifo), "owned by you")):
+            with self.subTest(path=path, error=error), ExitStack() as stack, \
+                    self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: .*{error}"):
+                if patches:
+                    stack.enter_context(unittest.mock.patch(patches[0], return_value=patches[1]))
+                tui_claude.mark("done", path, proc=Tmux(pane="w1"))
+        self.assertEqual(self.text(), "old\n")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "missing")))
+
+    def test_a_failed_tmux_call_or_bad_value_raises_writing_no_line(self):
+        timeout = subprocess.TimeoutExpired(["tmux"], 5)
+        cases = ((Tmux(pane="w1", fail={"set-option"}), {}, "^tmux: boom$"),
+                 (Tmux(), {}, "^tmux: no server running$"),
+                 (Tmux(results={"set-option": timeout}), {}, "^tmux: timed out after 5 s$"),
+                 (Tmux(results={"display-message": FileNotFoundError(2, "No such file")}), {}, "^tmux: "),
+                 (Tmux(pane="a b"), {}, "^tmux session 'a b'"),
+                 (Tmux(pane="w1"), {"pane": "w1:0"}, "^bad tmux pane 'w1:0'$"))
+        for fake, kw, error in cases:
+            with self.subTest(error=error), self.assertRaisesRegex(tui_claude.TuiError, error):
+                tui_claude.mark("done", self.events, proc=fake, **kw)
+        self.assertEqual(self.text(), "old\n")
 
 
 class EventsFile(unittest.TestCase):

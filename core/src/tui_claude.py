@@ -35,6 +35,7 @@ HANDOVER_TIMEOUT = 10
 POLL = 0.1   # seconds between checks that the wrapper took the handover file
 PAUSE = 0.5   # between typing a text and its Enter
 SHOW_TIMEOUT = 30
+MARK_TIMEOUT = 5   # seconds each of mark's tmux calls may take
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 SPLITS = ("right", "below")
@@ -160,12 +161,13 @@ class Slot(NamedTuple):
 
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           template: str | None = None, split: str | None = None, split_from: str | None = None, opener: str | None = None,
-          per_column: int | None = None, retile: str | None = None, status_line: bool = False, proc=subprocess.run,
-          sleep=time.sleep) -> None:
-    """Run with_hooks(argv, events), argv a claude command, in a new detached session, in cwd with env minus
-    PARENT_KEYS, its PWD set to cwd, plus the pane's terminal keys; once it runs, decorate the session (status_line
-    too), then show it. events goes through events_file first. argv, cwd and env reach the pane through a 0600 handover
-    file, never through tmux. Raising, it leaves no session of its own."""
+          per_column: int | None = None, retile: str | None = None, status_line: bool = False,
+          claude_hooks: bool = True, proc=subprocess.run, sleep=time.sleep) -> None:
+    """Run with_hooks(argv, events), argv a claude command (claude_hooks False: argv as given, its own hooks writing
+    the events), in a new detached session, in cwd with env minus PARENT_KEYS, its PWD set to cwd, plus the pane's
+    terminal keys; once it runs, decorate the session (status_line too), then show it. events goes through events_file
+    first. argv, cwd and env reach the pane through a 0600 handover file, never through tmux. Raising, it leaves no
+    session of its own."""
     _name(session)
     if template is None:
         _layout(split, split_from, opener)
@@ -174,7 +176,8 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     argv = _command(argv, env)
     if events is not None:
         events = events_file(events)
-    argv = with_hooks(argv, events)
+    if claude_hooks:
+        argv = with_hooks(argv, events)
     tmp = None
     may_run = False
     try:
@@ -312,6 +315,47 @@ def with_hooks(argv: list[str], events: str | None = None) -> list[str]:
             own[e] = [*own.get(e, []), *entries]
         return [*argv[:at], prefix + json.dumps(settings), *argv[at + 1:]]
     return [argv[0], "--settings", hooks(events), *argv[1:]]
+
+
+def mark(word: str, events: str, *, pane: str | None = None, tmux: str = "tmux", proc=subprocess.run) -> None:
+    """hooks()' writer for a client whose hooks run a program: sets the pane's @state to word and, for done and
+    blocked, appends `HH:MM:SS <session> <word>` to events, a regular file of the caller's, never created or followed.
+    pane None: $TMUX_PANE, unset → nothing. tmux: the binary each call runs."""
+    pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
+    if not pane:
+        return
+    if not PANE.fullmatch(pane):
+        raise TuiError(f"bad tmux pane {pane!r}")
+    _mark_tmux([tmux, "set-option", "-t", pane, "@state", word], proc)
+    if word not in ("done", "blocked"):
+        return
+    session = _mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"], proc).strip()
+    if not NAME.fullmatch(session):
+        raise TuiError(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
+    try:
+        # O_NONBLOCK: a FIFO without a reader fails instead of hanging the hook
+        fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                raise TuiError(f"events file {events}: not a regular file owned by you")
+            os.write(fd, f"{time.strftime('%H:%M:%S')} {session} {word}\n".encode())
+        finally:
+            os.close(fd)
+    except OSError as e:
+        raise TuiError(f"events file {events}: {e.strerror}") from e
+
+
+def _mark_tmux(argv: list[str], proc) -> str:
+    try:
+        res = proc(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=MARK_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise TuiError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
+    except OSError as e:
+        raise TuiError(f"tmux: {e}") from e
+    if res.returncode:
+        raise TuiError(f"tmux: {_err(res)}")
+    return res.stdout
 
 
 def events_file(path: str) -> str:
