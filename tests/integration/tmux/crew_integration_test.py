@@ -299,8 +299,10 @@ class Lifecycle(Live):
         sid = self.started("w1", steps=["Hi from w1."], turns=[["Second."]])
         self.ok(self.server.tmux("has-session", "-t", "=w1"))
         claude = os.path.join(self.server.root, "bin", "claude")
-        self.assertEqual({k: self.server.option("w1", f"@{k}") for k in ("sid", "cwd", "claude", "flags", "events")},
-                         {"sid": sid, "cwd": self.cwd, "claude": claude, "flags": "[]", "events": self.events})
+        self.assertEqual({k: self.server.option("w1", f"@{k}")
+                          for k in ("sid", "cwd", "client", "exe", "flags", "env", "events")},
+                         {"sid": sid, "cwd": self.cwd, "client": "claude", "exe": claude, "flags": "[]", "env": "{}",
+                          "events": self.events})
         (call,) = self.calls("w1")
         argv = call["argv"]
         self.assertEqual(argv[:1] + argv[2:], ["--settings", "--session-id", sid, "--name", "w1", "--", "hi"])
@@ -807,7 +809,8 @@ class Roster(Live):
         self.attach()
         sid = self.started("w1")
         pane = self.server.pane_of("w1")
-        resume = [sys.executable, CREW, "start", "w1", "--manager", MANAGER, "--resume", sid, "--cwd", self.cwd]
+        resume = [sys.executable, CREW, "start", "w1", "--manager", MANAGER, "--client", "claude", "--resume", sid,
+                  "--cwd", self.cwd]
         e = self.roster()["entries"]["w1"]
         self.assertEqual({k: e[k] for k in ("kind", "sid", "cwd", "resume", "pane", "opener", "state")},
                          {"kind": "worker", "sid": sid, "cwd": self.cwd, "resume": resume, "pane": pane,

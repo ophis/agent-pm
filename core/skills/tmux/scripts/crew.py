@@ -1,14 +1,13 @@
-"""Starts and directs Claude Code workers in tmux panes through the plugin's src/tui_claude.py. Stdlib only."""
+"""Starts and directs workers of any configured client with the worker capability (src/clients/) in tmux panes through
+the plugin's src/tui_claude.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
 import contextlib
-import glob
 import json
 import os
 import re
 import shlex
-import shutil
 import stat
 import subprocess
 import sys
@@ -18,23 +17,20 @@ from collections.abc import Iterator
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(CORE, "src"))
+import clients  # noqa: E402
 import manager  # noqa: E402
 import repo  # noqa: E402
 import tui_claude  # noqa: E402
+from compose import ConfigError  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
-STRIP = (*tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
-         "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
-         "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
 SESSION_ID = manager.SID
-REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
 REPLY_LINES = 80
 PANE_LINES = 40
-BLOCK = 1 << 16
 RUN = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 RUN_TAIL = 1 << 20
 LIVE = "#{session_name}\t#{@sid}\t#{@state}\t#{@pane}\t#{@opener}"
@@ -101,18 +97,69 @@ def _tmux(argv: list, proc) -> None:
         raise WorkersError(f"tmux {argv[1]} {argv[-2]}: {(res.stderr or '').strip()}")
 
 
-def _refuse(flags) -> None:
-    """Raises on a flag, before the first bare `--`, that makes claude pick the session."""
-    for flag in flags:
-        if flag == "--":
-            return
-        word = flag.split("=", 1)[0] if flag.startswith("--") else flag
-        if word in REFUSED:
-            raise WorkersError(f"{word}: crew.py picks the session; use start --resume <sid>")
+def _loaded() -> dict[str, type[clients.Client]]:
+    """The configured clients' classes (clients.loaded)."""
+    try:
+        return clients.loaded(CORE)
+    except ConfigError as e:
+        raise WorkersError(str(e)) from e
 
 
-def _early(name: str, proc) -> None:
-    """Watches worker `name`'s pane for EARLY seconds; raises if claude exits or the session ends, the exit with the
+def _get(name: str) -> clients.Client:
+    try:
+        return clients.get(name, CORE)
+    except ConfigError as e:
+        raise WorkersError(str(e)) from e
+
+
+def _client(name: str | None, env: dict, classes: dict) -> tuple[str, clients.Client]:
+    """The worker's client, by name: `name` (--client), else the one of classes whose session marker env holds
+    (clients.caller), else manager.LEGACY_CLIENT."""
+    if name is None:
+        try:
+            name = clients.caller(env, classes) or manager.LEGACY_CLIENT
+        except ConfigError as e:
+            raise WorkersError(str(e)) from e
+    return name, _get(name)
+
+
+def _command(client: clients.Client, spec: clients.WorkerSpec) -> clients.WorkerCommand:
+    try:
+        return client.worker(spec)
+    except ConfigError as e:
+        raise WorkersError(str(e)) from e
+
+
+def _allowed(classes: dict) -> set[str]:
+    """The names --env may set: every loaded client's injected defaults."""
+    return {k for cls in classes.values() for k, v in cls.command_env.items() if isinstance(v, str)}
+
+
+def _override(item: str, allowed: set[str]) -> tuple[str, str]:
+    """An --env NAME=VALUE: NAME in allowed, VALUE printable (manager.printable)."""
+    key, eq, value = item.partition("=")
+    if not eq or key not in allowed:
+        raise WorkersError(f"--env {item}: want NAME=VALUE, NAME one of {', '.join(sorted(allowed))}")
+    if not manager.printable(value):
+        raise WorkersError(f"--env {key}: {value!r}: want printable text (no control character, U+2028 or U+2029)")
+    return key, value
+
+
+def _environment(env: dict, classes: dict, client_env: dict, overrides: dict) -> dict[str, str]:
+    """A worker's env: env minus each loaded client's identity keys (its session marker among them) and minus each
+    injected default whose client's session marker env holds, when env has that value (the caller inherited it);
+    then client_env, then overrides."""
+    drop = set()
+    for cls in classes.values():
+        inside = bool(cls.session_env) and cls.session_env in env
+        drop.update(k for k, v in cls.command_env.items() if v is None or (inside and env.get(k) == v))
+        if cls.session_env:
+            drop.add(cls.session_env)
+    return {**{k: v for k, v in env.items() if k not in drop}, **client_env, **overrides}
+
+
+def _early(name: str, exe: str, proc) -> None:
+    """Watches worker `name`'s pane for EARLY seconds; raises if exe exits or the session ends, the exit with the
     pane's last REPORT_LINES non-blank lines."""
     try:
         for _ in range(round(EARLY / POLL)):
@@ -122,10 +169,27 @@ def _early(name: str, proc) -> None:
                 raise WorkersError(f"{name}: session ended at once")
             if state != tui_claude.RUNNING:
                 lines = [x for x in tui_claude.read(name, 2000, proc=proc).splitlines() if x.strip()]
-                raise WorkersError(f"{name}: claude exited {state} at once; its pane's last lines:\n"
+                raise WorkersError(f"{name}: {os.path.basename(exe)} exited {state} at once; its pane's last lines:\n"
                                    + "\n".join(lines[-REPORT_LINES:]))
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
+
+
+def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
+    """After _early: worker `name`'s visible pane showing one of client.worker_dialogs, a dialog no hook reports, marks
+    the pane blocked (tui_claude.mark) and says so on stderr."""
+    if not client.worker_dialogs:
+        return
+    try:
+        screen = tui_claude.read(name, proc=proc)
+        text = next((t for t in client.worker_dialogs if t in screen), None)
+        if text is None:
+            return
+        pane = _query(["tmux", "display-message", "-p", "-t", f"={name}:", "#{pane_id}"], proc).strip()
+        tui_claude.mark("blocked", events, pane=pane, proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+    print(f"workers: {name}: waits on a dialog: {text}", file=sys.stderr)
 
 
 def _note_text(text: str) -> str | None:
@@ -137,12 +201,15 @@ def _note_text(text: str) -> str | None:
     return text or None
 
 
-def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, note: str | None, flags,
-            split: str | None, split_from: str | None, proc) -> None:
+def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, note: str | None, flags, client: str,
+            overrides: dict, split: str | None, split_from: str | None, proc) -> None:
     """Writes worker `name`'s roster entry (manager.record) in one lease-checked block: its recovery argv, start
-    --resume <sid>, and its session's placement (_placed). A failure only prints its line (manager.unwritten)."""
+    --client <client> --resume <sid> with its --env items, and its session's placement (_placed). A failure only
+    prints its line (manager.unwritten)."""
     resume = [sys.executable, os.path.abspath(__file__), "start", name, "--manager", os.path.basename(directory),
-              "--resume", sid, "--cwd", cwd, *(["--split", split] if split is not None else []),
+              "--client", client, "--resume", sid, "--cwd", cwd,
+              *(w for k, v in overrides.items() for w in ("--env", f"{k}={v}")),
+              *(["--split", split] if split is not None else []),
               *(["--split-from", split_from] if split_from is not None else []), *(["--", *flags] if flags else [])]
     try:
         row = _live(proc).get(name)
@@ -158,44 +225,50 @@ def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, n
 
 
 def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str | None = None,
-          note: str | None = None, flags=(), env: dict, resume: str | None = None, split_from: str | None = None,
-          split: str | None = None, proc=subprocess.run) -> str:
+          note: str | None = None, flags=(), env: dict, client: str | None = None, overrides=(),
+          resume: str | None = None, split_from: str | None = None, split: str | None = None,
+          proc=subprocess.run) -> str:
     """Start worker `name` for manager directory `directory`, its lease checked for `own` (_leased) and its events
     file used; record its options on the tmux session, then its roster entry (_enroll); returns the session id.
-    `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the entry's.
-    `split_from` or `split` replaces tui_claude's automatic placement outside a tmux grid, which ignores them; it
-    defaults the other. Its status line, grid column size and grid re-tiling: core config's status_line,
-    workers_per_column and grid_retile. A claude that exits within EARLY seconds raises, the session and the entry
-    kept (see _early)."""
+    `client` (--client) names the worker's client (default: _client); its command (Client.worker) comes last before the
+    session. The worker's env: env through _environment, the client's, then `overrides` (--env NAME=VALUE items,
+    _override). `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the
+    entry's. `split_from` or `split` replaces tui_claude's automatic placement outside a tmux grid, which ignores them;
+    it defaults the other. Its status line, grid column size and grid re-tiling: core config's status_line,
+    workers_per_column and grid_retile. A command that exits within EARLY seconds raises, the session and the entry
+    kept (see _early); then a dialog on the pane is reported (_dialog)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
     if resume is not None and not SESSION_ID.fullmatch(resume):
         raise WorkersError(f"--resume {resume}: not a session id")
-    _refuse(flags)
     if note is not None:
         note = _note_text(note)
+    classes = _loaded()
+    client, worker = _client(client, env, classes)
+    overrides = dict(_override(item, _allowed(classes)) for item in overrides)
     with _leased(directory, own, proc, write=False):
         pass
-    events = manager.events(directory, create=False)
+    try:
+        events = tui_claude.events_file(manager.events(directory, create=False))
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
     status_line, per_column, retile = _status_line(), _per_column(), _retile()
     cwd = os.path.abspath(cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
-    claude = shutil.which("claude", path=env.get("PATH"))
-    if claude is None:
-        raise WorkersError("claude not found on PATH")
-    claude = os.path.abspath(claude)
-    pick, sid = ("--session-id", str(uuid.uuid4())) if resume is None else ("--resume", resume)
-    child_env = {k: v for k, v in env.items() if k not in STRIP}
+    sid = str(uuid.uuid4()) if resume is None else resume
+    cmd = _command(worker, clients.WorkerSpec(name=name, sid=sid, cwd=cwd, flags=tuple(flags), prompt=prompt,
+                                              events=events, resume=resume is not None,
+                                              env=_environment(env, classes, {}, {})))
     try:
-        tui_claude.start(name, [claude, pick, sid, "--name", name, *flags,
-                                *(["--", prompt] if prompt else [])],
-                         cwd=cwd, env=child_env, events=events, split=split, split_from=split_from, per_column=per_column,
-                         retile=retile, status_line=status_line, proc=proc)
+        tui_claude.start(name, cmd.argv, cwd=cwd, env=_environment(env, classes, cmd.env, overrides), events=events,
+                         split=split, split_from=split_from, per_column=per_column, retile=retile,
+                         status_line=status_line, claude_hooks=False, proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    options = {"@sid": sid, "@cwd": cwd, "@claude": claude, "@flags": json.dumps(list(flags))}
+    options = {"@sid": sid, "@cwd": cwd, "@client": client, "@exe": cmd.argv[0], "@flags": json.dumps(list(flags)),
+               "@env": json.dumps(overrides)}
     for argv in (["tmux", "set-option", "-t", f"={name}:", k, v] for k, v in options.items()):
         try:
             _tmux(argv, proc)
@@ -205,109 +278,96 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
             except WorkersError:
                 pass
             raise WorkersError(f"{e}; start undone") from e
-    _enroll(name, directory, own, sid=sid, cwd=cwd, note=note, flags=flags, split=split, split_from=split_from,
-            proc=proc)
-    _early(name, proc)
+    _enroll(name, directory, own, sid=sid, cwd=cwd, note=note, flags=flags, client=client, overrides=overrides,
+            split=split, split_from=split_from, proc=proc)
+    _early(name, cmd.argv[0], proc)
+    _dialog(name, worker, events, proc)
     return sid
 
 
-def _option(name: str, key: str, proc) -> str:
+def _option(name: str, key: str, proc, *, required: bool = True) -> str | None:
+    """The session option `key` of tmux session `name`; failing: NotAWorker, None when not required."""
     res = _run(proc, ["tmux", "show-options", "-t", f"={name}:", "-v", key])
     if res.returncode != 0:
-        raise NotAWorker(f"{name}: not a worker")
+        if required:
+            raise NotAWorker(f"{name}: not a worker")
+        return None
     return res.stdout.rstrip("\n")
 
 
-def _stored(name: str, proc) -> dict:
-    opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "claude", "flags")}
+def _stored(name: str, allowed: set[str], proc) -> dict:
+    """Worker `name`'s options: @sid @cwd @events @flags, and @client @exe @env (each item checked as --env is,
+    against allowed); a session started before @client: manager.LEGACY_CLIENT, @claude and no env. Missing or
+    malformed: NotAWorker."""
+    opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "flags")}
+    client = _option(name, "@client", proc, required=False)
+    if client is None:
+        opt.update(client=manager.LEGACY_CLIENT, exe=_option(name, "@claude", proc), env="{}")
+    else:
+        opt.update(client=client, exe=_option(name, "@exe", proc), env=_option(name, "@env", proc))
     try:
-        flags = json.loads(opt["flags"])
-        ok = (all(opt[k] for k in ("sid", "cwd", "events", "claude"))
-              and isinstance(flags, list) and all(isinstance(f, str) for f in flags))
+        flags, env = json.loads(opt["flags"]), json.loads(opt["env"])
+        ok = (all(opt[k] for k in ("sid", "cwd", "events", "client", "exe"))
+              and isinstance(flags, list) and all(isinstance(f, str) for f in flags)
+              and isinstance(env, dict) and all(isinstance(v, str) for v in env.values()))
     except ValueError:
         ok = False
     if not ok:
         raise NotAWorker(f"{name}: not a worker")
-    return {**opt, "flags": flags}
+    try:
+        env = dict(_override(f"{k}={v}", allowed) for k, v in env.items())
+    except WorkersError as e:
+        raise WorkersError(f"{name}: @env: {e}") from e
+    return {**opt, "flags": flags, "env": env}
 
 
 def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
-    """Respawn worker `name`'s pane, its history cleared, resuming its session (tui_claude.respawn) with env minus
-    STRIP, its status line as core config's status_line says now; returns the command, shell-quoted. A claude that
-    exits within EARLY seconds raises (see _early)."""
+    """Respawn worker `name`'s pane, its history cleared, resuming its session with its client's command
+    (Client.worker, from its stored options: _stored) through tui_claude.respawn, its env as start makes it from env
+    and @env, its status line as core config's status_line says now; returns the command, shell-quoted. A command
+    that exits within EARLY seconds raises (see _early); then a dialog on the pane is reported (_dialog)."""
     _check(name)
-    opt = _stored(name, proc)
+    classes = _loaded()
+    opt = _stored(name, _allowed(classes), proc)
+    worker = _get(opt["client"])
     status_line = _status_line()
     try:
-        resume = tui_claude.with_hooks([opt["claude"], "--resume", opt["sid"], "--name", name, *opt["flags"]],
-                                       opt["events"])
-        tui_claude.decorate(name, opt["events"], status_line=status_line, proc=proc)
+        events = tui_claude.events_file(opt["events"])
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    cmd = " ".join(shlex.quote(w) for w in resume)
+    command = _command(worker, clients.WorkerSpec(name=name, sid=opt["sid"], cwd=opt["cwd"], flags=tuple(opt["flags"]),
+                                                  prompt=None, events=events, resume=True,
+                                                  env=_environment(env, classes, {}, {}), exe=opt["exe"]))
+    try:
+        tui_claude.decorate(name, events, status_line=status_line, proc=proc)
+    except tui_claude.TuiError as e:
+        raise WorkersError(str(e)) from e
+    cmd = shlex.join(command.argv)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
     try:
-        tui_claude.respawn(name, resume, cwd=opt["cwd"], env={k: v for k, v in env.items() if k not in STRIP},
-                           proc=proc)
+        tui_claude.respawn(name, command.argv, cwd=opt["cwd"],
+                           env=_environment(env, classes, command.env, opt["env"]), proc=proc)
     except tui_claude.TuiError as e:
         raise WorkersError(str(e)) from e
-    _early(name, proc)
+    _early(name, command.argv[0], proc)
+    _dialog(name, worker, events, proc)
     return cmd
 
 
-def reply(name: str, *, proc=subprocess.run, config: str | None = None) -> str:
-    """The text blocks of worker `name`'s last text-bearing assistant message, joined by newlines; the transcript
-    read from its end back to that message's first record."""
+def reply(name: str, *, proc=subprocess.run) -> str:
+    """Worker `name`'s last answer, "" when none yet: its client's (@client; unset: manager.LEGACY_CLIENT)
+    Client.worker_reply."""
     _check(name)
     sid = _option(name, "@sid", proc)
     if not SESSION_ID.fullmatch(sid):
         raise WorkersError(f"{name}: bad session id {sid!r}")
-    config = config or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
-    found = glob.glob(os.path.join(glob.escape(config), "projects", "*", sid + ".jsonl"))
-    if not found:
-        raise WorkersError(f"no transcript for {sid}: started with a leaked Claude Code variable?")
-    last, texts = None, []
+    client = _option(name, "@client", proc, required=False)
+    worker = _get(manager.LEGACY_CLIENT if client is None else client)
     try:
-        with open(found[0], "rb") as f:
-            for raw in _lines_back(f):
-                try:
-                    entry = json.loads(raw.decode("utf-8", errors="replace"))
-                    message = entry["message"]
-                    content = message["content"]
-                    if entry["type"] != "assistant" or not isinstance(content, list):
-                        continue
-                    blocks = [b["text"] for b in content if b["type"] == "text"]
-                    mid = message.get("id") or object()   # no id: a message of its own
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    continue
-                if last is None:
-                    if blocks:
-                        last, texts = mid, blocks
-                elif mid != last:
-                    break
-                else:
-                    texts = blocks + texts
-    except OSError as e:
-        raise WorkersError(f"transcript {found[0]}: {e.strerror}") from e
-    return "\n".join(texts)
-
-
-def _lines_back(f):
-    """The binary file f's lines, last first, each without its newline; read from the end in BLOCK-byte reads."""
-    pos = f.seek(0, os.SEEK_END)
-    tail = []   # the pieces, last first, of the line whose start isn't read yet
-    while pos > 0:
-        size = min(BLOCK, pos)
-        pos -= size
-        f.seek(pos)
-        parts = f.read(size).split(b"\n")
-        tail.append(parts[-1])
-        if len(parts) > 1:
-            yield b"".join(reversed(tail))
-            yield from reversed(parts[1:-1])
-            tail = [parts[0]]
-    yield b"".join(reversed(tail))
+        return worker.worker_reply(sid)
+    except ConfigError as e:
+        raise WorkersError(str(e)) from e
 
 
 def next_event(events: str, after: int | None) -> tuple[int, str]:
@@ -345,7 +405,7 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         time.sleep(0.5)
 
 
-def content(event: str, *, proc=subprocess.run, config: str | None = None) -> str:
+def content(event: str, *, proc=subprocess.run) -> str:
     """What next-event prints after the event: a worker's done → the first REPLY_LINES lines of its reply; blocked,
     dead or a role run's done (not a worker) → the pane's last PANE_LINES lines, history included; else ""."""
     name, kind = event.split(" ")[1:3]
@@ -353,7 +413,7 @@ def content(event: str, *, proc=subprocess.run, config: str | None = None) -> st
         return ""
     if kind == "done":
         try:
-            return "\n".join(reply(name, proc=proc, config=config).split("\n")[:REPLY_LINES])
+            return "\n".join(reply(name, proc=proc).split("\n")[:REPLY_LINES])
         except NotAWorker:
             pass
     try:
@@ -770,6 +830,10 @@ def main(argv=None) -> int:
     p.add_argument("--cwd")
     p.add_argument("--prompt")
     p.add_argument("--resume", metavar="SID", help="a session id")
+    p.add_argument("--client", metavar="NAME",
+                   help=f"the worker's client (default: the one whose session runs this, else {manager.LEGACY_CLIENT})")
+    p.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
+                   help="sets a client-declared default in the worker's env; repeatable")
     p.add_argument("--note", help="its roster note, as crew.py note sets it")
     p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
@@ -830,8 +894,8 @@ def main(argv=None) -> int:
             forget(_directory(a.manager), _own(), a.name, proc=subprocess.run)
         elif a.cmd == "start":
             sid = start(a.name, _directory(a.manager), own=_own(), cwd=a.cwd or os.getcwd(), prompt=a.prompt,
-                        note=a.note, flags=flags, env=dict(os.environ), resume=a.resume, split_from=a.split_from,
-                        split=a.split, proc=subprocess.run)
+                        note=a.note, flags=flags, env=dict(os.environ), client=a.client, overrides=a.env,
+                        resume=a.resume, split_from=a.split_from, split=a.split, proc=subprocess.run)
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
             restart(a.name, env=dict(os.environ), proc=subprocess.run)

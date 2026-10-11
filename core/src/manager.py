@@ -25,7 +25,7 @@ it):
   sid               SID or null
   cwd               an absolute path, printable
   resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to crew.py, drive.py or
-                    router.py (or LEGACY)
+                    router.py (or LEGACY); a worker's names its client (--client)
   note              null, or printable with at most NOTE_MAX characters
   opener            tui_claude.OPENER or null
   pane              tui_claude.PANE or tui_claude.ITERM_ID, or null
@@ -71,6 +71,8 @@ SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
 # crew.py's name before TASK-284: an entry an older plugin version wrote still validates, and recovery runs CREW
 LEGACY = "workers.py"
+# the client of a worker started before crew.py start --client, and of a crew.py caller in no client's session
+LEGACY_CLIENT = "claude"
 CREW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills", "tmux", "scripts", "crew.py")
 TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = ("kind", "sid", "cwd", "resume", "note", "opener", "pane", "split", "split_from", "tui", "state", "started")
@@ -519,10 +521,14 @@ def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
 
 def recovery(entry: dict) -> list[str] | None:
     """The argv that resumes the entry, run in entry["cwd"]: a worker's or pipeline's `resume`; a role's plus its sid
-    and `--resume`; None for a role without a sid. A LEGACY resume[1] becomes CREW."""
+    and `--resume`; None for a role without a sid. A LEGACY resume[1] becomes CREW; a worker's resume with no
+    --client before a bare `--` gets `--client LEGACY_CLIENT` after its name, resume[3]."""
     resume = list(entry["resume"])
     if os.path.basename(resume[1]) == LEGACY:
         resume[1] = CREW
+    options = resume[:resume.index("--")] if "--" in resume else resume
+    if entry["kind"] == "worker" and len(resume) > 3 and "--client" not in options:
+        resume[4:4] = ["--client", LEGACY_CLIENT]
     if entry["kind"] != "role":
         return resume
     if entry["sid"] is None:
