@@ -6,8 +6,8 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 
 | Path | What |
 |---|---|
-| `core/src/` | the layers, one package each: `adapters/`, `driver/`; `composer` and `delegate` come later |
-| `core/config.toml` | the `[adapters.<name>]` tables; this machine's settings go in `~/.agent-pm/core-new.local.toml` (the file's header) |
+| `core/src/` | the layers, one package each: `adapters/`, `composer/`, `driver/`; `delegate` comes later. `repo.py`, a module outside the layers |
+| `core/config.toml` | the Composer's run keys (`runtime` among them) and `[roles.<role>]` tables, the Driver's `[adapters.<name>]` tables; which layer reads which keys, and this machine's settings in `~/.agent-pm/core-new.local.toml`: the file's header |
 | `tests/` | `unit/`, `integration/`, `fake_adapter/` (the test-only runtime `fake`), `guards.py` |
 
 Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`. `tests/guards.py` (`layer_imports`) enforces it, with the other rules in its docstring.

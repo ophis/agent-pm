@@ -34,17 +34,14 @@
 #                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold
 #                   roles/, tasks/ and templates/ (each optional) of <name>.md files ([a-z0-9-] names) in team/'s
 #                   formats (src/composer/__init__.py's docstring). Add-only: a name core or another team dir defines
-#                   stops the run, naming both files, so no team dir file changes or extends a core role.
-#                   roles/<role>.md is a new role's charter (`# ` title, intro, ## Tasks index) and needs no
-#                   [roles.<role>] (unset: the global run keys); its tasks are its own team dir's tasks/, which its
-#                   <tasks> names and the run adds as a dir, as core's roles run only core's team/tasks/. Any role's
-#                   templates may name any template. The files hold text only, no config (no --- front matter). Each
-#                   team dir file a run uses is checked as core's text is, and a team dir is refused when it, its
-#                   subdirs or files (by real path) lie in a temp dir, overlap the workdir, the cwd, a write dir or
-#                   another dir the run adds or the runtime can write (read dirs too; the role's own tasks/ aside), are
-#                   writable by group or others, or are not yours; or a parent dir of it is writable by group or
-#                   others (not sticky) or owned by neither you nor root. The orchestrator's runs ignore it, but refuse
-#                   a team dir overlapping their workdir, cwd or a dir they add or can write
+#                   stops the run, naming both files, so no team dir file changes or extends a core role. A team dir's
+#                   role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
+#                   template. A team dir is refused when it, its subdirs or files (by real path) lie in a temp dir,
+#                   overlap the workdir, the cwd, a write dir or another dir the run adds or the runtime can write (read
+#                   dirs too; the role's own tasks/ aside), are writable by group or others, or are not yours; or a
+#                   parent dir of it is writable by group or others (not sticky) or owned by neither you nor root. The
+#                   orchestrator's runs ignore it, but refuse a team dir overlapping their workdir, cwd or a dir they
+#                   add or can write
 tier = 2
 effort = "high"
 runtime = "claude"
