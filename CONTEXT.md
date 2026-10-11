@@ -31,13 +31,13 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, an optional task and free-text input into an agent run: a composer plus a facade. As the facade's caller, it reads the agent run's replies (progress, outcome) and decides nudges and give-ups.
+The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the facade, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `core/src/drive.py`'s entry point (moved to `delegate.py` by TASK-310).
 
 **Composer**:
-The part of the delegate that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
+The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Facade**:
-The part of the delegate that runs a prompt on the agent runtime and mode its caller names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `core/src/drive.py` (renamed by TASK-310).
+The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `core/src/drive.py` (renamed by TASK-310).
 _Avoid_: driver, runtime, harness
 
 **Adapter**:
