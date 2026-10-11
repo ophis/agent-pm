@@ -9,11 +9,46 @@ from compose import ConfigError, RunConfig, RunParams
 from .base import PROGRESS, Access, Client, Event, Launch
 
 
+def _inside(path: str, root: str) -> bool:
+    return os.path.commonpath((path, root)) == root
+
+
+def _guard_untrusted_project(workdir: str, cwd: str) -> None:
+    """Keep project-controlled Codex configuration out of an untrusted run."""
+    real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
+    if not _inside(real_cwd, real_workdir):
+        raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
+
+    config_home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    config_home = os.path.abspath(os.path.join(cwd, config_home))
+    real_config_home = os.path.realpath(config_home)
+    if _inside(config_home, workdir) or _inside(real_config_home, real_workdir):
+        raise ConfigError(f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
+                          "move Codex config outside the workdir")
+
+    for start in (cwd, real_cwd):
+        ancestor = start
+        while True:
+            candidate = os.path.join(ancestor, ".codex")
+            if os.path.lexists(candidate) and (os.path.isdir(candidate) or os.path.islink(candidate)):
+                real_candidate = os.path.realpath(candidate)
+                user_home = (candidate == config_home or real_candidate == real_config_home)
+                if not user_home or _inside(candidate, workdir) or _inside(real_candidate, real_workdir):
+                    raise ConfigError(f"project Codex settings at {candidate} may load in an untrusted run; "
+                                      "use a clean workdir or trusted_dirs")
+            parent = os.path.dirname(ancestor)
+            if parent == ancestor:
+                break
+            ancestor = parent
+
+
 class CodexClient(Client):
-    keys = frozenset({"tiers", "efforts"})
+    keys = frozenset({"tiers", "efforts", "shell_network"})
 
     def __init__(self, config: dict):
         super().__init__(config)
+        if type(config.get("shell_network")) is not bool:
+            raise ConfigError("[clients.codex].shell_network must be a boolean")
         for name, label in (("tiers", "tier"), ("efforts", "effort")):
             values = config.get(name)
             if not isinstance(values, dict):
@@ -40,16 +75,19 @@ class CodexClient(Client):
             raise ConfigError(f"no model for tier {run.tier} in [clients.codex] in config.toml")
         if effort is None:
             raise ConfigError(f"no effort for {run.effort!r} in [clients.codex] in config.toml")
-        workdir = os.path.realpath(os.path.abspath(params.workdir))
+        workdir = os.path.abspath(params.workdir)
         cwd = os.path.abspath(access.cwd or params.workdir)
-        real_cwd = os.path.realpath(cwd)
-        if not access.project and os.path.commonpath((workdir, real_cwd)) != workdir:
-            raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
+        if not access.project:
+            _guard_untrusted_project(workdir, cwd)
         print(f"drive.py: Codex tier {run.tier} uses {model}; "
               "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change",
               file=sys.stderr)
+        if access.commands:
+            print("drive.py: configured commands are subject to Codex approval; they are not preapproved",
+                  file=sys.stderr)
         argv = ["codex", "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
-                "-m", model, "-c", f"model_reasoning_effort={effort}"]
+                "--approve-for-me", "-m", model, "-c", f"model_reasoning_effort={effort}",
+                "-c", f"sandbox_workspace_write.network_access={str(self.config['shell_network']).lower()}"]
         if not access.project:
             argv.extend(("-c", "project_doc_max_bytes=0"))
         for directory in access.dirs:

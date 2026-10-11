@@ -399,9 +399,10 @@ class Codex(Base):
             launch, resolved = drive.plan(
                 CORE, clients.get("codex", CORE), "researcher", "light-research",
                 params=self.params(), cwd=self.work)
-        self.assertEqual(notice.getvalue(),
-                         f"drive.py: Codex tier {resolved.tier} uses {config['tiers'][str(resolved.tier)]}; "
-                         "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change\n")
+        self.assertIn(f"drive.py: Codex tier {resolved.tier} uses {config['tiers'][str(resolved.tier)]}; "
+                      "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change\n",
+                      notice.getvalue())
+        self.assertIn("configured commands are subject to Codex approval", notice.getvalue())
         self.assertEqual(launch.argv[launch.argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
 
     def test_missing_model_emits_no_selection_hint(self):
@@ -424,6 +425,8 @@ class Codex(Base):
                     argv = launch.argv
                     self.assertEqual(argv[:5], ["codex", "exec", "--json", "--sandbox", "workspace-write"])
                     self.assertIn("--skip-git-repo-check", argv)
+                    self.assertIn("--approve-for-me", argv)
+                    self.assertIn("sandbox_workspace_write.network_access=false", argv)
                     self.assertEqual(argv[argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
                     self.assertEqual(argv[argv.index("-c") + 1],
                                      f"model_reasoning_effort={config['efforts'][resolved.effort]}")
@@ -431,6 +434,7 @@ class Codex(Base):
                     self.assertTrue(argv[-1].startswith("# Guide"))
                     self.assertNotIn("--ignore-rules", argv)
                     self.assertNotIn("--ignore-user-config", argv)
+                    self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
                     self.assertEqual((launch.cwd, launch.env, launch.interactive), (self.work, {}, []))
                     self.assertIn("--add-dir", argv)
                     self.assertEqual(drive.command(launch, "headless", clients.get("codex", CORE)), argv)
@@ -447,6 +451,96 @@ class Codex(Base):
             with self.subTest(changed=changed), self.assertRaisesRegex(compose.ConfigError, message):
                 client = type(clients.get("codex", CORE))({**config, **changed})
                 drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+
+    def test_network_requires_a_boolean_and_is_explicit_for_each_choice(self):
+        config = clients.get("codex", CORE).config
+        client_type = type(clients.get("codex", CORE))
+        self.assertIs(config["shell_network"], False)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), redirect_stderr(io.StringIO()):
+                client = client_type({**config, "shell_network": enabled})
+                launch = client.launch("prompt", run(), params=self.params(),
+                                       access=drive.Access(dirs=[], commands=[], cwd=self.work))
+                self.assertIn(f"sandbox_workspace_write.network_access={str(enabled).lower()}", launch.argv)
+        for bad in (0, 1, "false", None, []):
+            with self.subTest(bad=bad), self.assertRaisesRegex(compose.ConfigError,
+                                                                 r"\[clients.codex\].shell_network must be a boolean"):
+                client_type({**config, "shell_network": bad})
+
+    def test_add_dir_keeps_read_and_write_intent_and_commands_require_approval(self):
+        read_dir, write_dir = os.path.join(self.tmp.name, "read"), os.path.join(self.tmp.name, "write")
+        access = drive.Access(dirs=[read_dir, write_dir], commands=["make test"], cwd=self.work)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            launch = clients.get("codex", CORE).launch("prompt", run(), params=self.params(), access=access)
+        self.assertEqual([launch.argv[i + 1] for i, value in enumerate(launch.argv) if value == "--add-dir"],
+                         [read_dir, write_dir])
+        self.assertIn("--approve-for-me", launch.argv)
+        self.assertIn("configured commands are subject to Codex approval", notice.getvalue())
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", launch.argv)
+        self.assertFalse(any(".rules" in value for value in launch.argv))
+
+    def test_untrusted_project_codex_settings_are_rejected_from_cwd_or_ancestor(self):
+        client = clients.get("codex", CORE)
+        for location, link in (("cwd", False), ("ancestor", False), ("ancestor", True)):
+            with self.subTest(location=location, link=link):
+                root = tempfile.mkdtemp(dir=self.tmp.name)
+                work = os.path.join(root, "work")
+                os.makedirs(work)
+                path = os.path.join(work if location == "cwd" else root, ".codex")
+                if link:
+                    os.symlink(self.repo, path)
+                else:
+                    os.mkdir(path)
+                with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "user-config")}):
+                    with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                        client.launch("p", run(), params=self.params(workdir=work),
+                                      access=drive.Access(dirs=[], commands=[], cwd=work))
+                with redirect_stderr(io.StringIO()):
+                    trusted = client.launch("p", run(), params=self.params(workdir=work),
+                                            access=drive.Access(dirs=[], commands=[], cwd=work, project=True))
+                self.assertEqual(trusted.cwd, work)
+
+    def test_untrusted_project_codex_settings_are_rejected_on_resolved_ancestor(self):
+        client = clients.get("codex", CORE)
+        real_parent = os.path.join(self.tmp.name, "real")
+        os.makedirs(real_parent)
+        os.mkdir(os.path.join(real_parent, ".codex"))
+        real_work = os.path.join(real_parent, "work")
+        os.mkdir(real_work)
+        linked_work = os.path.join(self.tmp.name, "linked-work")
+        os.symlink(real_work, linked_work)
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "user-config")}):
+            with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                client.launch("p", run(), params=self.params(workdir=linked_work),
+                              access=drive.Access(dirs=[], commands=[], cwd=linked_work))
+
+    def test_untrusted_codex_home_cannot_be_project_controlled(self):
+        client = clients.get("codex", CORE)
+        os.makedirs(self.work)
+        cases = [os.path.join(self.work, ".codex")]
+        lexical_link = os.path.join(self.work, "config-link")
+        os.symlink(self.repo, lexical_link)
+        cases.append(lexical_link)
+        real_inside_link = os.path.join(self.tmp.name, "external-link")
+        os.symlink(self.work, real_inside_link)
+        cases.append(real_inside_link)
+        for config_home in cases:
+            with self.subTest(config_home=config_home):
+                with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": config_home}):
+                    with self.assertRaisesRegex(compose.ConfigError, r"CODEX_HOME .*inside.*workdir"):
+                        client.launch("p", run(), params=self.params(),
+                                      access=drive.Access(dirs=[], commands=[], cwd=self.work))
+
+    def test_genuine_codex_home_outside_workdir_is_not_a_project_setting(self):
+        client = clients.get("codex", CORE)
+        home = os.path.join(self.tmp.name, ".codex")
+        work = os.path.join(home, "runs", "work")
+        os.makedirs(work)
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": home}), redirect_stderr(io.StringIO()):
+            launch = client.launch("p", run(), params=self.params(workdir=work),
+                                   access=drive.Access(dirs=[], commands=[], cwd=work))
+        self.assertEqual(launch.cwd, work)
 
     def test_untrusted_cwd_outside_workdir_fails_before_launch(self):
         client = clients.get("codex", CORE)
