@@ -378,6 +378,20 @@ class Claude(Base):
 
 
 class Codex(Base):
+    def test_four_tiers_select_astra_sol_luna_terra_and_show_the_model(self):
+        expected = {"1": "gpt-6-astra", "2": "gpt-6.1-sol",
+                    "3": "gpt-6-luna", "4": "gpt-5.6-terra"}
+        client = clients.get("codex", CORE)
+        self.assertEqual(client.config["tiers"], expected)
+        for tier, model in expected.items():
+            with self.subTest(tier=tier):
+                notice = io.StringIO()
+                with redirect_stderr(notice):
+                    launch = client.launch("prompt", run(tier=int(tier)), params=self.params(),
+                                           access=drive.Access(dirs=[], commands=[], cwd=self.work))
+                self.assertEqual(launch.argv[launch.argv.index("-m") + 1], model)
+                self.assertIn(f"Codex tier {tier} uses {model};", notice.getvalue())
+
     def test_plan_shows_selected_model_and_local_update_hint(self):
         config = clients.load_config("codex", CORE)
         notice = io.StringIO()
