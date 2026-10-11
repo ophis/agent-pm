@@ -1,7 +1,3 @@
-"""Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config.toml. The run
-reports progress and its outcome with the driver's report command; its stream-json output gives only the text to show.
-A crew.py worker is an interactive `claude` whose tmux_host hooks write its events.
-"""
 import glob
 import json
 import os
@@ -24,24 +20,20 @@ APPROVAL = (": pre-approved commands match on their exact text and each shell ca
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # This core's own plugin (<plugin>@<marketplace>): agent runs load the user's plugins (--setting-sources user), not it.
 PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
-# Flags that make claude pick the session: crew.py picks a worker's.
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 
 
 def resume(cwd: str, sid: str, workdir: str) -> str:
-    """The shell command a human resumes session `sid` with: claude in its cwd, reaching the workdir."""
     q = shlex.quote
     cmd = f"cd {q(cwd)} && claude --resume {q(sid)}"
     return cmd if os.path.realpath(cwd) == os.path.realpath(workdir) else f"{cmd} --add-dir {q(workdir)}"
 
 
 def config_dir() -> str:
-    """Claude Code's config dir: $CLAUDE_CONFIG_DIR, else ~/.claude."""
     return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
 
 
 def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
-    """Where Claude Code saves session `sid` started in `cwd`."""
     return os.path.join(projects, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)), f"{sid}.jsonl")
 
 
@@ -54,7 +46,6 @@ class ClaudeClient(Client):
         "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")))
 
     def session_info(self, workdir: str, sid: str) -> SessionInfo:
-        """Claude can resume by run ID; this core does not inspect Claude's native file here."""
         return SessionInfo(resume_supported=True)
 
     def __init__(self, config: dict):
@@ -140,8 +131,6 @@ class ClaudeClient(Client):
             raise ConfigError(str(e)) from e
 
     def worker_reply(self, sid: str) -> str:
-        """The text blocks of session sid's last text-bearing assistant message, joined by newlines; its transcript
-        read from its end back to that message's first record."""
         if not roster.SID.fullmatch(sid):
             raise ConfigError(f"bad session id {sid!r}")
         found = glob.glob(os.path.join(glob.escape(config_dir()), "projects", "*", sid + ".jsonl"))

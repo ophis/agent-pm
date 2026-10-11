@@ -1,22 +1,3 @@
-"""A fake Linear for orchestrator integration tests, stdlib only: FakeLinear, a thread-safe model of one team's board
-that answers the orchestrator's own GraphQL texts; serve() puts it on 127.0.0.1 over HTTP and seam() writes the
-AGENT_PM_LINEAR file (linear.py's docstring) pointing linear_gql at it.
-
-Dispatch: by exact query text (texts()), each an op named <module>.<CONSTANT>, plus router.issues and
-router.issues+relations (router.q_issues() and q_issues(RELATIONS)). An unknown text: a GraphQL error `fake: unknown
-query`. Each answer is cut to the query's selection set (selection(), project()): a field not selected is missing, as in
-Linear; a selected field the model lacks is a GraphQL error `fake: <op> has no field <name>`.
-
-Callers: a user seeded with a service has a key derived from it (keys()); the caller is the user whose key a request
-carries (Authorization, no "Bearer"); a missing or unknown key gets HTTP 401 with a GraphQL error. isMe, comment authors
-and history actors are the caller.
-
-Semantics, as Linear's for what the orchestrator reads: the team board_ids.TEAM (key TASK, board_ids.STATES named as
-config.STATES, typed as TYPES, plus BACKLOG, a team state the config's [states] lacks: named Backlog, type backlog);
-issue(id:) by uuid or identifier, archived too, a missing one a GraphQL error; lists skip archived issues unless
-includeArchived, in creation order, paged by position cursors; history and comments newest first; times in Linear's form
-(stamp()), now from the real clock.
-"""
 import functools
 import hashlib
 import io
@@ -45,7 +26,7 @@ import sessions
 import writeback
 
 KEY = "TASK"
-BACKLOG = "00000000-0000-4000-8000-000000000017"   # a team state the config's [states] lacks
+BACKLOG = "00000000-0000-4000-8000-000000000017"
 IDS = {**STATES, "backlog": BACKLOG}
 TYPES = {"todo": "unstarted", "in_progress": "started", "in_review": "started", "handoff": "started",
          "done": "completed", "canceled": "canceled", "backlog": "backlog"}
@@ -59,14 +40,11 @@ COMPARATORS = {"eq": lambda x, a: x == a, "in": lambda x, a: x in a, "null": lam
 
 
 class Problem(Exception):
-    """An answer of HTTP 200 with a GraphQL error, the message."""
+    pass
 
 
 @dataclass
 class Request:
-    """A request-log entry. op: the op, the query text when unknown, None for a bad body (HTTP 400); account: the
-    caller's email, None for a bad key; result: ok, a failure kind (error also for a GraphQL error of the call's own and
-    for a bad body), unknown or unauthorized."""
     op: str | None
     account: str | None
     variables: dict
@@ -83,8 +61,6 @@ class _Failure:
 
 
 def stamp(t=None):
-    """t (a datetime, an ISO 8601 string; UTC unless it carries an offset; default now) in Linear's form,
-    2026-10-09T07:30:41.062Z."""
     if t is None:
         t = datetime.now(timezone.utc)
     elif isinstance(t, str):
@@ -95,10 +71,9 @@ def stamp(t=None):
 
 @functools.cache
 def selection(query):
-    """The query's selection set as {field: its selection or None}; the operation header and argument lists skipped."""
     tokens = re.findall(r"\w+|[{}()]", query)
 
-    def skip(i):  # tokens[i] == "(": the index after its ")"
+    def skip(i):
         depth = 0
         while True:
             depth += {"(": 1, ")": -1}.get(tokens[i], 0)
@@ -106,7 +81,7 @@ def selection(query):
             if depth == 0:
                 return i
 
-    def block(i):  # tokens[i] == "{": (its fields, the index after its "}")
+    def block(i):
         fields, i, last = {}, i + 1, None
         while tokens[i] != "}":
             if tokens[i] == "(":
@@ -125,7 +100,6 @@ def selection(query):
 
 
 def project(value, sel, op):
-    """value cut to sel (selection()'s shape), a list element-wise, None as is; Problem on a selected field it lacks."""
     if sel is None or value is None:
         return value
     if isinstance(value, list):
@@ -136,12 +110,10 @@ def project(value, sel, op):
 
 
 def texts():
-    """{op: its query text}, for each op of OPS."""
     return {op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1]) for op in OPS}
 
 
 def index(named):
-    """{text: name} of {name: text}; ValueError naming both names of a shared text."""
     out = {}
     for name, text in named.items():
         if text in out:
@@ -159,28 +131,17 @@ def _errors(message):
 
 
 def _newest(nodes):
-    """Newest createdAt first; a tie, the later added first."""
     return sorted(reversed(nodes), key=lambda n: n["createdAt"], reverse=True)
 
 
 class FakeLinear:
-    """The model, its answers, failures and request log, under one lock. harness: the service the in-process call
-    uses when given none (linear_gql's default is the config's harness_key). Records are the model's own dicts: an issue
-    {id, identifier, url, title, description, priority, createdAt, updatedAt, state (id), project ({id, name} or None),
-    assignee (user id or None), labels (ids), comments [{id, body, createdAt, user (id or None)}], attachments [{url,
-    title}], subscribers (emails), history [{createdAt, actorId, fromStateId, toStateId}], archived}; relations
-    (type, issue id, related issue id)."""
-
     def __init__(self, harness=None):
         self.harness, self.lock = harness, threading.RLock()
-        self.ops = dict(TABLE)  # {text: op}; a test may map another text to an op
+        self.ops = dict(TABLE)
         self.requests, self.failures = [], []
         self.users, self.issues, self.labels, self.projects, self.relations = {}, {}, {}, {}, []
 
-    # Seeding: a time is stamp()'s input, default now.
-
     def user(self, email, name, service=None):
-        """Adds a user; returns its id. With service, it has a key (keys())."""
         with self.lock:
             if any(u["email"].lower() == email.lower() or (service and u["service"] == service)
                    for u in self.users.values()):
@@ -190,12 +151,10 @@ class FakeLinear:
             return uid
 
     def keys(self):
-        """{service: key} of the users with a service, now; a key is derived from its service."""
         with self.lock:
             return {u["service"]: _key(u["service"]) for u in self.users.values() if u["service"]}
 
     def label_group(self, id, name, labels):
-        """Adds label group id and its labels, {id: name}."""
         with self.lock:
             self.labels[id] = {"id": id, "name": name, "isGroup": True, "parent": None}
             for lid, lname in labels.items():
@@ -203,9 +162,6 @@ class FakeLinear:
 
     def issue(self, title="Issue", *, identifier=None, id=None, state="todo", assignee=None, project=None,
               description="", priority=0, labels=(), created=None, updated=None):
-        """Adds an issue of the team; returns its record. identifier TASK-<n> (default the next number); id a uuid
-        (default a new one); state a board_ids.STATES key or "backlog"; assignee a user id; project {id, name}; labels
-        label ids; updated defaults to created."""
         with self.lock:
             if (assignee is not None and assignee not in self.users) or any(i not in self.labels for i in labels):
                 raise ValueError("assignee or a label not seeded")
@@ -221,19 +177,16 @@ class FakeLinear:
                 raise ValueError(str(e)) from None
 
     def comment(self, issue, user, body, *, at=None):
-        """Adds a comment by user (an id; None: an integration's); returns its id."""
         with self.lock:
             if user is not None and user not in self.users:
                 raise ValueError(f"user {user} not seeded")
             return self._comment(self._get(issue), user, body, stamp(at))
 
     def move(self, issue, to, *, actor, at=None):
-        """Moves the issue to state `to` (a board_ids.STATES key or "backlog") as actor (a user id): a history node."""
         with self.lock:
             self._move(self._get(issue), IDS[to], actor, stamp(at))
 
     def relate(self, type, issue, related):
-        """Adds a relation of `type` from issue to related (refs as find() takes); ValueError for an unknown issue."""
         with self.lock:
             a, b = self.find(issue), self.find(related)
             if a is None or b is None:
@@ -241,16 +194,10 @@ class FakeLinear:
             self.relations.append((type, a["id"], b["id"]))
 
     def find(self, ref):
-        """The issue record of a uuid or identifier, else None."""
         with self.lock:
             return self.issues.get(ref) or next((i for i in self.issues.values() if i["identifier"] == ref), None)
 
     def fail(self, op, kind, *, account=None, times=1, seconds=3):
-        """The next `times` calls of op (with account's key only, an email, when given) fail as kind: error (GraphQL
-        errors: linear_gql raises SystemExit), unsuccessful (a mutation's success: false: linear.call raises
-        RuntimeError), 503 (linear.Unavailable), all three changing nothing; hang (applied, answered after seconds: a
-        shorter client timeout raises linear.Unavailable). ValueError for an unknown op or kind, unsuccessful on a query,
-        times under 1, or an account of no seeded user with a key."""
         with self.lock:
             if (op not in OPS or kind not in KINDS or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
                     or times < 1 or (account is not None and not any(
@@ -259,8 +206,6 @@ class FakeLinear:
             self.failures.append(_Failure(op, kind, account, times, seconds))
 
     def answer(self, query, variables, key):
-        """(HTTP status, JSON body, delay in seconds) of one request, logged; serve() and __call__ both send it. A query
-        not a string or variables neither None nor an object: HTTP 400; any exception of the op: a GraphQL error."""
         with self.lock:
             caller = next((u for u in self.users.values() if u["service"] and _key(u["service"]) == key), None)
             account = caller and caller["email"]
@@ -284,13 +229,12 @@ class FakeLinear:
                     data = {top: {f: False if f == "success" else None for f in sel[top]}}
                 else:
                     data = project(OPS[op](self, caller, variables), sel, op)
-            except Exception as e:  # the model's Problem, or the call's own (a missing variable: KeyError)
+            except Exception as e:
                 message = str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
                 return self._log(op, account, variables, "error", 200, _errors(message))
             return self._log(op, account, variables, kind, 200, {"data": data}, failure.seconds if kind == "hang" else 0)
 
     def __call__(self, query, *, timeout=30, service=None, **variables):
-        """linear_gql in process: answer() raised as linear_gql raises it."""
         service = service or self.harness
         keys = self.keys()
         if service not in keys:
@@ -314,7 +258,6 @@ class FakeLinear:
         return status, body, delay
 
     def _failure(self, op, account):
-        """The first failure of op for account, its times counted down, else None."""
         for f in self.failures:
             if f.op == op and (f.account is None or f.account.lower() == account.lower()):
                 f.times -= 1
@@ -347,8 +290,6 @@ class FakeLinear:
         if state != rec["state"]:
             rec["history"].append({"createdAt": at, "actorId": actor, "fromStateId": rec["state"], "toStateId": state})
             rec["state"], rec["updatedAt"] = state, at
-
-    # Views: Linear's objects, every field the orchestrator selects.
 
     def _state(self, sid):
         return {"id": sid, "name": TITLES[NAMES[sid]], "type": TYPES[NAMES[sid]]}
@@ -383,7 +324,6 @@ class FakeLinear:
                                                for t, a, b in self.relations if b == rec["id"]]}}
 
     def _list(self, caller, flt, first, after=None, archived=False):
-        """The issues matching flt (archived ones too when archived), first of them after the cursor `after`."""
         found = [i for i in self.issues.values() if (archived or not i["archived"]) and self._match(i, flt)]
         start = int(after or 0)
         page = found[start:start + first]
@@ -392,7 +332,6 @@ class FakeLinear:
                                         "endCursor": str(start + len(page)) if page else None}}}
 
     def _match(self, rec, flt):
-        """rec meets flt, the filters the orchestrator sends: id, team, state, assignee, project; eq, in, null."""
         values = {"id": rec["id"], "team": TEAM, "state": rec["state"], "assignee": rec["assignee"],
                   "project": rec["project"] and rec["project"]["id"]}
         for field, cond in flt.items():
@@ -404,8 +343,6 @@ class FakeLinear:
                 if not COMPARATORS[c](values[field], arg):
                     return False
         return True
-
-    # Ops: (caller, variables) -> the answer's data before projection.
 
     def _issue(self, caller, v):
         return {"issue": self._view(self._get(v["i"]), caller)}
@@ -575,22 +512,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
-        except (BrokenPipeError, ConnectionResetError):  # the client gave up (its timeout)
+        except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def log_message(self, format, *args):  # test output stays pristine
+    def log_message(self, format, *args):
         pass
 
 
 def serve(case, fake):
-    """Serves fake at 127.0.0.1 (POST /graphql only) until case's cleanup; returns the URL."""
     server = _Server(("127.0.0.1", 0), _Handler)
     server.fake, server.closing = fake, threading.Event()
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
 
     def stop():
-        server.closing.set()  # a hang answers nothing
+        server.closing.set()
         server.shutdown()
         server.server_close()
         thread.join()
@@ -599,7 +535,6 @@ def serve(case, fake):
 
 
 def seam(case, fake, url):
-    """Writes an AGENT_PM_LINEAR file of url and fake's keys now (removed in case's cleanup); returns its path."""
     fd, path = tempfile.mkstemp(prefix="fake-linear-", suffix=".json")
     case.addCleanup(os.remove, path)
     with os.fdopen(fd, "w") as f:

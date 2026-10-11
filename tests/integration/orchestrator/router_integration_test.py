@@ -1,6 +1,3 @@
-"""router.py --issue as a process, then tmux → run.py → drive → the fake claude → write-back, against the fake
-Linear, gh and git (flow_fixtures.Flow); a Linear outage stopping router.py. Issue TASK-7 in Todo, assigned to the
-engineer account, in the mapped project."""
 import os
 import signal
 import unittest
@@ -30,7 +27,6 @@ class Router(Flow):
                         description="Add a session registry.")
 
     def claim(self, mode="start"):
-        """router.py --issue ID exits 0; the sid of runs.jsonl's last line, which is a `mode` line."""
         res = self.router("--issue", ID)
         self.assertEqual(res.returncode, 0, res.stderr)
         last = self.runs()[-1]
@@ -38,8 +34,6 @@ class Router(Flow):
         return last["sid"]
 
     def assert_built(self, sid):
-        """TASK-7 In Review, claimed by the harness and moved by the engineer; one session comment for sid, done; the
-        start and ready comments; the PR attached; the human subscribed; every write-back step ledgered."""
         self.assertEqual(self.state(ID), "in_review")
         self.assertEqual(self.history(ID), [("todo", "in_progress", HARNESS_EMAIL),
                                             ("in_progress", "in_review", ENGINEER)])
@@ -79,7 +73,7 @@ class Router(Flow):
         os.kill(int(pane.stdout), signal.SIGKILL)
         try:
             os.kill(self.calls()[0]["pid"], signal.SIGKILL)
-        except ProcessLookupError:   # orphaned, it ended by itself
+        except ProcessLookupError:
             pass
         live_tmux.wait(lambda: not self.live(driver), TIMEOUT, f"{driver} to end")
         self.assertEqual(self.state(ID), "in_progress")
@@ -126,8 +120,6 @@ class Router(Flow):
         self.assertEqual(self.problems(), [("linear.M_STATE", ENGINEER, "503")])
 
     def outage(self, *argv):
-        """router.py argv with the team read answering HTTP 503: exit 1, nothing printed; the read its only request;
-        one event, a linear-error; TASK-7 still Todo."""
         self.fake.fail("linear.Q_TEAM", "503")
         res = self.router(*argv)
         self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))

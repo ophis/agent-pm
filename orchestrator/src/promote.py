@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""Promote issues in Handoff to the next role.
-
-For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in orchestrator/config.toml has a next:
-create that role's issue in the same project, assigned to its account, in Todo with the source links and the
-human instructions, relate it, and move the source to Done.
---dry-run   Change nothing; print what would happen.
---now       Skip the 10-minute wait in Handoff (for a manual run).
-Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
-config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
-
-At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
-finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
-failure is logged and never breaks the Handoff work.
-"""
 import functools
 import hashlib
 import os
@@ -26,8 +12,22 @@ import linear  # noqa: E402
 from linear import CONFIG_ERRORS, config_error, linear_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
 
+HELP = """Promote issues in Handoff to the next role.
+
+For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in orchestrator/config.toml has a next:
+create that role's issue in the same project, assigned to its account, in Todo with the source links and the
+human instructions, relate it, and move the source to Done.
+--dry-run   Change nothing; print what would happen.
+--now       Skip the 10-minute wait in Handoff (for a manual run).
+Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
+config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
+
+At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
+finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
+failure is logged and never breaks the Handoff work.
+"""
 GRACE = timedelta(hours=1)
-MATURE = timedelta(minutes=10)  # undo window for an accidental drag into Handoff
+MATURE = timedelta(minutes=10)
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 
 Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
@@ -75,7 +75,7 @@ class Promoter:
             if nxt:
                 try:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
-                    if detail["state"]["id"] != self.states["handoff"]:  # the Handoff list can lag behind a just-made move
+                    if detail["state"]["id"] != self.states["handoff"]:
                         continue
                     work.append((self.moves(src, detail), src, detail, role, nxt))
                 except linear.Unavailable:
@@ -92,13 +92,12 @@ class Promoter:
                 self.promote(src, detail, role, nxt, cutoff, first, found)
             except linear.Unavailable:
                 raise
-            except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
+            except (Exception, SystemExit) as e:
                 self.say("handoff-error", src["identifier"], error=one_line(e))
                 if self.now - parse_time(latest) > GRACE:
                     self.bounce_failed(src, e, found[0])
 
     def moves(self, src, detail):
-        """(cutoff, first Handoff move after it, latest Handoff move), as API timestamps."""
         hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
         cutoff = max((h["createdAt"] for h in hist if h["toStateId"] == self.states["in_review"]
                       and h["fromStateId"] != self.states["handoff"]), key=parse_time, default=None)
@@ -108,7 +107,6 @@ class Promoter:
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
-        """Comments after the cutoff by `human_members` users."""
         return sorted((c for c in detail["comments"]["nodes"] if c["user"] and (c["user"].get("email") or "").lower() in self.humans
                        and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
                       key=lambda c: parse_time(c["createdAt"]))
@@ -178,23 +176,20 @@ class Promoter:
             linear.comment(self.gql, src["id"], body)
 
     def move(self, src, state, step):
-        """linear.move from Handoff; True once moved (or dry)."""
         return self.dry or self.moved(src, step, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"]))
 
     def comment_and_move(self, src, body, step):
-        """linear.comment_and_move from Handoff to In Review, the humans subscribed; True once moved (or dry)."""
         return self.dry or self.moved(src, step, linear.comment_and_move(
             self.gql, src["id"], body, self.states["in_review"], self.states["handoff"], self.cfg.get("human_members") or []))
 
     def moved(self, src, step, left):
-        """True for a move made (left None); else logs the skip."""
         if left is not None:
             self.say("move-skip", src["identifier"], step=step, state=left)
         return left is None
 
 
 def run_prune(gql, now, dry, team, roles, pruner=None):
-    """prune.Pruner's run; a failure, even an ImportError, is logged."""
+    # a failure, even an ImportError, is logged
     try:
         if pruner is None:
             from prune import Pruner as pruner
@@ -208,7 +203,7 @@ def run_prune(gql, now, dry, team, roles, pruner=None):
 def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
     os.environ["PATH"] = PATH
     if any(a not in ("--dry-run", "--now") for a in argv):
-        print(__doc__.strip(), file=sys.stderr)
+        print(HELP.strip(), file=sys.stderr)
         return 2
     dry = "--dry-run" in argv
     try:

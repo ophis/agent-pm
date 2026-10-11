@@ -33,7 +33,6 @@ def missing(keys):
 
 
 class ConfigFile:
-    """setUp and load for TestCases that write a orchestrator/config.toml into self.dir."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -122,7 +121,6 @@ class Config(ConfigFile, unittest.TestCase):
                 self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
 
     def test_bad_table_entry_rejected(self):
-        """A [project_repos] or [local_clones] entry: the message names the entry and shows the value."""
         cases = [("project_repos", key, value) for key, value in (
                      ("not-a-uuid", "ophis/x"), (P1.upper(), "ophis/x"), (P1, "https://github.com/ophis/x"), (P1, "ophis/."),
                      (P1, "ophis/.."), (P1, ""), (P1, 42), (P1, "ophis"))]
@@ -165,7 +163,6 @@ def old_key(key):
 
 
 class Runnable(ConfigFile, unittest.TestCase):
-    """runnable() over the repo's core config and orchestrator/config.toml's [core]."""
     def runs(self, text=PIPELINE):
         return config.runnable(self.load(text))
 
@@ -267,8 +264,6 @@ DIRS = {"researcher": "Research/", "pm": "Designs/"}
 
 
 class OtherRoot(ConfigFile, unittest.TestCase):
-    """A repo root with its own orchestrator/config.toml (load() writes it) and core/config.toml; core's text and
-    [clients.*] tables are the real ones."""
     def setUp(self):
         super().setUp()
         self.root = os.path.join(self.dir, "my root")
@@ -285,7 +280,6 @@ class OtherRoot(ConfigFile, unittest.TestCase):
             f.write(text + real[real.index("\n[clients."):])
 
     def researcher_line(self, task, line):
-        """Replaces `task`'s line of researcher's index in a copy of core's team text."""
         team = os.path.join(self.root, "core", "team")
         os.remove(team)
         shutil.copytree(os.path.join(config.CORE, "team"), team)
@@ -380,7 +374,6 @@ class OtherRoot(ConfigFile, unittest.TestCase):
                 self.runs()
 
     def test_core_errors(self):
-        """A core config error, in core's file or the overlay, stops the caller."""
         cases = [('trusted_dirs = ["rel/dir"]\n' + CORE_TOML, PIPELINE,
                   "core: trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path"),
                  (CORE_TOML, PIPELINE + '[core]\ncwd = "rel"\n', "core: cwd must be a printable absolute or ~ path, got 'rel'"),
@@ -417,7 +410,6 @@ DEPLOYMENT = {"team", "states", "human_members", "harness_key", "task_label_grou
 
 
 class Local(ConfigFile, unittest.TestCase):
-    """config.toml with the local file on top."""
     def setUp(self):
         super().setUp()
         self.home = hermetic.home(self)
@@ -462,7 +454,6 @@ STEPS = ("\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] th
 
 
 class TeamDirsIgnored(unittest.TestCase):
-    """The orchestrator never reads core's team_dirs (a drive.py-only key): its roles, tasks and prompts are core's."""
     def setUp(self):
         self.home = hermetic.home(self)
         self.team = os.path.realpath(os.path.join(self.home, "team"))
@@ -479,7 +470,6 @@ class TeamDirsIgnored(unittest.TestCase):
         self.work = os.path.join(os.path.dirname(self.home), "work")
 
     def seen(self):
-        """role_tasks, run_config and drive.plan (as run.py calls it) for pm."""
         params = config.compose.RunParams(input="x", out=os.path.join(self.work, "out.md"), workdir=self.work,
                                           sid="11111111-2222-3333-4444-555555555555")
         launch, run = drive.plan(config.CORE, clients.get("claude", config.CORE), "pm", params=params,
@@ -509,7 +499,6 @@ class TeamDirsIgnored(unittest.TestCase):
 
 
 class RealConfig(unittest.TestCase):
-    """The repo's committed orchestrator/config.toml with a fixture local file, core config and TASKS together."""
     def setUp(self):
         self.local = os.path.join(hermetic.home(self), "orchestrator.local.toml")
 
@@ -565,7 +554,6 @@ def git(*args):
 
 
 class Clones(ConfigFile, unittest.TestCase):
-    """Real git clones (no network) in self.dir, a realpath."""
     def setUp(self):
         super().setUp()
         self.dir = os.path.realpath(self.dir)
@@ -578,7 +566,6 @@ class Clones(ConfigFile, unittest.TestCase):
         return path
 
     def bad(self):
-        """[(name, path, reason)]: what is no local clone of github.com/ophis/agent-pm."""
         dotgit_file = os.path.join(self.dir, "file")
         os.makedirs(dotgit_file)
         with open(os.path.join(dotgit_file, ".git"), "w") as f:
@@ -740,7 +727,7 @@ class Paths(unittest.TestCase):
 
 
 class PathSeam(unittest.TestCase):
-    """config.PATH is computed at import: each case reads it in a fresh process."""
+    # config.PATH is computed at import: each case reads it in a fresh process
     def read(self, **env):
         env = {**{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}, **env, "PYTHONPATH": ROOT}
         res = subprocess.run([sys.executable, "-c", "from tests import hermetic; import config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))"],

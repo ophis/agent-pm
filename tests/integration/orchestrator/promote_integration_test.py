@@ -1,5 +1,3 @@
-"""promote.py as a process against the fake Linear and the test's tmux server (flow_fixtures.Flow): a researcher's
-Handoff issue becomes the pm's child issue, also after a failed move or a Linear outage; prune after Done."""
 import os
 import subprocess
 import unittest
@@ -21,28 +19,20 @@ CLONE = ("src", "acme", "widgets")
 
 
 class Tick(Flow):
-    """promote.py runs and the checks of its every run."""
-
     def tick(self):
-        """promote.py exits 0, printing nothing."""
         res = self.promote()
         self.assertEqual((res.returncode, res.stderr, res.stdout), (0, "", ""))
 
     def events(self):
-        """orchestrator.jsonl's events without ts."""
         return [{k: v for k, v in e.items() if k != "ts"} for e in self.logged()]
 
     def outage(self, op):
-        """promote.py exits 1, printing nothing; its last request the one that failed (HTTP 503), so no prune; its
-        one event a linear-error of op."""
         res = self.promote()
         self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
         self.assertEqual(self.requests()[-1].result, "503")
         self.assertEqual(self.events(), [{"src": "promote", "kind": "linear-error", "op": op, "status": 503}])
 
     def assert_requests(self, writes, problems=()):
-        """Every request the harness account's and answered ok but `problems` ((op, account, result) each); the
-        mutations `writes`, oldest first."""
         self.assertEqual(self.problems(), list(problems))
         requests = self.requests()
         self.assertEqual({r.account for r in requests}, {HARNESS_EMAIL})
@@ -50,9 +40,6 @@ class Tick(Flow):
 
 
 class Promote(Tick):
-    """SOURCE, the researcher's in PROJECT, moved In Review → Handoff 20 min ago (past promote.MATURE, within GRACE),
-    the human's instructions commented between."""
-
     def setUp(self):
         super().setUp()
         now, researcher, human = datetime.now(timezone.utc), self.ids[ACCOUNTS["researcher"]], self.ids[HUMAN]
@@ -68,8 +55,6 @@ class Promote(Tick):
             self.child = promote.child_id(source["id"], "pm", handoff["createdAt"])
 
     def assert_promoted(self):
-        """The child issue: the pm's, Todo, in PROJECT, titled and described from SOURCE, related to it; SOURCE Done
-        by the harness, its one comment after the human's naming the child. Returns the child's identifier."""
         with self.fake.lock:
             child = self.fake.find(self.child)
             self.assertIsNotNone(child, f"no issue {self.child}")
@@ -93,8 +78,6 @@ class Promote(Tick):
         self.assertEqual(self.events(), [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
 
     def assert_move_retried(self, failed):
-        """After a run whose move of SOURCE to Done failed (failed: its problems): the child made and related, SOURCE
-        in Handoff with the human's comment only; the next run promotes it, reusing the child."""
         with self.fake.lock:
             self.assertIsNotNone(self.fake.find(self.child), f"no issue {self.child}")
             self.assertEqual(self.fake.relations, [("related", self.source, self.child)])
@@ -135,7 +118,6 @@ class Promote(Tick):
 
 class Prune(Tick):
     def git_init(self, path):
-        """A clone at path, by a real `git init` with env()."""
         res = subprocess.run(["git", "init", "--quiet", path], env=self.env(), stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, timeout=TIMEOUT)
         self.assertEqual(res.returncode, 0, res.stderr)

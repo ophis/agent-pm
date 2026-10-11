@@ -1,5 +1,3 @@
-"""The Codex worker hook helper (core/src/clients/_codex_hook.py), run as Codex runs it: a process, its payload on
-stdin, $TMUX_PANE set; its tmux a fake that logs each call with the record and reply as they are then."""
 import json
 import os
 import re
@@ -14,7 +12,7 @@ from tests import ROOT
 
 HOOK = os.path.join(ROOT, "core", "src", "clients", "_codex_hook.py")
 PANE = "%3"
-LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"   # one event line
+LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"
 TMUX = """#!{python}
 import json, os, sys
 files = {{}}
@@ -65,7 +63,6 @@ class HookTest(unittest.TestCase):
             f.write(text)
 
     def hook(self, word, payload, args=None, events=None):
-        """Runs the helper; checks it exits 0 printing nothing on stdout; returns its stderr."""
         data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         args = [word, events or self.events, self.record, self.tmux] if args is None else args
         env = {"PATH": "/usr/bin:/bin", "TMUX_PANE": PANE, "TMUX_LOG": self.log,
@@ -105,7 +102,6 @@ class HookTest(unittest.TestCase):
             return []
 
     def marked(self, state):
-        """The tmux calls tmux_host.mark makes for state."""
         calls = [["set-option", "-t", PANE, "@state", state]]
         return calls + [["display-message", "-p", "-t", PANE, "#S"]] if state in ("done", "blocked") else calls
 
@@ -127,7 +123,6 @@ class HookTest(unittest.TestCase):
         self.assertRegex(self.lines(), LINE % "done")
 
     def test_each_word_binds_and_marks_its_state(self):
-        """session and working write no event line; interrupt is done."""
         for word, event, state in (("session", "SessionStart", "working"), ("working", "UserPromptSubmit", "working"),
                                    ("blocked", "PermissionRequest", "blocked"), ("interrupt", "Interrupt", "done")):
             with self.subTest(word=word):
@@ -188,7 +183,6 @@ class HookTest(unittest.TestCase):
         self.assertEqual((self.bound(), self.replied()), (self.native, "the answer"))
 
     def test_done_is_marked_when_the_record_fails(self):
-        """A missing, symlinked, malformed or foreign record: a stderr line, nothing bound or replied, done marked."""
         target = os.path.join(self.dir, "target.json")
         os.rename(self.record, target)
         os.chmod(target, 0o600)
@@ -241,7 +235,6 @@ class HookTest(unittest.TestCase):
                 self.assertRegex(self.lines(), LINE % "done")
 
     def test_the_payload_is_read_to_its_end(self):
-        """One past the pipe's buffer is parsed; one over 64 MiB is read, not parsed."""
         message = "x" * (1 << 20)
         self.assertEqual(self.hook("done", self.stop(message)), "")
         self.assertEqual(self.replied(), message)

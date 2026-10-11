@@ -1,5 +1,3 @@
-"""Codex CLI headless client. Reports are still carried only by report.py. A crew.py worker is an interactive `codex`
-(_codex_worker.py)."""
 import json
 import fcntl
 import hashlib
@@ -57,7 +55,6 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
-    """Keep project-controlled Codex configuration out of an untrusted run."""
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
     if not _inside(real_cwd, real_workdir):
         raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
@@ -107,7 +104,6 @@ def _no_symlink_ancestors(path: str) -> None:
 
 
 def _session_file(snapshot: dict, client_id: str) -> tuple[str, float] | None:
-    """Find this exact native session, then verify the CLI's own first metadata event."""
     try:
         if str(uuid.UUID(client_id)) != client_id:
             raise ValueError
@@ -168,14 +164,12 @@ def _flags(snapshot: dict, *, interactive: bool) -> list[str]:
 class CodexClient(Client):
     keys = frozenset({"tiers", "efforts", "shell_network"})
     session_env = "CODEX_THREAD_ID"
-    # Identity: Codex's session, version and sandbox markers. Injected defaults: what unified exec forces on each
-    # command it runs (its TERM=dumb and COLORTERM= are terminal keys the pane replaces; its C.UTF-8 locale stays).
+    # Injected defaults: what unified exec forces on each command it runs (its TERM=dumb and COLORTERM= are
+    # terminal keys the pane replaces; its C.UTF-8 locale stays).
     command_env = MappingProxyType({
         **dict.fromkeys(("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
                          "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")),
         "NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"})
-    # codex 0.162.1's source anchors of its startup dialogs: folder trust, restricted folder, hook review, resume cwd,
-    # another app's writer lock, sign-in
     worker_dialogs = ("Trust this folder?", "Config, hooks, and exec policies from untrusted folders stay disabled.",
                       "Hooks need review", "Working directory · resume", "This conversation is open in another app",
                       "Sign in with ChatGPT to use Codex")
@@ -354,7 +348,6 @@ def _recovery_snapshot(state: _SessionState) -> dict:
 
 
 def _copy_snapshot(value: object) -> dict:
-    """Copy a JSON object without interpreting client-owned fields or coercing types."""
     try:
         copied = json.loads(json.dumps(value, allow_nan=False))
     except (TypeError, ValueError, RecursionError) as exc:
@@ -448,7 +441,6 @@ def _path(root: str, workdir: str, sid: str) -> str:
 
 
 def _implicit_writable_roots() -> list[str]:
-    """Temporary locations clients may write without an explicit directory grant."""
     return ["/tmp", "/private/tmp", "/var/tmp", tempfile.gettempdir(),
             *([os.path.abspath(os.environ["TMPDIR"])] if os.environ.get("TMPDIR") else [])]
 
@@ -488,7 +480,6 @@ def _read(path: str, workdir: str, sid: str) -> _SessionState | None:
 
 @contextmanager
 def _locked(root: str):
-    """Serialize native-ID binding across competing resume attempts."""
     fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -534,7 +525,6 @@ def _write(path: str, state: _SessionState, *, exclusive: bool) -> None:
 
 
 def _create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list[str]) -> _SessionState:
-    """Create a durable launch snapshot before the client process starts."""
     workdir, sid = _identity(workdir, sid)
     state = _state({"version": _SESSION_VERSION, "workdir": workdir, "sid": sid, "client": "codex",
                     "snapshot": snapshot, "client_id": None,
@@ -548,7 +538,6 @@ def _create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list
 
 
 def _load_session(workdir: str, sid: str) -> _SessionState | None:
-    """Read the authoritative state, or None if no state was ever created."""
     workdir, sid = _identity(workdir, sid)
     root = _store(create=False)
     if root is None:
@@ -560,7 +549,6 @@ def _load_session(workdir: str, sid: str) -> _SessionState | None:
 
 
 def _bind_session(workdir: str, sid: str, client_id: str) -> _SessionState:
-    """Permanently bind the first native ID; the same ID is safe on a resumed turn."""
     workdir, sid = _identity(workdir, sid)
     root = _store(create=False)
     if root is None:

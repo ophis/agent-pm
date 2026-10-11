@@ -1,5 +1,3 @@
-"""drive.py resumes, run as a process as in drive_integration_test: an answer to needs_input, a run whose role picked its
-task, a draft left at --out. A failure names its scenario step."""
 import contextlib
 import os
 import signal
@@ -17,8 +15,6 @@ DRAFT = "Draft.\n"
 
 @contextlib.contextmanager
 def step(n: int, name: str):
-    """Names step `n` in a failure inside the block: `step <n> (<name>): ` before its message; any other error gets
-    it as a note."""
     try:
         yield
     except AssertionError as e:
@@ -30,7 +26,6 @@ def step(n: int, name: str):
 
 
 def option(call: dict, name: str) -> str | None:
-    """The value after `name` in a fake invocation's argv; None without `name`."""
     argv = call["argv"]
     return argv[argv.index(name) + 1] if name in argv else None
 
@@ -80,7 +75,6 @@ class RolePicks(Integration):
         self.tasks = compose.index(hermetic.CORE, self.ROLE)
 
     def picks(self, text: str) -> None:
-        """`text`'s guide has the run pick its task, naming none."""
         guide = text.split("\n# Principles\n", 1)[0]
         self.assertIn("**Your task**: pick it from your charter's Tasks section", guide)
         self.assertEqual([t for t in self.tasks if f"`{t}`" in guide], [], "tasks the guide names")

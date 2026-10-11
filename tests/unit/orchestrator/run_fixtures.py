@@ -1,5 +1,3 @@
-"""Fixtures of an agent run shared by router_test (the outer) and run_test (the inner): a temp root linking the repo's core,
-a fake Linear (Gql) and a fake gh/git (Run); and orchestrator.jsonl's reader (logged, show)."""
 import json
 import os
 import subprocess
@@ -59,8 +57,6 @@ None linked."""
 
 
 def logged(logs=None):
-    """The lines of orchestrator.jsonl in logs (default config.LOGS_DIR) as dicts, each checked to open with ts (ISO 8601
-    with offset), src and kind."""
     try:
         with open(os.path.join(logs or config.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
             lines = [json.loads(line) for line in f]
@@ -72,7 +68,6 @@ def logged(logs=None):
 
 
 def show(event):
-    """An event as `kind [issue] key=value…`, ts and src left out; a value not a str as JSON."""
     fields = [f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}" for k, v in event.items()
               if k not in ("ts", "src", "kind", "issue")]
     return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
@@ -101,7 +96,6 @@ FIELDS = {"comment": "commentCreate", "update": "commentUpdate", "state": "issue
 
 
 class Gql:
-    """Fake Linear recording (name, service, variables) and each call's timeout; fail(name, v) → an exception to raise."""
     def __init__(self, issue, fail=lambda name, v: None):
         self.issue, self.fail, self.calls, self.timeouts = issue, fail, [], []
 
@@ -125,7 +119,6 @@ class Gql:
 
 
 class Run:
-    """Fake gh/git: (argv prefix, result or exception) pairs; records (argv, timeout)."""
     def __init__(self, table):
         self.table, self.calls = list(table), []
 
@@ -140,13 +133,11 @@ class Run:
 
 
 def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID):
-    """SHARED as the outer passes them to the inner: --task only when given."""
     return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}",
             *([f"--task={task}"] if task else []), f"--mode={mode}"]
 
 
 class Base(unittest.TestCase):
-    """A temp root ("my root") linking the repo's core, with CONFIG; config's work and logs dirs under it."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -181,9 +172,6 @@ class Base(unittest.TestCase):
             return f.read()
 
     def sh(self, argv, **kw):
-        """Fake tmux: list-sessions prints tmux_sessions; new-session (drive.detach's) fails with tmux_error, else takes
-        the handover file as tmux_host.EXEC does, keeping it in handovers by path; set-option goes to options as
-        (target, option, value), not sh_calls."""
         if argv[:2] == ["tmux", "set-option"]:
             self.options.append(tuple(argv[3:]))
             return subprocess.CompletedProcess(argv, 0, "", "")
@@ -203,7 +191,6 @@ class Base(unittest.TestCase):
         return service not in self.missing
 
     def said(self, src=None):
-        """show() of each orchestrator.jsonl event (of src only, when given), `src ` first when src is None."""
         return [show(e) if src else f"{e['src']} {show(e)}" for e in logged() if src in (None, e["src"])]
 
     def transcript(self):

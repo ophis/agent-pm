@@ -13,7 +13,8 @@ claude plugin validate core && claude plugin validate .   # plugin and marketpla
 ./gen-preview.sh                                          # every role × task's composed prompt into previews/ (gitignored)
 ```
 
-CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (all of `tests/unit`) and separate Core, Orchestrator and sharded Tmux integration jobs (each installs tmux); a test must pass on Linux too.
+CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Comment budget, Unit tests (all of `tests/unit`) and separate Core, Orchestrator and sharded Tmux integration jobs (each installs tmux); a test must pass on Linux too. Comment budget (`.github/comment_budget.py`) caps comment plus docstring characters per code character over git-tracked `.py` files at 15% for source and 10% for tests (`(^|/)tests/` or `_test.py`): keep a comment only for a gotcha (≤3 lines).
+The comment budget keeps comments short: meet it by cutting comments or docstrings, never by adding code to lower the ratio.
 
 Tests: a unit test of module `<m>` is `tests/unit/<pkg>/<m>_test.py`, an integration test (real processes end to end) `tests/integration/<pkg>/<m>_integration_test.py`; `<pkg>` is `core` (`core/src`), `tmux` (`core/skills/tmux/scripts`) or `orchestrator` (`orchestrator/src`); existing files keep their names. Every dir under `tests/` has an `__init__.py` (discovery skips a dir without one); import a helper by package path (`from tests.integration.core import fake_claude`). A new `<pkg>` needs its source dir in `tests/__init__.py` and an integration job. Assign each tmux integration test class once in `.github/tmux_shards.py`; its gate checks every `*_integration_test.py` and requires its shard names to match the workflow's inline JSON matrix.
 
