@@ -617,6 +617,7 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
 
 def tile(window: str, *, per_column: int | None = None, wait: bool = True, if_panes_changed: bool = False,
          proc=subprocess.run) -> None:
+    # tmux runs a command's hooks after it: @grid-busy, set first and unset by a second command, mutes them
     if not WINDOW.fullmatch(window):
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     _per_column(per_column)
@@ -653,6 +654,7 @@ def tile(window: str, *, per_column: int | None = None, wait: bool = True, if_pa
 
 def _grid_pass(window: str, per_column: int | None, if_panes_changed: bool,
                proc) -> tuple[list[tuple[str, str]], Cell | None, str, str] | None:
+    # up to SETTLE_ITERATIONS more passes: with the hooks muted, a multi-pass state (an orphan group) would stop short
     fields = _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc).stdout.rstrip("\n").split("\t", 7)
     if len(fields) != 8 or fields[2] != "0" or not fields[4]:
         return None
