@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
-from .base import PROGRESS, Access, Client, Event, Launch
+from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo
 
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +32,10 @@ def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
 
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
+
+    def session_info(self, workdir: str, sid: str) -> SessionInfo:
+        """Claude can resume by run ID; this core does not inspect Claude's native file here."""
+        return SessionInfo(resume_supported=True)
 
     def __init__(self, config: dict):
         super().__init__(config)

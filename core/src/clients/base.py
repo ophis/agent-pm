@@ -29,6 +29,7 @@ class Launch:
     status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
     per_column: int | None = None   # the config's workers_per_column, set by drive.plan, for the tui runner
     retile: str | None = None       # the config's grid_retile, set by drive.plan, for the tui runner
+    session_state: dict | None = None  # typed recovery options, persisted by the driver before launch
 
 
 @dataclass(frozen=True)
@@ -37,11 +38,26 @@ class Event:
     both through report.py; or, from the driver, a line of the headless client's stderr (`stderr`), or a progress point
     the run never reported (`missing`, named by it); or a turn end (`stop`, the interactive client's Stop hook, whose
     `pending` counts the background work still running; meaningful on `stop` only)."""
-    kind: Literal["text", "stderr", "progress", "outcome", "missing", "stop"]
+    kind: Literal["text", "stderr", "progress", "outcome", "missing", "stop", "session"]
     text: str = ""
     name: str = ""
     outcome: dict | None = None
     pending: int = 0
+    session_id: str = ""  # native client ID reported by a session event
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """Native session capabilities and current metadata, if the client can inspect them."""
+    resume_supported: bool = False
+    inspection_supported: bool = False
+    client_id: str | None = None
+    exists: bool = False
+    transcript: str | None = None
+    last_activity: float | None = None  # filesystem activity, seconds since epoch
+    resume: str | None = None
+    usage_supported: bool = False
+    usage: dict | None = None
 
 
 class Client:
@@ -85,6 +101,14 @@ class Client:
         """The agent run's stdout as text Events."""
         for line in lines:
             yield Event("text", line.rstrip("\n"))
+
+    def resume_location(self, workdir: str, sid: str) -> tuple[str, bool] | None:
+        """Authoritative saved cwd/project when this client has its own recovery state."""
+        return None
+
+    def session_info(self, workdir: str, sid: str) -> SessionInfo:
+        """Native session capabilities and metadata; unsupported unless a client overrides it."""
+        return SessionInfo()
 
     def inline(self, prompt: str) -> str:
         """The prompt for the calling conversation to follow."""
