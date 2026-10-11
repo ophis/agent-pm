@@ -1,5 +1,3 @@
-"""A new core client works from its module and config table, without changing production dispatch: its agent runs
-(drive.py) and, on a private tmux server, its crew.py workers."""
 import json
 import os
 import shutil
@@ -13,10 +11,9 @@ from tests.integration.core import live_tmux
 
 CORE = Path(__file__).resolve().parents[3] / "core"
 MANAGER = "mgr"
-WORKER = "extension_worker"   # the worker client's module and [clients.*] name
-MARKER = "EXTENSION_SESSION"   # its session marker
-TIMEOUT = 60   # seconds, per process
-# The worker client: its command runs SCRIPT, as a new or resumed session, with one variable of its own.
+WORKER = "extension_worker"
+MARKER = "EXTENSION_SESSION"
+TIMEOUT = 60
 WORKER_MODULE = """import sys
 from .base import Client, WorkerCommand
 class WorkerAdapter(Client):
@@ -26,8 +23,6 @@ class WorkerAdapter(Client):
                               spec.name], env={{"EXTENSION_WORKER": spec.name}})
 RUNS = WorkerAdapter.runs
 """
-# A worker: logs its start to $EXTENSION_LOG, prints a line, echoes stdin lines; when its terminal goes (a respawn's
-# kill), it lingers LINGER s before it logs its exit and ends.
 SCRIPT = """import json, os, signal, sys, time
 LINGER = 1
 def log(what):
@@ -48,7 +43,6 @@ log("exit")
 
 
 def copied_core(case) -> Path:
-    """A copy of core in a temp root of `case`'s own; returns the root."""
     temp = tempfile.TemporaryDirectory()
     case.addCleanup(temp.cleanup)
     root = Path(os.path.realpath(temp.name))
@@ -126,9 +120,6 @@ class ExtensionClientIntegration(unittest.TestCase):
 
 
 class ExtensionWorkerIntegration(unittest.TestCase):
-    """The copied core plus a worker client (WORKER_MODULE) and its [clients.<WORKER>] table, nothing else changed;
-    crew.py from that copy against a private tmux server, mgr started, shown in a client and attached."""
-
     def setUp(self):
         self.root = copied_core(self)
         core = self.root / "core"
@@ -150,7 +141,6 @@ class ExtensionWorkerIntegration(unittest.TestCase):
         self.ok(self.crew_py("attach"))
 
     def crew_py(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
-        """The copy's crew.py args… in mgr's pane, env Server.env() plus EXTENSION_LOG and `extra`."""
         env = self.server.env(**self.server.inside(MANAGER), EXTENSION_LOG=str(self.log), **extra)
         return subprocess.run([sys.executable, self.crew, *args], env=env, cwd=self.work, capture_output=True,
                               text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT)
@@ -160,14 +150,12 @@ class ExtensionWorkerIntegration(unittest.TestCase):
         return res
 
     def start(self, *args: str, **extra: str) -> str:
-        """`crew.py start w1 --manager mgr --cwd <work> args…`'s session id."""
         out = self.ok(self.crew_py("start", "w1", "--manager", MANAGER, "--cwd", self.work, *args, **extra)).stdout
         name, _, sid = out.strip().partition(" ")
         self.assertEqual(name, "w1", out)
         return sid
 
     def logged(self, count: int) -> list[dict]:
-        """The worker log's entries once it has `count`."""
         def read():
             entries = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
             return entries if len(entries) >= count else None
@@ -177,7 +165,6 @@ class ExtensionWorkerIntegration(unittest.TestCase):
         return int(self.ok(self.server.tmux("display-message", "-p", "-t", "=w1:", "#{pane_pid}")).stdout)
 
     def resume(self) -> list[str]:
-        """w1's roster entry's recovery argv."""
         return json.loads(self.roster.read_text())["entries"]["w1"]["resume"]
 
     def test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one(self):
@@ -197,7 +184,6 @@ class ExtensionWorkerIntegration(unittest.TestCase):
         self.assertEqual(self.pane_pid(), resumed["pid"])
 
     def test_its_session_marker_makes_it_the_default(self):
-        """A caller in its session (the marker set) gets its worker, the marker dropped from the worker's env."""
         sid = self.start(**{MARKER: "1"})
         (begun,) = self.logged(1)
         self.assertEqual(begun["env"], {MARKER: None, "EXTENSION_WORKER": "w1"})

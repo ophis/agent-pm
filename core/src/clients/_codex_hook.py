@@ -1,9 +1,9 @@
-"""The command each hook of a crew.py Codex worker runs (clients/_codex_worker.py), outside Codex's sandbox:
-`_codex_hook.py <word> <events> <record> <tmux>`, <word> one of WORDS. Reads the hook's JSON payload on stdin to its
-end; binds the worker record to the payload's session; for done (Stop) saves its last_assistant_message as the worker's
-reply; then, whatever those did, marks the pane (tmux_host.mark). Never prints on stdout (Codex reads a SessionStart's
-or UserPromptSubmit's stdout as model context) and always exits 0 (exit 2 denies or blocks); diagnostics go to stderr.
-No payload text reaches an event line or a tmux argument. Stdlib, and tmux_host from core's src/."""
+"""The command each hook of a crew.py Codex worker runs, outside Codex's sandbox: `_codex_hook.py <word> <events>
+<record> <tmux>`. Reads the hook's JSON payload on stdin to its end (Codex stalls on a hook that stops reading); binds
+the worker record to the payload's session; for done (Stop) saves its last_assistant_message as the worker's reply;
+then, whatever those did, marks the pane (tmux_host.mark). Never prints on stdout (Codex reads a SessionStart's or
+UserPromptSubmit's stdout as model context) and always exits 0 (exit 2 denies or blocks). No payload text reaches an
+event line or a tmux argument."""
 import fcntl
 import json
 import os
@@ -16,15 +16,14 @@ import uuid
 WORDS = {"session": "working", "working": "working", "blocked": "blocked", "done": "done", "interrupt": "done"}
 VERSION = 1
 KEYS = frozenset({"version", "sid", "cwd", "codex_home", "native"})
-RECORD_MAX = 64 << 10   # bytes in a worker record
-PAYLOAD_MAX = 64 << 20  # bytes of a payload parsed, and of a reply read
+RECORD_MAX = 64 << 10
+PAYLOAD_MAX = 64 << 20
 BLOCK = 1 << 16
-LOCK_WAIT = 5   # seconds to get the record's lock
+LOCK_WAIT = 5
 POLL = 0.05
 
 
 def canonical(text) -> bool:
-    """Whether text is a UUID as Codex writes one: lowercase, hyphenated."""
     try:
         return isinstance(text, str) and str(uuid.UUID(text)) == text
     except ValueError:
@@ -32,8 +31,6 @@ def canonical(text) -> bool:
 
 
 def unsafe(fd: int, limit: int) -> str:
-    """Why the file open as fd is no file of ours to trust ("" when it is): a 0600 regular file of the caller's, at
-    most limit bytes."""
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
         return "not a 0600 regular file of yours"
@@ -41,8 +38,6 @@ def unsafe(fd: int, limit: int) -> str:
 
 
 def load(data: bytes, sid: str) -> dict | None:
-    """A worker record's fields: exactly KEYS, version VERSION, sid the record's, absolute cwd and codex_home, native
-    null or canonical; None when data is not that."""
     try:
         record = json.loads(data)
     except (ValueError, RecursionError):
@@ -60,7 +55,6 @@ def dump(record: dict) -> bytes:
 
 
 def reply_path(record: str) -> str:
-    """The reply file beside a worker record <sid>.json: <sid>.reply."""
     return record[:-len(".json")] + ".reply"
 
 
@@ -84,8 +78,6 @@ def main(argv: list[str]) -> None:
 
 
 def _payload(stream) -> dict:
-    """The payload read to its end (Codex writes it whole, stalling on a hook that stops reading); {} when over
-    PAYLOAD_MAX bytes or not a JSON object."""
     chunks, size = [], 0
     while chunk := stream.read(BLOCK):
         size += len(chunk)
@@ -101,9 +93,6 @@ def _payload(stream) -> dict:
 
 
 def _bind(word: str, payload: dict, record: str) -> None:
-    """A root session's payload (no agent_id, a canonical session_id, its cwd the record's): the record, unbound,
-    gets its session_id as native, rewritten in place under its lock; bound to another, it stays (stderr). Bound to it
-    and done: the payload's last_assistant_message, a string, becomes the reply."""
     session, cwd = payload.get("session_id"), payload.get("cwd")
     if payload.get("agent_id") is not None or not canonical(session) or not isinstance(cwd, str):
         return
@@ -147,7 +136,6 @@ def _lock(fd: int) -> None:
 
 
 def _reply(record: str, text: str) -> None:
-    """text, as UTF-8, in the record's reply file: written to a temp file in its dir, then moved over it."""
     fd, tmp = tempfile.mkstemp(prefix=".reply-", dir=os.path.dirname(record))
     try:
         with os.fdopen(fd, "wb") as f:
@@ -161,6 +149,6 @@ def _reply(record: str, text: str) -> None:
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
-    except Exception as e:   # Codex reads any other exit as the hook's failure (exit 2: a denial)
+    except Exception as e:
         print(f"codex_hook: {type(e).__name__}: {e}", file=sys.stderr)
     sys.exit(0)

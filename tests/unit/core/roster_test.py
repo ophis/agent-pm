@@ -21,7 +21,6 @@ INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3"}
 
 
 def tmux(out="own\n"):
-    """A proc answering every call with out; its calls are recorded."""
     def proc(argv, **kw):
         proc.calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, out, "")
@@ -61,7 +60,6 @@ class ManagerTest(unittest.TestCase):
         self.addCleanup(os.umask, os.umask(mask))
 
     def outside(self, name):
-        """A directory beside ~/.agent-pm, for a link to point at."""
         path = os.path.join(os.path.dirname(self.agent_pm), name)
         os.mkdir(path)
         return path
@@ -257,7 +255,6 @@ except roster.Held as e:
 
 
 def good(**over):
-    """A valid entry value."""
     value = dict(kind="worker", sid=SID, cwd="/w", resume=["/usr/bin/python3", "/x/crew.py"], note=None, opener=None,
                  pane=None, split=None, split_from=None, tui=None, state="working", started=WHEN)
     return {**value, **over}
@@ -362,7 +359,6 @@ class RosterTest(unittest.TestCase):
         return {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}, **top}
 
     def store(self, data):
-        """Writes roster.json as given (bytes, str or JSON-able); returns its bytes."""
         raw = data if isinstance(data, bytes) else data.encode() if isinstance(data, str) else json.dumps(data).encode()
         with open(self.path, "wb") as f:
             f.write(raw)
@@ -377,7 +373,6 @@ class RosterTest(unittest.TestCase):
         return json.loads(self.bytes())["entries"]
 
     def load(self, **kw):
-        """The roster as read (write=False unless given) and what it printed to stderr."""
         err = io.StringIO()
         with contextlib.redirect_stderr(err), roster.locked(self.dir, **{"write": False, **kw}) as r:
             pass
@@ -394,7 +389,6 @@ class RosterTest(unittest.TestCase):
         fcntl.flock(fd, fcntl.LOCK_EX)
 
     def foreign(self, path):
-        """os.fstat answering for `path`'s file as another user's."""
         ino, real = os.stat(path).st_ino, os.fstat
 
         def fstat(fd):
@@ -707,7 +701,7 @@ class RosterTest(unittest.TestCase):
     def test_put_records_one_entry_under_the_lock(self):
         roster.put(self.dir, "w1", good(note="n"))
         roster.put(self.dir, "w2", good(state="done"))
-        roster.put(self.dir, "w1", good(state="done"))   # the same sid: record keeps the note
+        roster.put(self.dir, "w1", good(state="done"))
         self.assertEqual(self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")})
         with self.assertRaises(roster.RosterError):
             roster.put(self.dir, "w3", good(kind="boss"))
@@ -772,7 +766,6 @@ class RosterTest(unittest.TestCase):
                 self.assertEqual(e["resume"], resume)
 
     def test_recovery_names_the_legacy_client_of_a_worker_resume_without_one(self):
-        """Only a worker's resume with no --client before a bare `--` gets `--client claude` after its name."""
         head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
         rest = ["--manager", "m", "--resume", SID, "--cwd", "/w"]
         legacy = [*head, "--client", roster.LEGACY_CLIENT, *rest]
@@ -818,7 +811,6 @@ KEPT = object()
 
 
 def sessions(*live):
-    """A proc answering tmux has-session with 0 for the sessions in `live`, else 1; its argv are recorded."""
     def proc(argv, **kw):
         proc.calls.append(argv)
         if argv[:3] != ["tmux", "has-session", "-t"]:
@@ -863,8 +855,6 @@ class LeaseTest(unittest.TestCase):
             roster.take(r, self.dir, own, proc=proc)
 
     def test_take_and_check_by_holder_own_and_live_sessions(self):
-        """Each row: the holder, own, the live tmux sessions (None: no tmux); then take's and check's holder (KEPT: as
-        it was) or their error, which changes nothing; the sessions asked (has-session), the same for both."""
         since = "2026-01-02T03:04:05+00:00"
         other, me, me_now = self.held("other", since), self.held("me"), self.held("me", NOW)
         held, attach = (roster.Held, self.message("other", since)), (roster.RosterError, ATTACH.format(self.dir))
@@ -933,8 +923,6 @@ class LeaseTest(unittest.TestCase):
 
 
 def tmux_sessions(*live, stuck=()):
-    """A proc answering tmux kill-session and has-session over the sessions in `live`: a kill ends one (unless it is in
-    `stuck`) and fails for one not live; its argv are recorded."""
     alive = set(live)
 
     def proc(argv, **kw):
@@ -952,13 +940,10 @@ def tmux_sessions(*live, stuck=()):
 
 
 def kills(*sessions):
-    """The tmux calls roster.stop makes for sessions, in order."""
     return [["tmux", cmd, "-t", f"={s}"] for s in sessions for cmd in ("kill-session", "has-session")]
 
 
 class StopTest(unittest.TestCase):
-    """roster.stop inside a locked() block of m1's directory; tmux is tmux_sessions."""
-
     def setUp(self):
         self.agent_pm = hermetic.home(self)
         self.dir = os.path.join(self.agent_pm, "managers", "m1")
@@ -967,7 +952,6 @@ class StopTest(unittest.TestCase):
                         "d2": good(kind="pipeline", tui="t2"), "d3": good(kind="role", tui=None)}
 
     def stop(self, name, proc):
-        """roster.stop's key for name, and the entries then written."""
         with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
         with roster.locked(self.dir) as r:
@@ -976,7 +960,6 @@ class StopTest(unittest.TestCase):
             return key, r["entries"]
 
     def refused(self, name, proc, message):
-        """roster.stop raises message inside the block; nothing written."""
         with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
         with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir) as r:
@@ -986,7 +969,6 @@ class StopTest(unittest.TestCase):
             self.assertEqual(r["entries"], self.entries)
 
     def test_kills_the_sessions_driver_first_then_removes_the_entry(self):
-        """Each row: the name given, the live sessions (None: no tmux), the key stopped, the sessions killed in turn."""
         cases = [
             ("a worker", "w1", ("w1", "w2"), "w1", ("w1",)),
             ("a role by its key", "d1", ("d1", "t1"), "d1", ("d1", "t1")),
@@ -1028,7 +1010,6 @@ NOT_REGULAR = "{}: not a regular file owned by you"
 
 
 def numbered(count, *, start=1, first=WIDTH):
-    """count lines `line <i>` from i = start, dot-padded to WIDTH bytes with their newline (the first to `first`)."""
     return b"".join(f"line {i}".ljust((first if i == start else WIDTH) - 1, ".").encode() + b"\n"
                     for i in range(start, start + count))
 
@@ -1056,12 +1037,10 @@ class CursorTest(unittest.TestCase):
             return f.read()
 
     def due_file(self, tail=b""):
-        """events over EVENTS_MAX with tail after SPAN + 3 lines; returns the cursor leaving the last 3 unhandled."""
         self.write(numbered(SPAN + 3) + tail)
         return SPAN
 
     def rotate(self, r, during=lambda: None):
-        """roster.rotate with a fake sleep running `during`: (its result, the seconds slept, stderr)."""
         slept, err = [], io.StringIO()
 
         def sleep(seconds):
@@ -1073,7 +1052,6 @@ class CursorTest(unittest.TestCase):
         return result, slept, err.getvalue()
 
     def lstat_as(self, path, change):
-        """os.lstat answering for path with change(path, its real lstat)."""
         real = os.lstat
 
         def lstat(p, *args, **kw):

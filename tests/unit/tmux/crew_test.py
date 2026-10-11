@@ -37,8 +37,8 @@ DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
-MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")   # the configured clients' session markers (Client.session_env)
-NAMES = "BETA_CI, NO_COLOR"   # the names --env may set with extra_clients
+MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")
+NAMES = "BETA_CI, NO_COLOR"
 
 
 def executable(path, text):
@@ -48,8 +48,6 @@ def executable(path, text):
 
 
 def isolate(case):
-    """Outside tmux and iTerm2, so the show finds no pane and runs nothing, and outside any client's session; its
-    stderr lines stay out of the output."""
     env = {k: v for k, v in os.environ.items()
            if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM", *MARKERS)}
     for p in (mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO())):
@@ -58,7 +56,6 @@ def isolate(case):
 
 
 def no_sleep(case):
-    """time.sleep as a recorder, `case.sleep`, for the rest of `case`'s test."""
     p = mock.patch.object(crew.time, "sleep")
     case.sleep = p.start()
     case.addCleanup(p.stop)
@@ -66,15 +63,12 @@ def no_sleep(case):
 
 @contextlib.contextmanager
 def spawned():
-    """tmux_host.start as a recorder, yielded, and every session running (tmux_host.status): the rest of
-    crew.start runs, on a fake tmux, without a session."""
     with mock.patch.object(tmux_host, "start") as start, \
             mock.patch.object(tmux_host, "status", return_value=tmux_host.RUNNING):
         yield start
 
 
 def lock_free(path):
-    """Whether no one holds the flock on path."""
     fd = os.open(path, os.O_RDWR)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -86,21 +80,17 @@ def lock_free(path):
 
 
 def decorate_calls(events, status_line=False):
-    """The tmux calls tmux_host.decorate makes for worker w1."""
     fake = Fake()
     tmux_host.decorate("w1", events, status_line=status_line, proc=fake)
     return fake.calls
 
 
 def local(case, text):
-    """Core config's local file for the rest of `case`'s test."""
     with open(os.path.join(hermetic.home(case), "core.local.toml"), "w") as f:
         f.write(text)
 
 
 class Alpha(clients.Client):
-    """A test client with the worker capability: `alpha` on the spec's PATH, its env ALPHA_HOME; session marker
-    ALPHA_SESSION, identity key ALPHA_ID, injected default NO_COLOR=1; one dialog text."""
     needs_config = False
     session_env = "ALPHA_SESSION"
     command_env = MappingProxyType({"ALPHA_SESSION": None, "ALPHA_ID": None, "NO_COLOR": "1"})
@@ -116,7 +106,6 @@ class Alpha(clients.Client):
 
 
 class Beta(clients.Client):
-    """A test client without the worker capability: session marker BETA_SESSION, injected default BETA_CI=1."""
     needs_config = False
     session_env = "BETA_SESSION"
     command_env = MappingProxyType({"BETA_SESSION": None, "BETA_CI": "1"})
@@ -124,7 +113,6 @@ class Beta(clients.Client):
 
 @contextlib.contextmanager
 def extra_clients():
-    """The configured clients are claude, alpha and beta (clients.loaded); clients.get builds alpha and beta."""
     get, extra = clients.get, {"alpha": Alpha, "beta": Beta}
     with mock.patch.object(clients, "loaded", return_value={"claude": ClaudeClient, **extra}), \
             mock.patch.object(clients, "get", side_effect=lambda name, root: extra[name]({}) if name in extra
@@ -133,13 +121,6 @@ def extra_clients():
 
 
 class Fake:
-    """Records proc calls; `new_err` makes new-session fail; `results` maps a tmux command to a function of the argv
-    giving its stdout. On new-session or respawn-pane it reads the handover file tmux_host wrote and unlinks it as the
-    pane's wrapper would. A session's pane status (display-message), in `panes`, is empty (no session) until
-    new-session or respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers
-    `history` (until a clear-history, which fails with `clear_err`) then `text`. Until a respawn-pane, every call first
-    adds `late` to `history`: what the old run prints meanwhile. A clear-history stops a sequence (`;`) as it fails."""
-
     def __init__(self, new_err="", results=None):
         self.new_err, self.results = new_err, results or {}
         self.calls, self.kwargs = [], []
@@ -237,7 +218,6 @@ class StartTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(crew.CORE, ".claude-plugin", "plugin.json")))
 
     def test_tmux_host_call(self):
-        """The client's command, its hooks its own (claude_hooks=False)."""
         fake = Fake()
         sid = self.start(fake, prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
@@ -259,8 +239,6 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.options()["@sid"], SID)
 
     def test_the_claude_argv_after_its_name(self):
-        """A new session id; the flags verbatim, none scanned after a bare `--`; then `--` and the prompt, if any (one
-        `--` however the prompt starts). @flags records the flags."""
         bare = ("--model=m", "--", *REFUSED, "--resume=x")
         tools = ("--allowedTools", "Read", "Grep")
         cases = (({}, ()), ({"flags": ("--x",)}, ("--x",)), ({"flags": bare}, bare),
@@ -274,7 +252,6 @@ class StartTest(unittest.TestCase):
                 self.assertEqual(json.loads(fake.options()["@flags"]), list(kw.get("flags", ())))
 
     def test_env_cwd_in_the_handover(self):
-        """The env minus claude's context variables, its PWD the cwd."""
         fake = Fake()
         self.start(fake, env={**self.env, "PWD": "/elsewhere"})
         self.assertEqual(fake.handover["cwd"], self.dir)
@@ -312,8 +289,6 @@ class StartTest(unittest.TestCase):
                                                                     if c[1] == "set-option"))
 
     def test_a_failed_tmux_call_kills_the_session_before_any_watch(self):
-        """A worker option failing: crew.py kills the session, a failing kill ignored; tmux_host's decoration
-        failing: tmux_host kills it, no worker option set. An OSError: a WorkersError. No early watch (_early)."""
         def oserror(*words):
             return lambda argv: all(w in argv for w in words)
         undone, lost = "set boom; start undone", "^tmux: .*No such file"
@@ -383,7 +358,6 @@ class StartTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.directory))
 
     def test_a_bad_events_file_cwd_or_claude_starts_no_session(self):
-        """The events file, which any same-user process can replace, checked: a symlink, not owned, not regular."""
         target = os.path.join(self.dir, "t")
         open(target, "w").close()
 
@@ -478,8 +452,6 @@ class WorkerCase(unittest.TestCase):
 
 class ContainerTest(WorkerCase):
     def test_workers_stack_in_tmux_splits(self):
-        """In a Linux container: the commander in tmux session cmd, pane %0, shown on /dev/pts/1; no pgrep or iTerm2
-        variables."""
         sock = "/tmp/tmux-0/default"
         tmux = os.path.join(self.bin, "tmux")
         executable(tmux, "#!/bin/sh\n")
@@ -507,7 +479,6 @@ class ContainerTest(WorkerCase):
 
 
 def status_call():
-    """The tmux call tmux_host.status makes for worker w1."""
     fake = Fake()
     tmux_host.status("w1", proc=fake)
     return fake.calls[0]
@@ -517,15 +488,12 @@ class EarlyDeathTest(WorkerCase):
     RUNS = ("start", "restart")
 
     def interleaved(self, fake):
-        """Logs each sleep among fake's calls."""
         self.sleep.side_effect = lambda secs: fake.calls.append(["sleep", secs])
 
     def dead(self, fake, text=DEAD_TEXT, pane=DEAD_PANE):
         fake.spawned, fake.text = pane, text
 
     def attempt(self, run, fake, setup):
-        """Runs `run` (the start or the restart of w1) after setup(fake), and returns the WorkersError it raises.
-        A restart follows a start that finds a running pane."""
         self.sleep.reset_mock(side_effect=True)
         if run == "restart":
             self.started(fake)
@@ -559,8 +527,6 @@ class EarlyDeathTest(WorkerCase):
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
 
     def test_an_early_death_raises_its_report(self):
-        """At the first check that finds it: the exit status (a signal's as 128 + it) and the pane's last 20 non-blank
-        lines, history included but no earlier run's; the session kept. A vanished session: its own message."""
         old = [f"old {i}" for i in range(7)]
         kept = [f"kept {i}" for i in range(20)]
         text = "".join(f"{line}\n\n  \n" for line in (*old, *kept)) + "\n\n"
@@ -617,8 +583,6 @@ class EarlyDeathTest(WorkerCase):
 
 class RestartTest(WorkerCase):
     def test_respawns_through_the_handover(self):
-        """With the caller's env minus claude's context variables, its PWD the worker's cwd; the command printed on
-        stderr and returned."""
         fake = Fake()
         sid = self.started(fake)
         caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in ClaudeClient.command_env}}
@@ -653,7 +617,6 @@ class RestartTest(WorkerCase):
         self.assertEqual(settings["hooks"]["Notification"], ours["Notification"])
 
     def test_redecorates_and_clears_state_then_clears_history_in_the_respawns_tmux_command(self):
-        """Its status line as core config says at the restart."""
         for status_line in ("false", "true"):
             with self.subTest(status_line=status_line):
                 fake = Fake()
@@ -693,8 +656,6 @@ class RestartTest(WorkerCase):
                 self.assertIsNone(fake.handover)
 
     def test_missing_or_corrupt_options_not_a_worker(self):
-        """The options any same-user process can change, each checked as read back (bad None: unset); none: never a
-        worker."""
         for key, bad in ((None, None), ("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
                          ("@sid", ""), ("@client", ""), ("@exe", ""), ("@exe", None), ("@cwd", ""), ("@events", ""),
                          ("@env", ""), ("@env", None), ("@env", "[]"), ("@env", '{"NO_COLOR": 1}')):
@@ -719,9 +680,6 @@ class RestartTest(WorkerCase):
 
 
 class ClientTest(WorkerCase):
-    """The worker's client: --client, else the one whose session marker the caller's env holds, else claude; the
-    environment policy and --env; with the test clients (extra_clients)."""
-
     def setUp(self):
         super().setUp()
         self.alpha = os.path.join(self.bin, "alpha")
@@ -776,8 +734,6 @@ class ClientTest(WorkerCase):
                 self.assertEqual(fake.calls, [])
 
     def test_every_clients_identity_keys_dropped_an_injected_default_only_with_its_marker(self):
-        """Whichever the worker's client: each loaded client's identity keys go; NO_COLOR=1 (alpha's injected default)
-        goes only with ALPHA_SESSION present, BETA_CI=1 only with BETA_SESSION; another value stays."""
         caller = {"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "ALPHA_ID": "i", "KEEP": "k"}
         watched = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ALPHA_SESSION", "ALPHA_ID", "BETA_SESSION", "NO_COLOR",
                    "BETA_CI", "KEEP")
@@ -827,8 +783,6 @@ class ClientTest(WorkerCase):
                           "@env": '{"NO_COLOR": "0"}'})
 
     def test_restart_replays_the_client_its_exe_flags_and_env(self):
-        """The stored executable (not the caller's PATH), the caller's env through the policy, the client's env, then
-        @env."""
         fake = Fake()
         sid = self.start(fake, {"ALPHA_SESSION": "a"}, client="alpha", flags=("--x",), overrides=("NO_COLOR=0",))
         caller = {"PATH": os.path.join(self.dir, "empty"), "ALPHA_SESSION": "a", "NO_COLOR": "1", "FOO": "1"}
@@ -854,7 +808,6 @@ class ClientTest(WorkerCase):
                 self.assertEqual(fake.respawns(), [])
 
     def test_a_legacy_session_restarts_and_replies_as_claude(self):
-        """A session started before @client: @claude, no @env; claude whatever the caller's session."""
         fake = Fake()
         sid = self.start(fake, flags=("--model", "m"))
         for key in ("@client", "@exe", "@env"):
@@ -891,7 +844,6 @@ class ClientTest(WorkerCase):
         self.assertEqual(self.fails(fake, client="alpha"), DEAD_MSG.replace("claude exited", "alpha exited"))
 
     def test_a_dialog_on_the_screen_marks_the_pane_blocked(self):
-        """After the early watch, on start and restart: a text of the client's worker_dialogs on the visible pane."""
         def display(argv):
             return {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")
         for run in ("start", "restart"):
@@ -912,7 +864,6 @@ class ClientTest(WorkerCase):
                     self.assertRegex(f.read(), r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 blocked\n\Z")
 
     def test_a_dialog_text_matches_with_whitespace_collapsed(self):
-        """A dialog the client draws over lines of its own, indented."""
         fake = Fake(results={"display-message": lambda argv: {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")})
         open(self.events, "w").close()
         fake.text = "Folder /w\n  Trust\n    alpha?  (y/n)\n"
@@ -933,8 +884,6 @@ class ClientTest(WorkerCase):
 
 
 class CodexWorkerTest(WorkerCase):
-    """The configured clients (claude, codex, skill): Codex's session marker and context variables; a codex worker's
-    app-server the repo's fake codex (tests/integration/core/fake_codex.py), in a HOME of the test's own."""
     INJECTED = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
     IDENTITY = {k: "x" for k in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
                                  "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")}
@@ -973,7 +922,6 @@ class CodexWorkerTest(WorkerCase):
         self.assertEqual(fake.calls, [])
 
     def test_a_claude_worker_drops_codex_context_its_defaults_only_with_the_marker(self):
-        """Codex's identity keys always; its injected defaults with CODEX_THREAD_ID present; another value stays."""
         no_marker = {k: v for k, v in self.IDENTITY.items() if k != "CODEX_THREAD_ID"}
         for env, kept in (({**self.IDENTITY, **self.INJECTED}, {}), ({**no_marker, **self.INJECTED}, self.INJECTED),
                           ({**self.IDENTITY, "NO_COLOR": "0", "PAGER": "less"}, {"NO_COLOR": "0", "PAGER": "less"})):
@@ -1010,9 +958,6 @@ TOOL = {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}
 
 
 class ReplyTest(WorkerCase):
-    """crew.py's part of a reply: the worker's session id and client; the transcript is the client's (drive_test.py ›
-    ClaudeWorker)."""
-
     def fake(self, sid=SID):
         fake = Fake()
         fake.store["@sid"] = sid
@@ -1089,7 +1034,6 @@ class MainTest(WorkerCase):
         self.assertNotIn("kill-session", [c[1] for c in fake.calls])
 
     def test_start_client_and_env(self):
-        """The worker's client and --env items: options, and the roster entry's resume argv."""
         executable(os.path.join(self.bin, "alpha"), "#!/bin/sh\n")
         fake = Fake()
         with extra_clients():
@@ -1204,8 +1148,6 @@ class MainTest(WorkerCase):
 
 
 class ManagerDirTest(WorkerCase):
-    """main's events file is the manager directory's (core/skills/tmux/SKILL.md › Start 1), attached first; start's
-    session (spawned) and next_event are fakes, the tmux session of the caller's pane `session` (none: outside tmux)."""
     CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
 
     def setUp(self):
@@ -1217,7 +1159,6 @@ class ManagerDirTest(WorkerCase):
         return os.path.join(self.managers, name, "events")
 
     def run_main(self, argv, session=None):
-        """(exit code, stderr, the events file argv's command was given or None)."""
         env = {} if session is None else {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
         fake = Fake(results={"display-message": lambda argv: f"{session}\n"})
         err = io.StringIO()
@@ -1231,7 +1172,6 @@ class ManagerDirTest(WorkerCase):
         return rc, err.getvalue(), nxt.call_args.args[0] if nxt.called else None
 
     def test_default_is_the_own_sessions_events(self):
-        """A worker that starts workers (in session w1) uses its own directory too."""
         for cmd, session in ((self.CMDS[0], "m1"), (self.CMDS[1], "m2"), (["start", "w2"], "w1")):
             with self.subTest(cmd=cmd[0], session=session):
                 attached(own=session)
@@ -1246,8 +1186,6 @@ class ManagerDirTest(WorkerCase):
         self.assertEqual(os.listdir(self.managers), ["other"])
 
     def test_no_directory_or_a_bad_name_exit_1_making_nothing(self):
-        """Outside tmux without --manager; a bad --manager; a bad own session name, which any same-user process can
-        set."""
         outside = "workers: no manager directory: run inside tmux or give --manager <name>\n"
         manager_ = "workers: manager 'a/b': want [A-Za-z0-9_-]+\n"
         own = "workers: own tmux session 'a.b': want [A-Za-z0-9_-]+; give --manager <name>\n"
@@ -1299,7 +1237,6 @@ class NextEventTest(unittest.TestCase):
             f.write(data if isinstance(data, bytes) else data.encode())
 
     def sleeping(self, *steps):
-        """Patches time.sleep: its nth call runs steps[n]; a call past the last fails the test instead of hanging."""
         calls = iter(steps)
 
         def sleep(secs):
@@ -1330,9 +1267,6 @@ class NextEventTest(unittest.TestCase):
                 self.assertEqual(crew.next_event(self.path, n), (n + 1, event))
 
     def test_the_first_event_after_a_line_waited_for(self):
-        """`after` None: after the complete lines there now (none in a missing file). A line counts once complete, a
-        non-event line too; bytes once read are not read again; a missing file is waited for. A 0.5 s sleep per step,
-        each step run by one sleep (data: appended)."""
         A, B, C = self.A, self.B, self.C
         junk = ["", "garbage", "1:00:01 w1 done", "10:00:01 w1", "10:00:01 w1 ", "10:00:01  w1 done",
                 " 10:00:01 w1 done"]
@@ -1408,8 +1342,6 @@ class NextEventTest(unittest.TestCase):
 
 
 class Gone(Fake):
-    """No session: show-options and capture-pane fail as tmux does."""
-
     def __call__(self, argv, **kw):
         if argv[1] == "capture-pane":
             self.calls.append(argv)
@@ -1418,7 +1350,6 @@ class Gone(Fake):
 
 
 class NextEventContentTest(WorkerCase):
-    """What next-event prints after `<line> <event>`."""
     PANE = [f"pane {i}" for i in range(50)]
     CAPTURE = ["tmux", "capture-pane", "-p", "-J", "-t", "=w1:", "-S", "-40"]
 
@@ -1428,8 +1359,6 @@ class NextEventContentTest(WorkerCase):
         attached("--manager", "m1")
 
     def run_event(self, event, fake, *transcript):
-        """main's (exit code, stdout, stderr) for next-event on an events file holding only `event`; transcript: the
-        lines of session SID's transcript, if any."""
         if transcript:
             d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "-p")
             os.makedirs(d, exist_ok=True)
@@ -1444,7 +1373,6 @@ class NextEventContentTest(WorkerCase):
         return rc, out.getvalue(), err.getvalue()
 
     def pane(self, worker=True, fake=None):
-        """A fake tmux whose w1 pane shows PANE; a worker's session holds @sid SID."""
         fake = fake or Fake()
         fake.text = nl(*self.PANE)
         if worker:
@@ -1508,13 +1436,10 @@ SPAN = roster.EVENTS_MAX // WIDTH
 
 
 def numbered(count, start=1):
-    """count event lines `12:00:00 w<i> done`, i from start, dot-padded to WIDTH bytes with their newline."""
     return nl(*(f"12:00:00 w{i} done ".ljust(WIDTH - 1, ".") for i in range(start, start + count)))
 
 
 def tail(directory, n=0, gen=0, *backlog):
-    """What attach prints after the table for manager directory `directory`: the backlog, N and GEN, the arm
-    commands."""
     me, events = shlex.quote(os.path.abspath(crew.__file__)), shlex.quote(os.path.join(directory, "events"))
     name = os.path.basename(directory)
     return nl(*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
@@ -1523,18 +1448,15 @@ def tail(directory, n=0, gen=0, *backlog):
 
 
 def entry(kind="worker", **over):
-    """A valid roster entry."""
     return {"kind": kind, "sid": SID, "cwd": "/w", "resume": [PY, SCRIPT[kind], "--go"], "note": None, "opener": None,
             "pane": None, "split": None, "split_from": None, "tui": None, "state": "working", "started": WHEN, **over}
 
 
 def opts(sid="", state="", pane="", opener=""):
-    """A live session's @sid, @state, @pane and @opener."""
     return (sid, state, pane, opener)
 
 
 def result(**fields):
-    """A run.jsonl line of kind result."""
     return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
 
 
@@ -1553,13 +1475,6 @@ def within(seconds=10):
 
 
 class Server:
-    """A fake tmux server for the roster commands. `sessions` maps a session to its opts(); `extra` is appended to
-    list-sessions' rows; `clients` maps a session to its list-clients output; `panes` is list-panes -a's; `fail` maps a
-    command, or a command with its target (`list-clients -t =w1`), to the stderr it fails with (an OSError: raised);
-    kill-session ends a session. The caller's pane is in session `own` (None: outside tmux). Any other program is a
-    recovery command: recorded in `recoveries` as (argv, its keywords, whether roster.lock at `lock` was free), it
-    exits as `results` maps its argv[1] ((code, output), or an exception raised; default (0, ""))."""
-
     def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra="", results=None, lock=None):
         self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
         self.sessions = {**({own: opts()} if own else {}), **(sessions or {})}
@@ -1599,8 +1514,6 @@ class Server:
 
 
 def attached(*argv, own=None):
-    """Runs `crew.py attach argv…` on a fake tmux server (Server), the caller in tmux session `own` (None: outside
-    tmux); fails unless it exits 0. What start and next-event need first."""
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
     if own:
         env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
@@ -1617,8 +1530,6 @@ OTHER = {"session": "other", "since": WHEN}
 
 
 class RosterCase(WorkerCase):
-    """mgr's manager directory, its roster seeded by a test, on a fake tmux server (Server)."""
-
     def setUp(self):
         super().setUp()
         self.agent_pm = hermetic.home(self)
@@ -1627,7 +1538,6 @@ class RosterCase(WorkerCase):
         self.lock = os.path.join(self.mdir, "roster.lock")
 
     def seed(self, holder=None, cursor=0, gen=0, **entries):
-        """roster.json holding these entries; returns its bytes."""
         roster.ensure(self.mdir)
         with open(self.path, "w") as f:
             json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": gen, "entries": entries}, f)
@@ -1641,7 +1551,6 @@ class RosterCase(WorkerCase):
         return json.loads(self.bytes())["entries"]
 
     def held(self):
-        """The FR-13 refusal for OTHER, as main prints it."""
         return (f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
                 "run crew.py release, or end that session\n")
 
@@ -1649,7 +1558,6 @@ class RosterCase(WorkerCase):
         return f"workers: manager directory {self.mdir} not attached: run crew.py attach first\n"
 
     def run_main(self, server, *argv):
-        """main's (exit code, stdout, stderr) for argv, the caller in tmux session server.own."""
         env = dict(self.env)
         if server.own:
             env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
@@ -1661,8 +1569,6 @@ class RosterCase(WorkerCase):
 
 
 class AttachTest(RosterCase):
-    """crew.py attach, the caller in tmux session mgr unless a test says otherwise; show is self.show."""
-
     def setUp(self):
         super().setUp()
         self.shows, self.then = [], None
@@ -1671,8 +1577,6 @@ class AttachTest(RosterCase):
         self.addCleanup(p.stop)
 
     def show(self, session, **kw):
-        """tmux_host.show as a recorder: (session, its keywords, whether roster.lock was free) in self.shows; it
-        records @pane %9 and @opener mgr on the session as tmux_host's does, then runs self.then."""
         self.shows.append((session, kw, lock_free(self.lock)))
         sessions = kw["proc"].sessions
         sessions[session] = (*sessions[session][:2], "%9", "mgr")
@@ -1684,11 +1588,9 @@ class AttachTest(RosterCase):
             f.write(text)
 
     def attach(self, server, *argv):
-        """main's (exit code, stdout, stderr) for `attach *argv`."""
         return self.run_main(server, "attach", *argv)
 
     def synced(self, server, *argv):
-        """attach's stdout; asserts exit 0 and nothing on stderr."""
         rc, out, err = self.attach(server, *argv)
         self.assertEqual((rc, err), (0, ""))
         return out
@@ -1801,7 +1703,6 @@ class AttachTest(RosterCase):
                          [f"resume {name}" for name in sorted(entries)])
 
     def test_a_role_or_pipeline_is_live_by_its_driver_or_tui_session(self):
-        """Driver only: working, placement kept; tui: its state and placement, the driver live or not."""
         for kind in ("role", "pipeline"):
             with self.subTest(kind=kind):
                 self.seed(d1=entry(kind, cwd=self.dir, state="gone", tui="t1", pane="%1"),
@@ -2003,7 +1904,6 @@ class AttachTest(RosterCase):
         self.assertFalse(os.path.exists(self.path))
 
     def test_a_failed_list_clients_skips_that_entry(self):
-        """No reopen and no `shown in` for it; the rest as usual, the second block included."""
         for fail in ("can't find session: w1\n", OSError(errno.ENOENT, "No such file or directory")):
             with self.subTest(fail=fail):
                 self.shows = []
@@ -2040,8 +1940,6 @@ class AttachTest(RosterCase):
 
 
 class LeaseTest(RosterCase):
-    """start and next-event check the lease (roster.check) before any tmux call and make nothing but start's entry
-    (StartEntryTest) and next-event's cursor; start's session (spawned) and next_event are fakes."""
     CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
     FRESH = {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
 
@@ -2052,7 +1950,6 @@ class LeaseTest(RosterCase):
         self.addCleanup(p.stop)
 
     def rest(self, cmd):
-        """roster.json without start's entry; None when missing."""
         if not os.path.exists(self.path):
             return None
         r = json.loads(self.bytes())
@@ -2061,7 +1958,6 @@ class LeaseTest(RosterCase):
         return r
 
     def ran(self, server, cmd):
-        """(exit code, stderr, whether start or next_event ran) for `cmd --manager mgr`."""
         for fake in self.fakes:
             fake.reset_mock()
         rc, _, err = self.run_main(server, *cmd, "--manager", "mgr")
@@ -2098,8 +1994,7 @@ class LeaseTest(RosterCase):
                 self.assertEqual(self.rest(cmd), before)
 
     def test_allowed_outside_tmux_without_a_live_holder(self):
-        """start writes only its entry; next-event only the cursor it records; the holder left null."""
-        roster.events(self.mdir)   # as drive.py and router.py --tui still make it
+        roster.events(self.mdir)
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
                 with contextlib.suppress(FileNotFoundError):
@@ -2114,9 +2009,6 @@ class LeaseTest(RosterCase):
 
 
 class StartEntryTest(RosterCase):
-    """start's roster entry (roster.record) in mgr's directory, which mgr holds; tmux is a Fake (has-session: every
-    session live)."""
-
     def setUp(self):
         super().setUp()
         self.seed(MGR)
@@ -2125,12 +2017,10 @@ class StartEntryTest(RosterCase):
         return crew.start("w1", self.mdir, own="mgr", cwd=self.dir, env=self.env, proc=fake or Fake(), **kw)
 
     def resume(self, sid, *rest):
-        """w1's recovery argv for sid, rest after its --cwd."""
         return [sys.executable, CREW, "start", "w1", "--manager", "mgr", "--client", "claude", "--resume", sid,
                 "--cwd", self.dir, *rest]
 
     def lines(self, err):
-        """err's lines but show's (tui: …)."""
         return [x for x in err.getvalue().splitlines() if not x.startswith("tui: ")]
 
     def test_the_worker_entry_resumes_through_crew_py(self):
@@ -2243,7 +2133,6 @@ class StartEntryTest(RosterCase):
 
 
 class RosterCommandsTest(RosterCase):
-    """release, note, forget and stop, the caller in tmux session mgr unless a test says otherwise."""
     CMDS = (["release"], ["note", "w1", "x"], ["forget", "w1"], ["stop", "w1"])
 
     def test_refused_without_the_lease_writing_nothing(self):
@@ -2280,7 +2169,6 @@ class RosterCommandsTest(RosterCase):
         self.assertEqual((r["holder"], r["cursor"]), (None, 7))
 
     def test_note_sets_and_an_empty_one_clears(self):
-        """At most 500 characters."""
         self.seed(MGR, w1=entry(), w2=entry(note="old"), w3=entry())
         for argv in (["w1", "check the logs"], ["w2", ""], ["w3", "x" * 500]):
             self.assertEqual(self.run_main(Server(), "note", *argv), (0, "", ""))
@@ -2319,7 +2207,6 @@ class RosterCommandsTest(RosterCase):
         self.assertEqual(self.entries(), {"w2": entry()})
 
     def test_forget_refuses_a_live_entry_writing_nothing(self):
-        """A worker by its session; a role or pipeline by its driver (its name) or its tui."""
         entries = {"w1": entry(), "r1": entry("role", tui="r1-tui"), "r2": entry("role", tui="r2-tui"),
                    "p1": entry("pipeline", tui="p1-tui")}
         server = Server(sessions={"w1": opts(), "r1": opts(), "r2-tui": opts(), "p1-tui": opts()})
@@ -2338,10 +2225,7 @@ class RosterCommandsTest(RosterCase):
 
 
 class StopTest(RosterCase):
-    """crew.py stop, mgr the holder unless a test says otherwise (its refusals: RosterCommandsTest)."""
-
     def stopped(self, server, name, *argv):
-        """stop's (exit code, stdout, stderr), the targets it killed and the entries left."""
         res = self.run_main(server, "stop", name, *argv)
         return res, [c[3] for c in server.ran("kill-session")], set(self.entries())
 
@@ -2392,8 +2276,6 @@ class StopTest(RosterCase):
 
 
 class StopAllTest(RosterCase):
-    """crew.py stop-all, the caller in tmux session mgr, its holder unless a test says otherwise."""
-
     def test_selects_by_opener_recursively_deepest_first(self):
         live = {"mgr": {"opener": ""}, "w1": {"opener": "mgr"}, "w2": {"opener": "mgr"}, "w3": {"opener": "w1"},
                 "w4": {"opener": "w3"}, "x": {"opener": "other"}, "y": {"opener": "x"}, "z": {"opener": ""},
@@ -2402,7 +2284,7 @@ class StopAllTest(RosterCase):
         self.assertEqual(crew.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"])
         self.assertEqual(crew.opened("nobody", live), [])
         entries = {"mgr": {"x": entry(), "w9": entry(tui="t9"), "w1": entry()}}
-        live = {**live, "w9": {"opener": ""}, "t9": {"opener": "mgr"}}   # x: another manager's, its name reused
+        live = {**live, "w9": {"opener": ""}, "t9": {"opener": "mgr"}}
         self.assertEqual(crew.opened("mgr", live, lambda s: entries.get(s, {})),
                          ["back", "w4", "w3", "t9", "w1", "w2", "w9"])
 
@@ -2437,7 +2319,7 @@ class StopAllTest(RosterCase):
             self.assertEqual(r["entries"], {})
 
     def test_unshown_sessions_of_its_roster_too_an_entry_kept_while_its_key_lives(self):
-        self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"))   # no pane shown: no @opener
+        self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"))
         server = Server(sessions={"w1": opts(SID), "d1": opts(), "t1": opts()},
                         fail={"kill-session -t =d1": "boom\n"})
         live = "workers: stop-all: still live after tmux kill-session: d1\n"
@@ -2467,8 +2349,6 @@ class StopAllTest(RosterCase):
 
 
 class ResumeTest(RosterCase):
-    """crew.py attach --resume, mgr attaching: every live session shown (no reopen); the recovery commands run on
-    Server."""
     RUN = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
            "errors": "replace"}
 
@@ -2560,9 +2440,7 @@ class ResumeTest(RosterCase):
 
 
 class CursorTest(RosterCase):
-    """attach and next-event record the cursor; attach rotates and prints the backlog and the arm commands. mgr holds
-    the lease; next_event is a fake recording (events, after, the roster's cursor while it runs) in self.waits."""
-    BIG = SPAN * 11 // 10   # the lines of a 1.1 MiB events file
+    BIG = SPAN * 11 // 10
     ROTATE = "workers: rotate: run crew.py attach, then arm with its N and GEN\n"
 
     def setUp(self):
@@ -2579,7 +2457,6 @@ class CursorTest(RosterCase):
         return after + 1, "12:00:00 w1 outcome done"
 
     def fill(self, data, cursor=0, gen=0):
-        """mgr's events file holding data, its roster held by mgr at cursor and gen; returns the roster's bytes."""
         before = self.seed(MGR, cursor=cursor, gen=gen)
         with open(self.mevents, "wb") as f:
             f.write(data if isinstance(data, bytes) else data.encode())
@@ -2749,8 +2626,6 @@ class CursorTest(RosterCase):
         self.assertEqual(self.waits, [(self.mevents, SPAN, SPAN)])
 
     def test_unhandled_lines_past_events_max_rotate_only_once_half_is_handled(self):
-        """events over EVENTS_MAX, all of it after the cursor: next-event waits and attach keeps the file until the
-        handled bytes reach EVENTS_MAX // 2."""
         data = numbered(SPAN + 1).encode()
         self.fill(data)
         half = SPAN // 2
@@ -2771,7 +2646,6 @@ class CursorTest(RosterCase):
         self.assertEqual(self.bytes(), before)
 
     def test_an_interrupted_next_event_leaves_its_line_for_the_next_manager(self):
-        """FR-15: next-event --after 12 interrupted, the lease released, another session's attach resumes after 12."""
         data = numbered(15)
         self.fill(data)
         with mock.patch.object(crew, "next_event", side_effect=KeyboardInterrupt), \

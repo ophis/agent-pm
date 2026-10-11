@@ -1,4 +1,3 @@
-"""drive.py run as a process (the headless runner) against fake_claude.py on PATH as `claude`."""
 import json
 import os
 import signal
@@ -44,13 +43,11 @@ class Integration(unittest.TestCase):
             json.dump({"steps": steps, **scenario, "log": self.log}, f)
 
     def drive(self, steps, *extra, cwd=None, **scenario) -> subprocess.CompletedProcess:
-        """drive.py's result, in `cwd` (default proj), the fake running scenario `steps` plus `scenario`'s keys."""
         self.scene(steps, **scenario)
         return subprocess.run(self.argv(*extra), cwd=cwd or self.proj, env=self.env, stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, timeout=60)
 
     def popen(self, *extra) -> subprocess.Popen:
-        """drive.py in its own session and process group, killed with its agents when the test ends."""
         # A suite started in the background inherits SIGINT ignored; drive.py installs no handler of its own.
         proc = subprocess.Popen(self.argv(*extra), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
@@ -73,7 +70,6 @@ class Integration(unittest.TestCase):
         proc.stderr.close()
 
     def until(self, proc: subprocess.Popen, check, what: str) -> None:
-        """Returns once check() holds; fails naming `what` once `proc` (popen's) ends first or 30 s pass."""
         deadline = time.monotonic() + 30
         while not check():
             if proc.poll() is not None or time.monotonic() > deadline:
@@ -84,7 +80,6 @@ class Integration(unittest.TestCase):
             time.sleep(0.05)
 
     def events(self) -> list[dict]:
-        """The run's record, <workdir>/run.jsonl, one dict per line."""
         with open(os.path.join(self.work, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
@@ -92,12 +87,10 @@ class Integration(unittest.TestCase):
         return [e for e in self.events() if e["kind"] == kind][-1]
 
     def calls(self) -> list[dict]:
-        """The fake's invocations, from its log."""
         with open(self.log) as f:
             return [json.loads(line) for line in f]
 
     def transcribed(self) -> list[dict]:
-        """The transcript's lines."""
         with open(self.transcript) as f:
             return [json.loads(line) for line in f]
 
@@ -129,7 +122,6 @@ class NewRun(Integration):
 
 
 def prompt(call: dict) -> str:
-    """The prompt of a fake invocation: the argument after `-p`."""
     return call["argv"][call["argv"].index("-p") + 1]
 
 

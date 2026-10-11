@@ -17,8 +17,6 @@ def comment(id, created_at, body, mine=True):
     return {"id": id, "createdAt": created_at, "body": body, "mine": mine}
 
 class FakeLinear:
-    """ISSUE's comments; answers the find query by applying its filters, commentCreate and commentUpdate.
-    fail maps an operation (comments, commentCreate, commentUpdate) to an exception to raise, or False for success: false."""
     def __init__(self, *comments, fail=None):
         self.comments, self.fail, self.calls = [dict(c) for c in comments], dict(fail or {}), []
 
@@ -55,7 +53,6 @@ def end(gql, rec, rc, ended_at=T2):
 
 class Record(unittest.TestCase):
     def test_post_writes_one_comment_per_status(self):
-        """Start: running; end: done (exit 0) or interrupted, with start and end times and the exit code."""
         for rc, line in ((None, f"running · {T1}"), (0, f"done · {T1} → {T2} · exit 0"),
                          (3, f"interrupted · {T1} → {T2} · exit 3")):
             with self.subTest(rc=rc):
@@ -78,8 +75,6 @@ class Record(unittest.TestCase):
                 self.assertNotIn("interrupted", line)
 
     def test_command(self):
-        """The workdir is quoted; a run.jsonl session entry gives the cwd, never the command (the agent run can write
-        it)."""
         with tempfile.TemporaryDirectory() as tmp:
             cwd = "/data/my repo"
             with open(os.path.join(tmp, "run.jsonl"), "w") as f:
@@ -161,7 +156,6 @@ class Record(unittest.TestCase):
 
 class Failure(unittest.TestCase):
     def error(self, out, reason):
-        """out is the reason, one line; the caller logs registry-error."""
         self.assertEqual(out, reason)
 
     def failing(self, exc):

@@ -1,4 +1,3 @@
-"""A Linear issue read into frozen dataclasses: its notes, links, linked issues and Handoff description."""
 import os
 import re
 import sys
@@ -21,7 +20,6 @@ SECTIONS = ("## Source", "## Instructions", "## Comments")
 
 @dataclass(frozen=True)
 class Note:
-    """A comment; `at` is the API string."""
     body: str
     at: str
     email: str | None
@@ -30,13 +28,11 @@ class Note:
 
 @dataclass(frozen=True)
 class Link:
-    """An attachment."""
     url: str
 
 
 @dataclass(frozen=True)
 class Linked:
-    """A related issue."""
     identifier: str
     title: str
     state: str
@@ -44,7 +40,6 @@ class Linked:
 
 @dataclass(frozen=True)
 class Handoff:
-    """A Handoff description's section bodies, stripped."""
     source: str
     instructions: str
     comments: str
@@ -69,8 +64,6 @@ class Issue:
 
 
 def read_issue(gql, ident) -> Issue:
-    """The issue `ident`; gql must carry the harness key (isMe tells sessions.is_comment which comments are sessions).
-    LookupError if it is missing or Linear returns another identifier."""
     node = gql(Q_ISSUE, i=ident)["issue"]
     if node is None:
         raise LookupError(f"{ident}: issue not found")
@@ -90,10 +83,8 @@ def read_issue(gql, ident) -> Issue:
 
 
 def parse_handoff(description) -> Handoff | None:
-    """The Handoff in a description, or None if its first line is not `Handoff from <ID>: <url>`. A section starts at a
-    line exactly its header; one missing is empty. Only Instructions carry unquoted user text, which may hold header
-    lines: Source is the first one (unless it comes after Instructions' first), Instructions the first after it,
-    Comments the last after Instructions."""
+    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first one (unless it
+    # comes after Instructions' first), Instructions the first after it, Comments the last after Instructions.
     lines = re.split(r"\r?\n", description or "")
     m = HANDOFF.fullmatch(lines[0])
     if not m:
@@ -121,17 +112,14 @@ def parse_handoff(description) -> Handoff | None:
 
 
 def is_user(note, humans) -> bool:
-    """True if the note's author is one of `humans`, the lowercased human_members emails."""
     return (note.email or "").lower() in humans
 
 
 def brief(issue) -> str:
-    """What the user asked for: a Handoff's instructions, else the description."""
     h = issue.handoff
     return h.instructions if h else issue.description
 
 
 def build_cutoff(issue, humans) -> str:
-    """`at` of the latest non-user note starting `Build started`, else the issue's creation time."""
     started = [n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())]
     return max(started, key=linear.parse_time) if started else issue.created_at

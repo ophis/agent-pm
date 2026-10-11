@@ -16,12 +16,10 @@ NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}
 ROLES = {"u-researcher": "researcher", "u-pm": "pm", "u-engineer": "engineer"}
 TEAM_OBJ = linear.Team(TEAM, "Team", dict(IDS_BY_KEY))
-A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"   # TUI sessions of TASK-7
+A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 
 
 def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
-    """issues: {identifier: (state name, [(hours ago, state name moved to)])}; owners: {identifier: assignee id}.
-    Q_FINISHED filters and pages like Linear, archived issues excluded; M_ARCHIVE of fail raises, of refuse fails."""
     owners = owners or {}
 
     def history(ident):
@@ -59,8 +57,6 @@ def write(path, text):
 
 
 class Git:
-    """Pruner's git runner: records every call; runs real git when `real`, else fails the test."""
-
     def __init__(self, real=False):
         self.real, self.calls = real, []
 
@@ -90,7 +86,6 @@ class PruneTest(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def mkc(self, ident, *parts):
-        """A core clone at work/<ident>/<parts>: a real .git directory, a read-only object file, and a symlink out."""
         path = os.path.join(self.work, ident, *parts)
         os.makedirs(os.path.join(path, ".git", "objects"))
         write(os.path.join(path, ".git", "HEAD"), "ref: refs/heads/main\n")
@@ -105,18 +100,16 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.outside, "keep")))
 
     def prune(self, gql, dry=False, tmux=None, git=None, writable=None):
-        """(code, the events logged or (dry) copied to stderr, one show() a line)."""
         before, err, out = len(logged(self.logs)), io.StringIO(), io.StringIO()
         with redirect_stderr(err), redirect_stdout(out):
             code = prune.Pruner(gql, NOW, dry, work=self.work, team=TEAM_OBJ, roles=ROLES, proc=tmux or Tmux(),
                                 run=git or Git(), writable=writable).run()
-        self.assertEqual(out.getvalue(), "")  # launchd's stdout is the log too
+        self.assertEqual(out.getvalue(), "")
         copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
         self.assertEqual({e["src"] for e in logged(self.logs)[before:] + copies} - {"prune"}, set())
         return code, "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
 
     def mkg(self, ident, *parts, git="file"):
-        """An entry at work/<ident>/<parts> whose .git is a file (a linked worktree) or absent (git=None)."""
         path = os.path.join(self.work, ident, *parts)
         os.makedirs(path)
         if git:
@@ -124,19 +117,16 @@ class PruneTest(unittest.TestCase):
         return path
 
     def fresh(self):
-        """An empty work dir, for the next subTest."""
         shutil.rmtree(self.work)
         os.makedirs(self.work)
 
     def symlinked_dot_git(self, ident, *parts):
-        """A clone whose .git is a symlink out."""
         path = self.mkc(ident, *parts)
         shutil.rmtree(os.path.join(path, ".git"))
         os.symlink(os.path.join(self.outside, "dotgit"), os.path.join(path, ".git"))
         return path
 
     def test_entries_that_are_no_clone_or_worktree_are_skipped_and_kept(self):
-        """No .git, or a symlinked one. An issue a row: a skip is logged once a day."""
         rows = [(dot_git, make, parts) for dot_git, make in (("none", partial(self.mkg, git=None)),
                                                              ("symlinked", self.symlinked_dot_git))
                 for parts in (("src", "o", "bare"), ("publish",))]
@@ -154,7 +144,6 @@ class PruneTest(unittest.TestCase):
                     self.assertTrue(os.path.isdir(os.path.join(self.outside, "dotgit")))
 
     def test_the_same_skip_twice_is_one_line(self):
-        """FR-10: prune-skip once a day."""
         self.mkg("TASK-49", "publish", git=None)
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
         self.assertEqual(self.prune(gql), (0, "prune-skip entry=TASK-49/publish reason=not a clone or worktree"))
@@ -171,7 +160,6 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(bare))
 
     def test_young_and_in_progress_untouched(self):
-        """Their clones and TUI sessions kept: finished under 24h ago (counted from the latest finish), or not finished."""
         path = self.mkc("TASK-48", "src", "o", "repo")
         busy = self.mkc("TASK-50", "src", "o", "repo")
         tmux = Tmux(live=["engineer-TASK-48-aaaaaaaa", "engineer-TASK-50-bbbbbbbb"])
@@ -189,7 +177,6 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(path))
 
     def test_no_entry_no_candidate(self):
-        """An empty src, an owner dir with nothing in it, a publish that is a file: no issue query."""
         def publish_file():
             os.makedirs(os.path.join(self.work, "TASK-49"))
             write(os.path.join(self.work, "TASK-49", "publish"), "x")
@@ -215,7 +202,7 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49")))
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
-        self.assertNotIn(linear.Q_TEAM, gql.calls)  # the given team
+        self.assertNotIn(linear.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
     def test_dry_run_plans_clone_and_worktree_deletion_and_touches_nothing(self):
@@ -332,7 +319,6 @@ class PruneTest(unittest.TestCase):
         self.assertFalse(os.path.lexists(wt))
 
     def real_clone(self, at=None):
-        """A clone at `at` (default <root>/clone) of a bare origin with one commit on main."""
         seed, bare, clone = os.path.join(self.root, "seed"), os.path.join(self.root, "origin.git"), at or os.path.join(self.root, "clone")
         if not os.path.isdir(bare):
             git("init", "-q", "-b", "main", seed)
@@ -536,8 +522,6 @@ class PruneTest(unittest.TestCase):
         self.assertEqual(list(tmux.live), [B])
 
     def tick(self, prune_gql):
-        """promote's tick with the real Pruner; (exit code, DR-1's state after Handoff, output); self.events: its events,
-        self.err: its stderr."""
         fake = tp.FakeLinear()
         fake.add("DR-1")
         fake.moved("DR-1", 60, "In Review")
@@ -575,8 +559,6 @@ class PruneTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(clone))
 
     def outage(self, op, issues, failed):
-        """For each outage.FAILURES, twice: promote's tick, prune's calls of op failing and the rest to issues: exit 0,
-        DR-1 promoted, one linear-error (src prune) the first time, none the second; failed: the calls that failed."""
         for name, error in FAILURES.items():
             with self.subTest(failure=name):
                 for said in ([("prune", f"linear-error op={op} {FIELDS[name]}")], []):

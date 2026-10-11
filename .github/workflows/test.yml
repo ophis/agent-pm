@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  comment-budget:
+    name: Comment budget (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Comment budget
+        run: python3 .github/comment_budget.py
+
   new-unit:
     name: New core unit tests (Python 3.11)
     runs-on: ubuntu-latest

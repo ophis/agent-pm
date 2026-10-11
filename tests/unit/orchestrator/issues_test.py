@@ -111,8 +111,6 @@ class ReadIssue(unittest.TestCase):
 
 class ParseHandoff(unittest.TestCase):
     def test_sections(self):
-        """A section starts at a line exactly its header; a missing one is empty; header lines inside Instructions stay
-        there; Comments is the last exact header line."""
         inner = "Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore."
         inside = ("- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n", "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments")
         cases = [
@@ -152,7 +150,6 @@ class IsUser(unittest.TestCase):
 
 class Brief(unittest.TestCase):
     def test_brief(self):
-        """A Handoff's instructions, else the description, `## Comments` and all."""
         for description, want in (
                 (HANDOFF, "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this."),
                 (f"Handoff from ENG-3: {URL}", ""),
@@ -163,8 +160,6 @@ class Brief(unittest.TestCase):
 
 class BuildCutoff(unittest.TestCase):
     def test_build_cutoff(self):
-        """`at` of the latest (by time) non-user note whose stripped body starts `Build started` as a word, else the
-        creation time."""
         created = "2026-09-01T00:00:00.000Z"
         cases = [
             ("no notes", (), created),

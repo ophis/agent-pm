@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Inner: one core agent run of an issue, per orchestrator/config.toml, in the driver's tmux session that router.py's
-outer starts (CLAUDE.md › Architecture); nobody runs it by hand.
-
-run.py --uuid ISSUE_UUID [--target OWNER/NAME] --issue ID --project PROJECT_ID --assignee EMAIL --sid SID [--task TASK]
-       --mode new|resume [--runner headless|tui] [--split right|below] [--split-from SESSION] [--opener OPENER]
-       [--events FILE] --input TEXT
-  Exits 2 bad arguments, 1 a config, role or task failure, else 0. Past the argument checks an `end` event
-  (orchestrator.jsonl, src run) always follows, with the agent run's own code (1 when it never started).
-"""
 import argparse
 import functools
 import os
@@ -30,8 +21,6 @@ import drive  # noqa: E402
 
 
 def inner(a, *, layout, gql, popen, root):
-    """In tmux, cwd <work_dir>/work/<ID>: 1 when config, role or task fails, else 0; the agent run's own code goes to
-    the `end` event. `layout` is the tui runner's, None for headless."""
     os.environ["PATH"] = PATH
 
     def stop(signum, frame):

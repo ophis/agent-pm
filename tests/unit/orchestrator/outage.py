@@ -1,4 +1,3 @@
-"""A Linear outage for the entry points' tests: the real linear.linear_gql, its transport failing."""
 import io
 import os
 import urllib.error
@@ -13,16 +12,13 @@ FAILURES = {  # factories: a fresh exception per use
     "timeout": lambda: TimeoutError("timed out"),
     "URLError": lambda: urllib.error.URLError(ConnectionRefusedError(61, "Connection refused")),
 }
-FIELDS = {  # each FAILURES kind's linear-error status or reason, as run_fixtures.show prints it
+FIELDS = {
     "5xx": "status=503", "timeout": "reason=TimeoutError: timed out",
     "URLError": "reason=ConnectionRefusedError: [Errno 61] Connection refused",
 }
 
 
 def failing(error, gql=None, ops=None):
-    """A gql: a query whose operation (linear.operation) is in ops, any when None, goes to the real linear_gql with
-    urlopen raising error() (a FAILURES factory), the seam unset and the Keychain faked; any other to gql. Its .failed
-    records those calls as (query, variables)."""
     failed = []
 
     def call(query, **v):

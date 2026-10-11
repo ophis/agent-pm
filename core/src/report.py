@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""The command an agent run reports with: appends one progress report, its outcome or a turn end as a JSON line to the
-channel the driver tails (drive.start), which checks them.
-
-report.py --to CHANNEL progress NAME TEXT...
-report.py --to CHANNEL outcome --status S --title T --summary S [--question Q]... [--url U] [--file F]...
-          [--deliverable FILE]   (FILE's text becomes the outcome's deliverable)
-report.py --to CHANNEL stop [--pending KEY]   (a turn ended; the interactive client's Stop hook runs it;
-          with --pending, the list at KEY in stdin's JSON is the agent run's pending background work)
-"""
 import argparse
 import json
 import os
@@ -38,7 +29,6 @@ def parse(argv: list[str]) -> argparse.Namespace:
 
 
 def pending(key: str) -> int | None:
-    """The length of the list at `key` in the JSON object on stdin; None when stdin holds no such list."""
     try:
         data = json.load(sys.stdin)
     except (OSError, ValueError):

@@ -1,6 +1,3 @@
-"""The pm → engineer segment as steps (segments.Segment): a Backlog pm issue handed off from a done research issue,
-the router's skip, the human's move to Todo, a claimed agent run, write-back, the human's handoff and promote's engineer
-issue; and its branches."""
 import os
 import sys
 import unittest
@@ -18,8 +15,6 @@ PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run
 
 class PmToEngineer(Segment):
     def test_b1_prd_to_an_engineer_issue(self):
-        """B1: pm_to_engineer (its run step checks the retitle, its promote step the child's title); the run's input
-        holds the report the pm issue's Source links; titles `PRD: <outcome title>`, then `ENG: <outcome title>`."""
         child = self.pm_to_engineer()
         [run] = self.runs()
         ident = run["issue"]
@@ -30,9 +25,6 @@ class PmToEngineer(Segment):
         self.assertIn(REPORT, self.section(self.prompt(ident, run["sid"]), "Reports"))
 
     def test_b2_rework_starts_a_new_session(self):
-        """B2: a PRD done; the human asks for rework, back to Todo, and the PRD is on the docs branch at the url the run
-        reported; pm_done's claim is a new session whose input holds the rework comment and that PRD, its report the
-        same url; the child's Instructions hold only the handoff comment."""
         ident = self.pm_ready()
         first = self.script("pm", "done", ident)
         self.claim(ident, "pm", first)
@@ -53,17 +45,12 @@ class PmToEngineer(Segment):
         self.assertEqual(issues.parse_handoff(description).instructions.partition(":\n")[2], BUILD)
 
     def test_b3_a_failed_run_is_not_promoted(self):
-        """B3: a failed run moves the issue to In Review, the human subscribed; promote finds nothing to do."""
         ident = self.pm_ready()
         self.claim(ident, "pm", self.script("pm", "failed", ident))
         self.agent_run()
         self.promote_nothing(ident)
 
     def test_b4_a_linear_outage_relating_the_child_is_retried(self):
-        """B4: promote.py's relate answers 503: it exits 1 having made the child, its key promote.child_id of the first
-        Handoff move after the last move to In Review; no relation, the source still in Handoff, no prune (the failed
-        relate is the last request). The next promote relates that child, makes no other and moves the source to
-        Done."""
         ident = self.pm_ready()
         self.claim(ident, "pm", self.script("pm", "done", ident))
         self.agent_run()
@@ -94,8 +81,6 @@ class PmToEngineer(Segment):
         self.assertEqual([v["in"]["id"] for v in self.sent("promote.M_CREATE")], [key])
 
     def test_b5_a_run_without_an_outcome_is_resumed(self):
-        """B5: a run ends without an outcome (run.py's one no-outcome event), the issue still In Progress; router.py
-        --issue resumes its session, which ends in review (no second start comment); handoff, promote."""
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.script("pm", "none", ident))
         self.agent_run()
@@ -107,9 +92,6 @@ class PmToEngineer(Segment):
                          [ident])
 
     def test_b6_an_attended_run_that_gives_up_is_resumed_headless(self):
-        """B6: router.py --tui --split-from MANAGER's run gives up after drive.STOP_LIMIT stops without an outcome, its
-        TUI session left running, the issue still In Progress; a headless router.py --issue resumes its session (run.py
-        closes that TUI session first), which ends in review; handoff, promote."""
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.script("pm", "give_up", ident), tui=True)
         self.agent_run()
@@ -119,8 +101,6 @@ class PmToEngineer(Segment):
         self.promote(ident, "pm", "engineer")
 
     def test_b7_a_lost_transcript_starts_a_new_session(self):
-        """B7: a run ends without an outcome and its transcript is lost: router.py --issue cannot resume it, comments
-        router.INTERRUPTED and moves the issue back to Todo (a recover event); pm_done's claim is a new session."""
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.script("pm", "none", ident))
         self.agent_run()
@@ -135,10 +115,6 @@ class PmToEngineer(Segment):
         self.pm_done(ident)
 
     def test_b8_a_managed_attended_run_is_recovered_from_the_roster(self):
-        """B8: B6's give-up, claimed with --manager MANAGER: its pipeline entry in MANAGER's roster.json, under the
-        driver session, notes the issue, cwd the run dir, resume `router.py --issue <ID> --tui --events <its events>
-        --manager MANAGER`. Its TUI session killed, that entry's recovery command, run from MANAGER's pane, resumes the
-        session attended (no --split-from: MANAGER the opener) and rewrites the entry; that run ends in review."""
         ident = self.pm_ready()
         sid = self.claim(ident, "pm", self.script("pm", "give_up", ident), tui=True, managed=True)
         driver, tui = self.driver("pm", ident), self.pending.tui

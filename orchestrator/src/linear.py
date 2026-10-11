@@ -1,11 +1,3 @@
-"""Linear access: Keychain-keyed GraphQL transport, lookups of the config's users, team and task labels, the shared writes
-and history, and small shared helpers, among them log, the one writer of orchestrator.jsonl.
-
-AGENT_PM_LINEAR (tests only), when set and non-empty, names a JSON file {"url": str, "keys": {service: key}} standing in
-for both api.linear.app and the Keychain, its request skipping proxies. The URL guard admits only
-http://127.0.0.1:<port>/... or http://[::1]:<port>/..., no user or password, no whitespace: a test key never leaves
-the machine. Like any env, it reaches the agent run: the path, never a key.
-"""
 import functools
 import http.client
 import json
@@ -29,28 +21,23 @@ SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keyc
 
 @functools.cache
 def harness_service():
-    """Keychain service of the harness account's Linear key: the orchestrator config's harness_key."""
     return config.load_config()["harness_key"]
 
 
 class Unavailable(Exception):
-    """Linear failed where a later try can succeed: op (operation), status (HTTP) or reason, or both. Its text never
-    holds the request, headers or key."""
+    # its text never holds the request, headers or key
     def __init__(self, op, *, status=None, reason=None):
         super().__init__(f"{op}: {reason}" if reason is not None else f"{op}: HTTP {status}")
         self.op, self.status, self.reason = op, status, reason
 
 
 def operation(query):
-    """The first field of query's top-level selection set: the first name inside its first `{`, else "?"."""
     m = re.match(r"[^{]*\{\s*([_A-Za-z]\w*)", query)
     return m[1] if m else "?"
 
 
 def linear_gql(query, *, timeout=30, service=None, **variables):
-    """Linear, at the seam's url or else URL, as the account whose key is service's (key), default the harness
-    account's. The seam is read once, so its url and key pair. Sending and reading raise Unavailable for a 5xx, a
-    rate limit, a transport error or a body not JSON; any other HTTPError as is."""
+    # the seam is read once, so its url and key pair
     seam = _seam()
     auth = _secret(service or harness_service(), timeout, seam)
     req = urllib.request.Request(seam[0] if seam else URL,
@@ -82,21 +69,18 @@ def linear_gql(query, *, timeout=30, service=None, **variables):
 
 
 def _rate_limited(e):
-    """e's body has an error whose extensions.code is RATELIMITED (Linear's rate limit)."""
     try:
         return any((x.get("extensions") or {}).get("code") == "RATELIMITED" for x in json.loads(e.read())["errors"])
-    except Exception:  # unreadable, not JSON or of another shape
+    except Exception:
         return False
 
 
 def key(service, timeout):
-    """service's Linear key: the seam's, else its Keychain item's secret. SystemExit, naming only service, when the seam
-    lacks it or it is empty, not printable or holds whitespace (urllib's header error would echo it)."""
     return _secret(service, timeout, _seam())
 
 
 def _secret(service, timeout, seam):
-    """key, given the seam as _seam() returned it."""
+    # a bad key fails naming only service: urllib's header error would echo it
     if seam is None:
         found = subprocess.run([SECURITY, "find-generic-password", "-s", service, "-w"],
                                capture_output=True, text=True, check=True, timeout=timeout).stdout.strip()
@@ -110,7 +94,7 @@ def _secret(service, timeout, seam):
 
 
 def has_key(service):
-    """True when service has a key: in the seam's keys, else a Keychain item (its secret never read: no -w)."""
+    # no -w: its secret is never read
     seam = _seam()
     if seam is not None:
         return service in seam[1]
@@ -119,8 +103,6 @@ def has_key(service):
 
 
 def _seam():
-    """None when $AGENT_PM_LINEAR is unset or empty, else (url, keys) from the file it names. SystemExit, naming the
-    variable and the path, never the file's text, when it is unreadable, of another shape or its url fails the guard."""
     path = os.environ.get(SEAM)
     if not path:
         return None
@@ -138,7 +120,7 @@ def _seam():
 
 
 def _local(url):
-    """url passes the URL guard (the module docstring), parsed, never a prefix test."""
+    # parsed, never a prefix test
     try:
         u = urllib.parse.urlsplit(url)
         port = u.port
@@ -149,21 +131,17 @@ def _local(url):
 
 
 def _clean(s):
-    """s is non-empty, printable and holds no whitespace."""
     return bool(s) and s.isprintable() and not any(c.isspace() for c in s)
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
-CONFIG_ERRORS = (SystemExit, ValueError, OSError)   # load_config, runnable: a bad value, TOML, a missing file
+CONFIG_ERRORS = (SystemExit, ValueError, OSError)
 _recent = {}
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
-    """Appends {"ts", "src", "kind", "issue", **fields} (None values left out) to <LOGS_DIR>/orchestrator.jsonl, unless
-    dry; copies it to stderr when dry or a terminal (launchd's stderr is the file). once, unless dry: skipped when a
-    line with the same ONCE values was written within WINDOW. Never raises OSError."""
     line = {k: v for k, v in {"ts": drive.stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
             if v is not None}
     path, key = os.path.join(config.LOGS_DIR, "orchestrator.jsonl"), _key(line)
@@ -186,20 +164,15 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
 
 
 def config_error(src, e, dry=False):
-    """A config that does not load (load_config's or runnable's SystemExit, a TOML or file error; CONFIG_ERRORS):
-    _stop's config-error, printed as its reason."""
     reason = one_line(e.code if isinstance(e, SystemExit) else e)
     return _stop(src, "config-error", reason, dry, reason=reason)
 
 
 def linear_error(src, e, dry=False):
-    """Linear unavailable (e, Unavailable): _stop's linear-error with e's op, status and reason, once a day per reason."""
     return _stop(src, "linear-error", f"Linear unavailable: {e}", dry, op=e.op, status=e.status, reason=e.reason)
 
 
 def _stop(src, kind, message, dry, **fields):
-    """Logs kind with fields once a day; on a terminal, unless dry (the dry copy shows it), also prints
-    `<src>.py: <message>`. Returns the exit code, 1."""
     log(src, kind, once=True, dry=dry, **fields)
     try:
         if sys.stderr.isatty() and not dry:  # elsewhere (launchd) stderr is the log
@@ -214,7 +187,6 @@ def _key(line):
 
 
 def _recent_keys(path):
-    """The ONCE keys of path's lines from the last WINDOW, read once per process."""
     if path not in _recent:
         cutoff, keys = datetime.now(timezone.utc) - WINDOW, set()
         try:
@@ -233,7 +205,7 @@ def _recent_keys(path):
 
 
 def one_line(x):
-    """An exception as `<Type>: <message>` (other attributes, a process's output or the request, may hold the key), anything else as str; whitespace collapsed."""
+    # other attributes, a process's output or the request, may hold the key
     text = f"{type(x).__name__}: {x}" if isinstance(x, BaseException) else str(x)
     return " ".join(text.split())
 
@@ -251,7 +223,6 @@ HISTORY = "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId f
 
 
 def call(gql, query, field, **v):
-    """The result's field; RuntimeError when its success is false."""
     out = gql(query, **v)[field]
     if not out["success"]:
         raise RuntimeError(f"{field}: success: false")
@@ -263,14 +234,13 @@ def comment(gql, issue, body):
 
 
 def reraise_signal(e):
-    """The runner's signal handler raises SystemExit(128 + signum), which must reach drive's loop to kill claude;
-    linear_gql's SystemExit (a str code) is an API error."""
+    # The runner's signal handler raises SystemExit(128 + signum), which must reach drive's loop to kill claude;
+    # linear_gql's SystemExit (a str code) is an API error.
     if isinstance(e, SystemExit) and isinstance(e.code, int):
         raise e
 
 
 def subscribe(gql, issue, emails):
-    """Subscribes each email; returns the failures as notes for a comment."""
     notes = ""
     for email in emails:
         try:
@@ -282,8 +252,6 @@ def subscribe(gql, issue, emails):
 
 
 def move(gql, issue, to, frm):
-    """Moves the issue to state `to` only from state `frm` (ids), re-read first: None once moved, else the state it is in
-    (already `to`, or not `frm`: the caller logs a skip)."""
     now = gql(Q_ISSUE_STATE, i=issue)["issue"]["state"]["id"]
     if now != frm:
         return now
@@ -292,8 +260,7 @@ def move(gql, issue, to, frm):
 
 
 def comment_and_move(gql, issue, body, to, frm, emails=()):
-    """subscribe, move, then body with the subscribe notes; returns move's result. Move first: a failed or skipped move
-    posts no comment, so a retry never repeats it."""
+    # move first: a failed or skipped move posts no comment, so a retry never repeats it
     notes = subscribe(gql, issue, emails)
     left = move(gql, issue, to, frm)
     if left is None:
@@ -302,7 +269,6 @@ def comment_and_move(gql, issue, body, to, frm, emails=()):
 
 
 def last_move(nodes, states, actors=None):
-    """Latest createdAt among the history nodes moved into states (by actors, when given), or None."""
     return max((parse_time(n["createdAt"]) for n in nodes
                 if n["toStateId"] in states and (actors is None or n["actorId"] in actors)), default=None)
 
@@ -311,13 +277,11 @@ Q_USER = "query($e: String!) { users(filter: { email: { eqIgnoreCase: $e } }) { 
 
 
 def user_id(gql, email):
-    """Linear user id of an email (case-insensitive), or None."""
     nodes = gql(Q_USER, e=email)["users"]["nodes"]
     return nodes[0]["id"] if nodes else None
 
 
 def humans(gql, cfg):
-    """Linear user ids of the `human_members` emails, in order; one not found in Linear stops the caller."""
     emails = cfg.get("human_members") or []
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids) if not i]:
@@ -326,7 +290,6 @@ def humans(gql, cfg):
 
 
 def role_ids(gql, runs):
-    """{Linear user id: role} of the roles' accounts ({role: Role}); an account not found in Linear stops the caller."""
     out = {}
     for name, run in runs.items():
         uid = user_id(gql, run.account)
@@ -338,7 +301,6 @@ def role_ids(gql, runs):
 
 @dataclass(frozen=True)
 class Team:
-    """The config's team as checked by team(): {logical state: state id}."""
     id: str
     name: str
     states: dict
@@ -349,7 +311,6 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 
 
 def team(gql, cfg):
-    """The config's team, checked in one query: it exists and holds every [states] id; a bad id stops the caller."""
     nodes = gql(Q_TEAM, t=cfg["team"])["teams"]["nodes"]
     if not nodes:
         raise SystemExit(f"orchestrator/config.toml: team {cfg['team']} not found in Linear")
@@ -364,7 +325,7 @@ Q_TASK_GROUP = "query($i: String!) { issueLabel(id: $i) { isGroup children(first
 
 
 def task_group(gql, cfg):
-    """Checks, in one query, that task_label_group is a Linear label group and every [task_labels] id is one of its children; a failure stops the caller. Children are unpaginated (250): beyond that a valid id fails."""
+    # children are unpaginated (250): beyond that a valid id fails
     group = cfg["task_label_group"]
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]

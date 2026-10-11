@@ -1,4 +1,3 @@
-"""The free-text input of a core agent run: the docs-repo files an issue links (read through `gh api`), laid out per role kind."""
 import fnmatch
 import json
 import os
@@ -31,7 +30,7 @@ PRECEDENCE = {
 class Doc:
     url: str
     path: str
-    text: str | None    # None: not found on the branch
+    text: str | None
 
 
 @dataclass(frozen=True)
@@ -41,19 +40,18 @@ class Sources:
 
 
 def _head(description):
-    """The description up to its first line `## Comments`; what follows is quoted agent text."""
+    # what follows is quoted agent text
     m = COMMENTS.search(description)
     return description[:m.start()] if m else description
 
 
 def _link_re(docs):
-    """A docs link; the path ends at the first raw `#` or `?` (GitHub percent-encodes real ones), the rest is ignored."""
+    # the path ends at the first raw `#` or `?` (GitHub percent-encodes real ones)
     return re.compile(rf"https://github\.com/{re.escape(docs.repo)}/blob/{re.escape(docs.branch)}/([^\s)>\]`#?]*)"
                       r"(?:[#?][^\s)>\]`]*)?")
 
 
 def doc_path(url, docs) -> str | None:
-    """The repo path a docs-repo link points to, or None if `url` is not one (or the path is unsafe)."""
     m = _link_re(docs).fullmatch(url)
     path = unquote(m.group(1)) if m else ""
     if not path or CONTROL.search(path) or ".." in path.split("/"):
@@ -66,7 +64,6 @@ def _design_dirs(docs):
 
 
 def _links(issue, docs):
-    """{path: url} of the docs links, deduped by path: the description's up to `## Comments`, then the attachments'."""
     urls = [m.group(0) for m in _link_re(docs).finditer(_head(issue.description))] + [a.url for a in issue.links]
     found = {}
     for url in urls:
@@ -84,7 +81,6 @@ def _contents(docs, path):
 
 
 def _read(run, docs, path):
-    """The file's text, or None if it is not on the branch."""
     res = run(["gh", "api", "-H", RAW, _contents(docs, path)], SHORT)
     if res.returncode == 0:
         return res.stdout
@@ -102,7 +98,7 @@ def _names(text):
 
 
 def _listed(run, docs, ident, dir_):
-    """Path of the newest `*-<ident>-*.md` (names are date-prefixed) in dir_ on the branch, or None."""
+    # names are date-prefixed: the last is the newest
     d = dir_.rstrip("/")
     res = run(["gh", "api", _contents(docs, d)], SHORT)
     if res.returncode != 0:
@@ -117,7 +113,6 @@ def _listed(run, docs, ident, dir_):
 
 
 def gather(issue, role, docs, *, run=sh_run) -> Sources:
-    """Read the docs an issue links, and its earlier version (research, design). RuntimeError on a gh failure."""
     kind = TASKS[role].kind
     links = _links(issue, docs)
     path = None
@@ -160,7 +155,6 @@ def _join(blocks):
 
 
 def _split(issue, humans):
-    """(the user's notes, the others), oldest first."""
     user = [n for n in issue.notes if issues.is_user(n, humans)]
     return user, [n for n in issue.notes if n not in user]
 
@@ -170,7 +164,7 @@ def _repo(target):
 
 
 def _checkout(issue):
-    """The run's `repo.py --name`; target.checkout uses the same slug."""
+    # target.checkout uses the same slug
     return "Checkout: " + issue.identifier
 
 
@@ -230,7 +224,5 @@ def _build(issue, sources, humans, target, docs):
 
 
 def render(issue, role, sources, *, humans, target, docs) -> str:
-    """The input text for the role's kind. `target`: research, design → research_repo() or None; build → the checked
-    Target. `docs` names the branch in "not found" lines and the design dirs a PRD link is picked from."""
     layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
     return layout(issue, sources, humans, target, docs)

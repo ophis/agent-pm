@@ -114,14 +114,12 @@ VIEWER = "query { viewer { id } }"
 
 
 def respond(body=b'{"data": {}}'):
-    """urlopen's return value: a response reading body."""
     resp = mock.MagicMock()
     resp.__enter__.return_value = io.BytesIO(body)
     return resp
 
 
 def refused(case, call):
-    """The str code of the SystemExit call() raises, no request sent."""
     with mock.patch.object(linear.urllib.request, "urlopen", side_effect=AssertionError("request sent")), \
             mock.patch.object(linear.urllib.request, "build_opener", side_effect=AssertionError("request sent")), \
             case.assertRaises(SystemExit) as cm:
@@ -131,7 +129,6 @@ def refused(case, call):
 
 
 def no_seam(case):
-    """SEAM unset for case's test."""
     env = mock.patch.dict(os.environ)
     env.start()
     case.addCleanup(env.stop)
@@ -139,13 +136,10 @@ def no_seam(case):
 
 
 class LinearGql(unittest.TestCase):
-    """Without the seam: the Keychain's key, api.linear.app."""
     def setUp(self):
         no_seam(self)
 
     def gql(self, query=VIEWER, body=b'{"data": {}}', **kw):
-        """linear_gql(query, **kw), the harness's service svc-h (read only without service=), urlopen answering body;
-        returns (its result, the Keychain run, urlopen)."""
         harness = {"side_effect": AssertionError("harness key read")} if "service" in kw else {"return_value": "svc-h"}
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
         with mock.patch.object(linear, "harness_service", **harness), mock.patch.object(linear.subprocess, "run", run), \
@@ -154,7 +148,6 @@ class LinearGql(unittest.TestCase):
             return linear.linear_gql(query, **kw), run, urlopen
 
     def test_key_by_service_only_sent_by_urlopen(self):
-        """The Keychain item of service (default the harness's) by name; urlopen, with the proxies as configured."""
         for env, kw, service in (({}, {}, "svc-h"), ({SEAM: ""}, {}, "svc-h"), ({}, {"service": "linear-api-key-pm"}, "linear-api-key-pm")):
             with self.subTest(env=env, service=service), mock.patch.dict(os.environ, env):
                 out, run, urlopen = self.gql(body=b'{"data": {"viewer": {"id": "v"}}}', **kw)
@@ -196,12 +189,10 @@ def http_error(code, body=b""):
 
 
 def errors(*codes):
-    """A GraphQL error body, one error per extensions.code."""
     return json.dumps({"errors": [{"message": "m", "extensions": {"code": c}} for c in codes]}).encode()
 
 
 class Unavailable(unittest.TestCase):
-    """linear_gql's transport or Linear failing: Unavailable when a later try can succeed."""
     def setUp(self):
         no_seam(self)
         p = mock.patch.object(linear.subprocess, "run", return_value=SimpleNamespace(stdout=SECRET + "\n"))
@@ -209,7 +200,6 @@ class Unavailable(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def gql(self, query, opened=None, read=None, body=b'{"data": {}}'):
-        """linear_gql(query): urlopen raising opened, else answering body, or raising read on reading it."""
         resp = respond(body)
         if read:
             resp.__enter__.return_value = mock.Mock(read=mock.Mock(side_effect=read))
@@ -276,7 +266,6 @@ class Unavailable(unittest.TestCase):
 
 
 class Outage(unittest.TestCase):
-    """tests/unit/orchestrator/outage.py: the real linear_gql, its transport failing."""
     def test_each_failure_is_unavailable_and_recorded(self):
         want = {"5xx": (503, None), "timeout": (None, "TimeoutError: timed out"),
                 "URLError": (None, "ConnectionRefusedError: [Errno 61] Connection refused")}
@@ -311,7 +300,6 @@ class HasKey(unittest.TestCase):
 
 
 class Seam(unittest.TestCase):
-    """With the seam: linear's module docstring."""
     URL = "http://127.0.0.1:8123/graphql"
 
     def setUp(self):
@@ -324,7 +312,6 @@ class Seam(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def seam(self, data):
-        """Points SEAM at a new file holding data (JSON; a str as is); None: at a missing file."""
         self.path = os.path.join(self.tmp, "missing.json")
         if data is not None:
             fd, self.path = tempfile.mkstemp(dir=self.tmp)
@@ -333,14 +320,12 @@ class Seam(unittest.TestCase):
         os.environ[SEAM] = self.path
 
     def request(self, **kw):
-        """linear_gql's request."""
         with mock.patch.object(linear.urllib.request, "build_opener") as build:
             build.return_value.open.return_value = respond()
             linear.linear_gql(VIEWER, **kw)
         return build.return_value.open.call_args[0][0]
 
     def assert_refused(self, *hidden):
-        """linear_gql, key and has_key each raise SystemExit naming SEAM and the path, holding none of hidden."""
         for call in (lambda: linear.linear_gql(VIEWER), lambda: linear.key("svc-h", 30), lambda: linear.has_key("svc-h")):
             code = refused(self, call)
             self.assertIn(SEAM, code)
@@ -437,7 +422,6 @@ class Helpers(unittest.TestCase):
 
 
 class Stderr(io.StringIO):
-    """sys.stderr: a terminal or not; fail: the OSError each write raises (a gone tmux pane's EIO)."""
     def __init__(self, tty=False, fail=None):
         super().__init__()
         self.tty, self.fail = tty, fail
@@ -452,7 +436,6 @@ class Stderr(io.StringIO):
 
 
 class Logs(unittest.TestCase):
-    """A temp LOGS_DIR; stamps at TS."""
     TS = "2026-10-09T00:26:33-04:00"
 
     def setUp(self):
@@ -466,7 +449,6 @@ class Logs(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def stderr(self, call, tty=False, fail=None):
-        """call() at TS; returns (its result, its stderr)."""
         err = Stderr(tty, fail)
         with mock.patch.object(sys, "stderr", err), mock.patch.object(linear.drive, "stamp", return_value=self.TS):
             out = call()
@@ -483,15 +465,12 @@ class Logs(unittest.TestCase):
         return [json.loads(line) for line in self.text().splitlines()]
 
     def json(self, src, kind, issue=None, **fields):
-        """The stderr copy of a line."""
         line = {"ts": self.TS, "src": src, "kind": kind, **({"issue": issue} if issue else {}), **fields}
         return json.dumps(line, ensure_ascii=False) + "\n"
 
 
 class Log(Logs):
-    """linear.log: the one writer of <LOGS_DIR>/orchestrator.jsonl."""
     def log(self, *args, tty=False, fail=None, **kw):
-        """linear.log(*args, **kw); returns its stderr."""
         return self.stderr(lambda: linear.log(*args, **kw), tty, fail)[1]
 
     def test_line_shape_and_key_order(self):
@@ -593,9 +572,7 @@ class Log(Logs):
 
 
 class LinearError(Logs):
-    """linear.linear_error: one linear-error line a day per reason."""
     def error(self, e, tty=False, dry=False, src="router"):
-        """linear_error's (exit code, stderr)."""
         return self.stderr(lambda: linear.linear_error(src, e, dry), tty)
 
     def test_once_a_day_per_reason_printed_only_on_a_terminal(self):
@@ -635,8 +612,6 @@ FIELDS = {"subscribe": "issueSubscribe", "move": "issueUpdate", "comment": "comm
 
 
 class Gql:
-    """Fake Linear recording (name, variables); the issue is in `state`. fail(name, v) → an exception to raise,
-    False for `success: false`, else None."""
     def __init__(self, state=IN_PROGRESS, fail=lambda name, v: None):
         self.state, self.fail, self.calls = state, fail, []
 

@@ -38,9 +38,6 @@ FIELDS = {"subscribe": "issueSubscribe", "comment": "commentCreate", "state": "i
 
 
 class Gql:
-    """Fake role-account gql recording (name, variables). `states`: what each move's state read (Q_ISSUE_STATE)
-    returns, the last repeating;
-    `fail(name, v)` → an exception to raise, False for `success: false`, else None."""
     def __init__(self, states=(STATES["in_progress"],), attachments=(), fail=lambda name, v: None, issue=None):
         self.calls, self.states, self.attachments, self.fail, self.issue = [], list(states), attachments, fail, issue
 
@@ -92,7 +89,6 @@ def plan_comment(name="ENG-7-plan.md", text=PLAN_TEXT):
 
 
 def expect(*, body, state, files=(), title=None, subscribe=True, attach=None, attach_title=None):
-    """A finish's calls in the spec's order: read → files → retitle → subscribe → comment → attach → re-read, move."""
     calls = [READ, *files]
     if title:
         calls.append(("title", {"i": UUID, "t": title}))
@@ -105,7 +101,7 @@ def expect(*, body, state, files=(), title=None, subscribe=True, attach=None, at
 
 
 class ProcFcntl:
-    """fcntl.F_GETPATH is macOS's: on Linux (CI) writeback's fd path comes from /proc."""
+    # fcntl.F_GETPATH is macOS's: on Linux (CI) writeback's fd path comes from /proc
     F_GETPATH = None
 
     @staticmethod
@@ -140,12 +136,10 @@ class Base(unittest.TestCase):
         return path
 
     def files(self, ctx):
-        """(spec, plan) paths in the agent run's core clone."""
         return (self.write(ctx, "src/agent-pm/docs/ENG-7-spec.md", SPEC_TEXT),
                 self.write(ctx, "src/agent-pm/docs/ENG-7-plan.md", PLAN_TEXT))
 
     def lines(self):
-        """show() of each writeback event, its sid (checked: SID) left out."""
         events = logged()
         self.assertEqual({(e["src"], e.get("sid", SID)) for e in events} - {("writeback", SID)}, set())
         return [show({k: v for k, v in e.items() if k != "sid"}) for e in events]
@@ -180,7 +174,6 @@ class SayAndApprove(Base):
 
 class FinishGolden(Base):
     def outcomes(self, role, spec, plan):
-        """Every role's outcomes name the spec and plan: only a files role posts them."""
         kind, files = config.TASKS[role].kind, [plan, spec]
         if kind == "research":
             return {"done": outcome("done", summary="Three queues compared.\nRedis streams fit best.", url=DOC, files=files),
@@ -354,7 +347,6 @@ class FinishSteps(Base):
         self.assertEqual(self.lines()[-1], f"step-error {ID} step=attach:{PR} error=SystemExit: linear api error: boom")
 
     def test_no_move_from_another_state(self):
-        """Already the target: no move, no log; a user's move: never overridden, the skip logged. The step is done."""
         for state, skip in (("in_review", None), ("handoff", f"skip {ID} reason=move to in_review: issue is {STATES['handoff']}")):
             with self.subTest(state=state):
                 gql = Gql(states=[STATES[state]])
@@ -391,7 +383,6 @@ class FinishSteps(Base):
 
 
 class FileRecheck(Base):
-    """_read_file's checks on the open fd: an outcome file the agent run could swap is skipped and noted."""
     def finish_with(self, ctx, path):
         gql = Gql()
         writeback.finish(replace(ctx, gql=gql), outcome("failed", "ENG-7: x", "push not permitted", files=[path]))
@@ -500,7 +491,7 @@ class Sink(Base):
                 gql = Gql()
                 writeback.sink(self.ctx(role, gql=gql))(drive.Event("progress", text=text, name="start"))
                 self.assertEqual(gql.calls, [comment(body)])
-                if role == "engineer":  # issues.build_cutoff's `Build started` cutoff
+                if role == "engineer":
                     self.assertTrue(issues.BUILD_STARTED.match(body))
 
     def test_ignores_text_and_outcome(self):
@@ -542,7 +533,7 @@ class Sink(Base):
     def test_never_raises(self):
         gql = Gql(fail=lambda name, v: RuntimeError("boom"))
         open(os.path.join(self.tmp, "file"), "w").close()
-        with mock.patch.object(config, "LOGS_DIR", os.path.join(self.tmp, "file", "logs")):  # an unwritable log too
+        with mock.patch.object(config, "LOGS_DIR", os.path.join(self.tmp, "file", "logs")):
             writeback.sink(self.ctx(gql=gql))(drive.Event("progress", text="x", name="start"))
         writeback.sink(replace(self.ctx(), role="nope"))(drive.Event("progress", text="x", name="start"))
         self.assertEqual(self.lines(), [f"step-error {ID} step=sink error=KeyError: 'nope'"])
@@ -574,7 +565,7 @@ def issue(description):
 
 
 class Bounce(Base):
-    DONE = (STATES["done"], STATES["in_progress"])   # the source's state, then this issue's
+    DONE = (STATES["done"], STATES["in_progress"])
 
     def src(self, team=board_ids.TEAM):
         return {"id": SRC_UUID, "team": {"id": team}}
@@ -628,7 +619,6 @@ class Bounce(Base):
                 + ". Fix the description's `Repo:` line, then move this issue back to Todo.")
 
     def test_question_path(self):
-        """Not a handoff, or its source missing or in another team: a `Question:` and In Review."""
         reason = "unreadable Repo line: 'nope'"
         for name, description, src, lookup in (
                 ("not a handoff", "Repo: nope\n\nBuild it.", None, []),

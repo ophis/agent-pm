@@ -1,6 +1,3 @@
-"""Session registry: one comment per Claude session on its issue, written by the harness account
-(CLAUDE.md › Architecture).
-"""
 import functools
 import os
 import re
@@ -23,13 +20,12 @@ M_UPDATE = "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { 
 
 
 def is_record(attachment):
-    """True for an old attachment record. The URL alone identifies one: a source may be titled "Run rate analysis"."""
+    # the URL alone identifies one: a source may be titled "Run rate analysis"
     return attachment["url"].startswith(URL)
 
 
 def is_comment(comment):
-    """True for a session comment: by the harness account and starting `Run <sid> · `. isMe means the harness account
-    because callers query with its key (linear.linear_gql)."""
+    # isMe means the harness account because callers query with its key (linear.linear_gql)
     return bool((comment["user"] or {}).get("isMe")) and re.match(f"Run {config.UUID_RE.pattern} · ", comment["body"]) is not None
 
 
@@ -38,8 +34,7 @@ def base(*, sid, workdir, started_at):
 
 
 def command(rec):
-    """The resume command, in the cwd the session's record names (drive.session; none: the workdir). Built here, never
-    read from the record: the agent run can write it."""
+    # built here, never read from the record: the agent run can write it
     entry = drive.session(rec["workdir"], rec["sid"])
     return claude_client.resume(entry["cwd"] if entry else rec["workdir"], rec["sid"], rec["workdir"])
 
@@ -49,7 +44,6 @@ def prefix(sid):
 
 
 def body(rec, rc=None, ended_at=None, *, outcome=None):
-    """The comment uses a validated outcome when available, retaining the native exit code."""
     if rc is None:
         line = f"running · {rec['started_at']}"
     else:
@@ -63,8 +57,7 @@ def now():
 
 
 def write(gql, issue, sid, text, limit=LIMIT):
-    """None once text is sid's comment on issue, else a one-line reason; never raises. A failed find writes nothing.
-    The thread bounds both calls, key reads included."""
+    # the thread bounds both calls, key reads included
     out = {}
 
     def call():
@@ -75,7 +68,7 @@ def write(gql, issue, sid, text, limit=LIMIT):
                 out["ok"] = gql(M_UPDATE, c=earliest["id"], b=text)["commentUpdate"]["success"]
             else:
                 out["ok"] = gql(linear.M_COMMENT, i=issue, b=text)["commentCreate"]["success"]
-        except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
+        except (Exception, SystemExit) as e:
             out["error"] = e
 
     t = threading.Thread(target=call, daemon=True)
@@ -89,8 +82,5 @@ def write(gql, issue, sid, text, limit=LIMIT):
 
 
 def post(issue, rec, rc=None, *, gql=None, ended_at=None, outcome=None):
-    """Record the session rec on issue: running for rc None, else its end (ended_at defaults to now). gql defaults to
-    the harness account's, bounded by LIMIT. None once written, else why not, one line (the caller logs
-    registry-error)."""
     text = body(rec) if rc is None else body(rec, rc, ended_at or now(), outcome=outcome)
     return write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, rec["sid"], text)

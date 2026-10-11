@@ -1,12 +1,3 @@
-"""Composer: resolves a role's run config and compiles guide + parameters + principles + role (with its task index) +
-templates + output + input into its prompt; the agent run reads its task's file itself. A module for the driver
-(drive.py).
-
-Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the guide's default
-text) and {{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its
-path in the workdir> (no params → each line holding it is dropped). Every other run value is a PARAMETERS name, its
-value given once in # Parameters.
-"""
 import contextlib
 import json
 import os
@@ -37,31 +28,28 @@ OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column",
                           "grid_retile", "team_dirs"}
 OLD_KEYS = frozenset({"default_task", "tasks"})
-PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
-INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index (core/CLAUDE.md › Rules)
-INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)   # task, path (none → ""), description
-INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")   # in the index's opening sentence
-METHOD = re.compile(r"<methods>/([\w-]+)\.md")   # a method file named in a text
-REPORT = "report"   # the report command's Parameters name
+PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")
+INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)
+INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)
+INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")
+METHOD = re.compile(r"<methods>/([\w-]+)\.md")
+REPORT = "report"
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")
 BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
 ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
-# The # Parameters section's names, in order: name → (the regex a text uses it by, its value's source in _parameters).
 PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", "scripts"),
               "<tasks>": ("<tasks>", "tasks"), "<methods>": ("<methods>", "methods"), "<gate>": ("<gate>", "gate"),
               "<out-repo>": ("<out-repo>", "output.repo"), "<out-branch>": ("<out-branch>", "output.branch"),
               "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
-              REPORT: (r"`report[` ]", REPORT)}   # only a code span starting with it: prose says "report" too
+              REPORT: (r"`report[` ]", REPORT)}   # prose says "report" too
 RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
         "value and written out in full, no name or shell variable left")
-# The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
-CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
-START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)   # a task's start mark line (the root CLAUDE.md › Gotchas)
-KINDS = ("roles", "tasks", "templates")   # a team dir's subdirs, in scan order
-TEAM_NAME = re.compile(r"[a-z0-9-]+")   # a team dir file's stem
-# Section references (reference_errors).
+CHANNEL = "run.jsonl"
+START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
+KINDS = ("roles", "tasks", "templates")
+TEAM_NAME = re.compile(r"[a-z0-9-]+")
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
 FILE_REF = re.compile(r"`<(tasks|methods)>/(<task>|[\w-]+)\.md`")
@@ -78,7 +66,7 @@ class ConfigError(Exception):
 
 
 class PromptClient(Protocol):
-    """The part of a Client (clients/base.py) that render() uses; compose cannot import Client (base.py imports compose)."""
+    # compose cannot import Client (clients/base.py imports compose)
     inline_workdir: str
     inline_input: str
 
@@ -91,15 +79,13 @@ class PromptClient(Protocol):
 
 
 class ConfigClient(Protocol):
-    """The client configuration that run resolution needs, without importing clients here."""
     config: Mapping
 
 
 @dataclass(frozen=True, kw_only=True)
 class RunConfig:
-    """A role's resolved config; checked on creation and on dataclasses.replace."""
     role: str
-    task: str = ""   # the named task; "" → the agent run picks one from the role's index
+    task: str = ""
     tier: int
     effort: Effort
     output: dict
@@ -110,7 +96,7 @@ class RunConfig:
     gate: str = ""
     language: str = ""
     show: str | None = None
-    cwd: str = ""   # "" → the caller's default (drive.place)
+    cwd: str = ""
     role_title: str = ""
 
     def __post_init__(self):
@@ -133,14 +119,12 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and agent-pm
-    run ID."""
     input: str
     out: str
     workdir: str
-    sid: str | None = None   # None → a new agent-pm run ID
+    sid: str | None = None
     resume: bool = False
-    prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
+    prefix: str | None = None
 
     def __post_init__(self):
         if self.resume and not self.sid:
@@ -156,8 +140,6 @@ class RunParams:
 
     @property
     def deliverable(self) -> str:
-        """The file the agent run writes its deliverable to: `out` when it lies under the real workdir, else
-        <workdir>/tmp/deliverable.md."""
         out = os.path.abspath(self.out)
         if Path(os.path.realpath(out)).is_relative_to(os.path.realpath(self.workdir)):
             return out
@@ -165,12 +147,10 @@ class RunParams:
 
 
 def tui_session(role: str, sid: str, prefix: str | None = None) -> str:
-    """The name of the tui runner's tmux session for an agent run."""
     return f"{prefix or role}-{sid[:8]}"
 
 
 def lookup(layer: Mapping, role: str, key: str):
-    """`key` in one config layer: roles.<role> > the top; None if unset."""
     for table in (layer.get("roles", {}).get(role, {}), layer):
         if key in table:
             return table[key]
@@ -178,8 +158,6 @@ def lookup(layer: Mapping, role: str, key: str):
 
 
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
-    """Raises ConfigError when role table [<prefix>roles.<role>] holds a key of the task-level config this one replaced,
-    naming the table its run keys now go in."""
     if old := sorted(OLD_KEYS & set(table)):
         raise ConfigError(f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
                           f"run keys in [{prefix}roles.{role}] (a run without a task picks one)")
@@ -187,9 +165,6 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 
 @dataclass(frozen=True)
 class Team:
-    """The roles, tasks and templates a run can name: core's team/ (built-in) and the team dirs (custom), found by
-    name. `files`: (kind, name) → its paths, built-in first, then the team dirs in order (two or more: a conflict);
-    `misnamed`: custom files whose stem fails TEAM_NAME."""
     root: str
     dirs: tuple[str, ...] = ()
     files: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
@@ -205,7 +180,6 @@ class Team:
         return path if self.custom(path) else "built-in"
 
     def lookup(self, kind: str, name: str) -> str | None:
-        """The one path of that name, a custom one checked (check_file); None when none."""
         paths = self.files.get((kind, name), ())
         if len(paths) > 1:
             raise ConfigError(f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add")
@@ -219,7 +193,6 @@ class Team:
         return _text(path), self.label(kind, name, path)
 
     def check_file(self, kind: str, path: str) -> None:
-        """Raises ConfigError on the first defect of custom file `path`, naming it."""
         text = _text(path)
         if text.split("\n", 1)[0].strip() == "---":
             raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
@@ -240,26 +213,21 @@ class Team:
                 raise ConfigError(f"{path}: has no ## Resume section")
 
     def charter(self, role: str) -> tuple[str, str] | None:
-        """(the charter's text, its label); None without a charter."""
         if not (path := self.lookup("roles", role)):
             return None
         return _text(path), self.label("roles", role, path)
 
     def tasks_dir(self, role: str) -> str | None:
-        """Where `role`'s task files are: its team dir's tasks/ for a custom charter, None (core's team/tasks/) for a
-        built-in one or none."""
         path = self.lookup("roles", role)
         return os.path.join(os.path.dirname(os.path.dirname(path)), "tasks") if path and self.custom(path) else None
 
     def used(self, role: str, templates: Sequence[str] = ()) -> list[str]:
-        """The custom paths a run of `role` with `templates` uses: charter, index tasks, templates."""
         paths = [self.lookup("roles", role)]
         paths += [self.lookup("tasks", t) for t in index(self.root, role, self)]
         paths += [self.lookup("templates", name) for name in templates]
         return list(dict.fromkeys(p for p in paths if p and self.custom(p)))
 
     def misnamed_error(self, kind: str | None = None, name: str | None = None) -> ConfigError | None:
-        """The error for the first misnamed file (of `kind` and stem `name`, when given); None when none."""
         for path in self.misnamed:
             stem = os.path.basename(path).removesuffix(".md")
             if kind is None or (os.path.basename(os.path.dirname(path)), stem) == (kind, name):
@@ -267,7 +235,6 @@ class Team:
         return None
 
     def check_all(self, cfg: Mapping) -> None:
-        """Raises ConfigError on the first defect of any team dir file or `[roles.<role>]` without a charter."""
         if e := self.misnamed_error():
             raise e
         for kind, name in self.files:
@@ -276,8 +243,6 @@ class Team:
 
 
 def team_dirs(root: str) -> tuple[str, ...]:
-    """The real paths of the global `team_dirs` of <root>'s config with repo.LOCAL on top, in order; () when unset.
-    ConfigError when config.toml itself sets it, it is malformed or the config can't be read."""
     path = os.path.join(root, CONFIG)
     try:
         own, value = "team_dirs" in repo.read_config(path, os.devnull), repo.read_config(path).get("team_dirs")
@@ -303,8 +268,6 @@ def team_dirs(root: str) -> tuple[str, ...]:
 
 
 def team(root: str, dirs: Sequence[str] = ()) -> Team:
-    """The Team of core's team/ and `dirs` (real paths, in order): each <kind>/*.md regular file, symlinks followed.
-    A custom file whose stem fails TEAM_NAME is misnamed."""
     files, misnamed = {}, []
     builtin = os.path.join(root, TEXT)
     for base in (builtin, *dirs):
@@ -327,8 +290,6 @@ def team(root: str, dirs: Sequence[str] = ()) -> Team:
 
 
 def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
-    """Every role: core's charters in config order, then core's others sorted, then each team dir's, sorted.
-    ConfigError for a `[roles.<role>]` without a charter."""
     for role in cfg.get("roles", {}):
         if not team.lookup("roles", role):
             raise _no_charter(role)
@@ -342,9 +303,6 @@ def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
 
 
 def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
-    """{task: its description} of the role's task index, its charter's ## Tasks, in order: the only list of its tasks.
-    ConfigError unless the charter's opening sentence names a listed default, each task's path is <tasks>/<task>.md
-    and that task's file is in the role's own tasks dir (Team.tasks_dir: a custom role's team dir, else core's)."""
     team = _team(root, team)
     if not (charter := team.charter(role)):
         raise _no_charter(role, repo.read_config(os.path.join(root, CONFIG)), team)
@@ -373,9 +331,6 @@ def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
 
 def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = (),
              team: Team | None = None) -> RunConfig:
-    """The run config for `role` from config.toml with repo.LOCAL on top, each later layer (same layout) replacing the
-    run keys it sets; `task`, when named, must be in the role's index. That config must be valid on its own; each layer
-    is checked again once applied. `team`: where its charter and tasks are found (None: core's team/ alone)."""
     cfg = repo.read_config(os.path.join(root, CONFIG))
     _check(cfg)
     team = _team(root, team)
@@ -398,14 +353,10 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
             overlays: Sequence[Mapping] = (), trusted: bool = False,
             label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None) -> RunConfig:
-    """Resolve base (including local config), selected client, then caller overlays: later layers win,
-    role values beat global values within a layer, and output tables replace rather than merge; an overlay error
-    names `label` (source, the overlays' TOML table). `team` finds the role's files (load_run's); a role is known by
-    its `[roles.<role>]` table or its charter there.
-
-    The caller must set `trusted` only for operator-controlled local configuration. An
-    in-process caller can opt in, so this is an API contract rather than a sandbox.
-    """
+    """Resolve base (including local config), selected client, then caller overlays: later layers win, role values beat
+    global values within a layer, and output tables replace rather than merge. The caller must set `trusted` only for
+    operator-controlled local configuration: an in-process caller can opt in, so this is an API contract rather than a
+    sandbox."""
     overlays = tuple(overlays)
     if not trusted and any(overlay for overlay in overlays):
         raise ConfigError("nonempty run overlays require a trusted caller")
@@ -432,15 +383,12 @@ def resolve(root: str, client: ConfigClient, role: str, task: str | None = None,
 
 
 def catalog(root: str, team: Team | None = None) -> dict[str, dict[str, str]]:
-    """Every role (roles(), so configured ones in config order first) and its markdown task index; `team` as
-    resolve's."""
     team = _team(root, team)
     _roles(root)
     return {role: index(root, role, team) for role in roles(root, team, repo.read_config(os.path.join(root, CONFIG)))}
 
 
 def _roles(root: str) -> Mapping:
-    """The merged base role tables, checked before public catalog or resolution uses them."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")
@@ -454,14 +402,11 @@ def _roles(root: str) -> Mapping:
 
 
 def _known(root: str, team: Team) -> set[str]:
-    """The role names a run, the selected client or an overlay may name: `[roles.<role>]` tables and charters."""
     return set(_roles(root)) | {name for kind, name in team.files if kind == "roles"}
 
 
 def _team_dir_roles(root: str) -> set[str]:
-    """The role names of the team dirs' roles/*.md, by file name only (no file read): a core-only resolve (the
-    orchestrator's) still takes the selected client's table for one, as drive.py's does. Empty when team_dirs is unset
-    or invalid."""
+    # by file name only: a core-only resolve (the orchestrator's) still takes the selected client's table for one
     try:
         dirs = team_dirs(root)
     except ConfigError:
@@ -507,13 +452,6 @@ def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient,
            team: Team | None = None, tasks: str | None = None) -> str:
-    """The agent run's prompt for `client`: the guide, then # Parameters (_parameters); its Output section ends with the
-    client's handover as Output › Return; last, # Input: the input when params are given, else the client's
-    inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined.
-    A repeated heading in the text before the input gets an `<a id>` line (_unique); the input text is verbatim.
-    `team` finds the charter, tasks and templates (None: core's team/ alone); `tasks`: <tasks>'s value (None: the
-    role's Team.tasks_dir, else the client's tasks_path). A run using a team dir file has its prompt's references
-    checked (_check_prompt)."""
     text, team = os.path.join(root, TEXT), _team(root, team)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
@@ -525,7 +463,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
         principles = _without(principles, "{{language}}")
     texts = {"guide.md": fill(guide, names, "guide.md"), "principles.md": fill(principles, names, "principles.md"),
              rel: fill(role, {}, rel)}
-    parts = list(texts.items())   # (label, text) of each part joined, # Parameters aside
+    parts = list(texts.items())
     for name in run.templates:
         body, label = team.read("templates", name)
         f = _fence(body)
@@ -548,7 +486,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     joined.insert(1, _parameters(root, run, params, client, texts, team, tasks or team.tasks_dir(run.role)))
     prompt = (RESUME if params and params.resume else "") + "\n".join(joined)
     given = params.input.strip() if params else client.inline_input
-    own = _unique(prompt + "\n# Input\n") if params or given else _unique(prompt)   # the text before the input
+    own = _unique(prompt + "\n# Input\n") if params or given else _unique(prompt)
     if team.used(run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
     return own + f"\n{given}\n" if params or given else own
@@ -556,16 +494,6 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
 
 def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, str], *,
                      texts: Mapping[str, str] | None = None, labels: Mapping[str, str] | None = None) -> list[str]:
-    """What is wrong with the section references of a prompt's own text `own`, the role's task files `tasks` {task:
-    text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
-    label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
-    `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
-    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task or method file reference, the code
-    span `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) or `<methods>/<m>.md` (`methods/<m>.md` of
-    `methods`) then ` › ` and a path of each of them, their `# ` title dropped, the longest that matches; (4) no `›`
-    left once those, code spans and links are removed; (5) no `(name)` left, `name` the last title of a path of
-    `own` (a section named in parentheses, not linked). `texts` {label: text}: the texts checked in place of `own`
-    (its anchors and paths still `own`'s); `labels` {task: label}: a task's label in place of `tasks/<task>.md`."""
     outline_ = outline(own)
     anchors = {a for _, _, a, _ in outline_ if a}
     entries, titles = {}, {path[-1] for _, path, _, _ in outline_}
@@ -612,8 +540,6 @@ def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, s
 
 
 def _task_path(after: str, paths) -> str | None:
-    """The longest of `paths` (tuples of titles) that `after`, the text following a file's code span, opens with
-    ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
     best = None
     for path in paths:
         want = " › " + " › ".join(path)
@@ -623,8 +549,6 @@ def _task_path(after: str, paths) -> str | None:
 
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
-    """Raises ConfigError on the first reference error of a run using team dir files (Team.used): one in a custom text
-    as it is, one in core's text naming the custom file that broke it."""
     used = team.used(run.role, run.templates)
     paths = {t: team.lookup("tasks", t) for t in index(team.root, run.role, team)}
     tasks = {t: _text(p) for t, p in paths.items()}
@@ -655,7 +579,6 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
 
 
 def report_command(scripts: str, params: RunParams, interpreter: str = "python3") -> str:
-    """The shell command an agent run reports its progress and outcome with, up to its subcommand."""
     return (f"{shlex.quote(interpreter)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
             f"--to {shlex.quote(params.channel)}")
 
@@ -677,13 +600,10 @@ def fill(text: str, values: Mapping, where: str) -> str:
 
 
 def anchor(heading: str) -> str:
-    """GitHub's heading anchor."""
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
 def unfenced(text: str) -> list[tuple[int, str]]:
-    """(line index, line) of each line of `text` outside fences, fence lines excluded. A fence opens at 3+ backticks or
-    tildes and closes at a line of only that char, as many times or more; one never closed runs to the end."""
     out, fence = [], None
     for i, line in enumerate(text.split("\n")):
         shut = line.strip()
@@ -698,10 +618,6 @@ def unfenced(text: str) -> list[tuple[int, str]]:
 
 
 def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
-    """(line index, path, anchor, is_heading) of each heading and bold item of `text` outside fences, in order. A
-    heading's path is its ancestors' titles then its own, its anchor the `<a id>` line right before it, else
-    `anchor(title)`; a bold item (`**name**` opening its line after a list marker, `name` less a trailing `:` or `.`)
-    has its section's path plus its name and its section's anchor."""
     out, stack, section, last = [], [], "", (-2, "")
     for i, line in unfenced(text):
         if m := HEADING.match(line):
@@ -719,7 +635,6 @@ def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
 
 
 def _check(cfg: Mapping) -> None:
-    """Raises ConfigError unless the config's keys, its client's role tables included, are valid."""
     _check_keys(cfg, GLOBAL_KEYS, "the global table")
     for name, client in cfg.get("clients", {}).items():
         for r, table in client.get("roles", {}).items():
@@ -730,13 +645,10 @@ def _check(cfg: Mapping) -> None:
 
 
 def _team(root: str, given: Team | None) -> Team:
-    """`given`, else core's team/ alone."""
     return given if given is not None else team(root)
 
 
 def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
-    """The error for a role without a charter: a misnamed roles/<role>.md in `team` → its; else `[roles.<role>]` set
-    (or `cfg` None) → no charter; else unknown."""
     if team is not None and (e := team.misnamed_error("roles", role)):
         return e
     if cfg is not None and role not in cfg.get("roles", {}):
@@ -745,7 +657,6 @@ def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None)
 
 
 def _text(path: str) -> str:
-    """File `path`'s text, stripped, plus a newline; ConfigError naming it when it can't be read."""
     try:
         with open(path) as f:
             return f.read().strip() + "\n"
@@ -766,10 +677,6 @@ def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
 
 def _parameters(root: str, run: RunConfig, params: RunParams | None, client: PromptClient,
                 texts: Mapping[str, str], team: Team, tasks: str | None = None) -> str:
-    """The # Parameters section: RULE, then each PARAMETERS name that `texts` ({label: text}), the role's task files or
-    the method files these name use, plus <Workdir>, <scripts> and <tasks> even unused, each with its value as inline
-    code (<Workdir> without params: the client's inline_workdir, prose). A used name without a value raises ConfigError
-    naming the first text using it. `tasks`: <tasks>'s value (None: the client's tasks_path)."""
     text = os.path.join(root, TEXT)
     texts = dict(texts) | {label: body for body, label in (team.read("tasks", t) for t in index(root, run.role, team))}
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
@@ -794,8 +701,6 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
 
 
 def _unique(text: str) -> str:
-    """`text` with an `<a id>` line before each heading whose anchor an earlier heading has, its id the anchor of
-    "<top-level title> <title>" (a top-level heading: of its title), then -2, -3, ... until free."""
     lines, taken, top, ids = text.split("\n"), set(), "", {}
     for i, path, own, heading in outline(text):
         if not heading:
@@ -823,7 +728,6 @@ def _read(root: str, rel: str) -> str:
 
 
 def _without(text: str, placeholder: str) -> str:
-    """`text` less each line holding `placeholder`."""
     return "".join(line for line in text.splitlines(True) if placeholder not in line)
 
 
@@ -840,6 +744,5 @@ def _fence(text: str, least: int = 3) -> str:
 
 
 def _code(value: str) -> str:
-    """`value` as Markdown inline code."""
     f, pad = _fence(value, 1), " " if "`" in value else ""
     return f"{f}{pad}{value}{pad}{f}"
