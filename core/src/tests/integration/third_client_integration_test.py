@@ -26,7 +26,7 @@ class ThirdClientExtension(unittest.TestCase):
         self.env = {**os.environ, "HOME": str(self.home), "PYTHONPATH": str(self.core / "src")}
         (self.core / "src" / "clients" / "third.py").write_text(
             "from .base import Client, Launch\n"
-            "class ThirdClient(Client):\n"
+            "class CustomAdapter(Client):\n"
             "    keys = frozenset({'banner'})\n"
             "    def handover(self):\n"
             "        return self.config['banner']\n"
@@ -47,7 +47,7 @@ class ThirdClientExtension(unittest.TestCase):
             cwd=self.work, env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
 
     def test_third_module_and_config_support_dry_run_capability_catalog_and_resolution(self):
-        self.config('[clients.third]\ntier = 4\nbanner = "Third client handover."\n')
+        self.config('[clients.third]\nimplementation = "CustomAdapter"\ntier = 4\nbanner = "Third client handover."\n')
         result = self.drive("third")
         self.assertEqual(result.returncode, 0, result.stderr)
         launch = json.loads(result.stdout)
@@ -70,7 +70,7 @@ class ThirdClientExtension(unittest.TestCase):
         self.assertIn("echo", data["catalog"]["dummy-tester"])
 
     def test_configured_client_without_module_fails_before_launch(self):
-        self.config("[clients.absent]\n")
+        self.config('[clients.absent]\nimplementation = "AbsentClient"\n')
         result = self.drive("absent")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")

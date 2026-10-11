@@ -50,7 +50,7 @@ class Recorder(clients.Client):
 
 
 def claude(**overrides):
-    return clients.ClaudeClient({**clients.load_config("claude", CORE), **overrides})
+    return clients.ClaudeClient({**clients.get("claude", CORE).config, **overrides})
 
 
 def own(session="mgr"):
@@ -79,8 +79,8 @@ class Base(unittest.TestCase):
         self.enterContext(unittest.mock.patch.dict(sys.modules, {"clients.fake": module}))
         original = clients.load_config
         self.enterContext(unittest.mock.patch.object(
-            clients, "load_config", side_effect=lambda name, root: {} if name == "fake" and root == CORE
-            else original(name, root)))
+            clients, "load_config", side_effect=lambda name, root: ({"implementation": "FakeClient"}
+            if name == "fake" and root == CORE else original(name, root))))
 
     def params(self, **kw):
         return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
@@ -137,18 +137,32 @@ class ClientDiscovery(unittest.TestCase):
         with open(self.path, "w") as f:
             f.write(text)
 
-    def test_names_are_configured_in_source_order_and_existing_clients_load(self):
-        self.config("[clients.skill]\n[clients.claude]\n")
-        self.assertEqual(clients.names(self.tmp.name), ("skill", "claude"))
+    def test_existing_clients_use_explicit_implementations(self):
+        self.config('[clients.skill]\nimplementation = "SkillClient"\n'
+                    '[clients.claude]\nimplementation = "ClaudeClient"\n')
         self.assertIsInstance(clients.get("skill", self.tmp.name), clients.SkillClient)
         self.assertIsInstance(clients.get("claude", self.tmp.name), clients.ClaudeClient)
+        self.assertFalse(hasattr(clients, "names"))
 
-    def test_a_configured_module_and_subclass_are_discovered(self):
-        self.config("[clients.third_party]\n")
+    def test_configured_class_receives_only_runtime_config(self):
+        self.config('[clients.third_party]\nimplementation = "CustomAdapter"\ntier = 3\n')
         module = types.ModuleType("clients.third_party")
-        module.ThirdPartyClient = type("ThirdPartyClient", (clients.Client,), {"needs_config": False})
+        module.CustomAdapter = type("CustomAdapter", (clients.Client,), {})
         with unittest.mock.patch.dict(sys.modules, {"clients.third_party": module}):
-            self.assertIsInstance(clients.get("third_party", self.tmp.name), module.ThirdPartyClient)
+            client = clients.get("third_party", self.tmp.name)
+            self.assertIsInstance(client, module.CustomAdapter)
+            self.assertEqual(client.config, {"tier": 3})
+            module.CustomAdapter.needs_config = False
+            self.assertEqual(clients.get("third_party", self.tmp.name).config, {})
+
+    def test_missing_or_malformed_implementation_fails_before_import(self):
+        for field in ("", 'implementation = ""', 'implementation = 1', 'implementation = []',
+                      'implementation = {}', 'implementation = "other.Adapter"', 'implementation = "bad name"'):
+            with self.subTest(field=field), unittest.mock.patch("importlib.import_module") as imported:
+                self.config("[clients.third]\n" + field + "\n")
+                with self.assertRaisesRegex(compose.ConfigError, "implementation"):
+                    clients.get("third", self.tmp.name)
+                imported.assert_not_called()
 
     def test_missing_and_malformed_client_configuration_fail(self):
         for config in (None, "tier = 1\n", "clients = 1\n", "[clients]\nclaude = 1\n"):
@@ -158,8 +172,6 @@ class ClientDiscovery(unittest.TestCase):
                         os.unlink(self.path)
                 else:
                     self.config(config)
-                with self.assertRaises(compose.ConfigError):
-                    clients.names(self.tmp.name)
                 with self.assertRaises(compose.ConfigError):
                     clients.get("claude", self.tmp.name)
         self.config("[clients.skill]\n")
@@ -175,7 +187,7 @@ class ClientDiscovery(unittest.TestCase):
                 imported.assert_not_called()
 
     def test_missing_module_class_and_wrong_class_fail_clearly(self):
-        self.config("[clients.third]\n")
+        self.config('[clients.third]\nimplementation = "ThirdClient"\n')
         with self.assertRaisesRegex(compose.ConfigError, "module"):
             clients.get("third", self.tmp.name)
         module = types.ModuleType("clients.third")
@@ -187,7 +199,7 @@ class ClientDiscovery(unittest.TestCase):
                 clients.get("third", self.tmp.name)
 
     def test_failure_inside_an_existing_module_is_not_disguised_as_missing_module(self):
-        self.config("[clients.third]\n")
+        self.config('[clients.third]\nimplementation = "ThirdClient"\n')
         failure = ModuleNotFoundError("No module named 'dependency'", name="dependency")
         with unittest.mock.patch("importlib.import_module", side_effect=failure):
             with self.assertRaises(ModuleNotFoundError) as cm:

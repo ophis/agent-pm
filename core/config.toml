@@ -105,6 +105,7 @@ effort = "low"
 
 # ── Clients ─────────────────────────────────────────────
 # [clients.<name>], global only: a client's data, plus run keys in the layout above.
+#   implementation  required: Client subclass name exported by src/clients/<name>.py; not runtime config.
 # Claude Code, read by ClaudeClient (src/clients/claude.py); how argv is built lives there.
 #   flags    [clients.claude] only: flags on every claude command; unset → none. --setting-sources is refused: the
 #            driver sets it (trusted_dirs)
@@ -114,6 +115,7 @@ effort = "low"
 #   env      [clients.claude] only: variables added to the run's environment; unset → none.
 #            CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: claude -p otherwise kills a workflow after 10 idle minutes
 [clients.claude]
+implementation = "ClaudeClient"
 flags = ["--permission-mode", "auto", "--strict-mcp-config"]
 # allow = ["<rule>"]
 
@@ -139,6 +141,7 @@ CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
 # conversation to follow (`/agent-pm:act-as`).
 #   output  per role ([clients.skill.roles.<role>.output]); a role without one keeps its own (engineer: pull-request)
 [clients.skill]
+implementation = "SkillClient"
 
 [clients.skill.roles.researcher.output]
 type = "orchestrator"
