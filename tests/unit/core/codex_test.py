@@ -670,7 +670,8 @@ class Worker(unittest.TestCase):
         self.breaks(die=1)
         with mock.patch.object(time, "sleep") as sleep:
             self.client.worker(self.spec())
-        sleep.assert_called_once_with(1)
+        # before 3.14, Popen.wait(timeout=) polls with time.sleep too (Linux CI): count only the retry's
+        self.assertEqual(sleep.call_args_list.count(mock.call(1)), 1)
         self.assertEqual(self.runs(), 2)
         os.unlink(self.record)
         os.unlink(self.app + ".runs")
