@@ -8,14 +8,14 @@ import shutil
 import tempfile
 import unittest
 
-import repo
 from composer.prompt import RESUME, RETURN
 from new.tests import NEW
 from new.tests.integration.composer import child
+from utils.paths import temp_dirs, under
 
 # The team dirs lie outside every temp dir (check_team_dirs refuses one there): under the repo's gitignored work/.
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
-IN_TEMP = repo.under(os.path.realpath(TEAMS), repo.temp_dirs()) is not None
+IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(NEW, "core", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
 NOTE = (f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
@@ -27,10 +27,10 @@ TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 # After PRELUDE: what a listing reads, as the old --list did: the team dirs and every team dir file checked, then per
 # role of the catalog its destination type, source and each task's description and source, every prompt rendered.
-CATALOG = """import repo
+CATALOG = """from utils import config_file
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(repo.read_config(composer.CONFIG))
+team.check_all(config_file.read(composer.CONFIG))
 params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
 rows = {}
 for role, tasks in composer.catalog(team).items():

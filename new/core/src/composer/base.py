@@ -3,10 +3,9 @@ import os
 import re
 from collections.abc import Mapping
 
-import repo
+from utils.config_file import CONFIG
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # <scripts>'s value
-CONFIG = repo.CONFIG
 TEAM = os.path.join(os.path.dirname(SRC), "team")   # the built-in team root
 OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")

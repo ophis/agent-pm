@@ -10,10 +10,13 @@ runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/ada
 old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
 adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
+utils_imports(core)  each module under src/utils/ imports only the stdlib (sys.stdlib_module_names) and utils
+repo_library(core)   no module under src/ imports repo (repo.py is only the agents' git CLI)
 """
 import ast
 import os
 import re
+import sys
 
 LAYERS = ("adapters", "driver", "composer", "delegate")
 OUTSIDE = "outside the layers"
@@ -80,6 +83,29 @@ def syntax_311(new: str) -> list[str]:
         except SyntaxError as e:
             found.append(f"{rel}: {e}")
     return sorted(found)
+
+
+def utils_imports(core: str) -> list[str]:
+    found = set()
+    for rel, names, tree in _src_modules(core):
+        if names[0] == "utils":
+            found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
+                         if m.split(".")[0] not in ("utils", *sys.stdlib_module_names))
+    return sorted(found)
+
+
+def repo_library(core: str) -> list[str]:
+    found = set()
+    for rel, names, tree in _src_modules(core):
+        found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1]) if m.split(".")[0] == "repo")
+    return sorted(found)
+
+
+def _src_modules(core):
+    """(path relative to core, its module names under src/, its ast) of each .py in core's src/."""
+    for rel, text in _files(core, ".py"):
+        if rel.startswith("src/"):
+            yield rel, rel[len("src/"):-3].split("/"), ast.parse(text, rel)
 
 
 def _files(root, suffixes, skip=None):

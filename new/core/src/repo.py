@@ -26,12 +26,13 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
-import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+
+from utils import config_file
+from utils.paths import temp_dirs, under
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
 NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
@@ -46,8 +47,6 @@ BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
-LOCAL = "~/.agent-pm/core-new.local.toml"
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
@@ -108,53 +107,6 @@ def redact(text: str) -> str:
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
-
-
-def merge(base: dict, over: dict) -> dict:
-    """`base` with `over` on top: tables merge key by key; any other value of `over` replaces base's."""
-    out = dict(base)
-    for k, v in over.items():
-        out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    return out
-
-
-def read_config(path: str, local: str = LOCAL) -> dict:
-    """TOML file `path`, with TOML file `local` (~ expanded) merged on top when it exists (merge())."""
-    with open(path, "rb") as f:
-        cfg = tomllib.load(f)
-    local = os.path.expanduser(local)
-    if os.path.isfile(local):
-        with open(local, "rb") as f:
-            cfg = merge(cfg, tomllib.load(f))
-    return cfg
-
-
-def trusted_dirs(cfg: dict) -> frozenset[str]:
-    """Realpaths of the config's `trusted_dirs`; ValueError unless it is a list of absolute or expandable ~ paths."""
-    paths = cfg.get("trusted_dirs", [])
-    if not isinstance(paths, list):
-        raise ValueError("trusted_dirs: want a list of local paths")
-    for p in paths:
-        if not isinstance(p, str) or not p.startswith(("/", "~")) or os.path.expanduser(p).startswith("~"):
-            raise ValueError(f"trusted_dirs: {p!r:.80} is not an absolute or expandable ~ path")
-    return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
-
-
-def temp_dirs() -> tuple[str, ...]:
-    """Realpaths of the dirs any process, an agent run included, may write: TMPDIR, Python's temp dir, /tmp, /var/tmp
-    and macOS's per-user one."""
-    dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
-    try:
-        dirs.append(subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True, timeout=SHORT,
-                                   stdin=subprocess.DEVNULL).stdout.strip())
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return tuple(dict.fromkeys(os.path.realpath(d) for d in dirs if d))
-
-
-def under(path: str, roots) -> str | None:
-    """The first of `roots` that holds realpath `path`, or None."""
-    return next((r for r in map(os.path.realpath, roots) if os.path.commonpath([path, r]) == r), None)
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
@@ -270,7 +222,7 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
              links=frozenset()) -> dict:
     """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
     clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
-    local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
+    local clones whose worktrees get symlinks (config_file.trusted_dirs(), matched exactly)."""
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -427,7 +379,8 @@ def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: R
             "others": _oldest_first(others)}
 
 
-def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = CONFIG, temp=None) -> int:
+def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = config_file.CONFIG,
+         temp=None) -> int:
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("worktree", "status"):
@@ -440,9 +393,9 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_config(config)
+        cfg = config_file.read(config)
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
+            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=config_file.trusted_dirs(cfg))
         else:
             r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"), base_branch=a.base)
     except Invalid as e:

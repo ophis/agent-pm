@@ -1,6 +1,7 @@
-"""new/core/src/driver/registry.py: config merge, the [adapters.<name>] tables, their per-process cache and Adapter
-loading. Adapter packages are registered in sys.modules or the import system only for the test's span; the registry
-itself is never patched, except a wrap counting its file reads. Each test drops the cache at its end."""
+"""new/core/src/driver/registry.py: the [adapters.<name>] tables, their per-process cache and Adapter loading (the
+config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in sys.modules or the
+import system only for the test's span; the registry itself is never patched, except a wrap counting its file reads.
+Each test drops the cache at its end."""
 import importlib.abc
 import importlib.util
 import os
@@ -11,7 +12,7 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import CORE, SRC, fake_adapter, hermetic
+from new.tests import SRC, fake_adapter, hermetic
 from adapters.base import Adapter, ConfigError
 from driver import registry
 
@@ -88,48 +89,6 @@ class Base(unittest.TestCase):
         with self.assertRaises(ConfigError) as caught:
             call()
         self.assertEqual(str(caught.exception), message)
-
-
-class ConstantsTest(unittest.TestCase):
-    def test_paths(self):
-        self.assertEqual(registry.ROOT, CORE)
-        self.assertEqual(registry.CONFIG, os.path.join(CORE, "config.toml"))
-        self.assertEqual(registry.LOCAL, LOCAL_SHOWN)
-
-
-class MergeTest(unittest.TestCase):
-    def test_tables_merge_key_by_key_and_the_other_value_wins(self):
-        base = {"a": {"x": 1, "y": [1, 2], "t": {"p": 1, "q": 2}}, "b": 1, "c": {"k": 1}}
-        over = {"a": {"y": [3], "z": 2, "t": {"q": 3}}, "b": {"n": 1}, "c": 5, "d": "new"}
-        self.assertEqual(registry.merge(base, over),
-                         {"a": {"x": 1, "y": [3], "z": 2, "t": {"p": 1, "q": 3}}, "b": {"n": 1}, "c": 5, "d": "new"})
-
-    def test_leaves_its_arguments_unchanged(self):
-        base, over = {"a": {"x": 1}}, {"a": {"x": 2}}
-        registry.merge(base, over)
-        self.assertEqual((base, over), ({"a": {"x": 1}}, {"a": {"x": 2}}))
-
-
-class ReadConfigTest(Base):
-    def test_merges_the_local_file_over_the_base_file(self):
-        path = self.write("config.toml", 'top = 1\nlist = [1, 2]\n[t]\na = "base"\nb = "base"\n')
-        local = self.write("local.toml", 'list = [3]\n[t]\nb = "local"\nc = "local"\n')
-        self.assertEqual(registry.read_config(path, local),
-                         {"top": 1, "list": [3], "t": {"a": "base", "b": "local", "c": "local"}})
-
-    def test_expands_tilde_in_the_local_path(self):
-        path = self.write("config.toml", "a = 1\n")
-        self.local("a = 2\n")
-        self.assertEqual(registry.read_config(path, LOCAL_SHOWN), {"a": 2})
-
-    def test_reads_the_local_file_only_when_it_is_a_file(self):
-        path = self.write("config.toml", "a = 1\n")
-        self.assertEqual(registry.read_config(path, os.path.join(self.dir, "absent.toml")), {"a": 1})
-        self.assertEqual(registry.read_config(path, self.dir), {"a": 1})
-
-    def test_defaults_to_the_committed_config_and_the_home_local_file(self):
-        self.local('extra = "x"\n')
-        self.assertEqual(registry.read_config()["extra"], "x")
 
 
 class TablesTest(Base):

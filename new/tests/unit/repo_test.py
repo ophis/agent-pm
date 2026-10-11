@@ -1,4 +1,5 @@
-"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped)."""
+"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
+helpers' cases: unit/utils/)."""
 import io
 import json
 import os
@@ -9,7 +10,7 @@ import threading
 import unittest
 import unittest.mock
 
-from new.tests import CORE, hermetic
+from new.tests import hermetic
 import repo
 
 LOCAL = "core-new.local.toml"
@@ -120,41 +121,6 @@ class Base(unittest.TestCase):
         return path
 
 
-class ReadConfig(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.path = os.path.join(tmp.name, "config.toml")
-
-    def test_merge(self):
-        base = {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}}
-        over = {"b": 2, "s": {"k": 1}, "u": 5, "t": {"y": 2, "l": [3], "n": {"q": 3}}}
-        self.assertEqual(repo.merge(base, over), {"a": 1, "b": 2, "s": {"k": 1}, "u": 5,
-                                                  "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}}})
-        self.assertEqual(base, {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}})
-
-    def test_the_new_cores_config_pair(self):
-        self.assertEqual(repo.CONFIG, os.path.join(CORE, "config.toml"))
-        self.assertEqual(repo.LOCAL, "~/.agent-pm/core-new.local.toml")
-
-    def test_the_local_file_goes_on_top(self):
-        """The old core's local file is not read."""
-        with open(self.path, "w") as f:
-            f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
-        home = hermetic.home(self)
-        with open(os.path.join(home, "core.local.toml"), "w") as f:
-            f.write('users = ["old"]\n')
-        self.assertEqual(repo.read_config(self.path), {"users": ["a", "b"], "t": {"x": 1, "y": 1}})
-        with open(os.path.join(home, LOCAL), "w") as f:
-            f.write('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
-        merged = {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
-        self.assertEqual(repo.read_config(self.path), merged)
-        other = os.path.join(os.path.dirname(self.path), "other.toml")
-        with open(other, "w") as f:
-            f.write('users = ["d"]\n')
-        self.assertEqual(repo.read_config(self.path, other), {"users": ["d"], "t": {"x": 1, "y": 1}})
-
-
 class Parse(unittest.TestCase):
     def test_forms(self):
         for spec, want in (("o/n", ("github.com", "o", "n")), ("ghe.example.com/o/n", ("ghe.example.com", "o", "n")),
@@ -196,29 +162,6 @@ class ErrText(unittest.TestCase):
         for stderr, want in ((None, ""), ("", ""), ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"), ("x" * 300, "x" * 200)):
             with self.subTest(stderr=stderr):
                 self.assertEqual(repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want)
-
-
-class TempDirs(unittest.TestCase):
-    def test_every_temp_dir_counts(self):
-        getconf = subprocess.CompletedProcess([], 0, "/x/d/\n", "")
-        with unittest.mock.patch.dict(os.environ, {"TMPDIR": "/x/e/"}), \
-                unittest.mock.patch("tempfile.gettempdir", return_value="/x/t"), \
-                unittest.mock.patch("subprocess.run", return_value=getconf) as sub:
-            dirs = repo.temp_dirs()
-        self.assertEqual(sub.call_args.args[0], ["getconf", "DARWIN_USER_TEMP_DIR"])
-        self.assertEqual(dirs, tuple(dict.fromkeys(os.path.realpath(d) for d in ("/x/e", "/x/t", "/tmp", "/var/tmp", "/x/d"))))
-
-    def test_getconf_failing_is_ignored(self):
-        with unittest.mock.patch("subprocess.run", side_effect=OSError("no getconf")):
-            self.assertIn(os.path.realpath("/var/tmp"), repo.temp_dirs())
-
-
-class TrustedDirs(unittest.TestCase):
-    def test_unset_is_empty_and_paths_are_real_paths(self):
-        self.assertEqual(repo.trusted_dirs({}), frozenset())
-        with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
-            got = repo.trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
-        self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
 
 
 class Worktree(Base):

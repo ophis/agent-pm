@@ -17,10 +17,10 @@ from new.tests.unit.composer.prompt_test import (RUN, composed, heading_anchors,
                                                  section, task_text)
 from new.tests.unit.composer.team_test import INTRO
 import composer
-import repo
 from composer.prompt import RETURN, RULE
 from composer.run import check_old_keys
 from composer.teams import START
+from utils import config_file
 
 CATALOG = composer.catalog()
 ROLES = list(CATALOG)
@@ -124,7 +124,7 @@ class Package(unittest.TestCase):
         self.assertIs(composer.tasks_path, composer.teams.tasks_path)
         self.assertIsInstance(composer.teams, types.ModuleType)
         self.assertIs(composer.team, composer.teams.team)
-        self.assertEqual(composer.CONFIG, repo.CONFIG)
+        self.assertEqual(composer.CONFIG, config_file.CONFIG)
         self.assertEqual((composer.PROGRESS, composer.OUTCOME), ("agent-pm-progress", "agent-pm-outcome"))
 
 

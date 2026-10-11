@@ -6,20 +6,17 @@ sits beside it. The Adapter also gives its account usage probe's command (usage_
 Usage, and a session's SessionStatus. A spec type refuses a bad value with ConfigError when built; sid_error is the one
 sid rule. Nothing here starts a process or touches tmux; imports no other layer."""
 import json
-import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+
+from utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 class ConfigError(Exception):
     """A config or spec error, raised by adapters and the Driver."""
-
-
-def _path(value) -> bool:
-    return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
 
 
 def _strings(value) -> bool:
@@ -61,14 +58,14 @@ class Spec:
     sid: str | None = None   # agent-pm's session id, set by the Driver's start(), never by the caller
 
     def __post_init__(self):
-        if not _path(self.workdir):
+        if not printable_abs(self.workdir):
             raise ConfigError(f"workdir must be a printable absolute path, got {self.workdir!r:.80}")
         if self.tier is not None and (isinstance(self.tier, bool) or not isinstance(self.tier, int)
                                       or not 1 <= self.tier <= 4):
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort is not None and self.effort not in EFFORTS:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
-        if self.access.cwd != "" and not _path(self.access.cwd):
+        if self.access.cwd != "" and not printable_abs(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)

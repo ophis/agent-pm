@@ -1,7 +1,7 @@
 """The Composer: reads the team root (TEAM: guide.md, principles.md, roles/, tasks/, templates/, methods/, output/) and
 the team dirs (the core config's team_dirs) in place, resolves a role's run config (resolve: the core config, then the
 caller's overlays; `runtime` an opaque key) and access intent (access), and assembles its prompt (render); the agent run
-reads its task's file itself. It imports only repo and the stdlib (tests/guards.py layer_imports). Callers use this
+reads its task's file itself. It imports only utils and the stdlib (tests/guards.py layer_imports). Callers use this
 package's names (composer.resolve(...)); modules: base (paths, ConfigError, text helpers), teams (Team, task indexes,
 team dir checks), run (run config, params, access intent), prompt (render, reference checks).
 

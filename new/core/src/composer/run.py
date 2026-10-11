@@ -6,9 +6,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
 
-import repo
 from composer.base import CONFIG, SRC, ConfigError, _title, fill
 from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
+from utils import config_file
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
@@ -105,11 +105,11 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] = (),
             label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None,
             config: str = CONFIG) -> RunConfig:
-    """The run config of `role`: `config` with repo.LOCAL on top, then each overlay in order (the same layout), each
-    replacing the run keys it sets; within a layer [roles.<role>] beats the global value and an output table replaces
-    the whole. `config` must give a valid RunConfig on its own (so it sets runtime); each overlay is checked again once
-    applied, its errors naming `label` (source, the overlays' table). A role is known by its [roles.<role>] table or
-    its charter in `team` (None: the team root alone); `task`, when named, must be in the role's index.
+    """The run config of `role`: `config` with config_file.LOCAL on top, then each overlay in order (the same layout),
+    each replacing the run keys it sets; within a layer [roles.<role>] beats the global value and an output table
+    replaces the whole. `config` must give a valid RunConfig on its own (so it sets runtime); each overlay is checked
+    again once applied, its errors naming `label` (source, the overlays' table). A role is known by its [roles.<role>]
+    table or its charter in `team` (None: the team root alone); `task`, when named, must be in the role's index.
 
     An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled config as one."""
     overlays, team = tuple(overlays), _team(team)
@@ -122,7 +122,7 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
             _check_overlay(overlay, known, where)
         except ConfigError as e:
             raise ConfigError(f"{source}: {e}") from None
-    cfg = repo.read_config(config)
+    cfg = config_file.read(config)
     _check(cfg)
     values = _run_keys(cfg, role)
     run = RunConfig(role=role, task=task or "", tier=values.pop("tier", None), effort=values.pop("effort", None),
@@ -139,9 +139,10 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
 
 
 def trusted_dirs(config: str = CONFIG) -> frozenset[str]:
-    """Real paths of the global `trusted_dirs` of `config` with repo.LOCAL on top; ConfigError when it is malformed."""
+    """Real paths of the global `trusted_dirs` of `config` with config_file.LOCAL on top; ConfigError when it is
+    malformed."""
     try:
-        return repo.trusted_dirs(repo.read_config(config))
+        return config_file.trusted_dirs(config_file.read(config))
     except ValueError as e:
         raise ConfigError(str(e)) from None
 

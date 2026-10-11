@@ -3,8 +3,8 @@ import os
 import unittest
 
 from new.tests import SRC
-import repo
 from composer import base
+from utils import config_file
 
 
 class Paths(unittest.TestCase):
@@ -14,7 +14,7 @@ class Paths(unittest.TestCase):
         self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertEqual(base.SRC, SRC)
         self.assertTrue(os.path.isdir(os.path.join(base.SRC, "composer")))
-        self.assertEqual(base.CONFIG, repo.CONFIG)
+        self.assertEqual(base.CONFIG, config_file.CONFIG)
 
 
 class Fill(unittest.TestCase):

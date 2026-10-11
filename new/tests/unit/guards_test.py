@@ -25,7 +25,8 @@ class Sample(unittest.TestCase):
 class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
-                            (guards.adapters_key, CORE), (guards.syntax_311, NEW)):
+                            (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.utils_imports, CORE),
+                            (guards.repo_library, CORE)):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
 
@@ -127,6 +128,41 @@ class AdaptersKey(Sample):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
         root = self.tree({"src/composer/x.py": sample, "src/driver/x.py": sample})
         self.assertEqual(guards.adapters_key(root), ['src/composer/x.py:2: literal key "adapters"'])
+
+
+class UtilsImports(Sample):
+    def test_a_layer_another_src_module_or_a_third_party_module_is_a_violation(self):
+        root = self.tree({"src/utils/x.py": "import driver\nfrom adapters.base import ConfigError\nimport repo\n"
+                                            "def f():\n    import yaml\n",
+                          "src/utils/y.py": "from .. import composer\n"})
+        self.assertEqual(guards.utils_imports(root), ["src/utils/x.py: imports adapters.base",
+                                                      "src/utils/x.py: imports driver",
+                                                      "src/utils/x.py: imports repo",
+                                                      "src/utils/x.py: imports yaml",
+                                                      "src/utils/y.py: imports composer"])
+
+    def test_the_stdlib_and_utils_are_clean_and_only_utils_is_checked(self):
+        root = self.tree({"src/utils/x.py": "from __future__ import annotations\nimport os, tomllib\n"
+                                            "from utils import paths\nfrom utils.files import read_regular\n"
+                                            "from . import files\n",
+                          "src/driver/x.py": "import yaml\n"})
+        self.assertEqual(guards.utils_imports(root), [])
+
+
+class RepoLibrary(Sample):
+    def test_a_src_module_importing_repo_is_a_violation(self):
+        root = self.tree({"src/composer/x.py": "import repo\n", "src/driver/y.py": "from repo import merge\n",
+                          "src/utils/z.py": "def f():\n    __import__('repo')\n",
+                          "src/composer/w.py": "from .. import repo\n"})
+        self.assertEqual(guards.repo_library(root), ["src/composer/w.py: imports repo",
+                                                     "src/composer/x.py: imports repo",
+                                                     "src/driver/y.py: imports repo.merge",
+                                                     "src/utils/z.py: imports repo"])
+
+    def test_repo_py_itself_and_modules_outside_src_are_clean(self):
+        root = self.tree({"src/repo.py": "import os\n", "tests/repo_test.py": "import repo\n",
+                          "src/composer/x.py": "import repository\nfrom utils import config_file\n"})
+        self.assertEqual(guards.repo_library(root), [])
 
 
 class Syntax311(Sample):

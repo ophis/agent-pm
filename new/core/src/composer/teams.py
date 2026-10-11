@@ -8,8 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import repo
 from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, _text, _title, unfenced
+from utils import config_file
+from utils.paths import temp_dirs, under
 
 PROGRESS = "agent-pm-progress"   # the progress mark (the package docstring)
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)   # a task's start mark line
@@ -58,7 +59,7 @@ class Team:
         text = _text(path)
         if text.split("\n", 1)[0].strip() == "---":
             raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
-                              f"{repo.LOCAL}")
+                              f"{config_file.LOCAL}")
         if m := PLACEHOLDER.search(text):
             raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
         for m in METHOD.findall(text):
@@ -111,14 +112,14 @@ class Team:
 
 
 def team_dirs(config: str = CONFIG) -> tuple[str, ...]:
-    """The real paths of the global `team_dirs` of `config` with repo.LOCAL on top, in order; () when unset.
+    """The real paths of the global `team_dirs` of `config` with config_file.LOCAL on top, in order; () when unset.
     ConfigError when `config` itself sets it, it is malformed or the config can't be read."""
     try:
-        own, value = "team_dirs" in repo.read_config(config, os.devnull), repo.read_config(config).get("team_dirs")
+        own, value = "team_dirs" in config_file.read(config, os.devnull), config_file.read(config).get("team_dirs")
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
-        raise ConfigError(f"team_dirs: set it in {repo.LOCAL}, not {os.path.basename(config)}")
+        raise ConfigError(f"team_dirs: set it in {config_file.LOCAL}, not {os.path.basename(config)}")
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -184,7 +185,7 @@ def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str
     docstring). `team` None: the team root alone; `config` names an unknown role apart from a charterless one."""
     team = _team(team)
     if not (charter := team.charter(role)):
-        raise _no_charter(role, repo.read_config(config), team)
+        raise _no_charter(role, config_file.read(config), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -212,14 +213,14 @@ def catalog(team: Team | None = None, config: str = CONFIG) -> dict[str, dict[st
     """Every role (roles(), so configured ones in config order first) and its task index; `team` as index's."""
     team = _team(team)
     _roles(config)
-    return {role: index(role, team, config) for role in roles(team, repo.read_config(config))}
+    return {role: index(role, team, config) for role in roles(team, config_file.read(config))}
 
 
 def _roles(config: str) -> Mapping:
     """The merged base role tables, checked before the catalog or a resolution uses them."""
     if not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = repo.read_config(config).get("roles")
+    roles = config_file.read(config).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():
@@ -246,18 +247,18 @@ def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None)
 def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
                     temp: Sequence[str] | None = None) -> None:
     """Raises ConfigError when a team dir, one of its KINDS subdirs or a *.md file directly in one, each by its real
-    path (symlinks followed, as team() does), lies in a temp dir (`temp`, None: repo.temp_dirs()), overlaps a dir of
+    path (symlinks followed, as team() does), lies in a temp dir (`temp`, None: temp_dirs()), overlaps a dir of
     `writes` ([(what, path)]: dirs the agent run can write) either way, is writable by group or others or is not the
     current user's; or when a parent dir of a team dir is writable by group or others or owned by neither the user nor
     root (who could move the team dir away and put another there; a sticky dir lets no one else)."""
     if not dirs:
         return
-    temps, me = repo.temp_dirs() if temp is None else temp, os.getuid()
+    temps, me = temp_dirs() if temp is None else temp, os.getuid()
     for d in map(os.path.realpath, dirs):
         for path in team_paths(d):
             real = os.path.realpath(path)
             shown = path if real == path else f"{path} ({real})"
-            if t := repo.under(real, temps):
+            if t := under(real, temps):
                 raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
             check_overlap(shown, real, writes)
             try:
@@ -299,5 +300,5 @@ def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> N
     """Raises ConfigError when realpath `real` (`shown` in the message) and a dir of `writes` hold one another."""
     for what, p in writes:
         p = os.path.realpath(p)
-        if repo.under(real, [p]) or repo.under(p, [real]):
+        if under(real, [p]) or under(p, [real]):
             raise ConfigError(f"team_dirs: {shown} overlaps {what} {p}: the agent run can write there")

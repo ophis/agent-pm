@@ -22,6 +22,7 @@ from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Ev
 from driver import records, registry
 from driver.modes import headless_run
 from driver.records import session
+from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
            "LimitHit", "MODES", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo", "SessionStatus",
@@ -239,7 +240,7 @@ def session_info(runtime: str, sid: str, cwd: str) -> SessionStatus:
     registry error."""
     if error := sid_error(sid):
         raise ConfigError(error)
-    if not (isinstance(cwd, str) and cwd.isprintable() and os.path.isabs(cwd)):
+    if not printable_abs(cwd):
         raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
     adapter = registry.adapter(runtime)
     try:
