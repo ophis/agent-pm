@@ -3064,5 +3064,121 @@ class Main(Base):
             self.assertIn("client 'claude' needs --input, --out and --workdir", err.getvalue())
 
 
+class CodexRecoveryDriver(Base):
+    def setUp(self):
+        super().setUp()
+        self.private = hermetic.home(self)
+        self.client = clients.get("codex", CORE)
+        self.snapshot = {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.work)],
+                         "commands": ["report *"], "model": "gpt-6-luna", "effort": "low",
+                         "network": False,
+                         "codex_home": os.path.realpath(os.path.join(os.path.dirname(self.private), ".codex"))}
+        self.native = "11111111-2222-4333-8444-555555555555"
+
+    def events(self):
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def run_codex(self, native=None, *, resume=False, begun=None, sinks=(), popen=None):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot)
+        lines = stream({"type": "thread.started", "thread_id": native or self.native})
+        return drive.start(launch, run(), self.params(resume=resume), client=self.client,
+                           begun=begun, sinks=sinks, popen=popen or (lambda argv, **kw: FakeProc(lines)))
+
+    def test_snapshot_exists_before_spawn_and_native_mapping_before_later_events(self):
+        observed = []
+
+        def started():
+            state = run_session.load(self.work, SID)
+            observed.append((state.snapshot, state.client_id, [e["kind"] for e in self.events()]))
+
+        def popen(argv, **kw):
+            self.assertEqual(run_session.load(self.work, SID).client_id, None)
+            def lines():
+                yield from stream({"type": "thread.started", "thread_id": self.native})
+                yield from stream({"type": "item.completed", "item": {"type": "agent_message", "text": "later"}})
+            return FakeProc(lines())
+
+        seen = []
+        def sink(event):
+            if event.kind == "text":
+                seen.append((event.text, run_session.load(self.work, SID).client_id,
+                             [e["kind"] for e in self.events()]))
+        self.run_codex(begun=started, popen=popen, sinks=[sink])
+        self.assertEqual(observed[0][:2], (self.snapshot, None))
+        self.assertEqual(observed[0][2], ["input", "session"])
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [self.native])
+        self.assertEqual(seen[0][:2], ("later", self.native))
+        self.assertIn("client_session", seen[0][2])
+
+    def test_resume_keeps_original_state_and_progress_and_rejects_changed_id(self):
+        self.run_codex()
+        drive.note(self.params().channel, "progress", name="review", text="first turn")
+        self.run_codex(resume=True)
+        self.assertIn("first turn", [e["text"] for e in self.events() if e["kind"] == "progress"])
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [self.native, self.native])
+        with self.assertRaisesRegex(compose.ConfigError, "different client ID"):
+            self.run_codex("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", resume=True)
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+
+    def test_forged_run_record_cannot_change_trusted_mapping(self):
+        self.run_codex()
+        drive.note(self.params().channel, "client_session", sid=SID,
+                   client_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        drive.note(self.params().channel, "session", sid=SID, cwd="/", project=True)
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual(self.client.resume_location(self.work, SID), (os.path.realpath(self.work), False))
+        self.run_codex(resume=True)
+        self.assertEqual(run_session.load(self.work, SID).snapshot["dirs"], [os.path.realpath(self.work)])
+
+    def test_driver_session_info_delegates_to_client(self):
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertTrue(info.resume_supported)
+        self.assertFalse(info.exists)
+
+    def test_no_native_id_does_not_count_as_a_recoverable_run(self):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot)
+        result = drive.start(launch, run(), self.params(), client=self.client, sinks=[],
+                             popen=lambda argv, **kw: FakeProc(stream({"type": "turn.completed"})))
+        self.assertIsNone(result.outcome)
+        self.assertIn("did not report a native session ID", result.error)
+        self.assertIsNone(run_session.load(self.work, SID).client_id)
+
+    def test_failed_durable_mirror_stops_host_before_later_output(self):
+        process = FakeProc(stream({"type": "thread.started", "thread_id": self.native},
+                                  {"type": "item.completed", "item": {"type": "agent_message", "text": "later"}}))
+        original = drive.append_line
+        def append(path, line, **kwargs):
+            if '"kind": "client_session"' in line:
+                raise OSError(errno.ENOSPC, "cannot fsync mapping")
+            return original(path, line, **kwargs)
+        seen = []
+        with unittest.mock.patch.object(drive, "append_line", append):
+            with self.assertRaisesRegex(OSError, "cannot fsync mapping"):
+                self.run_codex(popen=lambda argv, **kw: process, sinks=[seen.append])
+        self.assertTrue(process.killed)
+        self.assertEqual(seen, [])
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+
+    def test_session_query_exposes_native_file_and_manual_resume_without_usage_guess(self):
+        self.run_codex()
+        path = os.path.join(self.snapshot["codex_home"], "sessions", "2026", "10", "10",
+                            f"rollout-2026-10-10-{self.native}.jsonl")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {"id": self.native,
+                                                                "cwd": self.snapshot["cwd"]}}) + "\n")
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertEqual((info.client_id, info.exists, info.transcript), (self.native, True, path))
+        self.assertIsInstance(info.last_activity, float)
+        self.assertIn(f"codex resume --approve-for-me", info.resume)
+        self.assertIn(self.native, info.resume)
+        self.assertFalse(info.usage_supported)
+        self.assertIsNone(info.usage)
+
+
 if __name__ == "__main__":
     unittest.main()

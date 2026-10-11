@@ -5,11 +5,13 @@ import os
 import select
 import shlex
 import sys
+import uuid
 
 import fake_claude
 
 
 ENV = "FAKE_CODEX_SCENARIO"
+CLIENT_ID = "11111111-2222-4333-8444-555555555555"
 
 
 def install(bin_dir: str) -> str:
@@ -33,8 +35,17 @@ def parse(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("-m", "--model")
     ap.add_argument("-c", "--config", action="append", default=[])
     ap.add_argument("--add-dir", action="append", default=[])
-    ap.add_argument("prompt")
-    args = ap.parse_args(argv[1:])
+    resume = "resume" in argv
+    common = argv[1:argv.index("resume")] if resume else argv[1:-1]
+    ap.add_argument("prompt", nargs="?")
+    args = ap.parse_args(common)
+    if resume:
+        suffix = argv[argv.index("resume") + 1:]
+        if len(suffix) != 2:
+            sys.exit("fake_codex.py: expected resume ID and prompt")
+        args.resume_id, args.prompt = suffix
+    else:
+        args.resume_id, args.prompt = None, argv[-1]
     if not (args.json and args.skip_git_repo_check
             and args.approve_for_me and args.model):
         sys.exit("fake_codex.py: missing required headless launch settings")
@@ -51,7 +62,8 @@ def scenario() -> dict:
             data = json.load(f)
     except (KeyError, OSError, ValueError) as e:
         sys.exit(f"fake_codex.py: scenario: {e}")
-    if not isinstance(data, dict) or set(data) != {"steps", "log"} or not isinstance(data["steps"], list):
+    if (not isinstance(data, dict) or not {"steps", "log"} <= set(data)
+            or set(data) - {"steps", "log", "thread_id"} or not isinstance(data["steps"], list)):
         sys.exit("fake_codex.py: expected steps and log")
     for step in data["steps"]:
         if isinstance(step, str):
@@ -59,6 +71,13 @@ def scenario() -> dict:
         if not isinstance(step, dict) or step.get("kind") not in ("progress", "outcome", "stderr"):
             sys.exit("fake_codex.py: invalid step")
     return data
+
+
+def session_path(client_id: str) -> str:
+    home = os.environ.get("CODEX_HOME")
+    if not home:
+        sys.exit("fake_codex.py: missing CODEX_HOME")
+    return os.path.join(home, "sessions", "2026", "10", "10", f"rollout-2026-10-10-{client_id}.jsonl")
 
 
 def emit(event: dict) -> None:
@@ -73,12 +92,25 @@ def main(argv: list[str]) -> int:
     stdin_eof = bool(ready) and os.read(sys.stdin.fileno(), 1) == b""
     if not stdin_eof:
         sys.exit("fake_codex.py: stdin was not closed")
+    if args.resume_id:
+        try:
+            uuid.UUID(args.resume_id)
+        except ValueError:
+            sys.exit("fake_codex.py: invalid resume ID")
+        if not os.path.isfile(session_path(args.resume_id)):
+            sys.exit("fake_codex.py: resumed session file absent")
+    else:
+        path = session_path(CLIENT_ID)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {"id": CLIENT_ID, "cwd": os.getcwd()}}) + "\n")
     with open(data["log"], "w") as f:
-        json.dump({"argv": argv, "cwd": os.getcwd(), "prompt": args.prompt, "stdin_eof": stdin_eof}, f)
+        json.dump({"argv": argv, "cwd": os.getcwd(), "prompt": args.prompt,
+                   "stdin_eof": stdin_eof, "resume_id": args.resume_id}, f)
     command = fake_claude.report_command([args.prompt])
     if command is None:
         sys.exit("fake_codex.py: no report command in prompt")
-    emit({"type": "thread.started", "thread_id": "fake-session"})
+    emit({"type": "thread.started", "thread_id": data.get("thread_id", CLIENT_ID)})
     emit({"type": "turn.started"})
     for step in data["steps"]:
         if isinstance(step, str):
