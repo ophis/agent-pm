@@ -176,13 +176,14 @@ def _early(name: str, exe: str, proc) -> None:
 
 
 def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
-    """After _early: worker `name`'s visible pane showing one of client.worker_dialogs, a dialog no hook reports, marks
-    the pane blocked (tui_claude.mark) and says so on stderr."""
+    """After _early: worker `name`'s visible pane showing one of client.worker_dialogs, a dialog no hook reports (both
+    with whitespace collapsed: the client wraps its own lines), marks the pane blocked (tui_claude.mark) and says so on
+    stderr."""
     if not client.worker_dialogs:
         return
     try:
-        screen = tui_claude.read(name, proc=proc)
-        text = next((t for t in client.worker_dialogs if t in screen), None)
+        screen = " ".join(tui_claude.read(name, proc=proc).split())
+        text = next((t for t in client.worker_dialogs if " ".join(t.split()) in screen), None)
         if text is None:
             return
         pane = _query(["tmux", "display-message", "-p", "-t", f"={name}:", "#{pane_id}"], proc).strip()

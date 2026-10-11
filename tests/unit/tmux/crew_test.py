@@ -18,8 +18,10 @@ from types import MappingProxyType
 from unittest import mock
 
 from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
 import crew
 from clients.claude import ClaudeClient
+from clients.codex import CodexClient
 
 clients = crew.clients
 manager = crew.manager
@@ -909,6 +911,17 @@ class ClientTest(WorkerCase):
                 with open(self.events) as f:
                     self.assertRegex(f.read(), r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 blocked\n\Z")
 
+    def test_a_dialog_text_matches_with_whitespace_collapsed(self):
+        """A dialog the client draws over lines of its own, indented."""
+        fake = Fake(results={"display-message": lambda argv: {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")})
+        open(self.events, "w").close()
+        fake.text = "Folder /w\n  Trust\n    alpha?  (y/n)\n"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start(fake, client="alpha")
+        self.assertEqual(err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?")
+        self.assertIn(["tmux", "set-option", "-t", "%7", "@state", "blocked"], fake.calls)
+
     def test_no_dialog_marks_nothing(self):
         for client in ("alpha", "claude"):
             with self.subTest(client=client):
@@ -917,6 +930,69 @@ class ClientTest(WorkerCase):
                 self.start(fake, client=client)
                 self.assertNotIn("blocked", [c[-1] for c in fake.calls])
                 self.assertEqual(fake.calls[-1][1], "capture-pane" if client == "alpha" else "display-message")
+
+
+class CodexWorkerTest(WorkerCase):
+    """The configured clients (claude, codex, skill): Codex's session marker and context variables; a codex worker's
+    app-server the repo's fake codex (tests/integration/core/fake_codex.py), in a HOME of the test's own."""
+    INJECTED = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
+    IDENTITY = {k: "x" for k in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
+                                 "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")}
+
+    def setUp(self):
+        super().setUp()
+        hermetic.home(self)
+        fake_codex.install(self.bin)
+        executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\nexit 1\n")
+        scenario = os.path.join(self.dir, "scenario.json")
+        with open(scenario, "w") as f:
+            f.write("{}")
+        self.env[fake_codex.ENV] = scenario
+        self.cwd = os.path.join(self.dir, "project")
+        os.mkdir(self.cwd)
+
+    def start(self, fake, env=(), **kw):
+        return crew.start("w1", self.directory, own=None, cwd=self.cwd, env={**self.env, **dict(env)}, proc=fake,
+                          **kw)
+
+    def test_the_codex_marker_makes_a_codex_worker(self):
+        fake = Fake()
+        self.start(fake, {"CODEX_THREAD_ID": "t", "CLAUDE_PID": "1"})
+        codex = os.path.join(self.bin, "codex")
+        self.assertEqual((fake.options()["@client"], fake.options()["@exe"]), ("codex", codex))
+        self.assertEqual(fake.handover["argv"][:4], [codex, "--no-daemon", "-C", self.cwd])
+        self.assertEqual(fake.handover["env"]["CODEX_HOME"], os.path.join(os.path.realpath(os.environ["HOME"]),
+                                                                          ".codex"))
+
+    def test_both_markers_without_client_start_nothing(self):
+        fake = Fake()
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.start(fake, {"CLAUDECODE": "1", "CODEX_THREAD_ID": "t"})
+        self.assertEqual(str(cm.exception), "the caller runs inside more than one client's session (claude: "
+                                            "CLAUDECODE, codex: CODEX_THREAD_ID): pass --client")
+        self.assertEqual(fake.calls, [])
+
+    def test_a_claude_worker_drops_codex_context_its_defaults_only_with_the_marker(self):
+        """Codex's identity keys always; its injected defaults with CODEX_THREAD_ID present; another value stays."""
+        no_marker = {k: v for k, v in self.IDENTITY.items() if k != "CODEX_THREAD_ID"}
+        for env, kept in (({**self.IDENTITY, **self.INJECTED}, {}), ({**no_marker, **self.INJECTED}, self.INJECTED),
+                          ({**self.IDENTITY, "NO_COLOR": "0", "PAGER": "less"}, {"NO_COLOR": "0", "PAGER": "less"})):
+            with self.subTest(env=env):
+                fake = Fake()
+                self.start(fake, env, client="claude")
+                child = fake.handover["env"]
+                self.assertEqual({k: child[k] for k in (*self.IDENTITY, *self.INJECTED) if k in child}, kept)
+                self.assertEqual(fake.options()["@client"], "claude")
+
+    def test_env_may_set_codex_defaults(self):
+        fake = Fake()
+        self.start(fake, {"CODEX_THREAD_ID": "t", **self.INJECTED}, client="claude", overrides=("NO_COLOR=1",))
+        self.assertEqual({k: fake.handover["env"].get(k) for k in self.INJECTED}, {**dict.fromkeys(self.INJECTED),
+                                                                                   "NO_COLOR": "1"})
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.start(Fake(), overrides=("HOME=x",))
+        self.assertEqual(str(cm.exception), "--env HOME=x: want NAME=VALUE, NAME one of "
+                                            + ", ".join(sorted(k for k, v in CodexClient.command_env.items() if v)))
 
 
 def line(kind, *blocks, mid=None):
