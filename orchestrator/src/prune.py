@@ -1,27 +1,14 @@
 #!/usr/bin/env python3
-"""Delete finished issues' checkouts (TASK-49), close their TUI sessions and archive finished pm and engineer issues.
-
-An issue is finished once it is Done or Canceled and its finish time (its latest
-move into either, from its history; unknown means skip) is at least 24 hours ago.
-
-Entries: for each finished issue, <work_dir>/work/<ID>/src/<owner>/*, <work_dir>/work/<ID>/publish and
-<work_dir>/work/<ID>/tmp, each a real directory inside its own folder; a src or publish entry must be a clone
-or a worktree (.git a directory or a file), else it is skipped. Each goes with shutil.rmtree, uncommitted work included;
-the rest of <work_dir>/work/<ID>/ and <work_dir>/logs stay. A worktree's .git file is read first (repo.common_dir, no git) for its
-local clone; there, unless the clone lies in <work_dir>/work or a temp dir, git reads refs only: `worktree prune`, then each
-<ID>-* branch but the default is deleted when origin/<branch> or origin/<default> holds it, else kept and reported. Remote
-branches are never touched. Agent runs and the harness are the same macOS user: this keeps code an agent run planted
-(filters, hooks, submodules) from running outside auto mode's review; it is no privilege boundary.
-
-TUI sessions: attended.close ends a finished issue's live ones before its checkouts go, since a left-open claude may
-work in one.
-
-Each step is logged (linear.log, src prune); a skip once a day, a plan only in a dry run.
-
-Archive: every finished issue of the team assigned to the pm or engineer role
-account is archived (issueArchive, not trashed).
-
-An issue is queried on its own only when it has such an entry or a live TUI session.
+"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown: skipped):
+- closes its live TUI sessions (attended.close) before its checkouts go, since a left-open claude may work in one;
+- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own folder, a src or
+  publish entry only as a clone or worktree (.git a directory or a file), uncommitted work included;
+- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree prune`, then deletes
+  each <ID>-* branch but the default that origin/<branch> or origin/<default> holds, else keeps and reports it (git
+  reads refs only, so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
+- archives every finished issue of the team assigned to the pm or engineer role account.
+Each step is logged (linear.log, src prune); a failure is logged and the rest goes on (run returns 3), but
+linear.Unavailable is raised.
 """
 import functools
 import os
@@ -55,13 +42,11 @@ M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 
 
 class Skip(Exception):
-    """The entry stays; the message says why."""
+    pass
 
 
 class Pruner:
     def __init__(self, gql, now, dry, *, work=RUNS_DIR, team, roles, proc=subprocess.run, run=repo.sh, writable=None):
-        """roles: {Linear user id: role} as linear.role_ids returns. run: git's runner. writable: dirs whose clones get
-        no git run (default <work_dir>/work and the temp dirs)."""
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.proc, self.run_git = team, roles, proc, run
         self.writable = config.writable(work) if writable is None else writable
@@ -73,8 +58,6 @@ class Pruner:
         self.say("prune-error", issue, **fields)
 
     def entries(self, ident):
-        """Paths below <work_dir>/work/<ident>/, as parts: (src, owner, n), (src, owner) when not a real directory (prune
-        skips it), (publish,) and (tmp,)."""
         found = []
         for folder in FOLDERS:
             base = os.path.join(self.work, ident, folder)
@@ -96,7 +79,6 @@ class Pruner:
         return found
 
     def prune(self, ident, parts):
-        """Deletes one entry; for a worktree, the clone's git dir its `.git` file names (read before the delete)."""
         entry = os.path.join(self.work, ident, *parts)
         path = os.path.join(os.path.realpath(self.work), ident, *parts)
         key = "/".join((ident, *parts))
@@ -115,7 +97,6 @@ class Pruner:
             self.say("prune-skip", once=True, entry=key, reason=str(e))
 
     def delete(self, key, path, what):
-        """True once `path` is deleted (planned, in a dry run)."""
         if self.dry:
             self.say("prune-plan", entry=key, what=f"delete the {what}")
             return True
@@ -128,7 +109,6 @@ class Pruner:
         return True
 
     def clean_clone(self, ident, common):
-        """In the local clone of deleted worktrees: drops their records and the <ident>-* branches origin holds."""
         clone = os.path.dirname(common)
         if root := repo.under(common, self.writable):
             self.say("prune-skip", ident, once=True, reason=f"{clone} is under {root}, so no git runs there")
@@ -217,7 +197,6 @@ class Pruner:
                 self.say("prune-archived", ident)
 
     def run(self):
-        """0, or 3 if anything failed; raises the first linear.Unavailable."""
         finished = {self.team.states["done"], self.team.states["canceled"]}
         try:
             idents = [n for n in sorted(os.listdir(self.work))
@@ -235,7 +214,7 @@ class Pruner:
                 issue = self.gql(Q_ISSUE, i=ident)["issue"]
             except Unavailable:
                 raise
-            except (Exception, SystemExit) as e:  # linear_gql raises SystemExit on API errors
+            except (Exception, SystemExit) as e:
                 self.error(ident, error=f"Linear: {one_line(e)}")
                 continue
             if not issue or issue["state"]["id"] not in finished:
