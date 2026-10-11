@@ -72,6 +72,18 @@ class Store(unittest.TestCase):
         changed = dict(self.snapshot, cwd=self.home)
         with self.assertRaisesRegex(ConfigError, "writable"):
             self.create(snapshot=changed, writable_roots=[])
+
+    def test_existing_owner_controlled_config_parent_can_be_0755(self):
+        parent = os.path.join(self.home, ".agent-pm")
+        os.mkdir(parent, 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o755)
+        self.create()
+        store = os.path.join(parent, "core-sessions")
+        self.assertEqual(stat.S_IMODE(os.stat(store).st_mode), 0o700)
+        self.assertIsNotNone(run_session.load(self.work, self.sid))
+        os.chmod(parent, 0o775)
+        with self.assertRaisesRegex(ConfigError, "mode|permission"):
+            run_session.load(self.work, self.sid)
         changed = dict(self.snapshot, codex_home=self.home)
         with self.assertRaisesRegex(ConfigError, "writable"):
             self.create(snapshot=changed, writable_roots=[])

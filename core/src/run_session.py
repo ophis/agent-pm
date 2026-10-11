@@ -100,7 +100,7 @@ def _check_ancestors(path: str) -> None:
             raise ConfigError(f"Codex recovery state path has a symlink: {component}")
 
 
-def _private_dir(path: str, *, create: bool) -> bool:
+def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> bool:
     _check_ancestors(path)
     if not os.path.exists(path):
         if not create:
@@ -116,14 +116,16 @@ def _private_dir(path: str, *, create: bool) -> bool:
             os.close(fd)
     _check_ancestors(path)
     info = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+    mode = stat.S_IMODE(info.st_mode)
+    unsafe_mode = mode & 0o022 if config_parent else mode != 0o700
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or unsafe_mode:
         raise ConfigError(f"unsafe Codex recovery state directory mode or owner: {path}")
     return True
 
 
 def _store(*, create: bool) -> str | None:
     base = os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm")
-    if not _private_dir(base, create=create):
+    if not _private_dir(base, create=create, config_parent=True):
         return None
     root = os.path.join(base, "core-sessions")
     return root if _private_dir(root, create=create) else None
