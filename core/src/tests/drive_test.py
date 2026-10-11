@@ -26,7 +26,7 @@ import compose  # noqa: E402
 import drive  # noqa: E402
 import manager  # noqa: E402
 import report  # noqa: E402
-import run_session  # noqa: E402
+from clients import codex  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SID = "11111111-2222-3333-4444-555555555555"
@@ -383,7 +383,7 @@ class Claude(Base):
 class Codex(Base):
     def setUp(self):
         super().setUp()
-        self.enterContext(unittest.mock.patch.object(run_session, "_implicit_writable_roots", return_value=[]))
+        self.enterContext(unittest.mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
 
     def saved_session(self, *, client_id=None):
         hermetic.home(self)
@@ -394,10 +394,10 @@ class Codex(Base):
         snapshot = {"cwd": os.path.realpath(self.work), "project": False, "dirs": [os.path.realpath(extra)],
                     "commands": ["make test"], "model": "saved-model", "effort": "low", "network": True,
                     "codex_home": os.path.realpath(codex_home)}
-        state = run_session.create(self.work, SID, "codex", snapshot,
+        state = codex._create_session(self.work, SID, snapshot,
                                    [snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]])
         if client_id:
-            run_session.bind(self.work, SID, client_id)
+            codex._bind_session(self.work, SID, client_id)
         return state.snapshot
 
     def metadata(self, client_id, snapshot, *, filename=None, payload_id=None, cwd=None):
@@ -426,7 +426,7 @@ class Codex(Base):
     def test_codex_validates_its_own_saved_payload_before_use(self):
         snapshot = self.saved_session(client_id=SID)
         root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
-        path = run_session._path(root, os.path.realpath(self.work), SID)
+        path = codex._path(root, os.path.realpath(self.work), SID)
         with open(path) as f:
             original = json.load(f)
         client = clients.get("codex", CORE)
@@ -472,7 +472,7 @@ class Codex(Base):
         with self.assertRaisesRegex(compose.ConfigError, "missing Codex client ID"):
             client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
         client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-        run_session.bind(self.work, SID, client_id)
+        codex._bind_session(self.work, SID, client_id)
         with self.assertRaisesRegex(compose.ConfigError, "missing Codex session file"):
             client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
         path = self.metadata(client_id, snapshot, payload_id="ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee")
@@ -505,7 +505,7 @@ class Codex(Base):
         snapshot = self.saved_session()
         self.assertEqual(client.session_info(self.work, SID).client_id, None)
         client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-        run_session.bind(self.work, SID, client_id)
+        codex._bind_session(self.work, SID, client_id)
         missing = client.session_info(self.work, SID)
         self.assertEqual((missing.resume_supported, missing.inspection_supported, missing.client_id,
                           missing.exists, missing.usage_supported, missing.usage),
@@ -3103,7 +3103,7 @@ class Main(Base):
 class CodexRecoveryDriver(Base):
     def setUp(self):
         super().setUp()
-        self.enterContext(unittest.mock.patch.object(run_session, "_implicit_writable_roots", return_value=[]))
+        self.enterContext(unittest.mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
         self.private = hermetic.home(self)
         self.client = clients.get("codex", CORE)
         self.snapshot = {"cwd": os.path.realpath(self.work), "project": False,
@@ -3127,11 +3127,11 @@ class CodexRecoveryDriver(Base):
         observed = []
 
         def started():
-            state = run_session.load(self.work, SID)
+            state = codex._load_session(self.work, SID)
             observed.append((state.snapshot, state.client_id, [e["kind"] for e in self.events()]))
 
         def popen(argv, **kw):
-            self.assertEqual(run_session.load(self.work, SID).client_id, None)
+            self.assertEqual(codex._load_session(self.work, SID).client_id, None)
             def lines():
                 yield from stream({"type": "thread.started", "thread_id": self.native})
                 yield from stream({"type": "item.completed", "item": {"type": "agent_message", "text": "later"}})
@@ -3140,12 +3140,12 @@ class CodexRecoveryDriver(Base):
         seen = []
         def sink(event):
             if event.kind == "text":
-                seen.append((event.text, run_session.load(self.work, SID).client_id,
+                seen.append((event.text, codex._load_session(self.work, SID).client_id,
                              [e["kind"] for e in self.events()]))
         self.run_codex(begun=started, popen=popen, sinks=[sink])
         self.assertEqual(observed[0][:2], (self.snapshot, None))
         self.assertEqual(observed[0][2], ["input", "session"])
-        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
         self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [self.native])
         self.assertEqual(seen[0][:2], ("later", self.native))
         self.assertIn("client_session", seen[0][2])
@@ -3159,34 +3159,51 @@ class CodexRecoveryDriver(Base):
                          [self.native, self.native])
         with self.assertRaisesRegex(compose.ConfigError, "different client ID"):
             self.run_codex("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", resume=True)
-        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
+
+    def test_resume_rejects_changed_snapshot_before_spawn(self):
+        self.run_codex()
+        launch = drive.Launch(["fake"], cwd=self.work,
+                              session_state={**self.snapshot, "network": True}, writable_roots=[self.work])
+        popen = unittest.mock.Mock()
+        with self.assertRaisesRegex(compose.ConfigError, "changed Codex recovery state"):
+            drive.start(launch, run(), self.params(resume=True), client=self.client, popen=popen, sinks=[])
+        popen.assert_not_called()
+        self.assertEqual(codex._load_session(self.work, SID).snapshot, self.snapshot)
 
     def test_forged_run_record_cannot_change_trusted_mapping(self):
         self.run_codex()
         drive.note(self.params().channel, "client_session", sid=SID,
                    client_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
         drive.note(self.params().channel, "session", sid=SID, cwd="/", project=True)
-        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
         self.assertEqual(self.client.resume_location(self.work, SID), (os.path.realpath(self.work), False))
         self.run_codex(resume=True)
-        self.assertEqual(run_session.load(self.work, SID).snapshot["dirs"], [os.path.realpath(self.work)])
+        self.assertEqual(codex._load_session(self.work, SID).snapshot["dirs"], [os.path.realpath(self.work)])
 
-    def test_driver_accepts_another_clients_opaque_payload(self):
+    def test_driver_delegates_recovery_to_another_client(self):
+        recorded = []
         class FutureClient(clients.Client):
+            def prepare_session(self, launch, params):
+                recorded.append(("prepare", launch.session_state, params.sid))
+            def record_session(self, params, session_id):
+                recorded.append(("session", params.sid, session_id))
             def events(self, lines):
                 for _ in lines:
                     yield clients.Event("session", session_id="future:session-1")
                     yield clients.Event("text", "future output")
         payload = {"cursor": {"offset": 3}}
-        launch = drive.Launch(["future"], cwd=self.work, session_state=payload,
-                              writable_roots=[self.repo])
+        launch = drive.Launch(["future"], cwd=self.work, session_state=payload)
         seen = []
-        drive.start(launch, run(), self.params(), client=FutureClient({}), sinks=[seen.append],
-                    popen=lambda argv, **kw: FakeProc(["ready"]))
-        state = run_session.load(self.work, SID)
-        self.assertEqual(state.snapshot, payload)
-        self.assertIn(os.path.realpath(self.repo), state.writable_roots)
-        self.assertEqual(state.client_id, "future:session-1")
+        def popen(argv, **kw):
+            self.assertEqual(recorded, [("prepare", payload, SID)])
+            return FakeProc(["ready"])
+        def sink(event):
+            self.assertEqual(recorded[-1], ("session", SID, "future:session-1"))
+            seen.append(event)
+        drive.start(launch, run(), self.params(), client=FutureClient({}), sinks=[sink], popen=popen)
+        self.assertEqual(recorded, [("prepare", payload, SID), ("session", SID, "future:session-1")])
+        self.assertIsNone(codex._load_session(self.work, SID))
         self.assertIn(clients.Event("text", "future output"), seen)
 
     def test_driver_session_info_delegates_to_client(self):
@@ -3200,7 +3217,7 @@ class CodexRecoveryDriver(Base):
                              popen=lambda argv, **kw: FakeProc(stream({"type": "turn.completed"})))
         self.assertIsNone(result.outcome)
         self.assertIn("did not report a native session ID", result.error)
-        self.assertIsNone(run_session.load(self.work, SID).client_id)
+        self.assertIsNone(codex._load_session(self.work, SID).client_id)
 
     def test_fsync_failure_stops_host_before_later_output_and_reports(self):
         real_fsync = os.fsync
@@ -3242,7 +3259,7 @@ class CodexRecoveryDriver(Base):
                 self.assertTrue(failed, "must reach fsync after writing the native ID")
                 self.assertTrue(process.killed)
                 self.assertEqual(seen, [])
-                self.assertEqual(run_session.load(self.work, sid).client_id,
+                self.assertEqual(codex._load_session(self.work, sid).client_id,
                                  None if target == "state" else self.native)
 
     def test_session_query_exposes_native_file_and_manual_resume_without_usage_guess(self):

@@ -103,6 +103,14 @@ class Client:
         for line in lines:
             yield Event("text", line.rstrip("\n"))
 
+    def prepare_session(self, launch: Launch, params: RunParams) -> None:
+        """Persist or verify recovery state before spawning a recoverable launch."""
+        raise ConfigError(f"{type(self).__name__} does not support recovery state")
+
+    def record_session(self, params: RunParams, session_id: str) -> None:
+        """Persist the native ID before any later output or report is delivered."""
+        raise ConfigError(f"{type(self).__name__} does not support native session recording")
+
     def resume_location(self, workdir: str, sid: str) -> tuple[str, bool] | None:
         """Authoritative saved cwd/project when this client has its own recovery state."""
         return None

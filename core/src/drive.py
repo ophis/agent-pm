@@ -45,7 +45,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
 import manager  # noqa: E402
 import repo as repos  # noqa: E402
-import run_session  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill,  # noqa: E402
@@ -745,17 +744,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
     if launch.session_state is not None:
-        client_name = type(client).__module__.rsplit(".", 1)[-1]
-        if params.resume:
-            state = run_session.load(workdir, params.sid)
-            if (state is None or state.client != client_name
-                    or state.snapshot != launch.session_state
-                    or state.writable_roots != list(dict.fromkeys([os.path.realpath(workdir),
-                                                                  *map(os.path.realpath, launch.writable_roots)]))):
-                raise ConfigError(f"missing or changed {client_name} recovery state for run ID {params.sid!r}")
-        else:
-            run_session.create(workdir, params.sid, client_name, launch.session_state,
-                               launch.writable_roots)
+        client.prepare_session(launch, params)
     sinks = [terminal()] if sinks is None else sinks
     out = Path(params.out).absolute()
     if not out.is_dir() and not params.resume:   # a resumed session keeps the draft it wrote there
@@ -769,7 +758,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     try:
         if begun:
             begun()
-        result = _drive(launch, run, params, host=host, argv=argv, runner=runner, sinks=sinks, out=out)
+        result = _drive(launch, run, params, client=client, host=host, argv=argv, runner=runner, sinks=sinks, out=out)
         rc, closing = result.returncode, {"error": result.error}
         if result.outcome is not None:
             closing = {"outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"},
@@ -786,7 +775,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         note(params.channel, "end", best_effort=True, sid=params.sid, rc=rc)
 
 
-def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, argv: list[str], runner: str,
+def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, host: Runner, argv: list[str], runner: str,
            sinks: Sequence[Sink], out: Path) -> Result:
     """start()'s loop, from the host's begin to the checked outcome."""
     workdir = os.path.abspath(params.workdir)
@@ -798,7 +787,7 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         if event.kind == "session":
             if launch.session_state is None:
                 raise ConfigError("client reported a native session without recovery state")
-            run_session.bind(workdir, params.sid, event.session_id)
+            client.record_session(params, event.session_id)
             note(params.channel, "client_session", sid=params.sid, client_id=event.session_id, durable=True)
             session_seen = True
             return
