@@ -1264,6 +1264,16 @@ class Start(Base):
         self.assertEqual([e["text"] for e in errs], ["boom", "", "bang"])
         self.assertEqual(self.last("result")["error"], "the client exited 1")
 
+    def test_valid_report_survives_nonzero_exit_with_diagnostic_and_original_rc(self):
+        seen = []
+        r, _, _ = self.start([progress("start", "go"), outcome(DONE)], rc=7, sinks=[seen.append])
+        saved = self.last("result")
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (7, "done", "the client exited 7"))
+        self.assertEqual(self.read("out.md"), DONE["deliverable"])
+        self.assertEqual([e.kind for e in seen], ["progress", "outcome"])
+        self.assertEqual(saved["outcome"]["url"], os.path.join(self.work, "out.md"))
+        self.assertEqual((saved["error"], self.last("end")["rc"]), (r.error, 7))
+
     def test_stderr_is_recorded_between_the_reports_it_arrived_with(self):
         r, _, log = self.start([progress("start", "go"), said("hi"), outcome(DONE)], stderr=["warn\n"])
         self.assertEqual(r.returncode, 0)
@@ -1374,10 +1384,10 @@ class Start(Base):
                 self.assertEqual(self.read("out.md") if saved else self.exists("out.md"), saved or False)
                 self.assertEqual(self.last("result")["outcome"]["questions"], data.get("questions", []))
 
-    def test_failed_client_ignores_the_outcome_and_leaves_no_stale_outcome(self):
+    def test_failed_client_does_not_reuse_a_previous_runs_outcome(self):
         self.start([outcome(DONE)])
         seen = []
-        r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append])
+        r, _, _ = self.start([], rc=143, sinks=[seen.append])
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("out.md"))
         self.assertEqual(self.last("result")["error"], "the client exited 143")
@@ -1574,7 +1584,8 @@ class Start(Base):
     def test_a_run_without_a_valid_outcome_records_its_error_and_sinks_get_no_outcome(self):
         for items, rc, error, kinds in (
                 ([said("bye")], 0, "the agent run returned no outcome", ["text"]),
-                ([outcome(DONE)], 143, "the client exited 143", []),
+                ([said("bye")], 143, "the client exited 143", ["text"]),
+                ([outcome({**DONE, "status": "maybe"})], 143, "the client exited 143", []),
                 ([outcome({**DONE, "status": "maybe"})], 0, "invalid outcome: status 'maybe'", [])):
             with self.subTest(items=items, rc=rc):
                 seen = []
@@ -1957,6 +1968,23 @@ class TuiRunner(Base):
         self.assertEqual((r.returncode, r.outcome.status, kinds), (0, "done", ["progress", "outcome"]))
         self.assertEqual([c[0] for c in calls], ["start"])
         self.assertEqual(self.fake.steps, [])
+
+    def test_reported_outcome_survives_a_tui_session_exiting_nonzero(self):
+        def status(name):
+            for event in (progress("start", "go"), outcome(DONE)):
+                drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(event) + "\n")
+            return 7
+
+        r, calls, kinds, _ = self.start(api={"status": status})
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            saved = [json.loads(line) for line in f]
+        result = next(e for e in saved if e["kind"] == "result")
+        end = next(e for e in saved if e["kind"] == "end")
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (7, "done", "the client exited 7"))
+        self.assertEqual(kinds, ["progress", "outcome"])
+        self.assertEqual(result["outcome"]["url"], os.path.join(self.work, "out.md"))
+        self.assertEqual((result["error"], end["rc"]), ("the client exited 7", 7))
+        self.assertEqual([c[0] for c in calls], ["start"])
 
     def test_a_dead_pane_or_a_gone_session_ends_the_run_without_an_outcome(self):
         for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the agent run returned no outcome")),
@@ -2742,7 +2770,7 @@ class Main(Base):
             self.assertNotIn("SECRET", cmd[2])
 
     def test_no_outcome_exits_1_and_a_client_failure_3(self):
-        for lines, rc, code, want in (((), 0, 1, "no outcome"), ([outcome(DONE)], 1, 3, "the client exited 1")):
+        for lines, rc, code, want in (((), 0, 1, "no outcome"), ((), 1, 3, "the client exited 1")):
             with self.subTest(code=code):
                 got, _, err, _ = self.run_main(lines=lines, rc=rc)
                 self.assertEqual(got, code)
