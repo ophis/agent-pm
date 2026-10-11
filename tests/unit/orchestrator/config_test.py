@@ -460,7 +460,6 @@ class Local(ConfigFile, unittest.TestCase):
 
 STEPS = ("\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
          "## Resume\n\nRedo step 2.\n")
-PM_EXT = "## Tasks\n\n- `one-pager` (`<tasks>/one-pager.md`): a one-page brief; when asked; light.\n"
 
 
 class TeamDirsIgnored(unittest.TestCase):
@@ -470,8 +469,7 @@ class TeamDirsIgnored(unittest.TestCase):
         self.team = os.path.realpath(os.path.join(self.home, "team"))
         writer = ("# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
                   "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n")
-        for rel, text in (("roles/pm.md", PM_EXT), ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
-                          ("roles/writer.md", writer)):
+        for rel, text in (("tasks/one-pager.md", "# One-Pager\n" + STEPS), ("roles/writer.md", writer)):
             path = os.path.join(self.team, rel)
             for d in (self.team, os.path.dirname(path)):
                 os.makedirs(d, exist_ok=True)
@@ -493,12 +491,10 @@ class TeamDirsIgnored(unittest.TestCase):
         before = self.seen()
         with open(os.path.join(self.home, "core.local.toml"), "w") as f:
             f.write(f"team_dirs = {json.dumps([self.team])}\n[roles.writer]\ntier = 3\n")
-        self.assertIn("one-pager", config.compose.index(config.CORE, "pm", config.compose.team(
+        self.assertIn("writer", config.compose.catalog(config.CORE, config.compose.team(
             config.CORE, config.compose.team_dirs(config.CORE))))
         after = self.seen()
         self.assertEqual(after, before)
-        self.assertNotIn("one-pager", after[0])
-        self.assertIsNone(after[2].view)
         self.assertNotIn("one-pager", after[2].argv[2])
         self.assertFalse(os.path.exists(self.work))
 

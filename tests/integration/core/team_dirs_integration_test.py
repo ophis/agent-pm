@@ -1,9 +1,8 @@
 """drive.py run as a process with a local `team_dirs` (core/config.toml's comment), fake_claude.py on PATH as `claude`
-(fake_codex.py as `codex`): a team dir's role and an extended core role run as core's own, through their task view."""
+(fake_codex.py as `codex`): a team dir's role runs as core's own, its <tasks> its team dir's tasks/."""
 import json
 import os
 import shutil
-import pwd
 import subprocess
 import sys
 import tempfile
@@ -14,17 +13,22 @@ from tests.integration.core import fake_claude, fake_codex
 from tests.unit.core.drive_test import NOTE, SID, TEAM, outcome, progress
 import repo
 
-REAL_HOME = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)   # hermetic points HOME at a temp dir
 DRIVE = os.path.join(hermetic.CORE, "src", "drive.py")
 DONE = {"status": "done", "title": "note", "summary": "A note.", "deliverable": "A note.\n"}
-IN_TEMP = repo.under(REAL_HOME, repo.temp_dirs()) is not None
+# The team dirs lie outside every temp dir (drive.py refuses one there): under the repo's gitignored work/.
+TEAMS = os.path.join(os.path.dirname(hermetic.CORE), "work", "team-dirs-tests")
+IN_TEMP = repo.under(os.path.realpath(TEAMS), repo.temp_dirs()) is not None
 
 
+@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where drive.py refuses a team dir")
 class Fixture(unittest.TestCase):
     """A team dir (drive_test.TEAM) as the hermetic local config's `team_dirs`, fake_claude.py on PATH."""
     def setUp(self):
-        # The team dir lies outside every temp dir (drive.py refuses one there), so under the real HOME.
-        self.team = os.path.realpath(tempfile.mkdtemp(dir=REAL_HOME, prefix=".agent-pm-team-test-"))
+        os.makedirs(TEAMS, mode=0o700, exist_ok=True)
+        if os.path.realpath(TEAMS) != TEAMS:
+            raise RuntimeError(f"{TEAMS} must not contain symlinks")
+        os.chmod(TEAMS, 0o700)
+        self.team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
         self.addCleanup(shutil.rmtree, self.team, ignore_errors=True)
         os.chmod(self.team, 0o755)
         for rel, text in TEAM.items():
@@ -34,6 +38,7 @@ class Fixture(unittest.TestCase):
             with open(path, "w") as f:
                 f.write(text)
             os.chmod(path, 0o644)
+        self.tasks = os.path.join(self.team, "tasks")
         local = hermetic.home(self)
         with open(os.path.join(local, "core.local.toml"), "w") as f:
             f.write(f"team_dirs = {json.dumps([self.team])}\n")
@@ -58,37 +63,32 @@ class Fixture(unittest.TestCase):
                 "--workdir", self.work, "--sid", SID, *extra]
 
 
-@unittest.skipIf(IN_TEMP, f"HOME {REAL_HOME} is in a temp dir, where drive.py refuses a team dir")
 class TeamDirs(Fixture):
-    def test_dry_runs(self):
-        for role, task in (("writer", "note"), ("pm", "one-pager")):
-            with self.subTest(role=role):
-                res = self.drive(*self.run_argv(role, task, "--dry-run"))
-                self.assertEqual(res.returncode, 0, res.stderr)
-                self.assertIn(f"`{os.path.join(self.work, 'tasks')}`", json.loads(res.stdout)["argv"][2])
+    def test_a_dry_run(self):
+        res = self.drive(*self.run_argv("writer", "note", "--dry-run"))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        argv = json.loads(res.stdout)["argv"]
+        self.assertIn(f"`{self.tasks}`", argv[2])
+        self.assertIn(self.tasks, [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"])
         self.assertEqual(os.listdir(self.work), [])
 
     def test_list(self):
         res = self.drive("--list")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn(f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n", res.stdout)
-        self.assertIn(f"\n  one-pager: a one-page brief; when asked; light.  "
-                      f"[{os.path.join(self.team, 'tasks', 'one-pager.md')}]\n", res.stdout)
+        self.assertIn(f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"
+                      f"  note: a short note; always; light.  [{os.path.join(self.tasks, 'note.md')}]\n", res.stdout)
 
-    def test_a_headless_run_reads_its_task_from_the_view(self):
-        res = self.drive(*self.run_argv("writer", "note"),
-                         steps=[progress("start", "noting"), {"kind": "read", "path": "tasks/note.md"}, outcome(DONE)])
+    def test_a_headless_run_reads_its_task_from_its_tasks_dir(self):
+        res = self.drive(*self.run_argv("writer", "note"), steps=[
+            progress("start", "noting"), {"kind": "read", "path": os.path.join(self.tasks, "note.md")}, outcome(DONE)])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("drive.py: status done", res.stderr)
         self.assertIn("[agent-pm-progress:start] the topic", res.stderr)
-        with open(os.path.join(self.work, "tasks", "note.md")) as f:
-            self.assertEqual(f.read(), NOTE)
-        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "tasks"))), [".agent-pm-view", "note.md"])
+        self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
         with open(os.path.join(self.work, "out.md")) as f:
             self.assertEqual(f.read(), "A note.\n")
 
 
-@unittest.skipIf(IN_TEMP, f"HOME {REAL_HOME} is in a temp dir, where drive.py refuses a team dir")
 class CodexTeamDirs(Fixture):
     """The same team dir through `--client codex`, whose --add-dir dirs it can write: its HOME (its recovery store)
     outside the temp dirs too, as fake_codex_integration_test.py's."""
@@ -112,8 +112,7 @@ class CodexTeamDirs(Fixture):
                               cwd=self.work, env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=60)
 
-    def test_a_codex_run_and_its_resume_read_the_task_view(self):
-        view = os.path.join(self.work, "tasks")
+    def test_a_codex_run_and_its_resume_add_its_tasks_dir(self):
         for extra in ((), ("--resume",)):
             with self.subTest(extra=extra):
                 res = self.codex(*extra, steps=[{"kind": "progress", "name": "start", "text": "noting"},
@@ -122,19 +121,17 @@ class CodexTeamDirs(Fixture):
                 with open(self.log) as f:
                     call = json.load(f)
                 dirs = [call["argv"][i + 1] for i, a in enumerate(call["argv"]) if a == "--add-dir"]
-                self.assertIn(os.path.realpath(view), map(os.path.realpath, dirs))
+                self.assertIn(self.tasks, map(os.path.realpath, dirs))
                 self.assertNotIn(os.path.join(hermetic.CORE, "team", "tasks"), dirs)
-                self.assertIn(f"`{view}`", call["prompt"])
-                with open(os.path.join(view, "note.md")) as f:
-                    self.assertEqual(f.read(), NOTE)
-                self.assertEqual(sorted(os.listdir(view)), [".agent-pm-view", "note.md"])
+                self.assertIn(f"`{self.tasks}`", call["prompt"])
+                self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
     def test_a_read_dir_holding_the_team_dir_is_refused(self):
         with open(os.path.join(self.env["HOME"], ".agent-pm", "core.local.toml"), "a") as f:
             f.write(f'[roles.writer]\nread = ["{self.team}"]\n')
         res = self.codex(steps=[])
         self.assertEqual(res.returncode, 2, res.stderr)
-        self.assertIn(f"team_dirs: {self.team} overlaps a dir CodexClient can write {self.team}", res.stderr)
+        self.assertIn(f"team_dirs: {self.team} overlaps a dir CodexClient adds {self.team}", res.stderr)
         self.assertFalse(os.path.exists(self.log))
 
 

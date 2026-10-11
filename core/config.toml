@@ -35,17 +35,17 @@
 #                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold
 #                   roles/, tasks/ and templates/ (each optional) of <name>.md files ([a-z0-9-] names) in team/'s
 #                   formats (core/CLAUDE.md › Rules). Add-only: a name core or another team dir defines stops the run,
-#                   naming both files. roles/<role>.md of a new role is its charter (`# ` title, intro, ## Tasks
-#                   index) and needs no [roles.<role>] (unset: the global run keys); for a defined role, a file of only
-#                   ## Tasks task lines adds them after its index. Any role's index or templates may name any task or
+#                   naming both files, so no team dir file changes or extends a core role. roles/<role>.md is a new
+#                   role's charter (`# ` title, intro, ## Tasks index) and needs no [roles.<role>] (unset: the global
+#                   run keys); its tasks are its own team dir's tasks/, which its <tasks> names and the run adds as a
+#                   dir (--add-dir), as core's roles run only core's team/tasks/. Any role's templates may name any
 #                   template. The files hold text only, no config (no --- front matter). drive.py checks each team dir
 #                   file a run uses as core's text is checked (drive.py --list: every one), and refuses a team dir, its
 #                   subdirs or files (by real path) in a temp dir, overlapping the workdir, the cwd, a write dir or
-#                   another dir the client can write (Launch.writable_roots; Codex: every --add-dir, read dirs too),
-#                   writable by group or others, or not yours. A role with a team dir charter or task reads its tasks
-#                   from copies in <workdir>/tasks/ (the task view; /agent-pm:act-as: a new dir in
-#                   ~/.agent-pm/views/). The orchestrator's runs ignore it, but refuse a team dir overlapping their
-#                   workdir, cwd or a write dir
+#                   another dir the run adds or the client can write (read dirs too; the role's own tasks/ aside),
+#                   writable by group or others, or not yours; or a parent dir of it writable by group or others (not
+#                   sticky) or owned by neither you nor root. The orchestrator's runs ignore it, but refuse a team dir
+#                   overlapping their workdir, cwd or a dir they add or can write
 tier = 2
 effort = "high"
 language = "English"
@@ -74,7 +74,7 @@ type = "local"
 # table holding the old task-level keys is an error (README › Task labels: Upgrade).
 #   templates     names of team/templates/*.md inlined into the prompt; unset → none
 #   read          extra dirs the agent run needs to read; `repo` is drive.py's --repo dir, {{methods}} core's
-#                 team/methods/ dir; core's team/tasks/ (or its task view: team_dirs) is always included; unset → none.
+#                 team/methods/ dir; the role's tasks dir (core's team/tasks/, or a team dir's: team_dirs) is always included; unset → none.
 #                 Client grants: core/CLAUDE.md › An agent run's command.
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
 #   commands      requested shell commands, with approval determined by the client; Claude pre-approves these in its

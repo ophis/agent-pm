@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import repo
-from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, View, lookup  # noqa: F401
+from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,6 @@ class Launch:
     retile: str | None = None       # the config's grid_retile, set by drive.plan, for the tui runner
     session_state: dict | None = None  # opaque JSON recovery payload; the client validates its own fields
     writable_roots: list[str] = field(default_factory=list)  # effective writable locations, including client storage
-    view: View | None = None        # the run's task view, set by drive.plan, built (drive.write_view) by whoever
-    #                                 starts the run, before it; None: none
 
 
 @dataclass(frozen=True)

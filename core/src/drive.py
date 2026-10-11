@@ -37,7 +37,6 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
@@ -52,7 +51,7 @@ import manager  # noqa: E402
 import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, View, fill,  # noqa: E402
+from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, fill,  # noqa: E402
                      outcome_schema, render, report_command, resolve, tui_session)
 
 Status = Literal["done", "needs_input", "failed"]
@@ -66,8 +65,6 @@ NUDGE = ("Finish your task, then report its outcome with the report command your
          "If you are waiting for background work, wait for it first.")
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)   # end a detached driver (tmux kill-session: SIGHUP)
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
-VIEWS = "~/.agent-pm/views"   # the skill client's task views, a new dir each: no agent run writes there
-VIEW_MARK = ".agent-pm-view"   # an empty file marking a dir write_view built, the only kind it replaces
 # render's params for --list: no file is touched.
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work",
                         sid="00000000-0000-0000-0000-000000000000")
@@ -192,7 +189,8 @@ def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
     """Raises ConfigError when a team dir, one of its compose.KINDS subdirs or a *.md file directly in one, each by its
     real path (symlinks followed, as compose.team does), lies in a temp dir (`temp`, None: repo.temp_dirs()), overlaps
     a dir of `writes` ([(what, path)]: dirs the agent run can write) either way, is writable by group or others or is
-    not the current user's."""
+    not the current user's; or when a parent dir of a team dir is writable by group or others or owned by neither the
+    user nor root (who could move the team dir away and put another there; a sticky dir lets no one else)."""
     if not dirs:
         return
     temps, me = repos.temp_dirs() if temp is None else temp, os.getuid()
@@ -211,6 +209,17 @@ def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
                 raise ConfigError(f"team_dirs: {shown} is writable by group or others: chmod go-w it")
             if st.st_uid != me:
                 raise ConfigError(f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it")
+        for parent in Path(d).parents:
+            try:
+                st = os.stat(parent)
+            except OSError as e:
+                raise ConfigError(f"{parent}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not st.st_mode & stat.S_ISVTX:
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could "
+                                  "replace the team dir")
+            if st.st_uid not in (me, 0):
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: "
+                                  "they could replace the team dir")
 
 
 def team_paths(d: str) -> list[str]:
@@ -242,8 +251,8 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     layout) apply after the client's config; `cwd` is the cwd when the run key is unset (place()); `team` finds the
     role's files, its dirs checked (check_team_dirs, `temp`). None: core's team/ alone (the orchestrator's runs), and
     only the overlap of compose.team_dirs (when valid; team_paths, by real path) with the workdir, the cwd, the write
-    dirs and Launch.writable_roots refused. A role with a team dir charter or task reads its tasks from the task view
-    <workdir>/tasks: Launch.view, which a caller starting the run builds first (write_view)."""
+    dirs, the client's added dirs (Access.dirs) and Launch.writable_roots refused. A custom role's <tasks> is its team
+    dir's tasks/ (Team.tasks_dir): an added dir, the only one exempt from that overlap check."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
     guarded: tuple[str, ...] = ()
@@ -256,8 +265,8 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     run = resolve(root, client, role, task, overlays=layers, trusted=True, team=team)
     here, project = place(root, run, params, cwd, client=client)
     workdir, methods = os.path.abspath(params.workdir), client.methods_path(root)
-    files = compose.view_files(team, role)
-    tasks = os.path.join(workdir, "tasks") if files else client.tasks_path(root)
+    own = team.tasks_dir(role)
+    tasks = own or client.tasks_path(root)
     prompt = render(root, run, params, client=client, team=team, tasks=tasks)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=methods, tasks=tasks, cwd=here,
                  project=project, interpreter=client.report_interpreter())
@@ -265,86 +274,28 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     if team.dirs or guarded:
         writes = [("the workdir", workdir), ("the cwd", here)]
         writes += [(f"write dir {e}", p) for e in run.write if (p := bind(fill(e, {"methods": methods}, "write"), repo))]
-        writes += [(f"a dir {type(client).__name__} can write", p) for p in launch.writable_roots]
+        name = type(client).__name__
+        added = [(f"a dir {name} adds", p) for p in acc.dirs] + [(f"a dir {name} can write", p)
+                                                                  for p in launch.writable_roots]
+        # All but the role's own tasks dir, which the client adds for the run to read.
+        writes += [(what, p) for what, p in added if not own or os.path.realpath(p) != os.path.realpath(own)]
         check_team_dirs(team.dirs, writes=writes, temp=temp)
         for path in (p for d in guarded for p in team_paths(d)):
             real = os.path.realpath(path)
             check_overlap(path if real == path else f"{path} ({real})", real, writes)
     return replace(launch, project=project, status_line=status_line(root), per_column=workers_per_column(root),
-                   retile=grid_retile(root), view=View(tasks, files) if files else None), run
+                   retile=grid_retile(root)), run
 
 
 def inline(root: str, client: Client, role: str, task: str | None = None, *, team: Team | None = None,
-           temp: Sequence[str] | None = None, dry_run: bool = False) -> str:
+           temp: Sequence[str] | None = None) -> str:
     """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError. `team` as
-    plan's, its dirs checked for temp dirs and modes only; a task view goes in a new dir in VIEWS (0o700), refused when
-    VIEWS overlaps a temp dir (`temp` as plan's); with `dry_run` it is only named."""
+    plan's, its dirs checked for temp dirs, modes and owners only (`temp` as plan's)."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     team = team if team is not None else compose.team(root)
     check_team_dirs(team.dirs, writes=[], temp=temp)
-    run = resolve(root, client, role, task, team=team)
-    if not (files := compose.view_files(team, role)):
-        return client.inline(render(root, run, client=client, team=team))
-    views = os.path.realpath(os.path.expanduser(VIEWS))
-    for t in repos.temp_dirs() if temp is None else temp:
-        if repos.under(views, [t]) or repos.under(os.path.realpath(t), [views]):
-            raise ConfigError(f"task view {views}: overlaps temp dir {os.path.realpath(t)}: any process can write there")
-    if dry_run:
-        return client.inline(render(root, run, client=client, team=team, tasks=os.path.join(
-            views, f"skill-{uuid.uuid4().hex[:8]}", "tasks")))
-    try:
-        os.makedirs(views, mode=0o700, exist_ok=True)
-        parent = tempfile.mkdtemp(dir=views, prefix="skill-")
-    except OSError as e:
-        raise ConfigError(f"task view {views}: {e.strerror or e}") from None
-    try:
-        prompt = render(root, run, client=client, team=team, tasks=os.path.join(parent, "tasks"))
-        write_view(View(os.path.join(parent, "tasks"), files))
-    except BaseException:
-        shutil.rmtree(parent, ignore_errors=True)
-        raise
-    return client.inline(prompt)
-
-
-def write_view(view: View) -> None:
-    """Builds the task view `view`: a copy of each source and the mark VIEW_MARK in a new dir beside view.dir, then
-    renamed over the task view there, if any. ConfigError when it can't, or when view.dir holds anything else (a dir
-    without the mark, a file, a symlink: never followed), which is left as it is."""
-    parent, tmp = os.path.dirname(view.dir), None
-    try:
-        try:
-            st = os.lstat(view.dir)
-        except FileNotFoundError:
-            st = None
-        if st and not (stat.S_ISDIR(st.st_mode) and _marked(view.dir)):
-            raise ConfigError(f"task view {view.dir}: not a task view (no {VIEW_MARK}): move it away")
-        os.makedirs(parent, exist_ok=True)
-        tmp = tempfile.mkdtemp(dir=parent, prefix=".tasks-")
-        copies = {f"{task}.md": source for task, source in view.files.items()}
-        for name, source in [*copies.items(), (VIEW_MARK, None)]:
-            data = b""
-            if source:
-                with open(source, "rb") as f:
-                    data = f.read()
-            fd = os.open(os.path.join(tmp, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
-        if st:
-            shutil.rmtree(view.dir)
-        os.rename(tmp, view.dir)
-    except OSError as e:
-        if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)
-        raise ConfigError(f"task view {view.dir}: {e.strerror or e}") from None
-
-
-def _marked(path: str) -> bool:
-    """Whether dir `path` holds VIEW_MARK as a regular file (a symlink doesn't count)."""
-    try:
-        return stat.S_ISREG(os.lstat(os.path.join(path, VIEW_MARK)).st_mode)
-    except OSError:
-        return False
+    return client.inline(render(root, resolve(root, client, role, task, team=team), client=client, team=team))
 
 
 def listing(root: str, client: Client, team: Team, temp: Sequence[str] | None = None) -> str:
@@ -354,12 +305,10 @@ def listing(root: str, client: Client, team: Team, temp: Sequence[str] | None = 
     on the first defect. Writes nothing."""
     check_team_dirs(team.dirs, writes=[], temp=temp)
     team.check_all(repos.read_config(os.path.join(root, CONFIG)))
-    params, at = (LIST_PARAMS, LIST_PARAMS.workdir) if client.runs else (None, os.path.join(VIEWS, "skill-list"))
-    lines = []
+    params, lines = LIST_PARAMS if client.runs else None, []
     for role, tasks in compose.catalog(root, team).items():
         run = resolve(root, client, role, team=team)
-        view = os.path.join(at, "tasks") if compose.view_files(team, role) else None
-        render(root, run, params, client=client, team=team, tasks=view)
+        render(root, run, params, client=client, team=team)
         lines.append(f"{role}  {run.output['type']}  {team.source(team.lookup('roles', role))}\n")
         lines += [f"  {t}: {what}  [{team.source(team.lookup('tasks', t))}]\n" for t, what in tasks.items()]
     return "".join(lines)
@@ -1160,7 +1109,7 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
                 raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no layout")
             if a.detach or a.driver is not None:
                 raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no --detach")
-            prompt = inline(root, client, a.role, a.task, team=team, temp=temp, dry_run=a.dry_run)
+            prompt = inline(root, client, a.role, a.task, team=team, temp=temp)
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2, None
@@ -1176,8 +1125,6 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
     if a.detach:
         return _detach(a, run, params, driver, proc), None
     try:
-        if launch.view:
-            write_view(launch.view)
         result = start(launch, run, params, client=client, runner=a.runner, layout=layout,
                        events=a.events if a.runner == "tui" else None, popen=popen)
     except ConfigError as e:

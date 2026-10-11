@@ -186,21 +186,13 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 
 
 @dataclass(frozen=True)
-class View:
-    """A task view: its dir and {task: the source path of its copy}."""
-    dir: str
-    files: Mapping[str, str]
-
-
-@dataclass(frozen=True)
 class Team:
     """The roles, tasks and templates a run can name: core's team/ (built-in) and the team dirs (custom), found by
     name. `files`: (kind, name) → its paths, built-in first, then the team dirs in order (two or more: a conflict);
-    `extensions`: role → its extensions' paths; `misnamed`: custom files whose stem fails TEAM_NAME."""
+    `misnamed`: custom files whose stem fails TEAM_NAME."""
     root: str
     dirs: tuple[str, ...] = ()
     files: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
-    extensions: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     misnamed: tuple[str, ...] = ()
 
     def custom(self, path: str) -> bool:
@@ -223,7 +215,7 @@ class Team:
 
     def read(self, kind: str, name: str) -> tuple[str, str]:
         if not (path := self.lookup(kind, name)):
-            raise ConfigError(f"missing file {kind}/{name}.md")
+            raise self.misnamed_error(kind, name) or ConfigError(f"missing file {kind}/{name}.md")
         return _text(path), self.label(kind, name, path)
 
     def check_file(self, kind: str, path: str) -> None:
@@ -237,9 +229,7 @@ class Team:
         for m in METHOD.findall(text):
             if not os.path.isfile(os.path.join(self.root, TEXT, "methods", f"{m}.md")):
                 raise ConfigError(f"{path}: names <methods>/{m}.md, which core has no file for")
-        if kind == "roles" and any(path in paths for paths in self.extensions.values()):
-            _extension_lines(path, text)
-        elif kind == "roles":
+        if kind == "roles":
             _title(text, path)
         elif kind == "tasks":
             if not text.startswith("# "):
@@ -249,30 +239,21 @@ class Team:
             if not any(line.rstrip() == "## Resume" for _, line in unfenced(text)):
                 raise ConfigError(f"{path}: has no ## Resume section")
 
-    def parts(self, role: str) -> tuple[str, str, list[tuple[str, str]]] | None:
-        """(the charter's text, its label, [(extension path, its task lines)]); None without a charter."""
+    def charter(self, role: str) -> tuple[str, str] | None:
+        """(the charter's text, its label); None without a charter."""
         if not (path := self.lookup("roles", role)):
             return None
-        extensions = []
-        for ext in self.extensions.get(role, ()):
-            self.check_file("roles", ext)
-            extensions.append((ext, _extension_lines(ext, _text(ext))))
-        return _text(path), self.label("roles", role, path), extensions
+        return _text(path), self.label("roles", role, path)
 
-    def charter(self, role: str) -> tuple[str, str] | None:
-        """(the charter's text with each extension's task lines appended to its ## Tasks section, its label); None
-        without a charter."""
-        if not (parts := self.parts(role)):
-            return None
-        text, label, extensions = parts
-        if extensions and (m := INDEX.search(text)):
-            at = m.start(1) + len(m.group(1).rstrip())
-            text = text[:at] + "".join("\n" + lines for _, lines in extensions) + text[at:]
-        return text, label
+    def tasks_dir(self, role: str) -> str | None:
+        """Where `role`'s task files are: its team dir's tasks/ for a custom charter, None (core's team/tasks/) for a
+        built-in one or none."""
+        path = self.lookup("roles", role)
+        return os.path.join(os.path.dirname(os.path.dirname(path)), "tasks") if path and self.custom(path) else None
 
     def used(self, role: str, templates: Sequence[str] = ()) -> list[str]:
-        """The custom paths a run of `role` with `templates` uses: charter, extensions, index tasks, templates."""
-        paths = [self.lookup("roles", role), *self.extensions.get(role, ())]
+        """The custom paths a run of `role` with `templates` uses: charter, index tasks, templates."""
+        paths = [self.lookup("roles", role)]
         paths += [self.lookup("tasks", t) for t in index(self.root, role, self)]
         paths += [self.lookup("templates", name) for name in templates]
         return list(dict.fromkeys(p for p in paths if p and self.custom(p)))
@@ -291,11 +272,6 @@ class Team:
             raise e
         for kind, name in self.files:
             self.lookup(kind, name)
-        for role, paths in self.extensions.items():
-            if not self.lookup("roles", role):
-                raise _no_charter(role, cfg, self)
-            for path in paths:
-                self.check_file("roles", path)
         roles(self.root, self, cfg)
 
 
@@ -328,8 +304,8 @@ def team_dirs(root: str) -> tuple[str, ...]:
 
 def team(root: str, dirs: Sequence[str] = ()) -> Team:
     """The Team of core's team/ and `dirs` (real paths, in order): each <kind>/*.md regular file, symlinks followed.
-    A custom role file opening with ## Tasks is an extension; a custom file whose stem fails TEAM_NAME is misnamed."""
-    files, extensions, misnamed = {}, {}, []
+    A custom file whose stem fails TEAM_NAME is misnamed."""
+    files, misnamed = {}, []
     builtin = os.path.join(root, TEXT)
     for base in (builtin, *dirs):
         for kind in KINDS:
@@ -344,12 +320,10 @@ def team(root: str, dirs: Sequence[str] = ()) -> Team:
                     continue
                 if base != builtin and not TEAM_NAME.fullmatch(stem):
                     misnamed.append(path)
-                elif base != builtin and kind == "roles" and _opens_index(_text(path)):
-                    extensions.setdefault(stem, []).append(path)
                 else:
                     files.setdefault((kind, stem), []).append(path)
     return Team(root=root, dirs=tuple(dirs), files={k: tuple(v) for k, v in files.items()},
-                extensions={k: tuple(v) for k, v in extensions.items()}, misnamed=tuple(misnamed))
+                misnamed=tuple(misnamed))
 
 
 def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
@@ -367,22 +341,14 @@ def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
     return out
 
 
-def view_files(team: Team, role: str) -> dict[str, str]:
-    """{task: its path} of each task of the role's merged index, in order, when its charter or one of them is custom;
-    else {} (no task view)."""
-    files = {t: team.lookup("tasks", t) for t in index(team.root, role, team)}
-    charter = team.lookup("roles", role)
-    return files if any(team.custom(p) for p in [charter, *files.values()]) else {}
-
-
 def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
-    """{task: its description} of the role's task index, its charter's ## Tasks with each extension's lines after it
-    (Team.charter), in order: the only list of its tasks. ConfigError unless the charter's opening sentence names a
-    listed default, each task's path is <tasks>/<task>.md and the Team has that task's file."""
+    """{task: its description} of the role's task index, its charter's ## Tasks, in order: the only list of its tasks.
+    ConfigError unless the charter's opening sentence names a listed default, each task's path is <tasks>/<task>.md
+    and that task's file is in the role's own tasks dir (Team.tasks_dir: a custom role's team dir, else core's)."""
     team = _team(root, team)
-    if not (parts := team.parts(role)):
+    if not (charter := team.charter(role)):
         raise _no_charter(role, repo.read_config(os.path.join(root, CONFIG)), team)
-    text, rel, extensions = parts
+    text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
     if not (lines := INDEX_LINE.findall(section)):
@@ -395,15 +361,13 @@ def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
     for t, path in [default.groups(), *((t, path) for t, path, _ in lines)]:
         if path != f"<tasks>/{t}.md":
             raise ConfigError(f"{rel}: {t!r} has path {path!r}, not '<tasks>/{t}.md'")
-    owner = dict.fromkeys(tasks, rel)
-    for ext, ext_lines in extensions:
-        for t, _, what in INDEX_LINE.findall(ext_lines):
-            if t in tasks:
-                raise ConfigError(f"{ext}: lists {t!r}, already in {role}'s index")
-            tasks[t], owner[t] = what, ext
+    own = team.tasks_dir(role) or os.path.join(root, TEXT, "tasks")
     for t in tasks:
-        if not team.lookup("tasks", t):
-            raise ConfigError(f"{owner[t]}: lists {t!r} without tasks/{t}.md")
+        if not (path := team.lookup("tasks", t)):
+            raise team.misnamed_error("tasks", t) or ConfigError(f"{rel}: lists {t!r} without tasks/{t}.md")
+        if os.path.dirname(path) != own:
+            raise ConfigError(f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
+                              f"{team.tasks_dir(role) or 'core team/tasks'}: a role runs only its own tasks")
     return tasks
 
 
@@ -415,7 +379,7 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
     cfg = repo.read_config(os.path.join(root, CONFIG))
     _check(cfg)
     team = _team(root, team)
-    if not team.lookup("roles", role) and (role not in cfg.get("roles", {}) or role in team.extensions):
+    if not team.lookup("roles", role) and role not in cfg.get("roles", {}):
         raise _no_charter(role, cfg, team)
     values = _run_keys(cfg, role)
     run = RunConfig(role=role, task=task or "", tier=values.pop("tier", None), effort=values.pop("effort", None),
@@ -548,7 +512,8 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     inline_input ("" → no section). A client that runs needs params: <Workdir> and `report` are otherwise undefined.
     A repeated heading in the text before the input gets an `<a id>` line (_unique); the input text is verbatim.
     `team` finds the charter, tasks and templates (None: core's team/ alone); `tasks`: <tasks>'s value (None: the
-    client's tasks_path). A run using a team dir file has its prompt's references checked (_check_prompt)."""
+    role's Team.tasks_dir, else the client's tasks_path). A run using a team dir file has its prompt's references
+    checked (_check_prompt)."""
     text, team = os.path.join(root, TEXT), _team(root, team)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
@@ -580,7 +545,7 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
         texts["handover"] = fill(handover, {}, "handover")
         parts.append(("handover", f"## Return\n\n{texts['handover'].strip()}\n"))
     joined = [part for _, part in parts]
-    joined.insert(1, _parameters(root, run, params, client, texts, team, tasks))
+    joined.insert(1, _parameters(root, run, params, client, texts, team, tasks or team.tasks_dir(run.role)))
     prompt = (RESUME if params and params.resume else "") + "\n".join(joined)
     given = params.input.strip() if params else client.inline_input
     own = _unique(prompt + "\n# Input\n") if params or given else _unique(prompt)   # the text before the input
@@ -770,12 +735,10 @@ def _team(root: str, given: Team | None) -> Team:
 
 
 def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
-    """The error for a role without a charter: a misnamed roles/<role>.md in `team` → its; an extension of it in `team`
-    → that file's; else `[roles.<role>]` set (or `cfg` None) → no charter; else unknown."""
+    """The error for a role without a charter: a misnamed roles/<role>.md in `team` → its; else `[roles.<role>]` set
+    (or `cfg` None) → no charter; else unknown."""
     if team is not None and (e := team.misnamed_error("roles", role)):
         return e
-    if team is not None and (paths := team.extensions.get(role)):
-        return ConfigError(f"{paths[0]}: extends role {role!r}, which neither core nor a team dir defines")
     if cfg is not None and role not in cfg.get("roles", {}):
         return ConfigError(f"unknown role {role!r}")
     return ConfigError(f"roles.{role}: no charter roles/{role}.md in core or team_dirs")
@@ -790,26 +753,6 @@ def _text(path: str) -> str:
         raise ConfigError(f"{path}: {e.strerror}") from None
     except UnicodeDecodeError:
         raise ConfigError(f"{path}: not UTF-8 text") from None
-
-
-def _opens_index(text: str) -> bool:
-    """Whether `text`, less any front matter, opens with ## Tasks (an extension)."""
-    lines = text.strip().split("\n")
-    if lines[0].strip() == "---":
-        lines = lines[next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), len(lines)) + 1:]
-        lines = "\n".join(lines).strip().split("\n")
-    return lines[0].rstrip() == "## Tasks"
-
-
-def _extension_lines(path: str, text: str) -> str:
-    """An extension's task lines, joined; ConfigError unless it holds only ## Tasks, blank lines, then task lines."""
-    head, _, rest = text.strip().partition("\n")
-    lines = rest.strip().split("\n") if rest.strip() else []
-    if head.rstrip() != "## Tasks" or not lines or not all(
-            (m := INDEX_LINE.fullmatch(line)) and m[2] == f"<tasks>/{m[1]}.md" for line in lines):
-        raise ConfigError(f"{path}: an extension holds only a ## Tasks section of - `<task>` (`<tasks>/<task>.md`): … "
-                          "lines")
-    return "\n".join(lines)
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:
