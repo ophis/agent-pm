@@ -55,11 +55,12 @@ class Handle:
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
         """Each event in order, ending after Exited(returncode): made by the Driver once both pipes end and the
-        process exits (an Exited from the adapter is dropped); a later call yields nothing. SessionBound is recorded
-        as `client_session` (durable) and sets info().native_id; Stderr is recorded as `stderr` (best effort); a Reply,
-        or a TurnEnd's non-empty reply, sets `reply`. With an idle_timeout, each span of that many seconds without an
-        event yields IdleTimeout, except after a Blocked until an event other than Blocked or Stderr. Never stops the
-        process on its own; an exception (the Mode's, a record write's) stops it, then propagates."""
+        process exits, awaited in slices of at most POLL s (an Exited from the adapter is dropped); a later call yields
+        nothing. SessionBound is recorded as `client_session` (durable) and sets info().native_id; Stderr is recorded
+        as `stderr` (best effort); a Reply, or a TurnEnd's non-empty reply, sets `reply`. With an idle_timeout, each
+        span of that many seconds without an event yields IdleTimeout, except after a Blocked until an event other than
+        Blocked or Stderr. Never stops the process on its own; an exception (the Mode's, a record write's) stops it,
+        then propagates."""
         last = time.monotonic()
         try:
             while not self._ended:
@@ -69,20 +70,23 @@ class Handle:
                     last = time.monotonic()
                     self._blocked = isinstance(event, Blocked) or self._blocked and isinstance(event, Stderr)
                     yield event
-                elif self._closed:
-                    self._ended = True
-                    yield Exited(self._host.returncode())
-                else:
-                    wait = POLL
-                    if self._idle is not None and not self._blocked:
-                        left = last + self._idle - time.monotonic()
-                        if left <= 0:
-                            last = time.monotonic()
-                            yield IdleTimeout(self._idle)
-                            continue
-                        wait = min(POLL, left)
+                    continue
+                wait = POLL
+                if self._idle is not None and not self._blocked:
+                    wait = min(POLL, last + self._idle - time.monotonic())
+                if self._closed:
+                    code = self._host.returncode(max(wait, 0))
+                    if code is not None:
+                        self._ended = True
+                        yield Exited(code)
+                        continue
+                elif wait > 0:
                     found, self._closed = self._host.poll(wait)
                     self._queue.extend(e for e in found if not isinstance(e, Exited))
+                    continue
+                if wait <= 0:
+                    last = time.monotonic()
+                    yield IdleTimeout(self._idle)
         except GeneratorExit:   # the caller closed this iterator; the session goes on
             raise
         except BaseException:
@@ -114,7 +118,8 @@ class Handle:
         raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
-        """Ends the session: kills the process and waits; idempotent. events() then ends with Exited."""
+        """Ends the session: kills its process group, waiting a bounded time for the process; idempotent. events()
+        then ends with Exited."""
         self._host.stop()
 
     def info(self) -> SessionInfo:

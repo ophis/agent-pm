@@ -1,14 +1,17 @@
 """driver.api.start() end to end over the real fake runtime (new/tests/fake_adapter/runtime.py): the frozen event set
 streamed to the Driver's Exited and the run records (acceptance), the idle timer (FR-11), exits, stop(), failures, and
-the launch's environment. The fake adapter, and a subclass whose launch takes env, unset and cwd from its config, are
-registered in-process (sys.modules) with their tables given to registry.configure."""
+the launch's environment; then stop() of a process group and a process that outlives its pipes. The fake adapter, a
+subclass whose launch takes env, unset and cwd from its config, and one whose runtime is this Python running its
+config's script are registered in-process (sys.modules) with their tables given to registry.configure."""
 import dataclasses
 import io
 import json
 import os
 import re
+import signal
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import types
@@ -16,12 +19,13 @@ import unittest
 from unittest import mock
 
 from new.tests import fake_adapter, hermetic
-from adapters.base import Access, Activity, Blocked, Exited, Reply, SessionBound, Stderr, TurnEnd
+from adapters.base import Access, Activity, Blocked, Exited, Launch, Reply, SessionBound, Stderr, TurnEnd
 from driver import api, records, registry
 
 WAIT = 20      # upper bound on any wait, in seconds
 IDLE = 0.3     # idle_timeout, in seconds
 SILENCE = 0.9  # 3 × IDLE
+GAP = 0.2      # between stderr lines; that test's idle_timeout is 3 × GAP
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z")
 
 
@@ -44,6 +48,23 @@ LAUNCHING = types.ModuleType("adapters.launching")
 LAUNCHING.LaunchingAdapter = LaunchingAdapter
 
 
+class ScriptAdapter(fake_adapter.FakeAdapter):
+    """The fake adapter whose runtime is this Python running its config's `script`."""
+    keys = fake_adapter.FakeAdapter.keys | {"script"}
+
+    def headless_run(self):
+        return ScriptRun(self)
+
+
+class ScriptRun(fake_adapter.FakeHeadlessRun):
+    def launch(self, prompt, spec, resume):
+        return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
+
+
+SCRIPT = types.ModuleType("adapters.script")
+SCRIPT.ScriptAdapter = ScriptAdapter
+
+
 def out(kind, **fields) -> dict:
     """A scenario step printing record {"type": kind, **fields}."""
     return {"out": {"type": kind, **fields}}
@@ -57,6 +78,14 @@ def running(pid: int) -> bool:
     return True
 
 
+def kill(pid: int) -> None:
+    """SIGKILL to a test's stray process, if it still runs."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         hermetic.home(self)
@@ -67,7 +96,8 @@ class Base(unittest.TestCase):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
-        patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter, "adapters.launching": LAUNCHING})
+        patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter, "adapters.launching": LAUNCHING,
+                                              "adapters.script": SCRIPT})
         patch.start()
         self.addCleanup(patch.stop)
         self.addCleanup(registry.reset)
@@ -193,9 +223,9 @@ class IdleTest(Base):
         self.assertEqual(found[-1], Exited(0))
 
     def test_stderr_lines_restart_the_timer(self):
-        self.steps({"err": "1"}, {"sleep": 0.2}, {"err": "2"}, {"sleep": 0.2}, {"err": "3"}, {"sleep": 0.2},
+        self.steps({"err": "1"}, {"sleep": GAP}, {"err": "2"}, {"sleep": GAP}, {"err": "3"}, {"sleep": GAP},
                    {"err": "4"})
-        self.assertEqual(self.drain(self.start(idle_timeout=IDLE)),
+        self.assertEqual(self.drain(self.start(idle_timeout=3 * GAP)),
                          [Stderr("1"), Stderr("2"), Stderr("3"), Stderr("4"), Exited(0)])
 
 
@@ -219,6 +249,42 @@ class ExitTest(Base):
         handle.stop()
         self.assertEqual(handle.state(), "absent")
         self.assertEqual(list(handle.events()), [])
+
+
+class ProcessGroupTest(Base):
+    def script(self, code: str, **kwargs) -> api.Handle:
+        """A started session of runtime `script` running `code`."""
+        registry.configure({"adapters": {"script": {"implementation": "adapters.script:ScriptAdapter",
+                                                     "script": textwrap.dedent(code)}}})
+        return self.start("script", **kwargs)
+
+    def test_stop_kills_a_grandchild_holding_the_pipes_so_events_end_with_exited(self):
+        handle = self.script("""
+            import json, subprocess, sys, time
+            grandchild = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
+            print(json.dumps({"type": "message", "text": str(grandchild.pid)}), flush=True)
+            time.sleep(60)
+        """)
+
+        def on(event):
+            if isinstance(event, Reply):
+                self.addCleanup(kill, int(event.text))
+                handle.stop()
+        found = self.drain(handle, on)
+        self.assertEqual(len(found), 2)
+        self.assertIsInstance(found[0], Reply)
+        self.assertEqual(found[1], Exited(-signal.SIGKILL))
+
+    def test_a_process_that_closed_its_pipes_and_lives_yields_idle_timeouts_until_stop_ends_it(self):
+        handle = self.script("""
+            import json, os, time
+            print(json.dumps({"type": "activity", "name": "Read"}), flush=True)
+            os.close(1)
+            os.close(2)
+            time.sleep(60)
+        """, idle_timeout=IDLE)
+        found = self.drain(handle, lambda event: handle.stop() if isinstance(event, api.IdleTimeout) else None)
+        self.assertEqual(found, [Activity("Read"), api.IdleTimeout(IDLE), Exited(-signal.SIGKILL)])
 
 
 class FailureTest(Base):
