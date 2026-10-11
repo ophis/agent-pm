@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # A tmux session for the manager, attached via iTerm2 tmux integration (-CC); you start claude or codex in it.
-s=${1:?usage: ctmux <session-name>}
+if [ "$1" = --install ]; then
+  dst=$HOME/.agent-pm/bin/ctmux
+  mkdir -p "${dst%/*}" && { [ "$0" -ef "$dst" ] || install -m 755 "$0" "$dst"; } && echo "$dst"
+  exit
+fi
+s=${1:?usage: ctmux <session-name> | ctmux --install}
 dir=$PWD
 tmux has -t "=$s" 2>/dev/null || {
   # Start from ~ so the tmux server never sits in a directory that later gets deleted.

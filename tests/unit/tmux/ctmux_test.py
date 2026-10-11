@@ -35,8 +35,8 @@ class CtmuxTest(unittest.TestCase):
         self.log = os.path.join(self.tmp, "log")
         self.env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": self.home, "CTMUX_LOG": self.log}
 
-    def run_ctmux(self, *args, has_rc=1):
-        p = subprocess.run([CTMUX, *args], cwd=self.cwd, env={**self.env, "HAS_RC": str(has_rc)},
+    def run_ctmux(self, *args, has_rc=1, script=CTMUX):
+        p = subprocess.run([script, *args], cwd=self.cwd, env={**self.env, "HAS_RC": str(has_rc)},
                            capture_output=True, text=True)
         calls = []
         if os.path.exists(self.log):
@@ -61,6 +61,19 @@ class CtmuxTest(unittest.TestCase):
         self.assertEqual([c[1:] for c in calls],
                          [["has", "-t", "=s1"], START + [self.cwd], ["-CC", "attach", "-t", "=s1"]])
         self.assertEqual(calls[1][0], self.home)
+
+    def test_install_copies_itself_to_agent_pm_bin(self):
+        dst = os.path.join(self.home, ".agent-pm", "bin", "ctmux")
+        with open(CTMUX, "rb") as f:
+            src = f.read()
+        for script in (CTMUX, dst):
+            p, calls = self.run_ctmux("--install", script=script)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(p.stdout.strip(), dst)
+            self.assertTrue(os.access(dst, os.X_OK))
+            with open(dst, "rb") as f:
+                self.assertEqual(f.read(), src)
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
