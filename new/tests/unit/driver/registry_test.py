@@ -1,10 +1,12 @@
-"""new/core/src/driver/registry.py: config merge, the [adapters.<name>] tables and Adapter loading. Adapter packages
-are registered in sys.modules or the import system only for the test's span; the registry itself is never patched."""
+"""new/core/src/driver/registry.py: config merge, the [adapters.<name>] tables, their per-process cache and Adapter
+loading. Adapter packages are registered in sys.modules or the import system only for the test's span; the registry
+itself is never patched, except a wrap counting its file reads. Each test drops the cache at its end."""
 import importlib.abc
 import importlib.util
 import os
 import sys
 import tempfile
+import tomllib
 import types
 import unittest
 from unittest import mock
@@ -59,6 +61,7 @@ class Base(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
+        self.addCleanup(registry.reset)
 
     def write(self, name, content) -> str:
         path = os.path.join(self.dir, name)
@@ -70,6 +73,10 @@ class Base(unittest.TestCase):
         """`text` as this test's ~/.agent-pm/core-new.local.toml."""
         with open(os.path.join(self.home, "core-new.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
+
+    def configure(self, text):
+        """TOML `text` as the registry's config, no file read."""
+        registry.configure(tomllib.loads(text))
 
     def register(self, **modules):
         """Each name's module as sys.modules["adapters.<name>"] for the rest of the test."""
@@ -134,20 +141,17 @@ class TablesTest(Base):
         path = self.write("config.toml", '[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n')
         self.local('[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n')
         self.assertEqual(registry.tables(path), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}})
-        self.assertEqual(registry.configured(path), ["a", "b", "c"])
 
     def test_no_tables_when_absent_or_not_a_table(self):
         for text in ("x = 1\n", "adapters = 1\n", 'adapters = ["fake"]\n'):
             with self.subTest(text=text):
                 path = self.write("config.toml", text)
                 self.assertEqual(registry.tables(path), {})
-                self.assertEqual(registry.configured(path), [])
 
     def config_error(self, path, local):
-        for call in (registry.tables, registry.configured, lambda p, loc: registry.adapter("fake", path=p, local=loc)):
-            with self.assertRaises(ConfigError) as caught:
-                call(path, local)
-            self.assertTrue(str(caught.exception).startswith(f"core config {path}: "), caught.exception)
+        with self.assertRaises(ConfigError) as caught:
+            registry.tables(path, local)
+        self.assertTrue(str(caught.exception).startswith(f"core config {path}: "), caught.exception)
 
     def test_an_unreadable_or_invalid_config_is_a_config_error(self):
         absent = os.path.join(self.dir, "absent.toml")
@@ -164,21 +168,59 @@ class TablesTest(Base):
                 self.config_error(path, self.write("local.toml", content))
 
 
+class CacheTest(Base):
+    def test_the_first_use_reads_the_files_once(self):
+        self.register(fake=fake_adapter)
+        self.local(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n')
+        with mock.patch.object(registry, "tables", wraps=registry.tables) as read:
+            first = registry.adapter("fake")
+            second = registry.adapter("fake")
+            self.assertEqual(registry.configured(), ["a", "fake"])
+        read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
+        self.assertIsNot(first, second)
+        self.assertEqual((first.config, second.config), ({"scenario": "/s"}, {"scenario": "/s"}))
+
+    def test_reset_makes_the_next_use_read_the_files_again(self):
+        self.register(fake=fake_adapter)
+        self.local(FAKE + 'scenario = "/a"\n')
+        self.assertEqual(registry.adapter("fake").config, {"scenario": "/a"})
+        self.local(FAKE + 'scenario = "/b"\n')
+        self.assertEqual(registry.adapter("fake").config, {"scenario": "/a"})
+        registry.reset()
+        self.assertEqual(registry.adapter("fake").config, {"scenario": "/b"})
+
+    def test_a_failed_read_is_not_cached(self):
+        self.register(fake=fake_adapter)
+        self.local("x = \n")
+        for call in (registry.configured, lambda: registry.adapter("fake")):
+            with self.assertRaises(ConfigError) as caught:
+                call()
+            self.assertTrue(str(caught.exception).startswith(f"core config {registry.CONFIG}: "), caught.exception)
+        self.local(FAKE + 'scenario = "/s"\n')
+        self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
+
+    def test_configure_sets_the_cache_without_reading_a_file(self):
+        self.register(fake=fake_adapter)
+        self.local(FAKE + 'scenario = "/file"\n')
+        self.assertEqual(registry.adapter("fake").config, {"scenario": "/file"})
+        with mock.patch.object(registry, "tables", wraps=registry.tables) as read:
+            self.configure(FAKE + 'scenario = "/given"\n[adapters.a]\nk = 1\n')
+            self.assertEqual(registry.adapter("fake").config, {"scenario": "/given"})
+            self.assertEqual(registry.configured(), ["a", "fake"])
+            for config in ({}, {"adapters": 1}, {"adapters": ["fake"]}, {"other": {"fake": {}}}):
+                with self.subTest(config=config):
+                    registry.configure(config)
+                    self.assertEqual(registry.configured(), [])
+        read.assert_not_called()
+
+
 class AdapterTest(Base):
     def test_builds_the_configured_class_from_its_table_minus_implementation(self):
         self.register(fake=fake_adapter)
-        self.local(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
+        self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
         built = registry.adapter("fake")
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
-
-    def test_reads_the_given_config_and_local_file(self):
-        self.register(fake=fake_adapter)
-        path = self.write("config.toml", FAKE + 'scenario = "/a"\nlog = "/log"\n')
-        local = self.write("local.toml", '[adapters.fake]\nscenario = "/b"\ntui = true\n')
-        built = registry.adapter("fake", path=path, local=local)
-        self.assertIsInstance(built, fake_adapter.FakeAdapter)
-        self.assertEqual(built.config, {"scenario": "/b", "log": "/log", "tui": True})
 
     def test_refuses_an_unsafe_name(self):
         for bad in ("Fake", "", "../fake", "a-b", "1a", "fake\n", "adapters.fake", 1, None):
@@ -188,15 +230,10 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_table(self):
         message = f"no [adapters.fake] table in {registry.CONFIG} or {LOCAL_SHOWN}"
-        self.refused(message, lambda: registry.adapter("fake"))
-        self.local("[adapters]\nfake = 1\n")
-        self.refused(message, lambda: registry.adapter("fake"))
-
-    def test_names_the_given_files_when_the_table_is_missing(self):
-        path = self.write("config.toml", "")
-        local = os.path.join(self.dir, "absent.toml")
-        self.refused(f"no [adapters.fake] table in {path} or {local}",
-                     lambda: registry.adapter("fake", path=path, local=local))
+        for text in ("", "[adapters]\nfake = 1\n"):
+            with self.subTest(text=text):
+                self.configure(text)
+                self.refused(message, lambda: registry.adapter("fake"))
 
     def test_refuses_an_implementation_of_another_shape_or_package(self):
         self.register(fake=fake_adapter)
@@ -208,24 +245,25 @@ class AdapterTest(Base):
                      'implementation = "adapters.other:OtherAdapter"\n',
                      'implementation = "adapters.Fake:FakeAdapter"\n'):
             with self.subTest(line=line):
-                self.local("[adapters.fake]\n" + line)
+                self.configure("[adapters.fake]\n" + line)
                 self.refused(message, lambda: registry.adapter("fake"))
 
     def test_refuses_a_missing_package(self):
-        self.local('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
+        self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
         self.refused("adapter 'nope' has no package adapters.nope", lambda: registry.adapter("nope"))
 
     def test_refuses_a_missing_parent_package(self):
-        self.local(FAKE)
+        self.configure(FAKE)
         with mock.patch.dict(sys.modules), mock.patch.object(sys, "path", [p for p in sys.path if p != SRC]):
             del sys.modules[Adapter.__module__.partition(".")[0]]
             self.refused("adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake"))
 
     def test_refuses_a_package_that_fails_to_import(self):
-        self.local('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
+        self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
         for source, shown in (("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
                               ("from adapters.base import Absent\n", "cannot import name 'Absent'"),
-                              ("raise OSError('disk gone')\n", "disk gone")):
+                              ("raise OSError('disk gone')\n", "disk gone"),
+                              ("def broken(:\n", "invalid syntax")):
             with self.subTest(source=source), mock.patch.dict(sys.modules), \
                     mock.patch.object(sys, "meta_path", [SourceFinder("adapters.broken", source), *sys.meta_path]):
                 with self.assertRaises(ConfigError) as caught:
@@ -235,20 +273,20 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_class(self):
         self.register(empty=package("empty"))
-        self.local('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
+        self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
         self.refused("adapters.empty has no EmptyAdapter", lambda: registry.adapter("empty"))
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
         for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadlessRun):
             with self.subTest(value=value):
                 self.register(odd=package("odd", OddAdapter=value))
-                self.local('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
+                self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused("adapters.odd:OddAdapter must be a concrete Adapter subclass",
                              lambda: registry.adapter("odd"))
 
     def test_an_unknown_key_is_the_adapters_config_error(self):
         self.register(fake=fake_adapter)
-        self.local(FAKE + 'model = "m"\nscenario = "/s"\nalpha = 1\n')
+        self.configure(FAKE + 'model = "m"\nscenario = "/s"\nalpha = 1\n')
         self.refused("unknown key 'alpha' in FakeAdapter's config", lambda: registry.adapter("fake"))
 
 

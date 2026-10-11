@@ -1,6 +1,6 @@
 """new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, and a headless Handle's
-surface, over the fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables in
-the test's own core-new.local.toml. Wherever nothing may start, subprocess.Popen is patched to fail."""
+surface, over the fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables
+given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail."""
 import json
 import os
 import sys
@@ -56,7 +56,7 @@ PACKAGES = {"fake": fake_adapter, **{name: package(name, cls) for name, cls in
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.home = hermetic.home(self)
+        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -67,21 +67,19 @@ class Base(unittest.TestCase):
         patch = mock.patch.dict(sys.modules, {f"adapters.{name}": m for name, m in PACKAGES.items()})
         patch.start()
         self.addCleanup(patch.stop)
+        self.addCleanup(registry.reset)
         self.configure()
 
     def steps(self, *steps):
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump(list(steps), f)
 
-    def configure(self, extra=""):
-        """A table per PACKAGES name, each with this test's scenario and log; `extra` lines go into fake's."""
-        text = ""
-        for name in PACKAGES:
-            text += (f'[adapters.{name}]\nimplementation = "adapters.{name}:{name.capitalize()}Adapter"\n'
-                     f"scenario = {json.dumps(self.scenario)}\nlog = {json.dumps(self.log)}\n")
-            text += extra if name == "fake" else ""
-        with open(os.path.join(self.home, "core-new.local.toml"), "w", encoding="utf-8") as f:
-            f.write(text)
+    def configure(self, **extra):
+        """A table per PACKAGES name, each with this test's scenario and log; `extra` keys go into fake's."""
+        tables = {name: {"implementation": f"adapters.{name}:{name.capitalize()}Adapter", "scenario": self.scenario,
+                         "log": self.log} for name in PACKAGES}
+        tables["fake"].update(extra)
+        registry.configure({"adapters": tables})
 
     def spec(self, **fields) -> api.Spec:
         return api.Spec(workdir=self.workdir, **fields)
@@ -158,14 +156,14 @@ class ChecksTest(Base):
     def test_a_registry_error_passes_through(self):
         self.refused(api.ConfigError, f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}",
                      lambda: self.start(runtime="nope"))
-        self.configure('model = "m"\n')
+        self.configure(model="m")
         self.refused(api.ConfigError, "unknown key 'model' in FakeAdapter's config", lambda: self.start())
 
     def test_tui_on_a_runtime_without_it_is_unsupported(self):
         self.refused(api.ConfigError, "runtime 'fake' does not support tui mode", lambda: self.start(mode="tui"))
 
     def test_tui_on_a_runtime_with_it_is_not_available_yet(self):
-        self.configure("tui = true\n")
+        self.configure(tui=True)
         self.refused(api.ConfigError, "tui mode is not available yet", lambda: self.start(mode="tui"))
         self.refused(api.ConfigError, "tui mode is not available yet", lambda: self.start(mode="tui", name="w1"))
 

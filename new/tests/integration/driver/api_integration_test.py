@@ -1,7 +1,7 @@
 """driver.api.start() end to end over the real fake runtime (new/tests/fake_adapter/runtime.py): the frozen event set
 streamed to the Driver's Exited and the run records (acceptance), the idle timer (FR-11), exits, stop(), failures, and
 the launch's environment. The fake adapter, and a subclass whose launch takes env, unset and cwd from its config, are
-registered in-process (sys.modules) with their tables in the test's own core-new.local.toml."""
+registered in-process (sys.modules) with their tables given to registry.configure."""
 import dataclasses
 import io
 import json
@@ -17,7 +17,7 @@ from unittest import mock
 
 from new.tests import fake_adapter, hermetic
 from adapters.base import Access, Activity, Blocked, Exited, Reply, SessionBound, Stderr, TurnEnd
-from driver import api, records
+from driver import api, records, registry
 
 WAIT = 20      # upper bound on any wait, in seconds
 IDLE = 0.3     # idle_timeout, in seconds
@@ -59,7 +59,7 @@ def running(pid: int) -> bool:
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.home = hermetic.home(self)
+        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -70,20 +70,19 @@ class Base(unittest.TestCase):
         patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter, "adapters.launching": LAUNCHING})
         patch.start()
         self.addCleanup(patch.stop)
+        self.addCleanup(registry.reset)
         self.configure()
 
     def steps(self, *steps):
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump(list(steps), f)
 
-    def configure(self, extra=""):
-        """Tables fake and launching, each with this test's scenario and log; `extra` lines go into launching's."""
-        text = ""
-        for name in ("fake", "launching"):
-            text += (f'[adapters.{name}]\nimplementation = "adapters.{name}:{name.capitalize()}Adapter"\n'
-                     f"scenario = {json.dumps(self.scenario)}\nlog = {json.dumps(self.log)}\n")
-        with open(os.path.join(self.home, "core-new.local.toml"), "w", encoding="utf-8") as f:
-            f.write(text + extra)
+    def configure(self, **extra):
+        """Tables fake and launching, each with this test's scenario and log; `extra` keys go into launching's."""
+        tables = {name: {"implementation": f"adapters.{name}:{name.capitalize()}Adapter", "scenario": self.scenario,
+                         "log": self.log} for name in ("fake", "launching")}
+        tables["launching"].update(extra)
+        registry.configure({"adapters": tables})
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
         handle = api.start(runtime, "headless", "hello", spec or api.Spec(workdir=self.workdir), **kwargs)
@@ -258,11 +257,11 @@ class FailureTest(Base):
 
 class LaunchEnvironmentTest(Base):
     def test_unset_then_env_apply_to_the_callers_environment(self):
-        for extra, shown in (("", "caller"), ('unset = ["FAKE_ENV"]\n', None),
-                             ('unset = ["FAKE_ENV"]\nenv = { FAKE_ENV = "launch" }\n', "launch")):
+        for extra, shown in (({}, "caller"), ({"unset": ["FAKE_ENV"]}, None),
+                             ({"unset": ["FAKE_ENV"], "env": {"FAKE_ENV": "launch"}}, "launch")):
             with self.subTest(extra=extra), mock.patch.dict(os.environ, {"FAKE_ENV": "caller"}):
                 self.forget()
-                self.configure(extra)
+                self.configure(**extra)
                 self.assertEqual(self.drain(self.start("launching")), [Exited(0)])
                 self.assertEqual(self.logged()[0]["env"]["FAKE_ENV"], shown)
 
@@ -271,12 +270,12 @@ class LaunchEnvironmentTest(Base):
         os.mkdir(cwd)
         other = os.path.join(self.dir, "other")
         os.mkdir(other)
-        for runtime, extra, access, want in (("launching", f"cwd = {json.dumps(cwd)}\n", Access(cwd=other), cwd),
-                                             ("fake", "", Access(cwd=other), other),
-                                             ("fake", "", Access(), self.workdir)):
+        for runtime, extra, access, want in (("launching", {"cwd": cwd}, Access(cwd=other), cwd),
+                                             ("fake", {}, Access(cwd=other), other),
+                                             ("fake", {}, Access(), self.workdir)):
             with self.subTest(runtime=runtime, want=want), mock.patch.dict(os.environ, {"PWD": "/"}):
                 self.forget()
-                self.configure(extra)
+                self.configure(**extra)
                 handle = self.start(runtime, api.Spec(workdir=self.workdir, access=access))
                 self.assertEqual(self.drain(handle), [Exited(0)])
                 (entry,) = self.logged()
