@@ -1,10 +1,62 @@
-"""Strict fake `codex exec --json` for process tests; never reads the user's Codex account."""
+"""A stand-in `codex` for process tests; install() puts it on PATH. Stdlib only, importing no core module; it never
+reads the user's Codex account or config. It models Codex 0.162.1 as the manager's answers describe it; the two modes
+below agree with each other, not necessarily with Codex, on keys and hashes. Mode by the first word:
+
+codex exec …  strict `codex exec --json` for drive.py's headless runs (parse, scenario: steps, log, thread_id).
+
+codex app-server [-c K=V]… [--enable F]… [--disable F]…  (any other option, -p included: exit 2)
+  JSON lines on stdin until EOF (exit 0). A message with an `id` is a request; before each answer one notification
+  line. `initialize` → a result; any other request before it → an error; `hooks/list {"cwds": [...]}` → {"data": per
+  cwd {"cwd", "hooks": the catalog, "warnings": [], "errors": the scenario's errors, [] with hooks off}}; else an error.
+
+codex [resume ID] [-C DIR] [--no-daemon] [-c K=V]… [--enable F]… [--disable F]… [-m M] [-s S] [-a A] [--add-dir D]…
+      [--] [PROMPT]  (any other option, or resume without ID: exit 2)
+  Session: ID, whose rollout must exist (else exit 1), or a new UUID. Rollout: $CODEX_HOME (else ~/.codex)
+  /sessions/2026/10/10/rollout-2026-10-10-<id>.jsonl, a session_meta line, made at the first turn. -C: chdir; payload
+  `cwd` is DIR made absolute, symlinks kept. A catalog hook enabled, not managed and `untrusted` or `modified`: prints
+  `Hooks need review` and `<n> hook(s) … new or changed.`, then reads stdin lines, running no turn and no hook.
+  Else turns, as fake_claude's interactive mode: the prompt, then each stdin line; turn k runs [steps, *turns][k]; stdin
+  EOF: exit `exit`; orphaned or fake_claude.HANG_CAP s without a line: exit 1. A turn: SessionStart (the run's first
+  turn only), UserPromptSubmit, the steps, Stop. An event runs each catalog hook of its eventName, enabled, `trusted`
+  or `managed`, matcher absent, "" or "*": /bin/sh -c <command>, in the session cwd and the fake's env, the payload JSON
+  on stdin, stdout captured, its timeoutSec.
+  Payload: {session_id, transcript_path (the rollout), cwd, hook_event_name, model (-m, else "fake-model"),
+  permission_mode: "default"}, plus: SessionStart `source` (startup or resume); the others `turn_id` (the turn's);
+  UserPromptSubmit `prompt`; PermissionRequest `tool_name`, `tool_input` (+ `agent_id`, `agent_type`); Stop
+  `stop_hook_active`: false, `last_assistant_message` (the turn's last text, else null).
+  Steps: a string is assistant text, a stdout line, in color unless NO_COLOR is set and not "0". {"kind": "permission",
+  "tool_name"? (default "Bash"), "tool_input"?, "agent_id"?, "agent_type"?}: PermissionRequest; with agent_id it is a
+  sub-agent's (session_id stays the root's). {"kind": "interrupt"}: Interrupt, ending the turn with no Stop.
+
+Config: -c K=V sets dotted key K to V read as a TOML value (failing that, the string V); --enable/--disable F set
+features.F true/false; in argv order. Catalog (empty when features.hooks is false): per command handler h of group g of
+hooks.<Event> (any key of `hooks` but `state`) an entry {key "/<session-flags>/config.toml:<event_snake>:<g>:<h>",
+eventName <event camelCase>, handlerType "command", command, matcher, timeoutSec (timeout, default 600, min 1;
+Interrupt and SessionEnd default 1, within 1-3), sourcePath, source "sessionFlags", enabled (false only by
+hooks.state[key].enabled), isManaged false, currentHash "sha256:<hex>" (sha256 of the key-sorted compact JSON of
+{event_name, hooks: [{async, command, timeout, type}], matcher if set}), trustStatus: trusted when
+hooks.state[key].trusted_hash equals currentHash, modified when it differs, else untrusted}; then the user hook.
+
+Scenario: the JSON object in file $FAKE_CODEX_SCENARIO (unset, unreadable or any other key: exit 1); both modes.
+  steps, turns, exit  as fake_claude's; steps as above.
+  log        a file: JSON lines appended, each with "pid": a start {"argv" (without argv[0]), "cwd", "env": LOGGED's
+             set keys}; a hook run {"hook": event, "key", "payload", "exit", "stdout"} (null both: failed or timed
+             out); an app-server message {"received"}.
+  user_hook  the user's own hook, default none: {"event": "Stop", "command": "true", "trustStatus": "trusted",
+             "enabled": true, "isManaged": false}, each key optional; entry source "user", key
+             "$CODEX_HOME/hooks.json:<event_snake>:0:0", trustStatus as given.
+  errors     a list, default []: each hooks/list cwd's `errors`.
+"""
 import argparse
+import hashlib
 import json
 import os
+import re
 import select
 import shlex
+import subprocess
 import sys
+import tomllib
 import uuid
 
 if __package__:
@@ -15,6 +67,14 @@ else:   # install()'s shim runs this file as a script
 
 ENV = "FAKE_CODEX_SCENARIO"
 CLIENT_ID = "11111111-2222-4333-8444-555555555555"
+SESSION_FLAGS = "/<session-flags>/config.toml"
+LOGGED = ("CODEX_HOME", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
+          "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CODEX_CI", "CLAUDECODE", "NO_COLOR", "PAGER",
+          "GIT_PAGER", "GH_PAGER", "TERM", "COLORTERM")
+DEFAULTS = {"steps": [], "turns": [], "exit": 0, "log": None, "user_hook": None, "errors": []}
+USER_HOOK = {"event": "Stop", "command": "true", "trustStatus": "trusted", "enabled": True, "isManaged": False}
+STEPS = {"permission": {"kind", "tool_name", "tool_input", "agent_id", "agent_type"}, "interrupt": {"kind"}}
+SHORT = ("Interrupt", "SessionEnd")
 
 
 def install(bin_dir: str) -> str:
@@ -78,18 +138,22 @@ def scenario() -> dict:
     return data
 
 
+def rollout(home: str, client_id: str) -> str:
+    return os.path.join(home, "sessions", "2026", "10", "10", f"rollout-2026-10-10-{client_id}.jsonl")
+
+
 def session_path(client_id: str) -> str:
     home = os.environ.get("CODEX_HOME")
     if not home:
         sys.exit("fake_codex.py: missing CODEX_HOME")
-    return os.path.join(home, "sessions", "2026", "10", "10", f"rollout-2026-10-10-{client_id}.jsonl")
+    return rollout(home, client_id)
 
 
 def emit(event: dict) -> None:
     print(json.dumps(event), flush=True)
 
 
-def main(argv: list[str]) -> int:
+def exec_mode(argv: list[str]) -> int:
     args = parse(argv)
     data = scenario()
     # The driver must close stdin. A one-second timeout makes an accidental open pipe fail promptly.
@@ -126,6 +190,282 @@ def main(argv: list[str]) -> int:
             fake_claude.report(command, step)
     emit({"type": "turn.completed"})
     return 0
+
+
+def session_scenario() -> dict:
+    """The app-server and interactive modes' scenario, defaults filled in; exits 1 on a bad one."""
+    path = os.environ.get(ENV)
+    if not path:
+        sys.exit(f"fake_codex.py: {ENV} is unset")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        sys.exit(f"fake_codex.py: {ENV}: {e}")
+    if not isinstance(data, dict):
+        sys.exit("fake_codex.py: the scenario is no JSON object")
+    if extra := sorted(set(data) - set(DEFAULTS)):
+        sys.exit(f"fake_codex.py: unknown scenario key {extra[0]!r}")
+    data = {**DEFAULTS, **data}
+    if not (isinstance(data["turns"], list) and isinstance(data["errors"], list) and type(data["exit"]) is int):
+        sys.exit("fake_codex.py: turns and errors: want lists; exit: want an int")
+    for steps in [data["steps"], *data["turns"]]:
+        if not isinstance(steps, list):
+            sys.exit(f"fake_codex.py: bad steps {steps!r}")
+        for step in steps:
+            kind = step.get("kind") if isinstance(step, dict) else None
+            allowed = STEPS.get(kind) if isinstance(kind, str) else None
+            if not isinstance(step, str) and (allowed is None or not set(step) <= allowed or not all(
+                    isinstance(step.get(k, ""), str) for k in ("tool_name", "agent_id", "agent_type"))):
+                sys.exit(f"fake_codex.py: bad step {step!r}")
+    if (hook := data["user_hook"]) is not None:
+        if not (isinstance(hook, dict) and set(hook) <= set(USER_HOOK)
+                and all(type(hook[k]) is type(USER_HOOK[k]) for k in hook)):
+            sys.exit(f"fake_codex.py: bad user_hook {hook!r}")
+        data["user_hook"] = {**USER_HOOK, **hook}
+    return data
+
+
+def log(s: dict, line: dict) -> None:
+    if s["log"]:
+        with open(s["log"], "a") as f:
+            f.write(json.dumps({"pid": os.getpid(), **line}) + "\n")
+
+
+def start(s: dict, argv: list[str]) -> None:
+    log(s, {"argv": argv, "cwd": os.getcwd(), "env": {k: os.environ[k] for k in LOGGED if k in os.environ}})
+
+
+class Override(argparse.Action):
+    """-c, --enable and --disable, kept in argv order in `overrides` as (dest, value)."""
+    def __call__(self, parser, namespace, value, option_string=None):
+        if self.dest == "config" and "=" not in value:
+            parser.error(f"{option_string} {value}: want KEY=VALUE")
+        namespace.overrides = [*namespace.overrides, (self.dest, value)]
+
+
+def parser(prog: str) -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog=prog, allow_abbrev=False)
+    ap.set_defaults(overrides=[])
+    ap.add_argument("-c", "--config", action=Override)
+    for flag in ("--enable", "--disable"):
+        ap.add_argument(flag, action=Override)
+    return ap
+
+
+def configure(overrides: list[tuple[str, str]]) -> dict:
+    config = {}
+    for dest, value in overrides:
+        if dest == "config":
+            key, _, raw = value.partition("=")
+            try:
+                value = tomllib.loads(f"v = {raw}")["v"]
+            except tomllib.TOMLDecodeError:
+                value = raw
+            path = key.strip().split(".")
+        else:
+            path, value = ["features", value], dest == "enable"
+        node = config
+        for part in path[:-1]:
+            if not isinstance(node.get(part), dict):
+                node[part] = {}
+            node = node[part]
+        node[path[-1]] = value
+    return config
+
+
+def hooks_on(config: dict) -> bool:
+    features = config.get("features")
+    return not (isinstance(features, dict) and features.get("hooks") is False)
+
+
+def snake(event: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", event).lower()
+
+
+def entry(event: str, key: str, source_path: str, source: str, command: str, timeout, sync, matcher) -> dict:
+    """A hooks/list entry, enabled and untrusted."""
+    if type(timeout) is not int:
+        timeout = 1 if event in SHORT else 600
+    timeout = min(max(timeout, 1), 3) if event in SHORT else max(timeout, 1)
+    body = {"event_name": snake(event),
+            "hooks": [{"async": sync is True, "command": command, "timeout": timeout, "type": "command"}],
+            **({} if matcher is None else {"matcher": matcher})}
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+    return {"key": key, "eventName": event[:1].lower() + event[1:], "handlerType": "command", "command": command,
+            "matcher": matcher, "timeoutSec": timeout, "sourcePath": source_path, "source": source, "enabled": True,
+            "isManaged": False, "currentHash": f"sha256:{digest.hexdigest()}", "trustStatus": "untrusted"}
+
+
+def catalog(config: dict, home: str, user_hook: dict | None) -> list[dict]:
+    """hooks/list's entries for any cwd (the module docstring's Catalog)."""
+    if not hooks_on(config):
+        return []
+    hooks = config["hooks"] if isinstance(config.get("hooks"), dict) else {}
+    states = hooks["state"] if isinstance(hooks.get("state"), dict) else {}
+    entries = []
+    for event, groups in hooks.items():
+        for g, group in enumerate(groups if event != "state" and isinstance(groups, list) else []):
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            for h, handler in enumerate(handlers if isinstance(handlers, list) else []):
+                if not (isinstance(handler, dict) and handler.get("type") == "command"
+                        and isinstance(handler.get("command"), str)):
+                    continue
+                key = f"{SESSION_FLAGS}:{snake(event)}:{g}:{h}"
+                e = entry(event, key, SESSION_FLAGS, "sessionFlags", handler["command"], handler.get("timeout"),
+                          handler.get("async"), group.get("matcher"))
+                state = states[key] if isinstance(states.get(key), dict) else {}
+                trusted = state.get("trusted_hash")
+                e["enabled"] = state.get("enabled") is not False
+                e["trustStatus"] = ("trusted" if trusted == e["currentHash"] else
+                                    "untrusted" if trusted is None else "modified")
+                entries.append(e)
+    if user_hook:
+        path, event = os.path.join(home, "hooks.json"), user_hook["event"]
+        e = entry(event, f"{path}:{snake(event)}:0:0", path, "user", user_hook["command"], None, False, None)
+        e.update({k: user_hook[k] for k in ("enabled", "isManaged", "trustStatus")})
+        entries.append(e)
+    return entries
+
+
+def codex_home() -> str:
+    return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+
+
+def app_server(argv: list[str]) -> int:
+    s = session_scenario()
+    start(s, argv)
+    config = configure(parser("codex app-server").parse_args(argv[1:]).overrides)
+    hooks = catalog(config, codex_home(), s["user_hook"])
+    errors = s["errors"] if hooks_on(config) else []
+    ready = False
+
+    def say(message: dict) -> None:
+        print(json.dumps(message), flush=True)
+
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            print(f"fake_codex.py: app-server: not JSON: {line!r}", file=sys.stderr, flush=True)
+            continue
+        log(s, {"received": msg})
+        if not isinstance(msg, dict) or "id" not in msg:
+            continue
+        say({"method": "fake/notice", "params": {"before": msg["id"]}})
+        method, params, ident = msg.get("method"), msg.get("params"), msg["id"]
+        cwds = params.get("cwds") if isinstance(params, dict) else None
+        if method == "initialize":
+            ready = True
+            say({"id": ident, "result": {"userAgent": "fake_codex/0.162.1"}})
+        elif not ready:
+            say({"id": ident, "error": {"code": -32002, "message": "Not initialized"}})
+        elif method != "hooks/list":
+            say({"id": ident, "error": {"code": -32601, "message": f"unknown method {method!r}"}})
+        elif not (isinstance(cwds, list) and all(isinstance(c, str) for c in cwds)):
+            say({"id": ident, "error": {"code": -32602, "message": "hooks/list: want cwds, a list of strings"}})
+        else:
+            say({"id": ident, "result": {"data": [{"cwd": c, "hooks": hooks, "warnings": [], "errors": errors}
+                                                  for c in cwds]}})
+    return 0
+
+
+def interactive(argv: list[str]) -> int:
+    parent = os.getppid()
+    s = session_scenario()
+    start(s, argv)
+    ap = parser("codex")
+    resumed = None
+    if argv[:1] == ["resume"]:
+        if len(argv) < 2 or argv[1].startswith("-"):
+            ap.error("resume: want an ID")
+        resumed, argv = argv[1], argv[2:]
+    ap.add_argument("-C", "--cd")
+    ap.add_argument("--no-daemon", action="store_true")
+    for short, long in (("-m", "--model"), ("-s", "--sandbox"), ("-a", "--ask-for-approval")):
+        ap.add_argument(short, long)
+    ap.add_argument("--add-dir", action="append", default=[])
+    ap.add_argument("prompt", nargs="?")
+    a = ap.parse_args(argv)
+    cwd = os.path.abspath(a.cd) if a.cd else os.getcwd()
+    try:
+        os.chdir(cwd)
+    except OSError as e:
+        sys.exit(f"fake_codex.py: -C {a.cd}: {e}")
+    home = codex_home()
+    sid = resumed or str(uuid.uuid4())
+    transcript = rollout(home, sid)
+    if resumed and not os.path.isfile(transcript):
+        sys.exit(f"fake_codex.py: no session {resumed}")
+    hooks = catalog(configure(a.overrides), home, s["user_hook"])
+    if review := [h for h in hooks if h["enabled"] and not h["isManaged"]
+                  and h["trustStatus"] in ("untrusted", "modified")]:
+        n = len(review)
+        print("Hooks need review", f"{n} hook is new or changed." if n == 1 else f"{n} hooks are new or changed.",
+              "1. Review hooks", "2. Trust all and continue", "3. Continue without trusting (hooks won't run)",
+              sep="\n", flush=True)
+        try:
+            for _ in fake_claude.inputs(None, parent):
+                pass
+        except fake_claude.Stranded:
+            return 1
+        return s["exit"]
+    color = os.environ.get("NO_COLOR", "0") == "0"
+    session_start = "resume" if resumed else "startup"
+
+    def fire(event: str, **extra) -> None:
+        payload = {"session_id": sid, "transcript_path": transcript, "cwd": cwd, "hook_event_name": event,
+                   "model": a.model or "fake-model", "permission_mode": "default", **extra}
+        for h in hooks:
+            if (h["eventName"] != event[:1].lower() + event[1:] or not h["enabled"]
+                    or h["trustStatus"] not in ("trusted", "managed") or h["matcher"] not in (None, "", "*")):
+                continue
+            try:
+                res = subprocess.run(["/bin/sh", "-c", h["command"]], input=json.dumps(payload), cwd=cwd,
+                                     stdout=subprocess.PIPE, text=True, errors="replace", timeout=h["timeoutSec"])
+                code, out = res.returncode, res.stdout
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"fake_codex.py: {event} hook: {e}", file=sys.stderr, flush=True)
+                code = out = None
+            log(s, {"hook": event, "key": h["key"], "payload": payload, "exit": code, "stdout": out})
+
+    def turn(prompt: str, steps: list) -> None:
+        nonlocal session_start
+        if not os.path.isfile(transcript):
+            os.makedirs(os.path.dirname(transcript), exist_ok=True)
+            with open(transcript, "w") as f:
+                f.write(json.dumps({"type": "session_meta", "payload": {"id": sid, "cwd": cwd}}) + "\n")
+        if session_start:
+            fire("SessionStart", source=session_start)
+            session_start = None
+        turn_id, last = str(uuid.uuid4()), None
+        fire("UserPromptSubmit", turn_id=turn_id, prompt=prompt)
+        for step in steps:
+            if isinstance(step, str):
+                last = step
+                print(f"\x1b[36m{step}\x1b[0m" if color else step, flush=True)
+            elif step["kind"] == "interrupt":
+                fire("Interrupt", turn_id=turn_id)
+                return
+            else:
+                fire("PermissionRequest", turn_id=turn_id, tool_name=step.get("tool_name", "Bash"),
+                     tool_input=step.get("tool_input", {"command": "true", "description": "fake"}),
+                     **{k: step[k] for k in ("agent_id", "agent_type") if k in step})
+        fire("Stop", turn_id=turn_id, stop_hook_active=False, last_assistant_message=last)
+
+    turns = [s["steps"], *s["turns"]]
+    try:
+        for k, prompt in enumerate(fake_claude.inputs(a.prompt, parent)):
+            turn(prompt, turns[k] if k < len(turns) else [])
+    except fake_claude.Stranded:
+        return 1
+    return s["exit"]
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["exec"]:
+        return exec_mode(argv)
+    return app_server(argv) if argv[:1] == ["app-server"] else interactive(argv)
 
 
 if __name__ == "__main__":

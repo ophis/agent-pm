@@ -1,4 +1,5 @@
-"""Codex CLI headless client. Reports are still carried only by report.py."""
+"""Codex CLI headless client. Reports are still carried only by report.py. A crew.py worker is an interactive `codex`
+(_codex_worker.py)."""
 import json
 import fcntl
 import hashlib
@@ -12,10 +13,12 @@ import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from compose import ConfigError, RunConfig, RunParams
 
-from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo
+from . import _codex_worker
+from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo, WorkerCommand, WorkerSpec
 
 
 def _absolute(path: str, label: str) -> str:
@@ -164,6 +167,18 @@ def _flags(snapshot: dict, *, interactive: bool) -> list[str]:
 
 class CodexClient(Client):
     keys = frozenset({"tiers", "efforts", "shell_network"})
+    session_env = "CODEX_THREAD_ID"
+    # Identity: Codex's session, version and sandbox markers. Injected defaults: what unified exec forces on each
+    # command it runs (its TERM=dumb and COLORTERM= are terminal keys the pane replaces; its C.UTF-8 locale stays).
+    command_env = MappingProxyType({
+        **dict.fromkeys(("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
+                         "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")),
+        "NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"})
+    # codex 0.162.1's source anchors of its startup dialogs: folder trust, restricted folder, hook review, resume cwd,
+    # another app's writer lock, sign-in
+    worker_dialogs = ("Trust this folder?", "Config, hooks, and exec policies from untrusted folders stay disabled.",
+                      "Hooks need review", "Working directory · resume", "This conversation is open in another app",
+                      "Sign in with ChatGPT to use Codex")
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -273,6 +288,12 @@ class CodexClient(Client):
                  + shlex.join(command)
         return SessionInfo(resume_supported=True, inspection_supported=True, client_id=state.client_id,
                            exists=True, transcript=path, last_activity=activity, resume=manual)
+
+    def worker(self, spec: WorkerSpec) -> WorkerCommand:
+        return _codex_worker.worker(spec)
+
+    def worker_reply(self, sid: str) -> str:
+        return _codex_worker.reply(sid)
 
     def events(self, lines: Iterable[str]) -> Iterator[Event]:
         for line in lines:

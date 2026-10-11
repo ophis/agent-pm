@@ -15,6 +15,8 @@ SHARDS = {
     "B": ["tests.integration.tmux.crew_integration_test.Roster"],
     "C": ["tests.integration.tmux.crew_integration_test.Retile",
           "tests.integration.tmux.crew_integration_test.Managers", "tests.integration.tmux.crew_integration_test.Settle"],
+    "D": ["tests.integration.tmux.codex_worker_integration_test.CodexLifecycle",
+          "tests.integration.tmux.codex_worker_integration_test.CodexSession"],
 }
 
 

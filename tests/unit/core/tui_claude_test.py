@@ -13,10 +13,11 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
-from contextlib import contextmanager, redirect_stderr, redirect_stdout, suppress
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
 import tui_claude
 
@@ -59,6 +60,8 @@ PY, SCRIPT = "/usr/bin/python3", "/opt/a_b.c@1+2-3/tui_claude.py"   # sys.execut
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
 MODE_HOOKS = {"all": GRID_HOOKS, "open-close": ("pane-exited", "window-layout-changed"), "off": ()}   # each mode's
 RETILE_ERROR = "^retile must be one of all, open-close, off, not {}$"
+OLD_PID = "4321"   # the respawned pane's #{pane_pid}
+PANE_PID = ["tmux", "display-message", "-p", "-t", "=s:", "#{pane_pid}"]
 
 
 def done(argv, rc=0, out="", err=""):
@@ -508,6 +511,20 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.calls[2:], decorations("s", path, status))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
 
+    def test_without_claude_hooks_the_argv_is_handed_over_as_given(self):
+        """A client-hooked argv: no --settings added or merged into; the events file still checked and decorated."""
+        events = os.path.join(self.root, "ev")
+        for argv in (("tool", "-x", "a b"), ("tool", "--settings", "s.json")):
+            with self.subTest(argv=argv):
+                fake = Tmux()
+                self.start(fake, argv=argv, env={"PATH": self.bin}, events=events, claude_hooks=False)
+                self.assertEqual(fake.handover["argv"], [self.tool, *argv[1:]])
+                self.assertEqual(fake.calls[2:], decorations("s", events))
+        fake = Tmux()
+        with self.assertRaisesRegex(tui_claude.TuiError, "^events file "):
+            self.start(fake, events=self.cwd, claude_hooks=False)
+        self.assertEqual(fake.calls, [])
+
     def test_a_failed_decoration_kills_the_session(self):
         fake = Tmux(fail={"set-hook"})
         with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
@@ -525,28 +542,44 @@ class Respawn(unittest.TestCase):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         tui_claude.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
 
-    def test_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_tmux_command(self):
-        fake = Tmux()
+    def test_reads_the_old_pid_then_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_command(self):
+        fake = Tmux(pane=OLD_PID)
         self.respawn(fake)
-        self.assertEqual(fake.calls, [["tmux", "clear-history", "-t", "=s:", ";", "respawn-pane", "-k", "-t", "=s:",
-                                       sys.executable, "-I", "-c", tui_claude.EXEC, fake.path]])
-        self.assertEqual(fake.kwargs, [TMUX_KW])
+        self.assertEqual(fake.calls, [PANE_PID, ["tmux", "clear-history", "-t", "=s:", ";", "respawn-pane", "-k", "-t",
+                                                 "=s:", sys.executable, "-I", "-c", tui_claude.EXEC, fake.path]])
+        self.assertEqual(fake.kwargs, [TMUX_KW] * 2)
         self.sleep.assert_not_called()
 
-    def test_handover_file_as_start_writes_it(self):
+    def test_handover_file_as_start_writes_it_with_the_old_pid_as_after(self):
         env = {"PATH": self.bin, "HOME": "/h", "PWD": "/stale",
                **{k: "x" for k in (*tui_claude.PARENT_KEYS, *tui_claude.TERMINAL_KEYS)}}
-        fake = Tmux()
+        fake = Tmux(pane=OLD_PID)
         self.respawn(fake, env=env)
         self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"], "cwd": self.cwd,
-                                         "env": {"PATH": self.bin, "HOME": "/h", "PWD": self.cwd}})
+                                         "env": {"PATH": self.bin, "HOME": "/h", "PWD": self.cwd},
+                                         "after": int(OLD_PID)})
         self.assertEqual(fake.mode, 0o600)
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_no_pid_no_after(self):
+        """tmux (3.7) prints an empty #{pane_pid} for a missing session: nothing to wait for; respawn-pane fails."""
+        for out in ("\n", "x\n", "0\n"):
+            with self.subTest(out=out):
+                fake = Tmux(results={"display-message": (0, out, "")})
+                self.respawn(fake)
+                self.assertNotIn("after", fake.handover)
+
+    def test_a_failed_pid_read(self):
+        fake = Tmux()
+        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: no server running$"):
+            self.respawn(fake)
+        self.assertEqual(fake.calls, [PANE_PID])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_cwd_never_reaches_tmux(self):
         self.cwd = os.path.join(self.root, "#(x)#{y}")
         os.makedirs(self.cwd)
-        fake = Tmux()
+        fake = Tmux(pane=OLD_PID)
         self.respawn(fake)
         self.assertEqual(fake.handover["cwd"], self.cwd)
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
@@ -565,14 +598,14 @@ class Respawn(unittest.TestCase):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_a_failed_respawn(self):
-        fake = Tmux(fail={"clear-history"})
+        fake = Tmux(pane=OLD_PID, fail={"clear-history"})
         with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
             self.respawn(fake)
-        self.assertEqual(fake.commands(), ["clear-history"])
+        self.assertEqual(fake.commands(), ["display-message", "clear-history"])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_wrapper_never_reads(self):
-        fake = Tmux(hand_over=False)
+        fake = Tmux(pane=OLD_PID, hand_over=False)
         with self.assertRaisesRegex(tui_claude.TuiError, r"^the pane did not respawn$"):
             self.respawn(fake)
         self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui_claude.HANDOVER_TIMEOUT)
@@ -699,6 +732,82 @@ class WithHooks(unittest.TestCase):
                 tui_claude.with_hooks(argv)
         with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
             tui_claude.with_hooks([])
+
+
+MARK_KW = {**TMUX_KW, "timeout": 5}
+
+
+class Mark(unittest.TestCase):
+    """hooks()' event protocol written from Python: the pane's @state, and done or blocked lines in the events file."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.events = os.path.join(self.root, "events")
+        with open(self.events, "w") as f:
+            f.write("old\n")
+        self.enterContext(environ(TMUX_PANE="%1"))
+
+    def text(self):
+        with open(self.events) as f:
+            return f.read()
+
+    def test_working_sets_the_state_only(self):
+        fake = Tmux(pane="w1")
+        tui_claude.mark("working", self.events, proc=fake)
+        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", "working"]])
+        self.assertEqual(fake.kwargs, [MARK_KW])
+        self.assertEqual(self.text(), "old\n")
+
+    def test_done_and_blocked_set_the_state_and_append_a_line_through_the_given_tmux(self):
+        for word in ("done", "blocked"):
+            with self.subTest(word):
+                fake = Tmux(pane="w1")
+                tui_claude.mark(word, self.events, pane="%2", tmux=TMUX, proc=fake)
+                self.assertEqual(fake.calls, [[TMUX, "set-option", "-t", "%2", "@state", word],
+                                              [TMUX, "display-message", "-p", "-t", "%2", "#S"]])
+                self.assertEqual(fake.kwargs, [MARK_KW] * 2)
+        self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n\d\d:\d\d:\d\d w1 blocked\n$")
+
+    def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
+        fake = Tmux(pane="w1")
+        tui_claude.mark("done", self.events, proc=fake)
+        self.assertEqual([c[c.index("-t") + 1] for c in fake.calls], ["%1", "%1"])
+        for env in ({}, {"TMUX_PANE": ""}):
+            with self.subTest(env=env), environ(**env):
+                fake = Tmux(pane="w1")
+                tui_claude.mark("done", self.events, proc=fake)
+                self.assertEqual(fake.calls, [])
+        self.assertEqual(len(self.text().splitlines()), 2)
+
+    def test_refuses_an_events_file_not_a_regular_file_of_the_callers(self):
+        link = os.path.join(self.root, "link")
+        os.symlink(self.events, link)
+        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
+        for path, patches, error in ((link, (), ""), (self.root, (), ""),
+                                     (os.path.join(self.root, "missing"), (), "No such file"),
+                                     (self.events, ("os.getuid", os.getuid() + 1), "owned by you"),
+                                     (self.events, ("os.fstat", fifo), "owned by you")):
+            with self.subTest(path=path, error=error), ExitStack() as stack, \
+                    self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: .*{error}"):
+                if patches:
+                    stack.enter_context(unittest.mock.patch(patches[0], return_value=patches[1]))
+                tui_claude.mark("done", path, proc=Tmux(pane="w1"))
+        self.assertEqual(self.text(), "old\n")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "missing")))
+
+    def test_a_failed_tmux_call_or_bad_value_raises_writing_no_line(self):
+        timeout = subprocess.TimeoutExpired(["tmux"], 5)
+        cases = ((Tmux(pane="w1", fail={"set-option"}), {}, "^tmux: boom$"),
+                 (Tmux(), {}, "^tmux: no server running$"),
+                 (Tmux(results={"set-option": timeout}), {}, "^tmux: timed out after 5 s$"),
+                 (Tmux(results={"display-message": FileNotFoundError(2, "No such file")}), {}, "^tmux: "),
+                 (Tmux(pane="a b"), {}, "^tmux session 'a b'"),
+                 (Tmux(pane="w1"), {"pane": "w1:0"}, "^bad tmux pane 'w1:0'$"))
+        for fake, kw, error in cases:
+            with self.subTest(error=error), self.assertRaisesRegex(tui_claude.TuiError, error):
+                tui_claude.mark("done", self.events, proc=fake, **kw)
+        self.assertEqual(self.text(), "old\n")
 
 
 class EventsFile(unittest.TestCase):
@@ -2575,6 +2684,28 @@ class SingleFile(unittest.TestCase):
             self.assertIn(word, res.stdout)
 
 
+# a program printing whether process argv[1] is alive (kill 0)
+ALIVE = """import os, sys
+try: os.kill(int(sys.argv[1]), 0)
+except OSError: print('gone')
+else: print('alive')"""
+# time.sleep and time.monotonic of a process faked: a nap advances the clock, printing its seconds on stderr
+FAKE_CLOCK = """import os, time
+now = [time.monotonic()]
+def nap(seconds):
+    now[0] += seconds
+    os.write(2, b'%r\\n' % seconds)
+time.sleep, time.monotonic = nap, lambda: now[0]
+"""
+# open() of a process faked for one path: PROC_PATH reads PROC_STAT (Linux's /proc/<pid>/stat)
+FAKE_PROC = """import builtins, io
+real_open = builtins.open
+def fake_open(path, *args, **kwargs):
+    return io.BytesIO(PROC_STAT) if path == PROC_PATH else real_open(path, *args, **kwargs)
+builtins.open = fake_open
+"""
+
+
 class Exec(unittest.TestCase):
     def test_safe_for_tmux(self):
         self.assertNotIn("#", tui_claude.EXEC)
@@ -2586,12 +2717,22 @@ class Exec(unittest.TestCase):
         self.root = os.path.realpath(tmp.name)
         self.path = os.path.join(self.root, "handover.json")
 
-    def run_exec(self, argv, env, cwd, pane, **extra):
-        """The wrapper as tmux runs it, given a handover file naming argv."""
+    def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
+        """The wrapper as tmux runs it, given a handover file naming argv; `prelude` runs before it."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
-        return subprocess.run([sys.executable, "-I", "-c", tui_claude.EXEC, self.path], env=pane, capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL, timeout=30)
+        return subprocess.run([sys.executable, "-I", "-c", prelude + tui_claude.EXEC, self.path], env=pane,
+                              capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+
+    def child(self, seconds):
+        """A process of ours that sleeps `seconds`, reaped by a thread as it ends (a zombie still answers kill 0);
+        killed at cleanup. Returns it and the reaping thread."""
+        proc = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({seconds})"], stdin=subprocess.DEVNULL)
+        reaper = threading.Thread(target=proc.wait)
+        reaper.start()
+        self.addCleanup(reaper.join)
+        self.addCleanup(lambda: proc.returncode is None and proc.kill())
+        return proc, reaper
 
     def test_runs_the_handover(self):
         cwd = os.path.join(self.root, "cwd")
@@ -2616,6 +2757,54 @@ class Exec(unittest.TestCase):
                 res = self.run_exec([sys.executable, "-c", code], {}, self.root, {}, **extra)
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertEqual(set(json.loads(res.stdout)) & {signal.SIGHUP, signal.SIGTERM}, want)
+
+    def test_waits_for_the_old_process_to_end_after_taking_the_handover(self):
+        """respawn's `after`: argv runs once that process is gone; the handover file goes first, so respawn returns."""
+        old, reaper = self.child(1)
+        with open(self.path, "w") as f:
+            json.dump({"argv": [sys.executable, "-c", ALIVE, str(old.pid)], "env": {}, "cwd": self.root,
+                       "after": old.pid}, f)
+        wrapper = subprocess.Popen([sys.executable, "-I", "-c", tui_claude.EXEC, self.path], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
+        self.addCleanup(lambda: wrapper.returncode is None and wrapper.kill())
+        deadline = time.monotonic() + 5
+        while os.path.exists(self.path) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(os.path.exists(self.path))
+        self.assertIsNone(old.returncode)
+        out, err = wrapper.communicate(timeout=30)
+        self.assertEqual((wrapper.returncode, out), (0, "gone\n"), err)
+        reaper.join(timeout=5)
+        self.assertIsNotNone(old.returncode)
+
+    def test_gives_up_after_respawn_wait(self):
+        """A process outliving the wait: argv runs anyway, after RESPAWN_WAIT s of naps (time.sleep and
+        time.monotonic faked in the wrapper's process); no `after`, or one already gone: no nap."""
+        old, _ = self.child(60)
+        gone, reaper = self.child(0)
+        reaper.join(timeout=10)
+        for extra, naps, state in (({"after": old.pid}, tui_claude.RESPAWN_WAIT, "alive"), ({}, 0, "gone"),
+                                   ({"after": gone.pid}, 0, "gone")):
+            with self.subTest(**extra):
+                pid = extra.get("after", gone.pid)
+                res = self.run_exec([sys.executable, "-c", ALIVE, str(pid)], {}, self.root, {}, prelude=FAKE_CLOCK,
+                                    **extra)
+                self.assertEqual((res.returncode, res.stdout), (0, f"{state}\n"), res.stderr)
+                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
+        self.assertIsNone(old.returncode)
+
+    def test_a_zombie_ends_the_wait(self):
+        """Where /proc/<pid>/stat exists, state Z (the field after the last `)`) counts as gone: it has exited and
+        released its locks, only not yet reaped."""
+        old, _ = self.child(60)
+        for stat_line, naps in ((b"%d (python3) Z 1 1 1" % old.pid, 0),
+                                 (b"%d (a) Z (b) S 1 1 1" % old.pid, tui_claude.RESPAWN_WAIT)):
+            with self.subTest(stat=stat_line):
+                prelude = f"PROC_PATH, PROC_STAT = {f'/proc/{old.pid}/stat'!r}, {stat_line!r}\n{FAKE_PROC}{FAKE_CLOCK}"
+                res = self.run_exec([sys.executable, "-c", ALIVE, str(old.pid)], {}, self.root, {}, prelude=prelude,
+                                    after=old.pid)
+                self.assertEqual((res.returncode, res.stdout), (0, "alive\n"), res.stderr)
+                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
 
     def test_default_signal_dispositions(self):
         for sig in (signal.SIGPIPE, signal.SIGXFSZ):

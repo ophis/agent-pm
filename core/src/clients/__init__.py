@@ -1,12 +1,16 @@
 """Clients: one module per agent client, turning a composed agent run into its launch command."""
 import importlib
+import os
 import re
+import sys
 import tomllib
+from collections.abc import Mapping
 from types import ModuleType
 
-from compose import ConfigError, catalog as role_catalog
+from compose import CONFIG, ConfigError, catalog as role_catalog
 
-from .base import PROGRESS, Access, Client, Event, Launch, load_config  # noqa: F401
+from .base import (PROGRESS, Access, Client, Event, Launch, WorkerCommand, WorkerSpec, client_tables,  # noqa: F401
+                   lines_back, load_config)
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
@@ -59,3 +63,31 @@ def catalog(name: str, root: str, team=None) -> dict[str, dict[str, str]]:
     """The roles and tasks available to a selected, configured client; `team` as compose.catalog's."""
     get(name, root)
     return role_catalog(root, team)
+
+
+def configured(root: str) -> list[str]:
+    """The [clients.<name>] names of <root>/config.toml with repo.LOCAL on top, sorted."""
+    try:
+        return sorted(client_tables(root))
+    except (OSError, tomllib.TOMLDecodeError) as e:
+        raise ConfigError(f"core config {os.path.join(root, CONFIG)}: {e}") from e
+
+
+def loaded(root: str) -> dict[str, type[Client]]:
+    """The class of each configured client; one whose definition fails is left out, with one stderr line."""
+    classes = {}
+    for name in configured(root):
+        try:
+            classes[name] = definition(name, root)[0]
+        except ConfigError as e:
+            print(f"clients: {name} skipped: {e}", file=sys.stderr)
+    return classes
+
+
+def caller(env: Mapping[str, str], classes: Mapping[str, type[Client]]) -> str | None:
+    """The manager client: the one of classes whose session marker (Client.session_env) env holds; None: none."""
+    found = [(name, cls.session_env) for name, cls in classes.items() if cls.session_env and cls.session_env in env]
+    if len(found) > 1:
+        raise ConfigError("the caller runs inside more than one client's session "
+                          f"({', '.join(f'{name}: {key}' for name, key in found)}): pass --client")
+    return found[0][0] if found else None

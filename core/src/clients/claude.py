@@ -1,15 +1,21 @@
 """Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config.toml. The run
 reports progress and its outcome with the driver's report command; its stream-json output gives only the text to show.
+A crew.py worker is an interactive `claude` whose tui_claude hooks write its events.
 """
+import glob
 import json
 import os
 import re
 import shlex
+import shutil
 from collections.abc import Iterable, Iterator
+from types import MappingProxyType
 
+import manager
+import tui_claude
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
-from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo
+from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo, WorkerCommand, WorkerSpec, lines_back
 
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +24,8 @@ APPROVAL = (": pre-approved commands match on their exact text and each shell ca
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # This core's own plugin (<plugin>@<marketplace>): agent runs load the user's plugins (--setting-sources user), not it.
 PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
+# Flags that make claude pick the session: crew.py picks a worker's.
+REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 
 
 def resume(cwd: str, sid: str, workdir: str) -> str:
@@ -27,6 +35,11 @@ def resume(cwd: str, sid: str, workdir: str) -> str:
     return cmd if os.path.realpath(cwd) == os.path.realpath(workdir) else f"{cmd} --add-dir {q(workdir)}"
 
 
+def config_dir() -> str:
+    """Claude Code's config dir: $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+
+
 def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
     """Where Claude Code saves session `sid` started in `cwd`."""
     return os.path.join(projects, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)), f"{sid}.jsonl")
@@ -34,6 +47,11 @@ def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
 
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
+    session_env = "CLAUDECODE"
+    command_env = MappingProxyType(dict.fromkeys((
+        *tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")))
 
     def session_info(self, workdir: str, sid: str) -> SessionInfo:
         """Claude can resume by run ID; this core does not inspect Claude's native file here."""
@@ -100,6 +118,59 @@ class ClaudeClient(Client):
             for block in content if isinstance(content, list) else ():
                 if isinstance(block, dict) and block.get("type") == "text":
                     yield from (Event("text", t) for t in block.get("text", "").splitlines() if t.strip())
+
+    def worker(self, spec: WorkerSpec) -> WorkerCommand:
+        for flag in spec.flags:
+            if flag == "--":
+                break
+            word = flag.split("=", 1)[0] if flag.startswith("--") else flag
+            if word in REFUSED:
+                raise ConfigError(f"{word}: crew.py picks the session; use start --resume <sid>")
+        exe = spec.exe
+        if exe is None:
+            exe = shutil.which("claude", path=spec.env.get("PATH"))
+            if exe is None:
+                raise ConfigError("claude not found on PATH")
+            exe = os.path.abspath(exe)
+        argv = [exe, "--resume" if spec.resume else "--session-id", spec.sid, "--name", spec.name, *spec.flags,
+                *(["--", spec.prompt] if spec.prompt else [])]
+        try:
+            return WorkerCommand(tui_claude.with_hooks(argv, spec.events))
+        except tui_claude.TuiError as e:
+            raise ConfigError(str(e)) from e
+
+    def worker_reply(self, sid: str) -> str:
+        """The text blocks of session sid's last text-bearing assistant message, joined by newlines; its transcript
+        read from its end back to that message's first record."""
+        if not manager.SID.fullmatch(sid):
+            raise ConfigError(f"bad session id {sid!r}")
+        found = glob.glob(os.path.join(glob.escape(config_dir()), "projects", "*", sid + ".jsonl"))
+        if not found:
+            raise ConfigError(f"no transcript for {sid}: started with a leaked Claude Code variable?")
+        last, texts = None, []
+        try:
+            with open(found[0], "rb") as f:
+                for raw in lines_back(f):
+                    try:
+                        entry = json.loads(raw.decode("utf-8", errors="replace"))
+                        message = entry["message"]
+                        content = message["content"]
+                        if entry["type"] != "assistant" or not isinstance(content, list):
+                            continue
+                        blocks = [b["text"] for b in content if b["type"] == "text"]
+                        mid = message.get("id") or object()   # no id: a message of its own
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        continue
+                    if last is None:
+                        if blocks:
+                            last, texts = mid, blocks
+                    elif mid != last:
+                        break
+                    else:
+                        texts = blocks + texts
+        except OSError as e:
+            raise ConfigError(f"transcript {found[0]}: {e.strerror}") from e
+        return "\n".join(texts)
 
 
 RUNS = ClaudeClient.runs

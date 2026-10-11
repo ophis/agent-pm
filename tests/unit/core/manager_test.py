@@ -771,6 +771,24 @@ class RosterTest(unittest.TestCase):
                 self.assertEqual(got[:4], ["/usr/bin/python3", crew, "start", "w1"])
                 self.assertEqual(e["resume"], resume)
 
+    def test_recovery_names_the_legacy_client_of_a_worker_resume_without_one(self):
+        """Only a worker's resume with no --client before a bare `--` gets `--client claude` after its name."""
+        head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
+        rest = ["--manager", "m", "--resume", SID, "--cwd", "/w"]
+        legacy = [*head, "--client", manager.LEGACY_CLIENT, *rest]
+        cases = [("worker", [*head, *rest], legacy),
+                 ("worker", [*head, *rest, "--", "--client", "x"], [*legacy, "--", "--client", "x"]),
+                 ("worker", [*head, "--client", "other", *rest], [*head, "--client", "other", *rest]),
+                 ("pipeline", [*head, *rest], [*head, *rest]),
+                 ("role", [*head, *rest], [*head, *rest, "--sid", SID, "--resume", "--input",
+                                           "Continue the unfinished task."])]
+        self.assertEqual(manager.LEGACY_CLIENT, "claude")
+        for kind, resume, want in cases:
+            with self.subTest(kind=kind, resume=resume):
+                e = good(kind=kind, resume=list(resume))
+                self.assertEqual(manager.recovery(e), want)
+                self.assertEqual(e["resume"], resume)
+
     def test_printable(self):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):
             with self.subTest(text=text):

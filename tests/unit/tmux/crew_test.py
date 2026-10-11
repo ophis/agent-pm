@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -13,11 +14,16 @@ import sys
 import tempfile
 import unittest
 import uuid
+from types import MappingProxyType
 from unittest import mock
 
 from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
 import crew
+from clients.claude import ClaudeClient
+from clients.codex import CodexClient
 
+clients = crew.clients
 manager = crew.manager
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
@@ -31,6 +37,8 @@ DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
 CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
+MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")   # the configured clients' session markers (Client.session_env)
+NAMES = "BETA_CI, NO_COLOR"   # the names --env may set with extra_clients
 
 
 def executable(path, text):
@@ -40,8 +48,10 @@ def executable(path, text):
 
 
 def isolate(case):
-    """Outside tmux and iTerm2, so the show finds no pane and runs nothing; its stderr lines stay out of the output."""
-    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM")}
+    """Outside tmux and iTerm2, so the show finds no pane and runs nothing, and outside any client's session; its
+    stderr lines stay out of the output."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM", *MARKERS)}
     for p in (mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO())):
         p.__enter__()
         case.addCleanup(p.__exit__, None, None, None)
@@ -86,6 +96,40 @@ def local(case, text):
     """Core config's local file for the rest of `case`'s test."""
     with open(os.path.join(hermetic.home(case), "core.local.toml"), "w") as f:
         f.write(text)
+
+
+class Alpha(clients.Client):
+    """A test client with the worker capability: `alpha` on the spec's PATH, its env ALPHA_HOME; session marker
+    ALPHA_SESSION, identity key ALPHA_ID, injected default NO_COLOR=1; one dialog text."""
+    needs_config = False
+    session_env = "ALPHA_SESSION"
+    command_env = MappingProxyType({"ALPHA_SESSION": None, "ALPHA_ID": None, "NO_COLOR": "1"})
+    worker_dialogs = ("Trust alpha?",)
+
+    def worker(self, spec):
+        exe = spec.exe or os.path.abspath(shutil.which("alpha", path=spec.env["PATH"]))
+        return clients.WorkerCommand([exe, "--resume" if spec.resume else "--new", spec.sid, *spec.flags,
+                                      *([spec.prompt] if spec.prompt else [])], {"ALPHA_HOME": "/alpha"})
+
+    def worker_reply(self, sid):
+        return f"alpha's answer in {sid}"
+
+
+class Beta(clients.Client):
+    """A test client without the worker capability: session marker BETA_SESSION, injected default BETA_CI=1."""
+    needs_config = False
+    session_env = "BETA_SESSION"
+    command_env = MappingProxyType({"BETA_SESSION": None, "BETA_CI": "1"})
+
+
+@contextlib.contextmanager
+def extra_clients():
+    """The configured clients are claude, alpha and beta (clients.loaded); clients.get builds alpha and beta."""
+    get, extra = clients.get, {"alpha": Alpha, "beta": Beta}
+    with mock.patch.object(clients, "loaded", return_value={"claude": ClaudeClient, **extra}), \
+            mock.patch.object(clients, "get", side_effect=lambda name, root: extra[name]({}) if name in extra
+                              else get(name, root)):
+        yield
 
 
 class Fake:
@@ -171,7 +215,7 @@ class StartTest(unittest.TestCase):
         self.events = os.path.join(self.directory, "events")
         self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h",
                     "CLAUDE_JOB_DIR": "/j"}
-        for k in crew.STRIP:
+        for k in ClaudeClient.command_env:
             self.env[k] = "x"
         spy = mock.patch.object(tui_claude, "start", wraps=tui_claude.start)
         self.tui = spy.start()
@@ -193,21 +237,24 @@ class StartTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(crew.CORE, ".claude-plugin", "plugin.json")))
 
     def test_tui_claude_call(self):
+        """The client's command, its hooks its own (claude_hooks=False)."""
         fake = Fake()
         sid = self.start(fake, prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
-        argv = [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"]
-        env = {k: v for k, v in self.env.items() if k not in crew.STRIP}
+        argv = tui_claude.with_hooks([self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"],
+                                     self.events)
+        env = {k: v for k, v in self.env.items() if k not in ClaudeClient.command_env}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         split_from=None, per_column=None, retile=None, status_line=False, proc=fake)
-        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(argv, self.events))
+                                         split_from=None, per_column=None, retile=None, status_line=False,
+                                         claude_hooks=False, proc=fake)
+        self.assertEqual(fake.handover["argv"], argv)
 
     def test_resume(self):
         fake = Fake()
         sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
         self.assertEqual(sid, SID)
-        self.assertEqual(self.tui.call_args.args[1],
-                         [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"])
+        self.assertEqual(self.tui.call_args.args[1], tui_claude.with_hooks(
+            [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"], self.events))
         self.assertEqual(fake.handover["argv"][1:3], ["--settings", tui_claude.hooks(self.events)])
         self.assertEqual(fake.options()["@sid"], SID)
 
@@ -222,16 +269,17 @@ class StartTest(unittest.TestCase):
             with self.subTest(**kw):
                 fake = Fake()
                 sid = self.start(fake, **kw)
-                self.assertEqual(self.tui.call_args.args[1], [self.claude, "--session-id", sid, "--name", "w1", *tail])
+                self.assertEqual(self.tui.call_args.args[1], tui_claude.with_hooks(
+                    [self.claude, "--session-id", sid, "--name", "w1", *tail], self.events))
                 self.assertEqual(json.loads(fake.options()["@flags"]), list(kw.get("flags", ())))
 
     def test_env_cwd_in_the_handover(self):
-        """The env minus STRIP, its PWD the cwd."""
+        """The env minus claude's context variables, its PWD the cwd."""
         fake = Fake()
         self.start(fake, env={**self.env, "PWD": "/elsewhere"})
         self.assertEqual(fake.handover["cwd"], self.dir)
         env = fake.handover["env"]
-        for k in (*crew.STRIP, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
+        for k in (*ClaudeClient.command_env, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
             self.assertNotIn(k, env)
         self.assertEqual({k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME", "PWD")},
                          {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h", "PWD": self.dir})
@@ -250,12 +298,13 @@ class StartTest(unittest.TestCase):
         fake = Fake()
         sid = self.start(fake, flags=("--model", "m"), prompt="p")
         opts = fake.options()
-        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@claude", "@flags", "status"})
+        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@client", "@exe", "@flags", "@env", "status"})
         self.assertEqual(opts["@sid"], sid)
         self.assertEqual(opts["@cwd"], self.dir)
         self.assertEqual(opts["@events"], self.events)
-        self.assertEqual(opts["@claude"], self.claude)
+        self.assertEqual((opts["@client"], opts["@exe"]), ("claude", self.claude))
         self.assertEqual(json.loads(opts["@flags"]), ["--model", "m"])
+        self.assertEqual(json.loads(opts["@env"]), {})
         for c in fake.calls:
             if c[1] == "set-option" and c[2] == "-t":
                 self.assertEqual(c[:4], ["tmux", "set-option", "-t", "=w1:"])
@@ -390,6 +439,14 @@ class StartTest(unittest.TestCase):
                     self.start(fake)
                 self.assertEqual(fake.calls, [])
 
+    def test_a_broken_extra_client_skipped_with_its_stderr_line(self):
+        local(self, '[clients.extra]\nimplementation = "ExtraClient"\n')
+        fake, err = Fake(), io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start(fake)
+        self.assertIn("clients: extra skipped: client 'extra' has no module clients.extra\n", err.getvalue())
+        self.assertEqual(fake.options()["@client"], "claude")
+
     def test_layout_passed_through(self):
         for kw in ({}, {"split_from": "x"}, {"split": "below"}, {"split_from": "x", "split": "right"}):
             with self.subTest(**kw):
@@ -486,7 +543,7 @@ class EarlyDeathTest(WorkerCase):
         self.interleaved(fake)
         self.started(fake)
         last = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option")
-        self.assertEqual(fake.calls[last][:5], ["tmux", "set-option", "-t", "=w1:", "@flags"])
+        self.assertEqual(fake.calls[last][:5], ["tmux", "set-option", "-t", "=w1:", "@env"])
         self.assertEqual(fake.calls[last + 1:],
                          [["tmux", "list-sessions", "-F", crew.LIVE], *[["sleep", 0.5], status_call()] * 10])
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
@@ -560,10 +617,11 @@ class EarlyDeathTest(WorkerCase):
 
 class RestartTest(WorkerCase):
     def test_respawns_through_the_handover(self):
-        """With the caller's env minus STRIP, its PWD the worker's cwd; the command printed on stderr and returned."""
+        """With the caller's env minus claude's context variables, its PWD the worker's cwd; the command printed on
+        stderr and returned."""
         fake = Fake()
         sid = self.started(fake)
-        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in crew.STRIP}}
+        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in ClaudeClient.command_env}}
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             cmd = crew.restart("w1", env=caller, proc=fake)
@@ -578,7 +636,7 @@ class RestartTest(WorkerCase):
         self.assertEqual(shlex.split(cmd), resumed)
         self.assertEqual(err.getvalue(), cmd + "\n")
         for k in ("CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
-            self.assertIn(k, crew.STRIP)
+            self.assertIn(k, ClaudeClient.command_env)
 
     def test_own_settings_merged_with_the_hooks(self):
         own = {"type": "command", "command": "mine"}
@@ -635,14 +693,18 @@ class RestartTest(WorkerCase):
                 self.assertIsNone(fake.handover)
 
     def test_missing_or_corrupt_options_not_a_worker(self):
-        """The options any same-user process can change, each checked as read back; none: never a worker."""
+        """The options any same-user process can change, each checked as read back (bad None: unset); none: never a
+        worker."""
         for key, bad in ((None, None), ("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
-                         ("@sid", ""), ("@claude", ""), ("@cwd", ""), ("@events", "")):
+                         ("@sid", ""), ("@client", ""), ("@exe", ""), ("@exe", None), ("@cwd", ""), ("@events", ""),
+                         ("@env", ""), ("@env", None), ("@env", "[]"), ("@env", '{"NO_COLOR": 1}')):
             with self.subTest(key=key, bad=bad):
                 fake = Fake()
                 self.started(fake)
                 if key is None:
                     fake.store.clear()
+                elif bad is None:
+                    del fake.store[key]
                 else:
                     fake.store[key] = bad
                 with self.assertRaisesRegex(crew.WorkersError, "w1: not a worker"):
@@ -654,6 +716,283 @@ class RestartTest(WorkerCase):
         with self.assertRaises(crew.WorkersError):
             crew.restart("a b", env=self.env, proc=fake)
         self.assertEqual(fake.calls, [])
+
+
+class ClientTest(WorkerCase):
+    """The worker's client: --client, else the one whose session marker the caller's env holds, else claude; the
+    environment policy and --env; with the test clients (extra_clients)."""
+
+    def setUp(self):
+        super().setUp()
+        self.alpha = os.path.join(self.bin, "alpha")
+        executable(self.alpha, "#!/bin/sh\n")
+        p = extra_clients()
+        p.__enter__()
+        self.addCleanup(p.__exit__, None, None, None)
+
+    def start(self, fake, env=(), **kw):
+        return crew.start("w1", self.directory, own=None, cwd=self.dir, env={**self.env, **dict(env)}, proc=fake,
+                          **kw)
+
+    def fails(self, fake, env=(), **kw):
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.start(fake, env, **kw)
+        return str(cm.exception)
+
+    def test_the_default_is_the_callers_client_else_claude(self):
+        for env, client, exe in (({}, "claude", self.claude), ({"CLAUDECODE": "1"}, "claude", self.claude),
+                                 ({"ALPHA_SESSION": "a"}, "alpha", self.alpha),
+                                 ({"ALPHA_SESSION": ""}, "alpha", self.alpha)):
+            with self.subTest(env=env):
+                fake = Fake()
+                self.start(fake, env)
+                self.assertEqual((fake.options()["@client"], fake.options()["@exe"]), (client, exe))
+                self.assertEqual(fake.handover["argv"][0], exe)
+
+    def test_client_overrides_the_default_both_ways(self):
+        for env, client, exe in (({"ALPHA_SESSION": "a"}, "claude", self.claude),
+                                 ({"CLAUDECODE": "1"}, "alpha", self.alpha),
+                                 ({"CLAUDECODE": "1", "ALPHA_SESSION": "a"}, "alpha", self.alpha)):
+            with self.subTest(env=env, client=client):
+                fake = Fake()
+                self.start(fake, env, client=client)
+                self.assertEqual((fake.options()["@client"], fake.handover["argv"][0]), (client, exe))
+
+    def test_two_markers_without_client_start_nothing(self):
+        fake = Fake()
+        self.assertEqual(self.fails(fake, {"CLAUDECODE": "1", "ALPHA_SESSION": "a"}),
+                         "the caller runs inside more than one client's session (claude: CLAUDECODE, alpha: "
+                         "ALPHA_SESSION): pass --client")
+        self.assertEqual(fake.calls, [])
+
+    def test_an_unknown_inline_only_or_workerless_client_starts_nothing(self):
+        for env, kw, msg in (({}, {"client": "nope"}, "client 'nope' has no module clients.nope"),
+                             ({}, {"client": "skill"}, "SkillClient has no worker command"),
+                             ({}, {"client": "beta"}, "Beta has no worker command"),
+                             ({"BETA_SESSION": "b"}, {}, "Beta has no worker command")):
+            with self.subTest(env=env, **kw):
+                fake = Fake()
+                self.assertEqual(self.fails(fake, env, **kw), msg)
+                self.assertEqual(fake.calls, [])
+
+    def test_every_clients_identity_keys_dropped_an_injected_default_only_with_its_marker(self):
+        """Whichever the worker's client: each loaded client's identity keys go; NO_COLOR=1 (alpha's injected default)
+        goes only with ALPHA_SESSION present, BETA_CI=1 only with BETA_SESSION; another value stays."""
+        caller = {"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "ALPHA_ID": "i", "KEEP": "k"}
+        watched = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ALPHA_SESSION", "ALPHA_ID", "BETA_SESSION", "NO_COLOR",
+                   "BETA_CI", "KEEP")
+        cases = (({"ALPHA_SESSION": "a", "NO_COLOR": "1", "BETA_CI": "1"}, {"BETA_CI": "1"}),
+                 ({"NO_COLOR": "1", "BETA_CI": "1"}, {"NO_COLOR": "1", "BETA_CI": "1"}),
+                 ({"ALPHA_SESSION": "a", "NO_COLOR": "0"}, {"NO_COLOR": "0"}),
+                 ({"BETA_SESSION": "b", "BETA_CI": "1", "NO_COLOR": "1"}, {"NO_COLOR": "1"}))
+        for client in ("claude", "alpha"):
+            for extra, kept in cases:
+                with self.subTest(client=client, env=extra):
+                    fake = Fake()
+                    self.start(fake, {**caller, **extra}, client=client)
+                    env = fake.handover["env"]
+                    self.assertEqual({k: env[k] for k in watched if k in env}, {"KEEP": "k", **kept})
+                    self.assertEqual(env.get("ALPHA_HOME"), "/alpha" if client == "alpha" else None)
+
+    def test_the_clients_env_then_the_overrides_after_the_policy(self):
+        classes = {"claude": ClaudeClient, "alpha": Alpha}
+        env = {"ALPHA_SESSION": "a", "NO_COLOR": "1", "CLAUDE_PID": "1", "KEEP": "k"}
+        self.assertEqual(crew._environment(env, classes, {"NO_COLOR": "c", "C": "c"}, {"NO_COLOR": "o"}),
+                         {"KEEP": "k", "C": "c", "NO_COLOR": "o"})
+
+    def test_env_sets_a_client_declared_default(self):
+        fake = Fake()
+        self.start(fake, {"ALPHA_SESSION": "a", "NO_COLOR": "1"}, client="claude",
+                   overrides=("BETA_CI=", "NO_COLOR=0", "NO_COLOR=1"))
+        self.assertEqual({k: fake.handover["env"].get(k) for k in ("NO_COLOR", "BETA_CI")}, {"NO_COLOR": "1",
+                                                                                              "BETA_CI": ""})
+        self.assertEqual(json.loads(fake.options()["@env"]), {"BETA_CI": "", "NO_COLOR": "1"})
+
+    def test_env_refuses_another_name_or_a_bad_value_starting_nothing(self):
+        want = f"want NAME=VALUE, NAME one of {NAMES}"
+        for item, msg in (("HOME=x", f"--env HOME=x: {want}"), ("ALPHA_ID=1", f"--env ALPHA_ID=1: {want}"),
+                          ("NO_COLOR", f"--env NO_COLOR: {want}"), ("=1", f"--env =1: {want}"),
+                          ("NO_COLOR=a\nb", f"--env NO_COLOR: 'a\\nb': {UNPRINTABLE}")):
+            with self.subTest(item=item):
+                fake = Fake()
+                self.assertEqual(self.fails(fake, overrides=(item,)), msg)
+                self.assertEqual(fake.calls, [])
+
+    def test_options(self):
+        fake = Fake()
+        self.start(fake, client="alpha", flags=("--x", "y z"), overrides=("NO_COLOR=0",))
+        opts = fake.options()
+        self.assertEqual({k: opts[k] for k in ("@client", "@exe", "@flags", "@env")},
+                         {"@client": "alpha", "@exe": self.alpha, "@flags": '["--x", "y z"]',
+                          "@env": '{"NO_COLOR": "0"}'})
+
+    def test_restart_replays_the_client_its_exe_flags_and_env(self):
+        """The stored executable (not the caller's PATH), the caller's env through the policy, the client's env, then
+        @env."""
+        fake = Fake()
+        sid = self.start(fake, {"ALPHA_SESSION": "a"}, client="alpha", flags=("--x",), overrides=("NO_COLOR=0",))
+        caller = {"PATH": os.path.join(self.dir, "empty"), "ALPHA_SESSION": "a", "NO_COLOR": "1", "FOO": "1"}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cmd = crew.restart("w1", env=caller, proc=fake)
+        self.assertEqual(fake.handover["argv"], [self.alpha, "--resume", sid, "--x"])
+        self.assertEqual(fake.handover["env"], {"PATH": caller["PATH"], "FOO": "1", "ALPHA_HOME": "/alpha",
+                                                "NO_COLOR": "0", "PWD": self.dir})
+        self.assertEqual((cmd, err.getvalue()), (shlex.join(fake.handover["argv"]), cmd + "\n"))
+
+    def test_a_tampered_env_refused_on_restart(self):
+        for bad, msg in (('{"HOME": "/x"}', f"w1: @env: --env HOME=/x: want NAME=VALUE, NAME one of {NAMES}"),
+                         ('{"NO_COLOR": "a\\nb"}', f"w1: @env: --env NO_COLOR: 'a\\nb': {UNPRINTABLE}"),
+                         ('{"NO_COLOR": 1}', "w1: not a worker")):
+            with self.subTest(bad=bad):
+                fake = Fake()
+                self.start(fake, client="alpha")
+                fake.store["@env"] = bad
+                with self.assertRaises(crew.WorkersError) as cm:
+                    crew.restart("w1", env=self.env, proc=fake)
+                self.assertEqual(str(cm.exception), msg)
+                self.assertEqual(fake.respawns(), [])
+
+    def test_a_legacy_session_restarts_and_replies_as_claude(self):
+        """A session started before @client: @claude, no @env; claude whatever the caller's session."""
+        fake = Fake()
+        sid = self.start(fake, flags=("--model", "m"))
+        for key in ("@client", "@exe", "@env"):
+            del fake.store[key]
+        fake.store["@claude"] = self.claude
+        crew.restart("w1", env={**self.env, "ALPHA_SESSION": "a", "NO_COLOR": "1"}, proc=fake)
+        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
+            [self.claude, "--resume", sid, "--name", "w1", "--model", "m"], self.events))
+        self.assertNotIn("NO_COLOR", fake.handover["env"])
+        d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "-p")
+        os.makedirs(d)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            f.write(line("assistant", text("legacy")))
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.env["CLAUDE_CONFIG_DIR"]}):
+            self.assertEqual(crew.reply("w1", proc=fake), "legacy")
+        del fake.store["@claude"]
+        with self.assertRaisesRegex(crew.NotAWorker, "^w1: not a worker$"):
+            crew.restart("w1", env=self.env, proc=fake)
+
+    def test_reply_through_the_workers_client(self):
+        fake = Fake()
+        sid = self.start(fake, client="alpha")
+        self.assertEqual(crew.reply("w1", proc=fake), f"alpha's answer in {sid}")
+        for client, msg in (("beta", "Beta has no worker reply"), ("nope", "client 'nope' has no module clients.nope")):
+            with self.subTest(client=client):
+                fake.store["@client"] = client
+                with self.assertRaises(crew.WorkersError) as cm:
+                    crew.reply("w1", proc=fake)
+                self.assertEqual(str(cm.exception), msg)
+
+    def test_early_death_names_the_binary(self):
+        fake = Fake()
+        fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
+        self.assertEqual(self.fails(fake, client="alpha"), DEAD_MSG.replace("claude exited", "alpha exited"))
+
+    def test_a_dialog_on_the_screen_marks_the_pane_blocked(self):
+        """After the early watch, on start and restart: a text of the client's worker_dialogs on the visible pane."""
+        def display(argv):
+            return {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")
+        for run in ("start", "restart"):
+            with self.subTest(run=run):
+                fake = Fake(results={"display-message": display})
+                if run == "restart":
+                    self.start(fake, client="alpha")
+                open(self.events, "w").close()
+                fake.text = "Folder /w\n  Trust alpha? (y/n)\n"
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.start(fake, client="alpha") if run == "start" else crew.restart("w1", env=self.env, proc=fake)
+                self.assertEqual(fake.calls[-4:-1], [["tmux", "capture-pane", "-p", "-J", "-t", "=w1:"],
+                                                     ["tmux", "display-message", "-p", "-t", "=w1:", "#{pane_id}"],
+                                                     ["tmux", "set-option", "-t", "%7", "@state", "blocked"]])
+                self.assertEqual(err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?")
+                with open(self.events) as f:
+                    self.assertRegex(f.read(), r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 blocked\n\Z")
+
+    def test_a_dialog_text_matches_with_whitespace_collapsed(self):
+        """A dialog the client draws over lines of its own, indented."""
+        fake = Fake(results={"display-message": lambda argv: {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")})
+        open(self.events, "w").close()
+        fake.text = "Folder /w\n  Trust\n    alpha?  (y/n)\n"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.start(fake, client="alpha")
+        self.assertEqual(err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?")
+        self.assertIn(["tmux", "set-option", "-t", "%7", "@state", "blocked"], fake.calls)
+
+    def test_no_dialog_marks_nothing(self):
+        for client in ("alpha", "claude"):
+            with self.subTest(client=client):
+                fake = Fake()
+                fake.text = "Trust claude?\n"
+                self.start(fake, client=client)
+                self.assertNotIn("blocked", [c[-1] for c in fake.calls])
+                self.assertEqual(fake.calls[-1][1], "capture-pane" if client == "alpha" else "display-message")
+
+
+class CodexWorkerTest(WorkerCase):
+    """The configured clients (claude, codex, skill): Codex's session marker and context variables; a codex worker's
+    app-server the repo's fake codex (tests/integration/core/fake_codex.py), in a HOME of the test's own."""
+    INJECTED = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
+    IDENTITY = {k: "x" for k in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
+                                 "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")}
+
+    def setUp(self):
+        super().setUp()
+        hermetic.home(self)
+        fake_codex.install(self.bin)
+        executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\nexit 1\n")
+        scenario = os.path.join(self.dir, "scenario.json")
+        with open(scenario, "w") as f:
+            f.write("{}")
+        self.env[fake_codex.ENV] = scenario
+        self.cwd = os.path.join(self.dir, "project")
+        os.mkdir(self.cwd)
+
+    def start(self, fake, env=(), **kw):
+        return crew.start("w1", self.directory, own=None, cwd=self.cwd, env={**self.env, **dict(env)}, proc=fake,
+                          **kw)
+
+    def test_the_codex_marker_makes_a_codex_worker(self):
+        fake = Fake()
+        self.start(fake, {"CODEX_THREAD_ID": "t", "CLAUDE_PID": "1"})
+        codex = os.path.join(self.bin, "codex")
+        self.assertEqual((fake.options()["@client"], fake.options()["@exe"]), ("codex", codex))
+        self.assertEqual(fake.handover["argv"][:4], [codex, "--no-daemon", "-C", self.cwd])
+        self.assertEqual(fake.handover["env"]["CODEX_HOME"], os.path.join(os.path.realpath(os.environ["HOME"]),
+                                                                          ".codex"))
+
+    def test_both_markers_without_client_start_nothing(self):
+        fake = Fake()
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.start(fake, {"CLAUDECODE": "1", "CODEX_THREAD_ID": "t"})
+        self.assertEqual(str(cm.exception), "the caller runs inside more than one client's session (claude: "
+                                            "CLAUDECODE, codex: CODEX_THREAD_ID): pass --client")
+        self.assertEqual(fake.calls, [])
+
+    def test_a_claude_worker_drops_codex_context_its_defaults_only_with_the_marker(self):
+        """Codex's identity keys always; its injected defaults with CODEX_THREAD_ID present; another value stays."""
+        no_marker = {k: v for k, v in self.IDENTITY.items() if k != "CODEX_THREAD_ID"}
+        for env, kept in (({**self.IDENTITY, **self.INJECTED}, {}), ({**no_marker, **self.INJECTED}, self.INJECTED),
+                          ({**self.IDENTITY, "NO_COLOR": "0", "PAGER": "less"}, {"NO_COLOR": "0", "PAGER": "less"})):
+            with self.subTest(env=env):
+                fake = Fake()
+                self.start(fake, env, client="claude")
+                child = fake.handover["env"]
+                self.assertEqual({k: child[k] for k in (*self.IDENTITY, *self.INJECTED) if k in child}, kept)
+                self.assertEqual(fake.options()["@client"], "claude")
+
+    def test_env_may_set_codex_defaults(self):
+        fake = Fake()
+        self.start(fake, {"CODEX_THREAD_ID": "t", **self.INJECTED}, client="claude", overrides=("NO_COLOR=1",))
+        self.assertEqual({k: fake.handover["env"].get(k) for k in self.INJECTED}, {**dict.fromkeys(self.INJECTED),
+                                                                                   "NO_COLOR": "1"})
+        with self.assertRaises(crew.WorkersError) as cm:
+            self.start(Fake(), overrides=("HOME=x",))
+        self.assertEqual(str(cm.exception), "--env HOME=x: want NAME=VALUE, NAME one of "
+                                            + ", ".join(sorted(k for k, v in CodexClient.command_env.items() if v)))
 
 
 def line(kind, *blocks, mid=None):
@@ -671,119 +1010,27 @@ TOOL = {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}
 
 
 class ReplyTest(WorkerCase):
-    def setUp(self):
-        super().setUp()
-        self.cfg = self.env["CLAUDE_CONFIG_DIR"]
-
-    def transcript(self, *lines, sid=SID, project="-p"):
-        d = os.path.join(self.cfg, "projects", project)
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
-            f.write("".join(lines))
+    """crew.py's part of a reply: the worker's session id and client; the transcript is the client's (drive_test.py ›
+    ClaudeWorker)."""
 
     def fake(self, sid=SID):
         fake = Fake()
         fake.store["@sid"] = sid
         return fake
 
-    def reply(self, fake=None, **kw):
-        return crew.reply("w1", proc=fake or self.fake(), config=self.cfg, **kw)
-
-    def test_the_last_text_bearing_assistant_message(self):
-        """Its text blocks, from each of its records (one id; none: a message of its own), other records between them
-        skipped; a line without its newline counts only when whole."""
-        cases = {
-            "the last assistant text wins": ((line("assistant", text("first")), line("user", text("q")),
-                                              line("assistant", text("a"), TOOL, text("b")), line("assistant", TOOL),
-                                              "not json\n", line("user", text("later"))), "a\nb"),
-            "blocks of one message joined": ((line("assistant", text("old"), mid="m0"),
-                                              line("assistant", text("a"), mid="m1"), line("assistant", TOOL, mid="m1"),
-                                              line("assistant", text("b"), mid="m1"),
-                                              line("assistant", TOOL, mid="m2")), "a\nb"),
-            "lines without id are own messages": ((line("assistant", text("a")), line("assistant", text("b"))), "b"),
-            "other records inside a message skipped": ((line("assistant", text("old"), mid="m0"),
-                                                        line("assistant", text("a"), mid="m1"),
-                                                        line("user", text("result")), "not json\n",
-                                                        line("assistant", text("b"), mid="m1")), "a\nb"),
-            "a cut last line": ((line("assistant", text("a"), mid="m1"),
-                                 line("assistant", text("cut"), mid="m2")[:-10]), "a"),
-            "a whole last line without its newline": ((line("assistant", text("a"), mid="m1"),
-                                                       line("assistant", text("whole"), mid="m2").rstrip("\n")),
-                                                      "whole"),
-            "none yet": ((line("user", text("q")), line("assistant", TOOL)), ""),
-            "empty": ((), ""),
-            "blank lines": (("\n", "\n"), ""),
-            "no text, a fragment last": ((line("user", text("q")), line("assistant", TOOL, mid="m1"), "x"), ""),
-        }
-        for why, (lines, want) in cases.items():
-            with self.subTest(why):
-                self.transcript(*lines)
-                self.assertEqual(self.reply(), want)
-
-    def test_long_transcript_read_from_its_end(self):
-        """The last message's records span several reads, one starting inside a UTF-8 character; the reads stop at
-        the record before that message."""
-        big = "é" * 40000
-        earlier = [line("assistant", text(f"old {i} " + "x" * 1000), mid=f"m{i}") for i in range(300)]
-        last = [line("assistant", text("a " + big), mid="mL"), line("assistant", TOOL, mid="mL"),
-                line("assistant", text("b " + big), mid="mL"), line("assistant", text("c " + big), mid="mL")]
-        tail = [line("user", text("q")), line("assistant", TOOL, mid="mN")]
-        data = "".join([*earlier, *last, *tail]).encode()
-        if data[len(data) - crew.BLOCK] & 0xC0 != 0x80:
-            tail[0] = line("user", text("qq"))
-            data = "".join([*earlier, *last, *tail]).encode()
-        self.assertEqual(data[len(data) - crew.BLOCK] & 0xC0, 0x80)
-        self.transcript(*earlier, *last, *tail)
-        reads = []
-
-        def spy(*args, **kw):
-            f = open(*args, **kw)
-            read = f.read
-            f.read = lambda n=-1: reads.append(read(n)) or reads[-1]
-            return f
-        with mock.patch.object(crew, "open", side_effect=spy, create=True):
-            self.assertEqual(self.reply(), "\n".join(("a " + big, "b " + big, "c " + big)))
-        self.assertGreater(len(reads), 3)
-        self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + crew.BLOCK)
-
     def test_bad_name(self):
         fake = self.fake()
         with self.assertRaises(crew.WorkersError):
-            crew.reply("a b", proc=fake, config=self.cfg)
+            crew.reply("a b", proc=fake)
         self.assertEqual(fake.calls, [])
 
-    def test_no_transcript_of_its_session(self):
-        """None at all, or only another session's."""
-        for sids in ((), ("1" + SID[1:],)):
-            with self.subTest(sids=sids):
-                for sid in sids:
-                    self.transcript(line("assistant", text("x")), sid=sid)
-                with self.assertRaisesRegex(crew.WorkersError, f"^no transcript for {SID}"):
-                    self.reply()
-
-    def test_bad_sid_before_glob(self):
-        self.transcript(line("assistant", text("x")), sid="evil")
-        with mock.patch.object(crew.glob, "glob") as g:
-            with self.assertRaisesRegex(crew.WorkersError, "bad session id"):
-                self.reply(self.fake("*"))
-            g.assert_not_called()
+    def test_bad_sid(self):
+        with self.assertRaisesRegex(crew.WorkersError, "^w1: bad session id '\\*'$"):
+            crew.reply("w1", proc=self.fake("*"))
 
     def test_not_a_worker(self):
         with self.assertRaisesRegex(crew.WorkersError, "w1: not a worker"):
-            self.reply(Fake())
-
-    def test_config_from_env_else_home(self):
-        home = os.path.join(self.dir, "home")
-        base = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
-        for why, env, config in (("env", {**base, "CLAUDE_CONFIG_DIR": self.cfg}, self.cfg),
-                                 ("home", {**base, "HOME": home}, os.path.join(home, ".claude"))):
-            with self.subTest(why):
-                d = os.path.join(config, "projects", "p")
-                os.makedirs(d)
-                with open(os.path.join(d, SID + ".jsonl"), "w") as f:
-                    f.write(line("assistant", text(why)))
-                with mock.patch.dict(os.environ, env, clear=True):
-                    self.assertEqual(crew.reply("w1", proc=self.fake()), why)
+            crew.reply("w1", proc=Fake())
 
 
 class MainTest(WorkerCase):
@@ -832,14 +1079,43 @@ class MainTest(WorkerCase):
         flags = ["--append-system-prompt", "a\nb"]
         rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--", *flags], fake)
         sid = fake.store["@sid"]
-        resume = [sys.executable, CREW, "start", "w1", "--manager", "m1", "--resume", sid, "--cwd", self.dir,
-                  "--", *flags]
+        resume = [sys.executable, CREW, "start", "w1", "--manager", "m1", "--client", "claude", "--resume", sid,
+                  "--cwd", self.dir, "--", *flags]
         self.assertEqual((rc, out), (0, f"w1 {sid}\n"))
         self.assertEqual([x for x in err.splitlines() if not x.startswith("tui: ")],
                          [f"manager: entry w1 not written: entry: resume: {resume!r}: want a list of 2 or more "
                           "printable strings"])
         self.assertEqual(self.entries(), {})
         self.assertNotIn("kill-session", [c[1] for c in fake.calls])
+
+    def test_start_client_and_env(self):
+        """The worker's client and --env items: options, and the roster entry's resume argv."""
+        executable(os.path.join(self.bin, "alpha"), "#!/bin/sh\n")
+        fake = Fake()
+        with extra_clients():
+            rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--client", "alpha",
+                                          "--env", "NO_COLOR=0", "--env", "BETA_CI=", "--split", "below", "--",
+                                          "--x"], fake)
+        self.assertEqual(rc, 0, err)
+        sid = fake.store["@sid"]
+        self.assertEqual((fake.store["@client"], json.loads(fake.store["@env"])),
+                         ("alpha", {"NO_COLOR": "0", "BETA_CI": ""}))
+        self.assertEqual(self.entries()["w1"]["resume"],
+                         [sys.executable, CREW, "start", "w1", "--manager", "m1", "--client", "alpha", "--resume", sid,
+                          "--cwd", self.dir, "--env", "NO_COLOR=0", "--env", "BETA_CI=", "--split", "below", "--",
+                          "--x"])
+
+    def test_start_bad_client_or_env_exit_1_starting_nothing(self):
+        for argv, msg in ((["--client", "nope"], "client 'nope' has no module clients.nope"),
+                          (["--client", "skill"], "SkillClient has no worker command"),
+                          (["--client", "beta"], "Beta has no worker command"),
+                          (["--env", "HOME=x"], f"--env HOME=x: want NAME=VALUE, NAME one of {NAMES}")):
+            with self.subTest(argv=argv):
+                fake = Fake()
+                with extra_clients():
+                    self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
+                                     (1, "", f"workers: {msg}\n"))
+                self.assertEqual(fake.new_sessions(), [])
 
     def test_start_resume(self):
         fake = Fake()
@@ -1850,7 +2126,8 @@ class StartEntryTest(RosterCase):
 
     def resume(self, sid, *rest):
         """w1's recovery argv for sid, rest after its --cwd."""
-        return [sys.executable, CREW, "start", "w1", "--manager", "mgr", "--resume", sid, "--cwd", self.dir, *rest]
+        return [sys.executable, CREW, "start", "w1", "--manager", "mgr", "--client", "claude", "--resume", sid,
+                "--cwd", self.dir, *rest]
 
     def lines(self, err):
         """err's lines but show's (tui: …)."""

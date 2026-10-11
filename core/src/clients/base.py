@@ -1,11 +1,15 @@
-"""The client interface: a Client turns a composed agent run into a Launch."""
+"""The client interface: a Client turns a composed agent run into a Launch, a crew.py worker into a
+WorkerCommand."""
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 
 import repo
 from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
+
+BLOCK = 1 << 16   # lines_back's read size
 
 
 @dataclass(frozen=True)
@@ -61,12 +65,36 @@ class SessionInfo:
     usage: dict | None = None
 
 
+@dataclass(frozen=True)
+class WorkerSpec:
+    """A crew.py worker to start or restart; its client turns it into a WorkerCommand."""
+    name: str
+    sid: str                    # crew's session id
+    cwd: str                    # absolute
+    flags: tuple[str, ...]      # the client's own flags, verbatim
+    prompt: str | None
+    events: str                 # absolute, checked by tui_claude.events_file
+    resume: bool
+    env: Mapping[str, str]      # the worker's env after crew's environment policy
+    exe: str | None = None      # restart: the stored executable; None: the client resolves its own on env["PATH"]
+
+
+@dataclass(frozen=True)
+class WorkerCommand:
+    argv: list[str]                                     # argv[0] absolute; carries the client's lifecycle hooks
+    env: dict[str, str] = field(default_factory=dict)   # set after crew's environment policy, before --env
+
+
 class Client:
     keys = frozenset()     # this client's own keys; every config.toml run key (RUN_KEYS) is allowed too
     needs_config = True
     runs = True            # True: launch() starts an agent run; False: inline() gives the prompt to print instead
     inline_workdir = ""    # runs False: the prompt's <Workdir>, prose; "": no <Workdir> line
     inline_input = ""      # runs False: the prompt's # Input text; "": no # Input section
+    session_env = ""       # the session marker: set in the commands this client's sessions run; non-empty, it is also
+                           # an identity key of command_env
+    command_env = MappingProxyType({})   # context variables: name → None (identity, any value) or an injected default
+    worker_dialogs: tuple[str, ...] = ()   # screen texts of a worker's blocking dialogs that fire no hook
 
     def __init__(self, config: dict):
         if extra := sorted(set(config) - self.keys - RUN_KEYS):
@@ -130,14 +158,45 @@ class Client:
         """The prompt for the calling conversation to follow."""
         raise NotImplementedError
 
+    def worker(self, spec: WorkerSpec) -> WorkerCommand:
+        """The command crew.py runs in a worker's pane; refuses the client's reserved flags. It may persist client
+        state and spawn helper processes, so crew calls it last before the pane."""
+        raise ConfigError(f"{type(self).__name__} has no worker command")
 
-def load_config(name: str, root: str) -> dict:
-    """[clients.<name>] of <root>/config.toml with repo.LOCAL on top."""
+    def worker_reply(self, sid: str) -> str:
+        """Worker session sid's last answer; "" when none yet."""
+        raise ConfigError(f"{type(self).__name__} has no worker reply")
+
+
+def client_tables(root: str) -> dict:
+    """[clients] of <root>/config.toml with repo.LOCAL on top; {} when it is not a table."""
     path = os.path.join(root, CONFIG)
     if not os.path.isfile(path):
         raise ConfigError(f"no core config {path}")
     tables = repo.read_config(path).get("clients")
-    table = tables.get(name) if isinstance(tables, dict) else None
+    return tables if isinstance(tables, dict) else {}
+
+
+def load_config(name: str, root: str) -> dict:
+    """[clients.<name>] of <root>/config.toml with repo.LOCAL on top."""
+    table = client_tables(root).get(name)
     if not isinstance(table, dict):
-        raise ConfigError(f"no [clients.{name}] table in {path}")
+        raise ConfigError(f"no [clients.{name}] table in {os.path.join(root, CONFIG)}")
     return table
+
+
+def lines_back(f):
+    """The binary file f's lines, last first, each without its newline; read from the end in BLOCK-byte reads."""
+    pos = f.seek(0, os.SEEK_END)
+    tail = []   # the pieces, last first, of the line whose start isn't read yet
+    while pos > 0:
+        size = min(BLOCK, pos)
+        pos -= size
+        f.seek(pos)
+        parts = f.read(size).split(b"\n")
+        tail.append(parts[-1])
+        if len(parts) > 1:
+            yield b"".join(reversed(tail))
+            yield from reversed(parts[1:-1])
+            tail = [parts[0]]
+    yield b"".join(reversed(tail))
