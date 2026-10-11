@@ -73,9 +73,9 @@ Add `--dry-run` to inspect the command without starting Codex. `[clients.codex.t
 | pm / `product-design` | `done` | Local timer PRD with two flows and acceptance criteria; self-grill and review children finished before outcome. |
 | engineer / `build` | `needs_input` | Missing target repository and PRD; no build or publication. Portable method completion belongs to TASK-147. |
 | engineer / `light-build` | `needs_input` | Missing target repository; no build or publication. Portable method completion belongs to TASK-147. |
-| dummy-tester / `echo` | `done` | Exact input returned as the deliverable. |
+| dummy-tester / `echo` | `done` | Fresh no-newline input was identical, byte for byte, in the raw input record, reported deliverable and `out.md`. |
 
-For role handover, the Codex prompt requires each marked progress report immediately, then waits for every spawned child and collects its result before the terminal outcome as its last tool action. A final chat reply is not a report. The smoke run's `run.jsonl` records progress and the validated result; the native transcript confirms child completion order.
+For role handover, the Codex prompt requires each marked progress report immediately, then waits for every spawned child and collects its result before the terminal outcome as its last tool action. A final chat reply is not a report. The smoke run's `run.jsonl` records progress and the validated result; the native transcript confirms child completion order. The first echo attempt dropped its input's trailing newline despite a schema-valid outcome, so it was excluded. The fresh echo run used an explicit byte equality assertion across the raw input, deliverable and file; schema validation alone cannot establish a verbatim echo.
 
 ## Add a client
 
