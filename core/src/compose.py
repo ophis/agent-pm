@@ -51,8 +51,8 @@ PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", 
               "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
               REPORT: (r"`report[` ]", REPORT)}   # only a code span starting with it: prose says "report" too
 RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
-        "value and written out in full, no name or shell variable left: pre-approved commands match on their exact "
-        "text and each shell call starts fresh, so anything else waits on a permission prompt.")
+        "value and written out in full, no name or shell variable left. Run each shell call separately. Approval follows "
+        "the selected client's policy.")
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
