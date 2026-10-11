@@ -58,8 +58,8 @@ def worker(spec: WorkerSpec) -> WorkerCommand:
         raise ConfigError(f"bad session id {spec.sid!r}")
     _refuse(spec.flags)
     exe = spec.exe or _which("codex", spec.env)
-    tmux = _which("tmux", spec.env)
-    _protect(spec, tmux)
+    python, hook, tmux = map(os.path.realpath, (sys.executable, HOOK, _which("tmux", spec.env)))
+    _protect(spec, exe, tmux)
     if spec.resume:
         path, record = _record(spec.sid)
         if record["cwd"] != os.path.realpath(spec.cwd):
@@ -72,7 +72,7 @@ def worker(spec: WorkerSpec) -> WorkerCommand:
         _create(path, {"version": _codex_hook.VERSION, "sid": spec.sid, "cwd": os.path.realpath(spec.cwd),
                        "codex_home": home, "native": None})
         head = [exe, "--no-daemon", "-C", spec.cwd]
-    commands = [shlex.join([sys.executable, "-I", HOOK, word, spec.events, path, tmux]) for _, _, word in HOOKS]
+    commands = [shlex.join([python, "-I", hook, word, spec.events, path, tmux]) for _, _, word in HOOKS]
     hooks = [w for (event, _, _), command in zip(HOOKS, commands) for w in (
         "-c", f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
               f'timeout={INTERRUPT_TIMEOUT if event == "Interrupt" else HOOK_TIMEOUT}}}]}}]')]
@@ -128,12 +128,12 @@ def _which(name: str, env) -> str:
     return os.path.abspath(found)
 
 
-def _protect(spec: WorkerSpec, tmux: str) -> None:
+def _protect(spec: WorkerSpec, exe: str, tmux: str) -> None:
     """Raises when a root the worker may write, its cwd or an --add-dir (relative: to its cwd), holds or lies inside
-    what its hooks run or write outside the sandbox."""
+    what its hooks run or write outside the sandbox, or codex itself (exe)."""
     roots = [os.path.realpath(spec.cwd), *(os.path.realpath(os.path.join(spec.cwd, value))
                                            for name, value, _ in _options(spec.flags) if name == "--add-dir")]
-    paths = [os.path.realpath(p) for p in (SRC, sys.prefix, sys.base_prefix, sys.executable, tmux,
+    paths = [os.path.realpath(p) for p in (SRC, sys.prefix, sys.base_prefix, sys.executable, tmux, exe,
                                            os.path.join(codex._store_root(), "workers"), spec.events)]
     for root in roots:
         for path in paths:

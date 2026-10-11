@@ -200,4 +200,3 @@ def lines_back(f):
             yield from reversed(parts[1:-1])
             tail = [parts[0]]
     yield b"".join(reversed(tail))
-

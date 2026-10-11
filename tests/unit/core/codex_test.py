@@ -17,7 +17,7 @@ from unittest import mock
 
 from tests import ROOT, hermetic
 from tests.integration.core import fake_codex
-from clients import codex
+from clients import _codex_worker, codex
 from clients.claude import ClaudeClient
 from clients.base import Client, SessionInfo, WorkerSpec
 from compose import ConfigError
@@ -313,10 +313,11 @@ sys.exit(fake_codex.app_server(sys.argv[1:]))
 
 
 def hook_args(events: str, record: str, tmux: str) -> list[str]:
-    """A Codex worker's hook -c args (core/src/clients/_codex_worker.py)."""
+    """A Codex worker's hook -c args (core/src/clients/_codex_worker.py): resolved paths."""
     args = []
+    python, hook, tmux = map(os.path.realpath, (sys.executable, HOOK, tmux))
     for event, word in WORDS:
-        command = json.dumps(shlex.join([sys.executable, "-I", HOOK, word, events, record, tmux]), ensure_ascii=False)
+        command = json.dumps(shlex.join([python, "-I", hook, word, events, record, tmux]), ensure_ascii=False)
         args += ["-c", f'hooks.{event}=[{{hooks=[{{type="command",command={command},'
                        f'timeout={3 if event == "Interrupt" else 10}}}]}}]']
     return args
@@ -459,6 +460,18 @@ class Worker(unittest.TestCase):
                                                          "capabilities": {"experimentalApi": True}}},
             {"method": "initialized"}, {"id": 2, "method": "hooks/list", "params": {"cwds": [self.cwd]}}])
 
+    def test_hooks_run_the_resolved_paths_protect_checks(self):
+        links = os.path.join(self.dir, "links")
+        os.mkdir(links)
+        python, hook, tmux = (os.path.join(links, n) for n in ("python", "hook.py", "tmux"))
+        for link, target in ((python, sys.executable), (hook, HOOK), (tmux, self.tmux)):
+            os.symlink(target, link)
+        hooks = self.hooks()
+        with mock.patch.object(sys, "executable", python), mock.patch.object(_codex_worker, "HOOK", hook):
+            cmd = self.client.worker(self.spec(env={**self.env, "PATH": f"{links}:{self.env['PATH']}"}))
+        self.assertEqual(cmd.argv, [self.codex, "--no-daemon", "-C", self.cwd, "-c", NOTIFY, *hooks, "-c",
+                                    self.state(hooks)])
+
     def test_codex_home_and_the_binaries_from_the_env(self):
         home = os.path.join(self.dir, "codex-home")
         cmd = self.client.worker(self.spec(env={**self.env, "CODEX_HOME": home}))
@@ -505,11 +518,14 @@ class Worker(unittest.TestCase):
         self.assertEqual(cmd.argv[-4:], ["--", "resume", "-C", "/x"])
 
     def test_protected_paths_refused(self):
-        """A writable root (the cwd, each --add-dir) holding or inside core's src/, the record dir, the tmux binary or
-        the events file."""
+        """A writable root (the cwd, each --add-dir) holding or inside core's src/, the record dir, the tmux binary, the
+        codex executable (resolved) or the events file."""
         core = os.path.realpath(os.path.join(ROOT, "core"))
-        m = os.path.join(self.dir, "m")
-        os.mkdir(m)
+        m, cx, links = (os.path.join(self.dir, n) for n in ("m", "cx", "links"))
+        for d in (m, cx, links):
+            os.mkdir(d)
+        self.executable(os.path.join(cx, "codex"), "exit 1")
+        os.symlink(os.path.join(cx, "codex"), os.path.join(links, "codex"))
         events = os.path.join(m, "events")
         os.close(os.open(events, os.O_WRONLY | os.O_CREAT, 0o600))
         inside = os.path.join(self.workers, "w")
@@ -517,6 +533,8 @@ class Worker(unittest.TestCase):
                                ({"cwd": inside}, inside, self.workers),
                                ({"cwd": self.home}, self.home, self.workers),
                                ({"cwd": self.bin}, self.bin, self.tmux),
+                               ({"cwd": cx, "env": {**self.env, "PATH": f"{links}:{self.env['PATH']}"}}, cx,
+                                os.path.join(cx, "codex")),
                                ({"flags": ("--add-dir", m), "events": events}, m, events),
                                ({"flags": ("--add-dir=" + m,), "events": events}, m, events),
                                ({"flags": ("--add-dir", "../m"), "events": events}, m, events)):

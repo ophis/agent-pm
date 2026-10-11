@@ -96,6 +96,11 @@ class CodexLive(Live):
         """Fails unless the logged env has none of GONE: a session marker or a Codex tool's forced value."""
         self.assertEqual({k: env[k] for k in GONE if k in env}, {})
 
+    def assert_colored(self, name: str, text: str) -> None:
+        """Fails unless `name`'s pane shows `text` in fake_codex.py's color (capture-pane -e)."""
+        screen = self.ok(self.server.tmux("capture-pane", "-p", "-e", "-t", f"={name}:")).stdout
+        self.assertRegex(screen, rf"\x1b\[[0-9;]*36m\s*{re.escape(text)}")
+
 
 class CodexLifecycle(CodexLive):
     def test_start_blocked_done_reply_follow_up(self):
@@ -189,8 +194,7 @@ class CodexSession(CodexLive):
         self.assertEqual(self.server.option("w1", "@client"), "codex")
         (call,) = self.calls("w1")
         self.no_session_env(call["env"])
-        screen = self.ok(self.server.tmux("capture-pane", "-p", "-e", "-t", "=w1:")).stdout
-        self.assertRegex(screen, r"\x1b\[[0-9;]*36m\s*Hi from w1\.")
+        self.assert_colored("w1", "Hi from w1.")
 
         env_log = self.claude_env_log()
         with open(self.scenario("c1"), "w") as f:
@@ -202,15 +206,21 @@ class CodexSession(CodexLive):
             (env,) = [json.loads(line) for line in f]
         self.no_session_env(env)
 
-        self.ok(self.workers("restart", "w1", **self.codex_scenario("w1", []), **session))
+        self.ok(self.workers("restart", "w1", **self.codex_scenario("w1", ["Resumed."]), **session))
         _, again = self.calls("w1")
         self.no_session_env(again["env"])
+        self.ok(self.tui("send", "w1", "again"))
+        self.wait_event("w1", "done", 2)
+        self.assert_colored("w1", "Resumed.")
         self.ok(self.kill("w1"))
-        out = self.attach("--resume", **self.codex_scenario("w1", []), **session).stdout
+        out = self.attach("--resume", **self.codex_scenario("w1", ["Recovered."]), **session).stdout
         self.assertRegex(out, rf"\nresumed w1: exit 0: w1 {sid}\n\Z")
         *_, recovered = self.calls("w1")
         self.assertEqual(recovered["argv"][:2], ["resume", self.native("w1")])
         self.no_session_env(recovered["env"])
+        self.ok(self.tui("send", "w1", "again"))
+        self.wait_event("w1", "done", 3)
+        self.assert_colored("w1", "Recovered.")
 
     def test_a_codex_workers_own_crew_start_defaults_to_codex(self):
         self.start_codex("w1", "--client", "codex")
