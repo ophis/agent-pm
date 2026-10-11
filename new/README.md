@@ -7,7 +7,7 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 | Path | What |
 |---|---|
 | `core/src/` | the layers, one package each: `adapters/`, `composer/`, `driver/`; `delegate` comes later. `repo.py`, a module outside the layers |
-| `core/src/utils/` | shared utilities; `config_file.py` loads and merges TOML files; `paths.py` normalizes paths and checks containment and temporary roots |
+| `core/src/utils/` | shared utilities; `config_file.py` loads and merges TOML files; `paths.py` normalizes paths and checks containment and temporary roots; `markdown.py` finds Markdown code fences; `args.py` holds argparse helpers (`Once`) |
 | `core/src/adapters/claude/` | Claude Code's Adapter, runtime `claude` |
 | `core/team/` | the Composer's built-in team: the root `core/team/` as on main at a0bf18c, except that `output/output.md` and `output/destinations/{local,orchestrator}.md` name the outcome's `deliverable_file`. The root `core/team/` stays the old core's, unchanged from main (`tests/unit/composer/real_test.py`) |
 | `core/config.toml` | the Composer's run keys (`runtime` among them) and `[roles.<role>]` tables, the Driver's `[adapters.<name>]` tables (the registry reads `[adapters]` once per process); which layer reads which keys, and this machine's settings in `~/.agent-pm/core-new.local.toml`: the file's header |

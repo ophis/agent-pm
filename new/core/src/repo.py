@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from utils.args import Once
 from utils.config_file import merge, read_config as _read_config
 from utils.paths import real_dirs, temp_dirs, under
 
@@ -55,13 +56,6 @@ Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 class Invalid(Exception):
     pass
-
-
-class Once(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if getattr(namespace, self.dest) is not None:
-            parser.error(f"{option_string} given twice")
-        setattr(namespace, self.dest, values)
 
 
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:

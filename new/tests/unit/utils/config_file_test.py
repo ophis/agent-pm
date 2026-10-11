@@ -26,6 +26,12 @@ class ConfigFileTest(unittest.TestCase):
                          {"table": {"keep": 1, "change": {"x": 1, "y": 2}, "list": [2]}, "value": {"x": 3}})
         self.assertEqual((base, overlay), original)
 
+    def test_merge_adds_keys_replaces_a_table_by_a_value_and_merges_at_any_depth(self):
+        base = {"a": 1, "s": "x", "u": {"k": 1}, "t": {"x": 1, "l": [1, 2], "n": {"p": 1, "q": 2}}}
+        over = {"b": 2, "s": {"k": 1}, "u": 5, "t": {"y": 2, "l": [3], "n": {"q": 3}}}
+        self.assertEqual(merge(base, over), {"a": 1, "b": 2, "s": {"k": 1}, "u": 5,
+                                             "t": {"x": 1, "y": 2, "l": [3], "n": {"p": 1, "q": 3}}})
+
     def test_read_merges_an_explicit_overlay(self):
         self.path.write_text('value = 1\n[table]\nkeep = "base"\nchange = "base"\n')
         self.local.write_text('value = 2\n[table]\nchange = "local"\n')

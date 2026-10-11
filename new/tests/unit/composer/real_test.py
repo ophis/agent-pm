@@ -12,12 +12,11 @@ import tomllib
 import types
 import unittest
 
-from new.tests import NEW, hermetic
+from new.tests import CORE, NEW, hermetic
 from new.tests.unit.composer.prompt_test import (RUN, composed, heading_anchors, item, parameters, role_sources, rule,
                                                  section, task_text)
 from new.tests.unit.composer.team_test import INTRO
 import composer
-import repo
 from composer.prompt import RETURN, RULE
 from composer.run import check_old_keys
 from composer.teams import START
@@ -50,7 +49,7 @@ dir = "Product Design/"
 API = ["ConfigError", "SRC", "TEAM", "CONFIG", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Intent",
        "Team", "team", "team_dirs", "tasks_path", "roles", "index", "catalog", "check_team_dirs", "check_overlap",
        "resolve", "trusted_dirs", "bind", "access", "render", "reference_errors", "outline", "unfenced", "anchor",
-       "fill"]
+       "fill", "team_paths"]
 TICKET = re.compile(r"TASK-\d+")   # an internal ticket id
 # The format examples the team's text may hold: path in the team root → its examples, each allowed once.
 TICKET_EXAMPLES = {"principles.md": ["(e.g. `TASK-142`)"]}
@@ -124,7 +123,8 @@ class Package(unittest.TestCase):
         self.assertIs(composer.tasks_path, composer.teams.tasks_path)
         self.assertIsInstance(composer.teams, types.ModuleType)
         self.assertIs(composer.team, composer.teams.team)
-        self.assertEqual(composer.CONFIG, repo.CONFIG)
+        self.assertIs(composer.team_paths, composer.teams.team_paths)
+        self.assertEqual(composer.CONFIG, os.path.join(CORE, "config.toml"))
         self.assertEqual((composer.PROGRESS, composer.OUTCOME), ("agent-pm-progress", "agent-pm-outcome"))
 
 

@@ -7,10 +7,10 @@ import unittest
 from unittest import mock
 
 from new.tests import hermetic
-import repo
-from composer.base import TEAM, ConfigError
+from composer.base import LOCAL, TEAM, ConfigError
 from composer.teams import (catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team, team_dirs,
                             team_paths)
+from utils.config_file import read_config
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +
@@ -81,7 +81,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def cfg(self):
-        return repo.read_config(self.config)
+        return read_config(self.config, LOCAL)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""

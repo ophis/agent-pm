@@ -9,9 +9,8 @@ from dataclasses import fields, replace
 
 from new.tests import SRC, hermetic
 from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
-import repo
 import composer.run
-from composer.base import ConfigError
+from composer.base import LOCAL, ConfigError
 from composer.run import (RUN_KEYS, Intent, RunConfig, RunParams, access, bind, check_old_keys, resolve,
                           trusted_dirs)
 from composer.teams import team
@@ -65,7 +64,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.expanduser(repo.LOCAL), "w") as f:
+        with open(os.path.expanduser(LOCAL), "w") as f:
             f.write(text)
 
     def team_dir(self, files):

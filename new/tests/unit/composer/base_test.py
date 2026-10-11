@@ -2,8 +2,7 @@
 import os
 import unittest
 
-from new.tests import SRC
-import repo
+from new.tests import CORE, SRC
 from composer import base
 
 
@@ -14,7 +13,7 @@ class Paths(unittest.TestCase):
         self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertEqual(base.SRC, SRC)
         self.assertTrue(os.path.isdir(os.path.join(base.SRC, "composer")))
-        self.assertEqual(base.CONFIG, repo.CONFIG)
+        self.assertEqual(base.CONFIG, os.path.join(CORE, "config.toml"))
 
 
 class Fill(unittest.TestCase):

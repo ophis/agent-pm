@@ -3,6 +3,8 @@ import os
 import re
 from collections.abc import Mapping
 
+from utils.markdown import FENCE, unfenced
+
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # <scripts>'s value
 CONFIG = os.path.join(os.path.dirname(SRC), "config.toml")
 LOCAL = "~/.agent-pm/core-new.local.toml"
@@ -11,7 +13,6 @@ OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}
 METHOD = re.compile(r"<methods>/([\w-]+)\.md")   # a method file named in a text
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")
 BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
 ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
@@ -41,22 +42,6 @@ def fill(text: str, values: Mapping, where: str) -> str:
 def anchor(heading: str) -> str:
     """GitHub's heading anchor."""
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
-
-
-def unfenced(text: str) -> list[tuple[int, str]]:
-    """(line index, line) of each line of `text` outside fences, fence lines excluded. A fence opens at 3+ backticks or
-    tildes and closes at a line of only that char, as many times or more; one never closed runs to the end."""
-    out, fence = [], None
-    for i, line in enumerate(text.split("\n")):
-        shut = line.strip()
-        if fence:
-            if len(shut) >= fence[1] and shut == fence[0] * len(shut):
-                fence = None
-        elif m := FENCE.match(line):
-            fence = (m[1][0], len(m[1]))
-        else:
-            out.append((i, line))
-    return out
 
 
 def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
