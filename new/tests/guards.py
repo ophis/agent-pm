@@ -12,6 +12,7 @@ adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
 utils_imports(core)  each module under src/utils/ imports only the stdlib (sys.stdlib_module_names) and utils
 repo_library(core)   no module under src/ imports repo (repo.py is only the agents' git CLI)
+modes_import_api(core)  no module under src/driver/modes/ imports driver.api (a Mode raises driver.errors' DriverError)
 """
 import ast
 import os
@@ -98,6 +99,15 @@ def repo_library(core: str) -> list[str]:
     found = set()
     for rel, names, tree in _src_modules(core):
         found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1]) if m.split(".")[0] == "repo")
+    return sorted(found)
+
+
+def modes_import_api(core: str) -> list[str]:
+    found = set()
+    for rel, names, tree in _src_modules(core):
+        if names[:2] == ["driver", "modes"]:
+            found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
+                         if m.split(".")[:2] == ["driver", "api"])
     return sorted(found)
 
 

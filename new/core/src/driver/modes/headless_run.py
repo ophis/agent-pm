@@ -1,8 +1,8 @@
 """The Driver's headless Mode: a HeadlessRun's command on pipes, stdin /dev/null, leading its own process group. Two
 daemon threads pump the run's events() over stdout and one Stderr per stderr line into one queue, each closing its pipe
 when done; the session has ended at both pipes' EOF. stop() kills the whole group, so a grandchild holding the pipes
-dies with it; every wait on the process is bounded. probe() runs a short command for its stdout. Imports only the
-stdlib and adapters."""
+dies with it; every wait on the process is bounded. send and screen are refused (tui only). probe() runs a short command
+for its stdout. Imports only the stdlib, adapters and driver.errors."""
 import os
 import queue
 import signal
@@ -11,6 +11,7 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 
 from adapters.base import Event, HeadlessRun, Stderr
+from driver.errors import DriverError
 
 STOP_WAIT = 5   # seconds: the longest wait for a killed process to be reaped
 
@@ -51,7 +52,7 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
 
 
 class HeadlessMode:
-    """One headless session's process."""
+    """One headless session's process: driver.api's Mode."""
 
     def __init__(self, run: HeadlessRun):
         self.run, self.proc = run, None
@@ -101,9 +102,15 @@ class HeadlessMode:
         except subprocess.TimeoutExpired:
             return None
 
-    def alive(self) -> bool:
-        """Whether the process runs: False before begin and after exit."""
-        return self.proc is not None and self.proc.poll() is None
+    def state(self) -> str:
+        """live while the process runs, else absent (before begin, after exit)."""
+        return "live" if self.proc is not None and self.proc.poll() is None else "absent"
+
+    def send(self, text: str) -> None:
+        raise DriverError("send: tui mode only")
+
+    def screen(self, lines: int | None = None) -> str:
+        raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
         """kill_group on the process: its group killed, so whatever still holds the pipes ends too; a no-op before

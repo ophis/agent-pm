@@ -6,9 +6,10 @@ recording `client_session` and `stderr` on the way; nothing else is recorded or 
 Adapter's usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) gives the Adapter's
 SessionStatus; session() is the run records' session query.
 
-The tui Mode's surface is frozen here: start(mode="tui", name=…), attach(name), and send, state, screen and stop on a
-tui session's Handle. Until the Driver's tui Mode is built, each tui path raises ConfigError("tui mode is not available
-yet") before anything starts."""
+A Handle runs over its session's Mode (the Mode protocol; headless: driver/modes/headless_run.py). The tui Mode's
+surface is frozen here: start(mode="tui", name=…), attach(name), and send, state, screen and stop on a tui session's
+Handle. Until the Driver's tui Mode is built, each tui path raises ConfigError("tui mode is not available yet") before
+anything starts."""
 import os
 import stat
 import time
@@ -16,17 +17,21 @@ import uuid
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from typing import Protocol
 
-from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, Launch, LimitHit, Reply,
-                           SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage, sid_error)
+from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, HeadlessRun, Launch,
+                           LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage,
+                           sid_error)
 from driver import records, registry
+from driver.errors import DriverError
 from driver.modes import headless_run
 from driver.records import session
 from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
-           "LimitHit", "MODES", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo", "SessionStatus",
-           "Spec", "Stderr", "TurnEnd", "Usage", "attach", "records", "session", "session_info", "start", "usage"]
+           "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo",
+           "SessionStatus", "Spec", "Stderr", "TurnEnd", "Usage", "attach", "records", "session", "session_info",
+           "start", "usage"]
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
@@ -42,32 +47,52 @@ class IdleTimeout:
     seconds: float
 
 
-class DriverError(Exception):
-    """A session that could not start, or a call its Mode does not take."""
+class Mode(Protocol):
+    """A running session as one mode hosts it; a Handle's only way to it."""
+
+    def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
+        """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
+
+    def returncode(self, timeout: float) -> int | None:
+        """The session's exit status, waiting at most `timeout` s; None while it runs; negative: killed by that
+        signal."""
+
+    def state(self) -> str:
+        """One of STATES."""
+
+    def send(self, text: str) -> None:
+        """Submits `text` to the session."""
+
+    def screen(self, lines: int | None = None) -> str:
+        """The session's visible text."""
+
+    def stop(self) -> None:
+        """Ends the session; idempotent."""
 
 
 class Handle:
-    """One session start() began: `sid` (agent-pm's session id), `runtime` and `mode`."""
+    """One session start() began, over its Mode: `sid` (agent-pm's session id), `runtime`, `mode` and `name` (a tui
+    session's name; None in headless mode)."""
 
-    def __init__(self, sid: str, runtime: str, mode: str, *, host: headless_run.HeadlessMode, workdir: str,
-                 info: SessionInfo, idle_timeout: float | None):
-        self.sid, self.runtime, self.mode = sid, runtime, mode
+    def __init__(self, sid: str, runtime: str, mode: str, *, host: Mode, workdir: str, info: SessionInfo,
+                 idle_timeout: float | None, name: str | None = None):
+        self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
         self._channel = records.path(workdir)
         self._reply: str | None = None
         self._queue: deque = deque()   # polled events not yet yielded
-        self._closed = False    # both pipes have ended
+        self._closed = False    # the Mode has no more events
         self._ended = False     # Exited yielded, or events() raised
         self._blocked = False   # since a Blocked, no event but Blocked or Stderr
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
-        """Each event in order, ending after Exited(returncode): made by the Driver once both pipes end and the
-        process exits, awaited in slices of at most POLL s (an Exited from the adapter is dropped); a later call yields
-        nothing. SessionBound is recorded as `client_session` (durable) and sets info().native_id; Stderr is recorded
-        as `stderr` (best effort); a Reply, or a TurnEnd's non-empty reply, sets `reply`. With an idle_timeout, each
-        span of that many seconds without an event yields IdleTimeout, except after a Blocked until an event other than
-        Blocked or Stderr. Never stops the process on its own; an exception (the Mode's, a record write's) stops it,
-        then propagates."""
+        """Each event in order, ending after Exited(returncode): made by the Driver once the Mode has no more events and
+        gives its returncode, awaited in slices of at most POLL s (an Exited from the Mode is dropped); a later call
+        yields nothing. SessionBound is recorded as `client_session` (durable) and sets info().native_id; Stderr is
+        recorded as `stderr` (best effort); a Reply, or a TurnEnd's non-empty reply, sets `reply`. With an idle_timeout,
+        each span of that many seconds without an event yields IdleTimeout, except after a Blocked until an event other
+        than Blocked or Stderr. Never stops the session on its own; an exception (the Mode's, a record write's) stops
+        it, then propagates."""
         last = time.monotonic()
         try:
             while not self._ended:
@@ -114,19 +139,18 @@ class Handle:
 
     def send(self, text: str) -> None:
         """Submits `text` to a tui session; a headless one raises DriverError."""
-        raise DriverError("send: tui mode only")
+        self._host.send(text)
 
     def state(self) -> str:
-        """One of STATES: a headless session is live while its process runs, else absent."""
-        return "live" if self._host.alive() else "absent"
+        """One of STATES, the Mode's."""
+        return self._host.state()
 
-    def screen(self) -> str:
+    def screen(self, lines: int | None = None) -> str:
         """A tui session's pane text; a headless one raises DriverError."""
-        raise DriverError("screen: tui mode only")
+        return self._host.screen(lines)
 
     def stop(self) -> None:
-        """Ends the session: kills its process group, waiting a bounded time for the process; idempotent. events()
-        then ends with Exited."""
+        """Ends the session, the Mode's stop(); idempotent. events() then ends with Exited."""
         self._host.stop()
 
     def info(self) -> SessionInfo:
@@ -155,8 +179,9 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     adapter's runtime_note follows the prompt after a blank line. Refusals (ConfigError, nothing started): a bad mode,
     idle_timeout, resume or sid, a sid other than resume, a caller-set spec.sid, a registry error, a Mode the runtime
     lacks, tui (not available yet), a name in headless mode, a launch with no command; an exception from the run's
-    launch or the session record's write propagates. The child runs with _child_env's environment in launch.cwd, else
-    spec.access.cwd, else spec.workdir; a failed spawn, after the session record, is a DriverError."""
+    launch or the session record's write propagates. Every mode shares these steps up to the session record; the
+    mode's own (_begin_headless) then start the child, with _child_env's environment in launch.cwd, else
+    spec.access.cwd, else spec.workdir."""
     if mode not in MODES:
         raise ConfigError(f"mode must be headless or tui, got {mode!r}")
     if idle_timeout is not None and (isinstance(idle_timeout, bool) or not isinstance(idle_timeout, (int, float))
@@ -189,13 +214,19 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     os.makedirs(spec.workdir, exist_ok=True)
     records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
                  transcript=launch.transcript, resume=launch.resume)
+    return Handle(sid, runtime, mode, host=_begin_headless(run, launch, cwd), workdir=spec.workdir,
+                  idle_timeout=idle_timeout,
+                  info=SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume))
+
+
+def _begin_headless(run: HeadlessRun, launch: Launch, cwd: str) -> headless_run.HeadlessMode:
+    """The headless Mode running launch.argv in cwd with _child_env's environment; a failed spawn is a DriverError."""
     host = headless_run.HeadlessMode(run)
     try:
         host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
     except (OSError, ValueError) as e:
         raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
-    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout,
-                  info=SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume))
+    return host
 
 
 def attach(name: str) -> Handle:

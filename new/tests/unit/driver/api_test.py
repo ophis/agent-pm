@@ -1,7 +1,10 @@
 """new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
-usage()'s probe is headless_run.probe patched, but for a spawn error."""
+usage()'s probe is headless_run.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
+Mode on a fake clock (time.monotonic patched)."""
+import inspect
+import itertools
 import json
 import os
 import stat
@@ -16,7 +19,8 @@ from unittest import mock
 from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
-from driver import api, records, registry
+from driver import api, errors, records, registry
+from driver.modes import headless_run
 
 WAIT = 10   # upper bound on any wait, in seconds
 
@@ -318,6 +322,120 @@ class HandleTest(Base):
         self.assertEqual(str(caught.exception), "tui mode is not available yet")
 
 
+class ModeTest(unittest.TestCase):
+    def test_the_protocols_methods_and_headless_mode_has_each_with_its_parameters(self):
+        def params(function):
+            return [(p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()]
+        members = sorted(n for n, v in vars(api.Mode).items() if callable(v) and not n.startswith("_"))
+        self.assertEqual(members, ["poll", "returncode", "screen", "send", "state", "stop"])
+        for name in members:
+            with self.subTest(name=name):
+                self.assertEqual(params(getattr(headless_run.HeadlessMode, name)), params(getattr(api.Mode, name)))
+
+
+class Clock:
+    """time.monotonic's stand-in: `now` moves only when a StubMode waits."""
+    now = 0.0
+
+
+class StubMode:
+    """A Mode on a Clock: poll(timeout) gives the next script item (at, events, ended) once the clock reaches `at`,
+    else ([], False), moving the clock to `at` or on by timeout, whichever is sooner; past LATE s it raises, so a Handle
+    that never ends fails. returncode() gives `code`; every call is logged in `calls`."""
+    LATE = 60
+
+    def __init__(self, clock, script, code):
+        self.clock, self.script, self.code, self.calls = clock, list(script), code, []
+
+    def poll(self, timeout):
+        self.calls.append(("poll", timeout))
+        if self.clock.now > self.LATE:
+            raise AssertionError("polled past the script")
+        if self.script and self.script[0][0] <= self.clock.now + timeout:
+            at, events, ended = self.script.pop(0)
+            self.clock.now = max(self.clock.now, at)
+            return list(events), ended
+        self.clock.now += timeout
+        return [], False
+
+    def returncode(self, timeout):
+        self.calls.append(("returncode", timeout))
+        return self.code
+
+    def state(self):
+        self.calls.append(("state",))
+        return "unknown"
+
+    def send(self, text):
+        self.calls.append(("send", text))
+
+    def screen(self, lines=None):
+        self.calls.append(("screen", lines))
+        return "pane"
+
+    def stop(self):
+        self.calls.append(("stop",))
+
+
+class HandleOverAModeTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        self.clock = Clock()
+        patch = mock.patch("time.monotonic", lambda: self.clock.now)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def handle(self, *script, code=0, idle_timeout=None, **kwargs) -> api.Handle:
+        self.mode = StubMode(self.clock, script, code)
+        return api.Handle("s1", "fake", "tui", host=self.mode, workdir=self.dir, idle_timeout=idle_timeout,
+                          info=api.SessionInfo("s1", "", self.dir, False, "", ""), **kwargs)
+
+    def events(self, handle) -> list:
+        found = list(itertools.islice(handle.events(), 50))
+        self.assertLess(len(found), 50, found)
+        return found
+
+    def test_events_in_order_the_modes_exited_dropped_exited_last_in_poll_slices(self):
+        handle = self.handle((0, [api.Activity("a"), api.Exited(9)], False), (1, [api.TurnEnd("done")], False),
+                             (2, [api.Stderr("e")], True), code=3)
+        self.assertEqual(self.events(handle), [api.Activity("a"), api.TurnEnd("done"), api.Stderr("e"), api.Exited(3)])
+        self.assertEqual(self.events(handle), [])
+        self.assertEqual(handle.reply, "done")
+        self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {api.POLL})
+        self.assertEqual(self.mode.calls[-1], ("returncode", api.POLL))
+
+    def test_each_idle_span_yields_idle_timeout(self):
+        handle = self.handle((0, [api.Activity()], False), (5, [api.Reply("r")], False), (5.5, [], True),
+                             idle_timeout=2)
+        self.assertEqual(self.events(handle), [api.Activity(), api.IdleTimeout(2), api.IdleTimeout(2), api.Reply("r"),
+                                               api.Exited(0)])
+
+    def test_after_blocked_no_idle_timeout_until_an_event_but_stderr(self):
+        handle = self.handle((0, [api.Blocked("ask")], False), (0.5, [api.Stderr("x")], False),
+                             (3, [api.Activity()], False), (4.5, [], True), idle_timeout=1)
+        self.assertEqual(self.events(handle), [api.Blocked("ask"), api.Stderr("x"), api.Activity(), api.IdleTimeout(1),
+                                               api.Exited(0)])
+
+    def test_an_exception_from_the_mode_stops_it_then_propagates(self):
+        handle = self.handle()
+        with mock.patch.object(self.mode, "poll", side_effect=RuntimeError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                self.events(handle)
+        self.assertEqual(self.mode.calls, [("stop",)])
+        self.assertEqual(self.events(handle), [])
+
+    def test_state_send_screen_and_stop_are_the_modes_and_name_defaults_to_none(self):
+        handle = self.handle()
+        self.assertIsNone(handle.name)
+        self.assertEqual((handle.state(), handle.screen(), handle.screen(5)), ("unknown", "pane", "pane"))
+        handle.send("hi")
+        handle.stop()
+        self.assertEqual(self.mode.calls, [("state",), ("screen", None), ("screen", 5), ("send", "hi"), ("stop",)])
+        self.assertEqual(self.handle(name="w1").name, "w1")
+
+
 class UsageTest(Base):
     def usage(self, out="42.5", **launch):
         """api.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x") unless given) and
@@ -431,7 +549,9 @@ class ExportsTest(unittest.TestCase):
                 self.assertIs(getattr(api, name), getattr(base, name))
         self.assertIs(api.records, records)
         self.assertIs(api.session, records.session)
-        for name in ("LimitHit", "Usage", "SessionStatus", "RESUMABLE", "usage", "session_info", "session"):
+        self.assertIs(api.DriverError, errors.DriverError)
+        for name in ("LimitHit", "Usage", "SessionStatus", "RESUMABLE", "usage", "session_info", "session",
+                     "DriverError", "Mode"):
             with self.subTest(name=name):
                 self.assertIn(name, api.__all__)
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])

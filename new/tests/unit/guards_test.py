@@ -26,7 +26,7 @@ class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
                             (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.utils_imports, CORE),
-                            (guards.repo_library, CORE)):
+                            (guards.repo_library, CORE), (guards.modes_import_api, CORE)):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
 
@@ -163,6 +163,26 @@ class RepoLibrary(Sample):
         root = self.tree({"src/repo.py": "import os\n", "tests/repo_test.py": "import repo\n",
                           "src/composer/x.py": "import repository\nfrom utils import config_file\n"})
         self.assertEqual(guards.repo_library(root), [])
+
+
+class ModesImportApi(Sample):
+    def test_a_mode_importing_driver_api_any_way_is_a_violation(self):
+        root = self.tree({"src/driver/modes/a.py": "from driver import api\n",
+                          "src/driver/modes/b.py": "import driver.api\n",
+                          "src/driver/modes/c.py": "from ..api import DriverError\n",
+                          "src/driver/modes/d.py": "def f():\n    from .. import api\n",
+                          "src/driver/modes/__init__.py": "__import__('driver.api')\n"})
+        self.assertEqual(guards.modes_import_api(root), ["src/driver/modes/__init__.py: imports driver.api",
+                                                         "src/driver/modes/a.py: imports driver.api",
+                                                         "src/driver/modes/b.py: imports driver.api",
+                                                         "src/driver/modes/c.py: imports driver.api",
+                                                         "src/driver/modes/d.py: imports driver.api"])
+
+    def test_driver_errors_in_a_mode_and_driver_api_outside_modes_are_clean(self):
+        root = self.tree({"src/driver/modes/a.py": "from driver.errors import DriverError\nfrom driver import records\n"
+                                                   "from ..errors import DriverError\n",
+                          "src/driver/x.py": "from driver import api\n", "src/y.py": "import driver.api\n"})
+        self.assertEqual(guards.modes_import_api(root), [])
 
 
 class Syntax311(Sample):

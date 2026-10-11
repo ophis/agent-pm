@@ -1,5 +1,5 @@
-"""new/core/src/driver/modes/headless_run.py: a HeadlessRun's command on pipes, its process group's kill, bounded waits
-and probe(), over real Python children."""
+"""new/core/src/driver/modes/headless_run.py: a HeadlessRun's command on pipes, its state, its process group's kill,
+bounded waits, send and screen refused, and probe(), over real Python children."""
 import json
 import os
 import signal
@@ -14,6 +14,7 @@ from unittest import mock
 
 from new.tests import hermetic  # noqa: F401
 from adapters.base import Adapter, HeadlessRun, Launch, Reply, Stderr
+from driver.errors import DriverError
 from driver.modes import headless_run
 from driver.modes.headless_run import HeadlessMode
 
@@ -165,7 +166,7 @@ class Streams(Base):
         self.assertIs(calls[0]["stdin"], subprocess.DEVNULL)
         self.assertEqual(calls[0]["process_group"], 0)
         self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 3)
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         self.mode.stop()
         self.assertEqual(self.mode.returncode(0), 3)
 
@@ -197,9 +198,9 @@ class Streams(Base):
 class Stop(Base):
     def test_kills_a_sleeping_child_whose_pipes_then_end(self):
         self.begin("import time; time.sleep(60)")
-        self.assertTrue(self.mode.alive())
+        self.assertEqual(self.mode.state(), "live")
         self.promptly(self.mode.stop)
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         self.assertLess(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
         self.assertEqual(self.drain(), [])
         self.promptly(self.mode.stop)
@@ -236,7 +237,7 @@ class Stop(Base):
             self.promptly(self.mode.stop)
             self.assertGreaterEqual(time.monotonic() - began, 0.3)
         killed.assert_called_once_with()
-        self.assertTrue(self.mode.alive())
+        self.assertEqual(self.mode.state(), "live")
 
     def test_skips_killpg_once_the_child_is_reaped_and_both_pipes_ended(self):
         self.begin("pass")
@@ -249,11 +250,24 @@ class Stop(Base):
 
     def test_is_a_no_op_before_begin_and_after_a_failed_begin(self):
         self.mode.stop()
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         with self.assertRaises(FileNotFoundError):
             self.mode.begin((sys.executable, "-c", ""), cwd=os.path.join(self.dir, "missing"), env=dict(os.environ))
         self.mode.stop()
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
+
+
+class TuiOnly(Base):
+    def test_send_and_screen_raise_driver_error_before_and_after_begin(self):
+        for when in ("before", "after"):
+            if when == "after":
+                self.begin(SLEEPER)
+            for call, message in ((lambda: self.mode.send("x"), "send: tui mode only"),
+                                  (self.mode.screen, "screen: tui mode only"),
+                                  (lambda: self.mode.screen(5), "screen: tui mode only")):
+                with self.subTest(when=when, message=message), self.assertRaises(DriverError) as caught:
+                    call()
+                self.assertEqual(str(caught.exception), message)
 
 
 class Returncode(Base):
