@@ -5,12 +5,14 @@ runtime.py (RUNTIME), run by this Python.
 Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a TuiRun). FakeHeadlessRun.parse
 maps each JSON record by its "type": session {id} → SessionBound, activity {name} → Activity, message {text} → Reply,
 blocked {reason} → Blocked, result {text, pending} → TurnEnd, exit → Exited(99) (which the Driver drops); any other
-record → nothing."""
+record → nothing. FakeTuiRun's hook labels: stop (TURN_END: reply its last_message, pending its tasks' count), ask
+(BLOCKED), tool (ACTIVITY)."""
 import os
 import shlex
 import sys
 
-from adapters.base import Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, Reply, SessionBound, TuiRun, TurnEnd
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, Reply,
+                           SessionBound, TuiRun, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -54,6 +56,8 @@ class FakeHeadlessRun(HeadlessRun):
 
 
 class FakeTuiRun(TuiRun):
+    hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
+
     def launch(self, prompt, spec, resume, hook):
         return Launch((*_argv(self.adapter, prompt, spec, resume), *hook))
 

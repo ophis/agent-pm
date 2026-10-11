@@ -2,11 +2,13 @@
 
 Appends one JSON line {"argv" (without argv[0]), "pid", "cwd", "env": {"PWD", "FAKE_ENV"} (null: unset)} to the log,
 then runs the scenario, a JSON list, step by step: {"out": obj} prints obj as one JSON line, {"raw": text} prints text,
-{"err": text} prints text to stderr, {"sleep": s} sleeps s seconds, {"exit": n} exits n. Each line is flushed; after
-the last step it exits 0. A tui launch's HOOK argv follows PROMPT; it is logged, never run."""
+{"err": text} prints text to stderr, {"sleep": s} sleeps s seconds, {"exit": n} exits n, {"hook": label, "payload": obj}
+runs the HOOK argv plus label with obj as JSON on stdin and waits for it, {"read": true} waits for a stdin line. Each
+line is flushed; after the last step it exits 0. A tui launch's HOOK argv follows PROMPT."""
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -35,6 +37,10 @@ def main() -> int:
             time.sleep(step["sleep"])
         elif "exit" in step:
             return step["exit"]
+        elif "hook" in step:
+            subprocess.run([*args.hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True)
+        elif "read" in step:
+            sys.stdin.readline()
     return 0
 
 

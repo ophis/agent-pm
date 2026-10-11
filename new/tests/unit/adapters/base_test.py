@@ -1,6 +1,7 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
-Adapter, HeadlessRun and TuiRun, through stub subclasses; nothing starts a process."""
+Adapter, HeadlessRun and TuiRun (hook kinds, labels, limit), through stub subclasses; nothing starts a process."""
 import dataclasses
+import inspect
 import typing
 import unittest
 from types import MappingProxyType
@@ -8,9 +9,9 @@ from unittest import mock
 
 from new.tests import hermetic  # noqa: F401
 from adapters import base
-from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch,
-                           LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr, TuiRun, TurnEnd, Usage,
-                           Window)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Adapter, Blocked, ConfigError, Exited,
+                           HeadlessRun, Key, Launch, LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr,
+                           TuiRun, TurnEnd, Usage, Window)
 
 
 class StubAdapter(Adapter):
@@ -39,9 +40,24 @@ class StubTuiRun(TuiRun):
         return payload.get("last", "")
 
 
-class CountingTuiRun(StubTuiRun):
+class LabeledTuiRun(StubTuiRun):
+    hooks = {"end": TURN_END, "wait": BLOCKED, "work": ACTIVITY}
+
+
+class DetailedTuiRun(LabeledTuiRun):
     def pending(self, payload):
         return len(payload.get("tasks", []))
+
+    def activity(self, payload):
+        return payload.get("doing", "")
+
+    def blocked_reason(self, payload):
+        return payload.get("why", "")
+
+
+class NativeIdTuiRun(LabeledTuiRun):
+    def session_id(self, payload):
+        return payload.get("thread", "")
 
 
 class Refusals(unittest.TestCase):
@@ -228,34 +244,78 @@ class HeadlessRunTest(unittest.TestCase):
 
 class TuiRunTest(unittest.TestCase):
     def setUp(self):
-        self.run = CountingTuiRun(StubAdapter({}))
-        self.stop = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
+        self.run = DetailedTuiRun(StubAdapter({}))
+        self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
+
+    def test_the_hook_kinds(self):
+        self.assertEqual((TURN_END, BLOCKED, ACTIVITY), ("turn_end", "blocked", "activity"))
+
+    def test_defaults(self):
+        run = StubTuiRun(StubAdapter({}))
+        self.assertEqual(TuiRun.hooks, {})
+        self.assertEqual((run.pending(self.end), run.activity({"doing": "x"}), run.blocked_reason({"why": "y"})),
+                         (0, "", ""))
+        for screen in ("", "limit reached\n> "):
+            with self.subTest(screen=screen):
+                self.assertIsNone(run.limit(screen))
 
     def test_submit_pastes_then_presses_enter(self):
         self.assertEqual(self.run.submit("x"), (Paste("x"), Key("Enter")))
 
-    def test_pending_is_0_unless_overridden(self):
-        self.assertEqual(StubTuiRun(StubAdapter({})).pending(self.stop), 0)
+    def test_session_id_is_the_payloads_session_id_when_a_str(self):
+        for payload, native in (({"session_id": "n1"}, "n1"), ({"session_id": ""}, ""), ({"session_id": 5}, ""),
+                                ({"session_id": None}, ""), ({}, "")):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.run.session_id(payload), native)
 
-    def test_stop_with_a_new_session_id_binds_it_first(self):
-        self.assertEqual(self.run.hook_events("Stop", self.stop), [SessionBound("n1"), TurnEnd("done", 2)])
-        self.assertEqual(self.run.hook_events("Stop", self.stop, bound="n0"), [SessionBound("n1"), TurnEnd("done", 2)])
+    def test_a_new_session_id_binds_it_first(self):
+        self.assertEqual(self.run.hook_events("end", self.end), [SessionBound("n1"), TurnEnd("done", 2)])
+        self.assertEqual(self.run.hook_events("end", self.end, bound="n0"), [SessionBound("n1"), TurnEnd("done", 2)])
 
-    def test_stop_with_the_bound_or_no_session_id_is_a_turn_end(self):
-        self.assertEqual(self.run.hook_events("Stop", self.stop, bound="n1"), [TurnEnd("done", 2)])
+    def test_the_bound_or_no_session_id_binds_nothing(self):
+        self.assertEqual(self.run.hook_events("end", self.end, bound="n1"), [TurnEnd("done", 2)])
         for session in ({}, {"session_id": ""}, {"session_id": 5}):
             with self.subTest(session=session):
-                self.assertEqual(self.run.hook_events("Stop", {"last": "r", **session}), [TurnEnd("r", 0)])
+                self.assertEqual(self.run.hook_events("end", {"last": "r", **session}), [TurnEnd("r", 0)])
 
-    def test_post_tool_use_is_activity_naming_the_tool(self):
-        for payload, detail in (({"tool_name": "Bash"}, "Bash"), ({"tool_name": 5}, ""), ({}, "")):
-            with self.subTest(payload=payload):
-                self.assertEqual(self.run.hook_events("PostToolUse", {"session_id": "n1", **payload}, bound="n1"),
-                                 [Activity(detail)])
+    def test_each_label_gives_the_event_of_its_kind(self):
+        payload = {"session_id": "n1", "last": "r", "tasks": [1], "doing": "Bash", "why": "ask"}
+        for label, event in (("end", TurnEnd("r", 1)), ("wait", Blocked("ask")), ("work", Activity("Bash"))):
+            with self.subTest(label=label):
+                self.assertEqual(self.run.hook_events(label, payload, bound="n1"), [event])
 
-    def test_any_other_hook_gives_nothing_more(self):
-        self.assertEqual(self.run.hook_events("Notification", {"session_id": "n1"}, bound="n1"), [])
-        self.assertEqual(self.run.hook_events("Notification", {"session_id": "n1"}), [SessionBound("n1")])
+    def test_the_kinds_default_details(self):
+        run = LabeledTuiRun(StubAdapter({}))
+        payload = {"last": "r", "tasks": [1], "doing": "Bash", "why": "ask"}
+        for label, event in (("end", TurnEnd("r", 0)), ("wait", Blocked("")), ("work", Activity(""))):
+            with self.subTest(label=label):
+                self.assertEqual(run.hook_events(label, payload), [event])
+
+    def test_an_unknown_label_gives_nothing_more(self):
+        for label in ("other", "", "End", TURN_END, "Stop", "PostToolUse"):
+            with self.subTest(label=label):
+                self.assertEqual(self.run.hook_events(label, {"session_id": "n1", "last": "r"}, bound="n1"), [])
+        self.assertEqual(self.run.hook_events("other", {"session_id": "n1"}), [SessionBound("n1")])
+
+    def test_without_hooks_no_label_has_a_kind(self):
+        run = StubTuiRun(StubAdapter({}))
+        payload = {"session_id": "n1", "last": "r", "tool_name": "Bash"}
+        for label in ("Stop", "PostToolUse", "Notification", "PermissionRequest", "end"):
+            with self.subTest(label=label):
+                self.assertEqual(run.hook_events(label, payload), [SessionBound("n1")])
+
+    def test_base_names_no_runtime_hook(self):
+        source = inspect.getsource(base)
+        for name in ("Stop", "PreToolUse", "PostToolUse", "Notification", "PermissionRequest", "UserPromptSubmit"):
+            with self.subTest(name=name):
+                self.assertNotRegex(source, rf"\b{name}\b")
+
+    def test_hook_events_binds_the_id_session_id_reads(self):
+        run = NativeIdTuiRun(StubAdapter({}))
+        self.assertEqual(run.hook_events("end", {"thread": "t1", "session_id": "n1", "last": "r"}),
+                         [SessionBound("t1"), TurnEnd("r", 0)])
+        self.assertEqual(run.hook_events("end", {"thread": "t1", "last": "r"}, bound="t1"), [TurnEnd("r", 0)])
+        self.assertEqual(run.hook_events("work", {"session_id": "n1"}), [Activity("")])
 
 
 class NoProcessTest(unittest.TestCase):
@@ -265,8 +325,11 @@ class NoProcessTest(unittest.TestCase):
             adapter = StubAdapter({"model": "m"})
             tui = adapter.tui_run()
             tui.submit("x")
-            tui.hook_events("Stop", {"session_id": "n1"})
-            tui.hook_events("PostToolUse", {"tool_name": "Bash"}, bound="n1")
+            tui.hook_events("end", {"session_id": "n1"})
+            labeled = DetailedTuiRun(adapter)
+            for label in labeled.hooks:
+                labeled.hook_events(label, {"session_id": "n1", "doing": "Bash"}, bound="n1")
+            tui.limit("screen")
             list(adapter.headless_run().events(['{"texts": ["a"]}']))
             adapter.usage_probe()
             adapter.usage("output")

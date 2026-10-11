@@ -2,9 +2,11 @@
 config's [adapters.<name>] table minus `implementation`; headless_run() and tui_run() give the runtime's HeadlessRun or
 TuiRun, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
 the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited. Stderr, a diagnostic,
-sits beside it. The Adapter also gives its account usage probe's command (usage_probe) and reads that probe's stdout as
-Usage, and a session's SessionStatus. A spec type refuses a bad value with ConfigError when built; sid_error is the one
-sid rule. Nothing here starts a process or touches tmux; imports no other layer."""
+sits beside it. A TuiRun's hooks map each of its hook labels to a hook kind (TURN_END, BLOCKED, ACTIVITY), which
+hook_events turns into events; no runtime's hook is named here. The Adapter also gives its account usage probe's
+command (usage_probe) and reads that probe's stdout as Usage, and a session's SessionStatus. A spec type refuses a bad
+value with ConfigError when built; sid_error is the one sid rule. Nothing here starts a process or touches tmux;
+imports no other layer."""
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -13,6 +15,9 @@ from dataclasses import dataclass, field
 from utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+TURN_END = "turn_end"   # hook kinds
+BLOCKED = "blocked"
+ACTIVITY = "activity"
 
 
 class ConfigError(Exception):
@@ -243,7 +248,9 @@ class HeadlessRun(ABC):
 
 
 class TuiRun(ABC):
-    """One tui session's runtime side: its command, its submissions and its hook calls as events."""
+    """One tui session's runtime side: its command, its submissions, its hook calls as events and its visible pane's
+    usage-limit message."""
+    hooks: Mapping[str, str] = {}   # hook label → hook kind, set by each runtime
     dialogs: tuple[str, ...] = ()   # screen texts of blocking dialogs that fire no hook
 
     def __init__(self, adapter: Adapter):
@@ -251,30 +258,50 @@ class TuiRun(ABC):
 
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
-        """As HeadlessRun.launch; argv carries the runtime's hooks, each running the `hook` argv (installing them is the
-        runtime's)."""
+        """As HeadlessRun.launch; argv installs each label L of `hooks` as a runtime hook running `hook + (L,)` with the
+        hook's JSON payload on stdin (installing them is the runtime's)."""
 
     @abstractmethod
     def reply(self, payload: dict) -> str:
-        """The turn's reply from a Stop hook's payload."""
+        """The turn's reply from a TURN_END hook's payload."""
 
     def pending(self, payload: dict) -> int:
-        """The background work still running at a Stop hook."""
+        """The background work still running at a TURN_END hook."""
         return 0
+
+    def activity(self, payload: dict) -> str:
+        """An ACTIVITY hook's detail."""
+        return ""
+
+    def blocked_reason(self, payload: dict) -> str:
+        """A BLOCKED hook's reason."""
+        return ""
+
+    def session_id(self, payload: dict) -> str:
+        """The runtime's session id in a hook's payload: its session_id when a str, else ""."""
+        native = payload.get("session_id")
+        return native if isinstance(native, str) else ""
+
+    def limit(self, screen: str) -> LimitHit | None:
+        """The runtime's usage-limit message on the visible pane `screen`; None: none shown."""
+        return None
 
     def submit(self, text: str) -> tuple[Paste | Key, ...]:
         return Paste(text), Key("Enter")
 
-    def hook_events(self, name: str, payload: dict, bound: str = "") -> list[Event]:
-        """Hook `name`'s events: SessionBound first when payload's session_id is a non-empty str other than `bound`;
-        then Stop → TurnEnd, PostToolUse → Activity(its tool_name), any other hook nothing more."""
+    def hook_events(self, label: str, payload: dict, bound: str = "") -> list[Event]:
+        """Hook `label`'s events: SessionBound first when session_id(payload) is non-empty and not `bound`; then by the
+        label's kind in `hooks`: TURN_END → TurnEnd(reply, pending), BLOCKED → Blocked(blocked_reason), ACTIVITY →
+        Activity(activity), an unknown label nothing more."""
         found = []
-        native = payload.get("session_id")
-        if isinstance(native, str) and native and native != bound:
+        native = self.session_id(payload)
+        if native and native != bound:
             found.append(SessionBound(native))
-        if name == "Stop":
+        kind = self.hooks.get(label)
+        if kind == TURN_END:
             found.append(TurnEnd(self.reply(payload), self.pending(payload)))
-        elif name == "PostToolUse":
-            tool = payload.get("tool_name")
-            found.append(Activity(tool if isinstance(tool, str) else ""))
+        elif kind == BLOCKED:
+            found.append(Blocked(self.blocked_reason(payload)))
+        elif kind == ACTIVITY:
+            found.append(Activity(self.activity(payload)))
         return found
