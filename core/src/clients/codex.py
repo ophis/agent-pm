@@ -19,7 +19,9 @@ def _guard_untrusted_project(workdir: str, cwd: str) -> None:
     if not _inside(real_cwd, real_workdir):
         raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
 
-    config_home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    default_home = os.path.abspath(os.path.expanduser("~/.codex"))
+    real_default_home = os.path.realpath(default_home)
+    config_home = os.environ.get("CODEX_HOME") or default_home
     config_home = os.path.abspath(os.path.join(cwd, config_home))
     real_config_home = os.path.realpath(config_home)
     if _inside(config_home, workdir) or _inside(real_config_home, real_workdir):
@@ -32,8 +34,12 @@ def _guard_untrusted_project(workdir: str, cwd: str) -> None:
             candidate = os.path.join(ancestor, ".codex")
             if os.path.lexists(candidate) and (os.path.isdir(candidate) or os.path.islink(candidate)):
                 real_candidate = os.path.realpath(candidate)
-                user_home = (candidate == config_home or real_candidate == real_config_home)
-                if not user_home or _inside(candidate, workdir) or _inside(real_candidate, real_workdir):
+                genuine_user_home = (candidate in (default_home, real_default_home)
+                                     and config_home == default_home and real_candidate == real_default_home
+                                     and not os.path.islink(candidate)
+                                     and not _inside(candidate, workdir)
+                                     and not _inside(real_candidate, real_workdir))
+                if not genuine_user_home:
                     raise ConfigError(f"project Codex settings at {candidate} may load in an untrusted run; "
                                       "use a clean workdir or trusted_dirs")
             parent = os.path.dirname(ancestor)

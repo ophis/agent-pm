@@ -538,10 +538,22 @@ class Codex(Base):
         home = os.path.join(self.tmp.name, ".codex")
         work = os.path.join(home, "runs", "work")
         os.makedirs(work)
-        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": home}), redirect_stderr(io.StringIO()):
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": home}), \
+                redirect_stderr(io.StringIO()):
             launch = client.launch("p", run(), params=self.params(workdir=work),
                                    access=drive.Access(dirs=[], commands=[], cwd=work))
         self.assertEqual(launch.cwd, work)
+
+    def test_custom_codex_home_at_untrusted_project_ancestor_is_rejected(self):
+        client = clients.get("codex", CORE)
+        home = os.path.join(self.repo, ".codex")
+        work = os.path.join(self.repo, "run")
+        os.makedirs(home)
+        os.makedirs(work)
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                client.launch("p", run(), params=self.params(workdir=work),
+                              access=drive.Access(dirs=[], commands=[], cwd=work))
 
     def test_untrusted_cwd_outside_workdir_fails_before_launch(self):
         client = clients.get("codex", CORE)
