@@ -322,8 +322,7 @@ class _SessionState:
 def _recovery_snapshot(state: _SessionState) -> dict:
     snapshot = _snapshot(state.snapshot)
     paths = [state.workdir, snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
-    root = os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-sessions")
-    _unsafe_root(root, paths)
+    _unsafe_root(_store_root(), paths)
     for path in paths:
         if not any(_inside(path, grant) for grant in state.writable_roots):
             raise ConfigError(f"invalid Codex recovery writable grants: no recorded root covers {path}")
@@ -406,12 +405,16 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
     return True
 
 
+def _store_root() -> str:
+    return os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-sessions")
+
+
 def _store(*, create: bool) -> str | None:
-    base = os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm")
-    _unsafe_root(os.path.join(base, "core-sessions"), _implicit_writable_roots())
+    root = _store_root()
+    base = os.path.dirname(root)
+    _unsafe_root(root, _implicit_writable_roots())
     if not _private_dir(base, create=create, config_parent=True):
         return None
-    root = os.path.join(base, "core-sessions")
     return root if _private_dir(root, create=create) else None
 
 
@@ -513,8 +516,7 @@ def _create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list
                     "snapshot": snapshot, "client_id": None,
                     "writable_roots": list(dict.fromkeys([workdir, *(_absolute(path, "writable root")
                                                                     for path in writable_roots)]))}, workdir, sid)
-    root = os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-sessions")
-    _unsafe_root(root, [*state.writable_roots, *_implicit_writable_roots()])
+    _unsafe_root(_store_root(), [*state.writable_roots, *_implicit_writable_roots()])
     root = _store(create=True)
     assert root is not None
     _write(_path(root, workdir, sid), state, exclusive=True)
