@@ -123,6 +123,22 @@ class CommonTest(Base):
             with self.assertRaisesRegex(ConfigError, "writable"):
                 self.common.load(str(self.work), self.spec.sid)
 
+    def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
+        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
+        with self.assertRaisesRegex(ConfigError, "writable"):
+            adapter.common.prepare(self.spec, False)
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_configured_tmpdir_cannot_grant_store_on_resumed_prepare(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        saved = self.record().read_bytes()
+        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
+        with self.assertRaisesRegex(ConfigError, "writable"):
+            adapter.common.prepare(self.spec, True)
+        self.assertEqual(self.record().read_bytes(), saved)
+
     def test_store_parent_permissions_and_symlink_guard(self):
         parent = self.home / ".agent-pm"
         parent.mkdir(mode=0o755)

@@ -306,9 +306,10 @@ def _path(root: str, workdir: str, sid: str) -> str:
     return os.path.join(root, digest + ".json")
 
 
-def _implicit_writable_roots() -> list[str]:
+def _implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
+    environment = os.environ if environment is None else environment
     return ["/tmp", "/private/tmp", "/var/tmp", tempfile.gettempdir(),
-            *([os.path.abspath(os.environ["TMPDIR"])] if os.environ.get("TMPDIR") else [])]
+            *([os.path.abspath(environment["TMPDIR"])] if environment.get("TMPDIR") else [])]
 
 
 def _unsafe_root(root: str, paths: list[str]) -> None:
@@ -518,6 +519,8 @@ class CodexCommon:
         return result
 
     def prepare(self, spec, resume: bool) -> SessionState:
+        environment = {**os.environ, **self.defaults, **self.config.get("env", {})}
+        _unsafe_root(_store_root(), _implicit_writable_roots(environment))
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:

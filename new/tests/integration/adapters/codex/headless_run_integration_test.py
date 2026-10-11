@@ -2,6 +2,7 @@ import dataclasses
 import json
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 import threading
@@ -93,7 +94,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
                 "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"',
                 "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]",
                 "-m", "gpt-test", "-c", "model_reasoning_effort=low", "--add-dir", str(self.extra),
-                "--add-dir", str(self.tasks), *(["resume", NATIVE] if resume else []),
+                "--add-dir", str(self.tasks), *(["resume", NATIVE] if resume else []), "--",
                 prompt + "\n\n" + self.adapter.runtime_note]
 
     def test_fixture_cleanup_removes_owned_home_outside_writable_roots(self):
@@ -130,6 +131,77 @@ class HeadlessIntegrationTest(unittest.TestCase):
         self.assertTrue(entry["stdin_eof"])
         self.assertEqual((entry["cwd"], entry["env"]["PWD"], entry["env"]["CODEX_HOME"]),
                          (str(self.cwd), str(self.cwd), str(self.codex_home)))
+
+    def direct_launch(self, prompt, resume=False):
+        adapter = CodexAdapter({key: value for key, value in self.config["adapters"]["codex"].items()
+                                if key != "implementation"})
+        run = adapter.headless_run()
+        launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume)
+        env = {key: value for key, value in os.environ.items() if key not in launch.unset}
+        result = subprocess.run(launch.argv, cwd=launch.cwd, env={**env, **launch.env, "PWD": launch.cwd},
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(run.events(result.stdout.splitlines()))[-1], TurnEnd("three"))
+        entry = self.logged()[-1]
+        expected = self.expected_args(prompt, resume)[:-1] + [prompt]
+        self.assertEqual(entry["argv"], expected)
+        self.assertEqual(entry["prompt"], prompt)
+        self.assertEqual(entry["resume_id"], NATIVE if resume else None)
+
+    def test_fresh_native_prompt_boundary_preserves_subcommands_and_options(self):
+        for prompt in ("review", "resume", "fork", "--dangerously-bypass-approvals-and-sandbox", "--last", "--"):
+            with self.subTest(prompt=prompt):
+                try:
+                    self.direct_launch(prompt)
+                finally:
+                    self.record().unlink()
+
+    def test_resumed_native_prompt_boundary_preserves_options(self):
+        self.direct_launch("first")
+        for prompt in ("--dangerously-bypass-approvals-and-sandbox", "--last", "review", "--"):
+            with self.subTest(prompt=prompt):
+                self.direct_launch(prompt, resume=True)
+
+    def test_configured_tmpdir_override_is_forwarded_fresh_and_resume(self):
+        native_tmp = self.root / "native-tmp"
+        native_tmp.mkdir()
+        self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(native_tmp)
+        registry.configure(self.config)
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                found = self.drain(api.start("codex", "headless", "hello", self.spec,
+                                            resume=self.sid if resume else None, sid=self.sid))
+                self.assertEqual(found[-1], Exited(0))
+                self.assertEqual(self.logged()[-1]["env"]["TMPDIR"], str(native_tmp))
+
+    def test_configured_tmpdir_store_overlap_refused_before_fresh_spawn(self):
+        alias = self.root / "home-alias"
+        alias.symlink_to(self.home)
+        store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
+        for index, root in enumerate((self.home, self.home / ".agent-pm", store, alias)):
+            with self.subTest(root=root):
+                self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)
+                registry.configure(self.config)
+                with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned before TMPDIR guard")) as spawn:
+                    with self.assertRaisesRegex(ConfigError, "writable"):
+                        api.start("codex", "headless", "hello", self.spec, sid=f"{self.sid}-{index}")
+                    spawn.assert_not_called()
+                self.assertFalse((self.home / ".agent-pm").exists())
+        self.assertEqual(self.logged(), [])
+
+    def test_configured_tmpdir_store_overlap_refused_before_resumed_spawn(self):
+        self.drain(api.start("codex", "headless", "first", self.spec, sid=self.sid))
+        saved = self.record().read_bytes()
+        for root in (self.home, self.record().parent):
+            with self.subTest(root=root):
+                self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)
+                registry.configure(self.config)
+                with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned before TMPDIR guard")) as spawn:
+                    with self.assertRaisesRegex(ConfigError, "writable"):
+                        api.start("codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid)
+                    spawn.assert_not_called()
+                self.assertEqual(self.record().read_bytes(), saved)
+        self.assertEqual(len(self.logged()), 1)
 
     def test_resume_same_native_and_saved_settings(self):
         self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))

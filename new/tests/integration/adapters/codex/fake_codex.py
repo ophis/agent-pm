@@ -23,16 +23,16 @@ def parse(args):
     parser.add_argument("-m")
     parser.add_argument("-c", action="append", default=[])
     parser.add_argument("--add-dir", action="append", default=[])
-    offset = args.index("resume") if "resume" in args[:-1] else len(args) - 1
-    options = parser.parse_args(args[1:offset])
-    suffix = args[offset:]
-    if len(suffix) == 3 and suffix[0] == "resume":
-        native, prompt = suffix[1:]
+    if "--" not in args or args.index("--") != len(args) - 2:
+        raise RuntimeError("expected caller prompt after --")
+    prefix, prompt = args[:-2], args[-1]
+    if len(prefix) >= 3 and prefix[-2] == "resume":
+        native = prefix[-1]
         uuid.UUID(native)
-    elif len(suffix) == 1:
-        native, prompt = None, suffix[0]
+        options = parser.parse_args(prefix[1:-2])
     else:
-        raise RuntimeError("expected prompt or resume ID and prompt")
+        native = None
+        options = parser.parse_args(prefix[1:])
     if not {'approval_policy="on-request"', 'approvals_reviewer="auto_review"'} <= set(options.c):
         raise RuntimeError("missing approval settings")
     return native, prompt
@@ -68,7 +68,7 @@ def main():
     with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as stream:
         stream.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "stdin_eof": stdin_eof,
                                  "pid": os.getpid(), "snapshot": state, "resume_id": resume,
-                                 "env": {key: os.environ.get(key) for key in (*MARKERS, *DEFAULTS, "CODEX_HOME", "PWD")}})
+                                 "env": {key: os.environ.get(key) for key in (*MARKERS, *DEFAULTS, "CODEX_HOME", "PWD", "TMPDIR")}})
                      + "\n")
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"type": "user", "text": prompt}) + "\n")

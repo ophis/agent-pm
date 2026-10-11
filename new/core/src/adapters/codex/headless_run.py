@@ -57,7 +57,7 @@ class CodexHeadlessRun(HeadlessRun):
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]
         if resume:
             argv.extend(("resume", self.state.native_id))
-        argv.append(prompt)
+        argv.extend(("--", prompt))
         return Launch(tuple(argv), env=self.adapter.common.environment(snapshot),
                       unset=self.adapter.common.unset, cwd=snapshot["cwd"],
                       resume=self.adapter.common.resume_command(self.state) if resume else "")

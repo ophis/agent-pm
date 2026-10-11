@@ -9,10 +9,12 @@ runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/ada
 old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
 adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
+pure_utils(core)     src/utils/ imports only the Python standard library
 """
 import ast
 import os
 import re
+import sys
 
 LAYERS = ("adapters", "driver", "composer", "delegate")
 OUTSIDE = "outside the layers"
@@ -37,6 +39,17 @@ def layer_imports(core: str) -> list[str]:
             if top in LAYERS and top != layer and ((layer, top) not in ALLOWED
                                                    or top == "driver" and module != "driver.api"):
                 found.add(f"{rel}: {layer} imports {module}")
+    return sorted(found)
+
+
+def pure_utils(core: str) -> list[str]:
+    found = set()
+    for rel, text in _files(core, ".py"):
+        if rel.startswith("src/utils/"):
+            package = rel[:-3].split("/")[1:-1]
+            for module in _imports(ast.parse(text, rel), package):
+                if module.split(".")[0] not in sys.stdlib_module_names:
+                    found.add(f"{rel}: utils imports {module}")
     return sorted(found)
 
 
