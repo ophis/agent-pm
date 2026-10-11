@@ -21,7 +21,7 @@ Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgr
 flowchart TB
   subgraph EN[entry points]
     LD[launchd]
-    HU["the user: router --issue · --tui"]
+    HU[the user]
     M["manager: /agent-pm:tmux"]
   end
   subgraph OR[orchestrator/]
@@ -44,7 +44,8 @@ flowchart TB
     P2[Codex CLI]
   end
   LD --> R & PP
-  HU --> R
+  HU -->|"--issue · --tui"| R
+  M -->|"--issue · --tui"| R
   M -->|"CLI --detach"| D
   W -->|API| DR
   RU -->|delegate.run| D
