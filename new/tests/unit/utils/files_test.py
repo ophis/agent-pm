@@ -47,6 +47,13 @@ class ReadRegular(unittest.TestCase):
             with self.subTest(limit=limit, tail=tail):
                 self.assertEqual(files.read_regular(self.path, limit=limit, tail=tail), want)
 
+    def test_from_an_offset(self):
+        self.write()
+        for offset, limit, tail, want in ((3, None, False, b"3456789"), (3, 4, False, b"3456"), (3, 4, True, b"6789"),
+                                          (8, 4, True, b"89"), (10, None, False, b""), (12, 4, False, b"")):
+            with self.subTest(offset=offset, limit=limit, tail=tail):
+                self.assertEqual(files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want)
+
     def test_a_symlink_is_none(self):
         target = os.path.join(self.dir, "target")
         self.write(path=target)
@@ -57,6 +64,13 @@ class ReadRegular(unittest.TestCase):
         os.mkfifo(self.path)
         self.assertIsNone(self.promptly(lambda: files.read_regular(self.path)))
         self.assertIsNone(files.read_regular(self.dir))
+
+    def test_no_fd_is_left_open(self):
+        os.mkdir(self.path)
+        before = len(os.listdir("/dev/fd"))
+        for _ in range(3):
+            self.assertIsNone(files.read_regular(self.path))
+        self.assertEqual(len(os.listdir("/dev/fd")), before)
 
     def test_missing_is_none(self):
         self.assertIsNone(files.read_regular(self.path))
