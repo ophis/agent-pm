@@ -859,7 +859,11 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
     finally:   # a stop that cut the block short comes here too, blocked by _stop
         # The act-as skill pre-approves `--client skill --role *`: only a client that runs may write the outcome line.
-        if a.events is not None and getattr(clients.REGISTRY.get(a.client or "claude"), "runs", False):
+        try:
+            running_client = clients.get(a.client or "claude", root).runs if a.events is not None else False
+        except (ConfigError, ImportError):
+            running_client = False   # _main already reported an invalid client; cleanup must not mask it
+        if running_client:
             try:
                 append_line(tui_claude.events_file(a.events),
                             f"{time.strftime('%H:%M:%S')} {a.driver} outcome {status or 'error'}\n")

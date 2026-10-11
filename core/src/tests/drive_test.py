@@ -410,7 +410,7 @@ class Generic(Base):
     def test_a_client_unknown_or_of_the_wrong_kind(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
-        self.assertIn("unknown client 'nope'", str(cm.exception))
+        self.assertIn("no [clients.nope] table", str(cm.exception))
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
@@ -2080,6 +2080,12 @@ class Detach(Base):
                 self.assertFalse(os.path.exists(self.events))
                 self.assertFalse(os.path.exists(self.work))
                 self.assertEqual(os.listdir(home), [])
+
+    def test_discovered_client_driver_writes_its_cleanup_outcome(self):
+        argv = self.argv("--client", "fake", "--events", self.events, "--driver", "d-drive", "--dry-run")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(drive.main(argv, root=CORE), 0)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_dry_run_prints_the_plan_and_the_driver_and_starts_nothing(self):
         for runner in ("tui", "headless"):   # with --detach, headless takes --events
