@@ -1,5 +1,5 @@
-"""new/core/src/adapters/base.py: spec types, the frozen event set, Adapter, HeadlessRun and TuiRun, through stub
-subclasses; nothing starts a process."""
+"""new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage and SessionStatus, Adapter,
+HeadlessRun and TuiRun, through stub subclasses; nothing starts a process."""
 import dataclasses
 import typing
 import unittest
@@ -8,8 +8,8 @@ from unittest import mock
 
 from new.tests import hermetic  # noqa: F401
 from adapters import base
-from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch, LimitHit, Paste,
-                           Reply, SessionBound, SessionInfo, Spec, Stderr, TuiRun, TurnEnd)
+from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch,
+                           LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr, TuiRun, TurnEnd, Usage)
 
 
 class StubAdapter(Adapter):
@@ -119,6 +119,20 @@ class SpecTest(Refusals):
                              f'sid must be a non-empty printable string without "/", got {shown}')
 
 
+class SidErrorTest(unittest.TestCase):
+    def test_none_for_a_non_empty_printable_string_without_a_slash(self):
+        for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
+            with self.subTest(sid=sid):
+                self.assertIsNone(base.sid_error(sid))
+
+    def test_the_error_text_otherwise(self):
+        for bad, shown in (("", "''"), ("a/b", "'a/b'"), ("a\tb", r"'a\tb'"), (5, "5"), (None, "None"),
+                           ("s" * 200 + "\n", "'" + "s" * 79)):
+            with self.subTest(bad=bad):
+                self.assertEqual(base.sid_error(bad),
+                                 f'sid must be a non-empty printable string without "/", got {shown}')
+
+
 class LaunchTest(Refusals):
     def test_defaults(self):
         launch = Launch(("x",))
@@ -142,13 +156,29 @@ class LaunchTest(Refusals):
 
 class EventsTest(unittest.TestCase):
     def test_the_frozen_set_is_the_seven_events(self):
-        self.assertEqual(typing.get_args(base.Event), (SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited))
+        self.assertEqual(typing.get_args(base.Event),
+                         (SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited))
         self.assertNotIn(Stderr, typing.get_args(base.Event))
 
     def test_defaults(self):
-        self.assertEqual((Activity(), TurnEnd(), Blocked()), (Activity(""), TurnEnd("", 0), Blocked("")))
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            TurnEnd().reply = "x"
+        self.assertEqual((Activity(), TurnEnd(), Blocked(), LimitHit()),
+                         (Activity(""), TurnEnd("", 0), Blocked(""), LimitHit(None)))
+        self.assertEqual(LimitHit(1767225600.0).resets_at, 1767225600.0)
+        for event, name in ((TurnEnd(), "reply"), (LimitHit(), "resets_at")):
+            with self.subTest(name=name), self.assertRaises(dataclasses.FrozenInstanceError):
+                setattr(event, name, "x")
+
+
+class ReportsTest(unittest.TestCase):
+    def test_usage_and_session_status_are_frozen_records(self):
+        usage = Usage(five_hour=120.5, weekly_full=True, resets_at=None)
+        self.assertEqual((usage.five_hour, usage.weekly_full, usage.resets_at), (120.5, True, None))
+        status = SessionStatus(resumable="yes", last_active=1.5, resume_command="x --resume s")
+        self.assertEqual((status.resumable, status.last_active, status.resume_command), ("yes", 1.5, "x --resume s"))
+        self.assertEqual(base.RESUMABLE, ("yes", "no", "unknown"))
+        for record, name in ((usage, "five_hour"), (status, "resumable")):
+            with self.subTest(name=name), self.assertRaises(dataclasses.FrozenInstanceError):
+                setattr(record, name, "x")
 
 
 class AdapterTest(Refusals):
@@ -172,8 +202,12 @@ class AdapterTest(Refusals):
 
     def test_defaults(self):
         self.assertEqual((Adapter.keys, Adapter.runtime_note, TuiRun.dialogs), (frozenset(), "", ()))
-        info = SessionInfo(sid="s", native_id="", cwd="/c", project=False, transcript="", resume="")
-        self.assertIsNone(StubAdapter({}).usage(info))
+        adapter = StubAdapter({})
+        self.assertIsNone(adapter.usage_probe())
+        for output in ("", "garbage", '{"type": "rate_limit_event"}'):
+            with self.subTest(output=output):
+                self.assertIsNone(adapter.usage(output))
+        self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
 
     def test_runs_keep_their_adapter(self):
         adapter = StubAdapter({})
@@ -230,6 +264,9 @@ class NoProcessTest(unittest.TestCase):
             tui.hook_events("Stop", {"session_id": "n1"})
             tui.hook_events("PostToolUse", {"tool_name": "Bash"}, bound="n1")
             list(adapter.headless_run().events(['{"texts": ["a"]}']))
+            adapter.usage_probe()
+            adapter.usage("output")
+            adapter.session_status("s", "/c")
         popen.assert_not_called()
         run.assert_not_called()
 
