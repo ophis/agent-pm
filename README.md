@@ -43,7 +43,7 @@ flowchart TB
       B["base.py<br>Adapter (abstract factory)<br>HeadlessRun · TuiRun (abstract)"]
       CL["claude/: one factory<br>ClaudeAdapter<br>ClaudeHeadlessRun · ClaudeTuiRun<br>ClaudeCommon"]
       CX["codex/: one factory<br>CodexAdapter<br>CodexHeadlessRun · CodexTuiRun<br>CodexCommon"]
-      SK["skill/: one factory<br>SkillAdapter<br>SkillHeadlessRun (prints the prompt; no tui)"]
+      PP2["print_prompt/: one factory<br>PrintPromptAdapter<br>PrintPromptHeadlessRun (prints the prompt; no tui)"]
     end
   end
   subgraph RT[agent runtimes]
@@ -61,7 +61,7 @@ flowchart TB
   D --> C
   D <==>|"start · events, replies"| DR
   DR -->|"loads; headless_run() / tui_run()"| B
-  B -.->|implemented by| CL & CX & SK
+  B -.->|implemented by| CL & CX & PP2
   DR -->|"starts & hosts (pipe / tmux)"| RT
   CL -.->|"wraps (argv, output, hooks)"| P1
   CX -.->|wraps| P2
