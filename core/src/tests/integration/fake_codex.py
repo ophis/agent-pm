@@ -28,14 +28,15 @@ def parse(argv: list[str]) -> argparse.Namespace:
         sys.exit("fake_codex.py: expected exec")
     ap = argparse.ArgumentParser(prog="codex exec", allow_abbrev=False)
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--sandbox")
     ap.add_argument("--skip-git-repo-check", action="store_true")
+    ap.add_argument("--approve-for-me", action="store_true")
     ap.add_argument("-m", "--model")
     ap.add_argument("-c", "--config", action="append", default=[])
     ap.add_argument("--add-dir", action="append", default=[])
     ap.add_argument("prompt")
     args = ap.parse_args(argv[1:])
-    if not (args.json and args.sandbox == "workspace-write" and args.skip_git_repo_check and args.model):
+    if not (args.json and args.skip_git_repo_check
+            and args.approve_for_me and args.model):
         sys.exit("fake_codex.py: missing required headless launch settings")
     if not any(value.startswith("model_reasoning_effort=") and value.split("=", 1)[1] for value in args.config):
         sys.exit("fake_codex.py: missing model reasoning effort")

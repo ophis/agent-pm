@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
+import drive  # noqa: E402
 
 class Plain:
     """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
@@ -1073,6 +1074,39 @@ class Tickets(unittest.TestCase):
 
 
 class RealCore(unittest.TestCase):
+    def test_parameter_rule_defers_command_approval_to_client(self):
+        for name in ("claude", "codex", "skill"):
+            prompt, _ = client_prompt(name, "researcher")
+            self.assertIn("Approval follows the selected client's policy.", prompt)
+            self.assertNotIn("pre-approved commands match on their exact text", prompt)
+
+    def test_codex_installed_copy_uses_absolute_core_resources(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = os.path.join(parent, "installed", "core")
+            os.makedirs(root)
+            for name in ("src", "team", "output"):
+                shutil.copytree(os.path.join(CORE, name), os.path.join(root, name))
+            shutil.copy2(os.path.join(CORE, compose.CONFIG), os.path.join(root, compose.CONFIG))
+
+            client = clients.get("codex", root)
+            run = compose.resolve(root, client, "researcher", "light-research")
+            workdir = os.path.join(parent, "run")
+            params = replace(RUN, workdir=workdir, out=os.path.join(workdir, "out.md"))
+            prompt = compose.render(root, run, params, client=client)
+            scripts, tasks, methods = (client.scripts_path(root), client.tasks_path(root), client.methods_path(root))
+            access = drive.access(run, params, repo=None, scripts=scripts, tasks=tasks, methods=methods)
+
+            for name, path in (("<scripts>", scripts), ("<tasks>", tasks), ("<methods>", methods)):
+                self.assertTrue(os.path.isabs(path), name)
+                self.assertTrue(os.path.isdir(path), name)
+                self.assertEqual(parameters(prompt)[name], f"`{path}`")
+            self.assertTrue(os.path.isfile(os.path.join(scripts, "report.py")))
+            self.assertTrue(os.path.isfile(os.path.join(tasks, "light-research.md")))
+            self.assertIn(tasks, access.dirs)
+            self.assertIn(methods, access.dirs)
+            self.assertIn(compose.report_command(scripts, params) + " *", access.commands)
+            self.assertNotIn("CLAUDE_SKILL_DIR", prompt)
+
     def test_core_config_renders_the_language_and_progress_rules_once(self):
         for role in ROLES:
             prompt, run = composed(role)

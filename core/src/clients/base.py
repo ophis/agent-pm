@@ -10,9 +10,9 @@ from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, Ru
 
 @dataclass(frozen=True)
 class Access:
-    """An agent run's client-neutral constraints, as absolute paths and commands to pre-approve."""
-    dirs: list[str]       # extra dirs the agent run may reach
-    commands: list[str]   # shell commands to pre-approve
+    """An agent run's client-neutral access intent; the selected client decides its effective grants."""
+    dirs: list[str]       # combined extra dirs from read/write; effective access is client-specific
+    commands: list[str]   # requested shell commands; pre-approved only when the client supports it
     cwd: str = ""         # the dir the agent run starts in (drive.place)
     project: bool = False   # whether the client loads cwd's project settings and instructions (drive.place)
 

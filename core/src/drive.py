@@ -98,9 +98,10 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, tasks: str,
            cwd: str | None = None, project: bool = False) -> Access:
-    """The agent run's Access: the `tasks` dir, then the read/write entries, `{{methods}}` filled; `{{scripts}}` and
-    `{{workdir}}` in commands filled, then the report command and the gate (used verbatim) pre-approved too; the workdir
-    is the first dir when `cwd` (default the workdir) is another."""
+    """The agent run's client-neutral access intent: the `tasks` dir, then combined read/write entries with
+    `{{methods}}` filled; commands with `{{scripts}}` and `{{workdir}}` filled, then the report command and gate verbatim.
+    The selected client determines effective grants and approvals. The workdir is the first extra dir when `cwd`
+    (default the workdir) is another."""
     workdir = os.path.abspath(params.workdir)
     cwd = cwd or workdir
     dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks]
