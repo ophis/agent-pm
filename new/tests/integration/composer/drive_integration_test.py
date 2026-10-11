@@ -7,7 +7,7 @@ from composer.prompt import RESUME
 from new.tests import NEW
 from new.tests.integration.composer import child
 
-TASKS = os.path.join(os.path.dirname(NEW), "core", "team", "tasks")
+TASKS = os.path.join(NEW, "core", "team", "tasks")
 
 
 class NewRun(child.Case):

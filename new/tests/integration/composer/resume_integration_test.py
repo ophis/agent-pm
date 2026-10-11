@@ -9,7 +9,7 @@ from composer.prompt import RESUME
 from new.tests import NEW
 from new.tests.integration.composer import child
 
-TEAM = os.path.join(os.path.dirname(NEW), "core", "team")
+TEAM = os.path.join(NEW, "core", "team")
 ANSWER = "Say hello."
 PICK = "**Your task**: pick it from your charter's Tasks section"
 

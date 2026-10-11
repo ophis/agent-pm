@@ -7,7 +7,7 @@ import repo
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # <scripts>'s value
 CONFIG = repo.CONFIG
-TEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SRC))), "core", "team")   # the built-in team root
+TEAM = os.path.join(os.path.dirname(SRC), "team")   # the built-in team root
 OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")   # {{name}} or {{name|default}}

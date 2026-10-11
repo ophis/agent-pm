@@ -9,7 +9,6 @@ Your result is an **outcome**, returned per [Output › Return](#return), plus a
 - `url`: the delivered link, when [Output › Destination](#destination) gives one.
 - `files`: absolute paths, when your task asks for them.
 - `deliverable`: the document, when [Output › Destination](#destination) says so.
-- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place of `deliverable`, when [Output › Destination](#destination) says so or the deliverable is long.
 
 Statuses:
 

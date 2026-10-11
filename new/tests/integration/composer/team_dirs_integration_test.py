@@ -16,7 +16,7 @@ from new.tests.integration.composer import child
 # The team dirs lie outside every temp dir (check_team_dirs refuses one there): under the repo's gitignored work/.
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
 IN_TEMP = repo.under(os.path.realpath(TEAMS), repo.temp_dirs()) is not None
-CORE_TASKS = os.path.join(os.path.dirname(NEW), "core", "team", "tasks")
+CORE_TASKS = os.path.join(NEW, "core", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
 NOTE = (f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
         "## Resume\n\nRedo step 2.\n")
