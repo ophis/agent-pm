@@ -61,6 +61,7 @@ class CodexIntegration(unittest.TestCase):
         self.assertIn("--sandbox", call["argv"])
         self.assertEqual(call["argv"][call["argv"].index("--sandbox") + 1], "workspace-write")
         self.assertIn("--skip-git-repo-check", call["argv"])
+        self.assertIn("--approve-for-me", call["argv"])
         self.assertIn("# Input\n\nHello.", call["prompt"])
 
     def test_missing_outcome_is_not_inferred_from_final_reply(self):
