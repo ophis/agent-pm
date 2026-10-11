@@ -1,6 +1,3 @@
-"""A private tmux server per test, for integration tests that run crew.py, tmux_host.py and drive.py as processes
-against real tmux: Server (its socket and env, a control-mode client that shows a session, readers), events, wait and
-assert_grid. Stdlib only, importing no core module."""
 import os
 import resource
 import select
@@ -17,15 +14,14 @@ from tests.integration.core import fake_claude
 # Two words, so tmux execs them; one would run as `<default-shell> -c`, which without SHELL in env() is the user's
 # login shell, reading its rc files.
 IDLE = ("cat", "-")
-TIMEOUT = 10   # seconds
-POLL = 0.05   # seconds
+TIMEOUT = 10
+POLL = 0.05
 SOCKET_MAX = 100   # bytes; sun_path holds 104 (macOS), 108 (Linux)
-HEADROOM = 256   # processes
+HEADROOM = 256
 PANES = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}"
 
 
 class Client(NamedTuple):
-    """A control-mode client: its process, its pty's master and the thread draining it until stop."""
     proc: subprocess.Popen
     master: int
     thread: threading.Thread
@@ -33,9 +29,6 @@ class Client(NamedTuple):
 
 
 class Server:
-    """A tmux server of the test's own at socket <root>/tmux-<uid>/default, so TMUX_TMPDIR=<root> and -S reach it;
-    `home` is the test's HOME. The case's cleanups kill the server (by -S), reap the clients and remove the root."""
-
     def __init__(self, case, home: str):
         self.case, self.home, self.size, self.clients = case, home, (200, 50), []
         self.program = shutil.which("tmux")
@@ -43,6 +36,7 @@ class Server:
             case.fail("tmux not found on PATH")
         self.root = os.path.realpath(tempfile.mkdtemp())
         case.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        # socket <root>/tmux-<uid>/default, so TMUX_TMPDIR=<root> and -S reach it
         os.mkdir(os.path.join(self.root, f"tmux-{os.getuid()}"), 0o700)
         self.socket = os.path.join(self.root, f"tmux-{os.getuid()}", "default")
         self.bin = os.path.join(self.root, "bin")
@@ -54,13 +48,11 @@ class Server:
             case.fail(f"tmux socket path over {SOCKET_MAX} bytes: {self.socket}")
 
     def env(self, **extra: str) -> dict[str, str]:
-        """The env of every process the test starts, built from scratch (nothing of os.environ), plus `extra`."""
         return {"PATH": self.path, "HOME": self.home, "PYTHONUTF8": "1", "TMUX_TMPDIR": self.root, **extra}
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
-        """Starts the server, its global env env(), with session `manager` idle in a width x height window; it and its
-        jobs capped (RLIMIT_NPROC) at the user's processes (threads on Linux, which RLIMIT_NPROC counts there) plus
-        HEADROOM, so a fork loop cannot take the host."""
+        # it and its jobs capped (RLIMIT_NPROC) at the user's processes (threads on Linux, which RLIMIT_NPROC counts
+        # there) plus HEADROOM, so a fork loop cannot take the host
         self.size = width, height
         _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
         uid = str(os.getuid())
@@ -74,8 +66,7 @@ class Server:
                        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
 
     def attach(self, session: str) -> None:
-        """Shows `session` in a control-mode client in a pty (a tty tmux_host counts, no iTerm2 path), sized as
-        start's window; returns once list-clients lists it and the window has that size."""
+        # a control-mode client in a pty: a tty tmux_host counts, no iTerm2 path
         master, slave = os.openpty()
         try:
             proc = subprocess.Popen([self.program, "-S", self.socket, "-CC", "attach", "-t", f"={session}"],
@@ -105,39 +96,32 @@ class Server:
              == f"{width}x{height}\n", what=f"{session}'s window at {width}x{height}")
 
     def tmux(self, *args: str) -> subprocess.CompletedProcess:
-        """`tmux -S <socket> args…` with env(), captured."""
         # -u: env() has no locale and no TMUX, so tmux would print each tab or non-ASCII character to us as "_"
         return subprocess.run([self.program, "-u", "-S", self.socket, *args], env=self.env(), capture_output=True,
                               text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT)
 
     def inside(self, session: str) -> dict[str, str]:
-        """TMUX and TMUX_PANE for a process run in `session`'s pane."""
         pid = self._out("display-message", "-p", "#{pid}").strip()
         pane = self._out("display-message", "-p", "-t", f"={session}:", "#{pane_id}").strip()
         return {"TMUX": f"{self.socket},{pid},0", "TMUX_PANE": pane}
 
     def panes(self, window: str) -> dict[str, tuple[int, int, int, int]]:
-        """Each pane of `window` (a target): its (left, top, width, height)."""
         rows = (line.split() for line in self._out("list-panes", "-t", window, "-F", PANES).splitlines())
         return {r[0]: (int(r[1]), int(r[2]), int(r[3]), int(r[4])) for r in rows}
 
     def pane_of(self, session: str) -> str:
-        """`session`'s @pane; "" when unset."""
         return self.option(session, "@pane")
 
     def option(self, session: str, key: str) -> str:
-        """`session`'s session option `key`; "" when unset."""
         return self._out("show-options", "-qv", "-t", f"={session}:", key).removesuffix("\n")
 
     def _out(self, *args: str) -> str:
-        """tmux's stdout; fails the case when tmux fails."""
         res = self.tmux(*args)
         if res.returncode:
             self.case.fail(f"tmux {' '.join(args)}: exit {res.returncode}: {res.stderr.strip()}")
         return res.stdout
 
     def kill(self) -> None:
-        """Kills the server; returns once it and its panes' processes have ended. start() starts it again."""
         res = self.tmux("list-panes", "-a", "-F", "#{pid} #{pane_pid}")
         self.tmux("kill-server")
         pids = {int(p) for p in res.stdout.split() if p.isdigit()} if res.returncode == 0 else set()
@@ -175,7 +159,6 @@ def _alive(pid: int) -> bool:
 
 
 def events(path: str) -> list[str]:
-    """The events file's lines; none while it is missing."""
     try:
         with open(path) as f:
             return f.read().splitlines()
@@ -184,8 +167,6 @@ def events(path: str) -> list[str]:
 
 
 def wait(check, timeout: float = TIMEOUT, what: str = "check() to hold"):
-    """check()'s first truthy value, polled; a check raising AssertionError counts as falsy, its error the value. On
-    timeout: AssertionError naming `what` and the last value."""
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -201,7 +182,7 @@ def wait(check, timeout: float = TIMEOUT, what: str = "check() to hold"):
 
 
 class Box(NamedTuple):
-    """An area: right and bottom are exclusive, so a neighbour beyond the 1-cell border starts at right + 1."""
+    # right and bottom are exclusive, so a neighbour beyond the 1-cell border starts at right + 1
     left: int
     top: int
     right: int
@@ -226,11 +207,6 @@ def _sessions(cell) -> list[str]:
 
 
 def assert_grid(case, server: Server, manager: str, columns: list, manager_width: int | None = None) -> bool:
-    """Fails `case` unless manager's window is the grid `columns` gives: left to right, each column's top-level cells
-    top to bottom, a cell a session name, (parent, [subs…]) or an orphan group [subs…]; a cell's box bounds its
-    sessions' panes (@pane). The manager pane is the window's @grid-manager and first pane (lowest id), at left 0,
-    manager_width wide when given. Placement rules: core/skills/tmux/SKILL.md › Start 3; stored options:
-    core/CLAUDE.md › Rules. True when it holds (for wait)."""
     window, width, stored = server._out("display-message", "-p", "-t", f"={manager}:",
                                         "#{window_id}\t#{window_width}\t#{@grid-manager}").rstrip("\n").split("\t")
     panes = server.panes(window)

@@ -1,8 +1,3 @@
-"""crew.py Codex workers against a private tmux server, fake_codex.py as `codex` (its interactive and app-server modes):
-start with a prompt, the hook helper's blocked and done, the bound worker record, reply, follow-up, restart and recovery
-keeping the native session, flags and NOTIFY, recovery from a Claude session; a Codex manager's session marker and
-injected defaults kept out of a Codex worker (colors shown) and a Claude worker; a Codex worker's own crew.py start
-defaulting to Codex."""
 import json
 import os
 import re
@@ -19,17 +14,14 @@ NOTIFY = 'tui.notification_method="bel"'
 HOOKED = ("SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt")
 CODEX_TOOL_ENV = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
 GONE = ("CODEX_THREAD_ID", "CLAUDECODE", *CODEX_TOOL_ENV)
-CALLER = "26900000-0000-4000-8000-000000000009"   # the Codex manager's own thread
+CALLER = "26900000-0000-4000-8000-000000000009"
 
 
 def codex_session(thread: str = CALLER) -> dict[str, str]:
-    """What Codex gives each command it runs: its thread's session marker and unified exec's forced values."""
     return {"CODEX_THREAD_ID": thread, **CODEX_TOOL_ENV}
 
 
 class CodexLive(Live):
-    """Live with fake_codex.py as `codex` too. Codex worker <name>'s scenario logs to its own file."""
-
     def setUp(self):
         super().setUp()
         fake_codex.install(self.server.bin)
@@ -41,15 +33,12 @@ class CodexLive(Live):
         return os.path.join(self.server.root, f"{name}.codex.jsonl")
 
     def codex_scenario(self, name: str, steps: list, turns: list | tuple = ()) -> dict[str, str]:
-        """Writes `name`'s scenario; the env naming it."""
         with open(self.scenario(name), "w") as f:
             json.dump({"steps": steps, "turns": list(turns), "log": self.codex_log(name)}, f)
         return {fake_codex.ENV: self.scenario(name)}
 
     def start_codex(self, name: str, *args: str, steps: list | None = None, turns: list | tuple = (),
                     inside: str | None = MANAGER, **extra: str) -> str:
-        """`crew.py start <name> --cwd … --prompt hi args…`'s session id, its scenario `steps` (default one text,
-        `Hi from <name>.`) and `turns`, env plus `extra`; fails unless it exits 0 printing `<name> <sid>`."""
         scenario = self.codex_scenario(name, [f"Hi from {name}."] if steps is None else steps, turns)
         res = self.ok(self.workers("start", name, "--cwd", self.cwd, "--prompt", "hi", *args, inside=inside,
                                    **scenario, **extra))
@@ -65,14 +54,12 @@ class CodexLive(Live):
             return []
 
     def calls(self, name: str) -> list[dict]:
-        """The fake codex's interactive starts for worker `name`, oldest first (Live.diagnose reads their pids)."""
         return [e for e in self.logged(name) if "argv" in e and e["argv"][:1] != ["app-server"]]
 
     def hooks_run(self, name: str) -> list[dict]:
         return [e for e in self.logged(name) if "hook" in e]
 
     def native(self, name: str) -> str:
-        """The session id of `name`'s hook payloads, one for all."""
         (sid,) = {h["payload"]["session_id"] for h in self.hooks_run(name)}
         return sid
 
@@ -81,7 +68,6 @@ class CodexLive(Live):
             return json.load(f)
 
     def done_in(self, events: str, name: str, count: int = 1) -> list[str]:
-        """`events`' lines once `count` of them are `HH:MM:SS <name> done`."""
         def check():
             lines = live_tmux.events(events)
             return lines if sum(is_event(line, name, "done") for line in lines) >= count else None
@@ -93,11 +79,9 @@ class CodexLive(Live):
             return json.load(f)["entries"][name]
 
     def no_session_env(self, env: dict[str, str]) -> None:
-        """Fails unless the logged env has none of GONE: a session marker or a Codex tool's forced value."""
         self.assertEqual({k: env[k] for k in GONE if k in env}, {})
 
     def assert_colored(self, name: str, text: str) -> None:
-        """Fails unless `name`'s pane shows `text` in fake_codex.py's color (capture-pane -e)."""
         screen = self.ok(self.server.tmux("capture-pane", "-p", "-e", "-t", f"={name}:")).stdout
         self.assertRegex(screen, rf"\x1b\[[0-9;]*36m\s*{re.escape(text)}")
 
@@ -175,10 +159,7 @@ class CodexLifecycle(CodexLive):
 
 
 class CodexSession(CodexLive):
-    """crew.py run as a Codex session's command: codex_session()'s env."""
-
     def claude_env_log(self) -> str:
-        """Puts a `claude` on PATH that appends its env to a file, a JSON line, then runs fake_claude.py; the file."""
         path = os.path.join(self.server.root, "claude-env.jsonl")
         dump = "import json, os, sys; open(sys.argv[1], 'a').write(json.dumps(dict(os.environ)) + '\\n')"
         python, q = sys.executable, shlex.quote

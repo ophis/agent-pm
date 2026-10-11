@@ -1,4 +1,3 @@
-"""fake_claude.py run as a process, no tmux: interactive turns, hooks, print mode (its docstring: the format)."""
 import glob
 import json
 import os
@@ -18,7 +17,6 @@ BASE = {"session_id", "transcript_path", "cwd", "hook_event_name"}
 
 
 def wait(check, timeout: float = 10):
-    """check()'s first truthy value; fails once `timeout` s pass."""
     until = time.monotonic() + timeout
     while not (value := check()):
         if time.monotonic() > until:
@@ -45,14 +43,11 @@ class Case(unittest.TestCase):
             json.dump({"log": self.log, **scenario}, f)
 
     def settings(self, **entries) -> str:
-        """--settings JSON: per event the given entries, else one command hook appending its stdin JSON to hooklog."""
         record = f"cat >> {shlex.quote(self.hooklog)}; echo >> {shlex.quote(self.hooklog)}"
         return json.dumps({"hooks": {e: v if v else [{"hooks": [{"type": "command", "command": record}]}]
                                      for e, v in entries.items()}})
 
     def prompt(self, workdir: str = "", report: bool = True) -> str:
-        """A prompt as compose writes it: # Parameters defines <Workdir>, <scripts> (the dir of the tests' stub
-        report.py) and, with `report`, the `report` line; Output › Return says `report progress …` either way."""
         def code(value: str) -> str:
             return f"`` {value} ``" if "`" in value else f"`{value}`"
         lines = [f"- `<Workdir>`: {code(workdir or self.root)}", f"- `<scripts>`: {code(self.root)}"]
@@ -84,7 +79,6 @@ class Case(unittest.TestCase):
         return glob.glob(os.path.join(self.home, ".claude", "projects", "*", f"{SID}.jsonl"))
 
     def convo(self) -> list[tuple[str, str]]:
-        """The transcript as (role, text) pairs."""
         (path,) = self.transcripts()
         with open(path) as f:
             lines = [json.loads(line) for line in f]
@@ -92,7 +86,6 @@ class Case(unittest.TestCase):
                 for m in lines]
 
     def fired(self) -> list[dict]:
-        """The stdin JSON of each hook run so far, in order."""
         try:
             with open(self.hooklog) as f:
                 return [json.loads(line) for line in f]
@@ -344,7 +337,6 @@ class Gate(Case):
         self.gate = os.path.join(self.root, "gate")
 
     def parked(self, *args) -> subprocess.Popen:
-        """A fake started with the scenario, once it has logged and had time to run a turn."""
         proc = self.popen(*args)
         wait(lambda: os.path.isfile(self.log))
         time.sleep(0.5)
