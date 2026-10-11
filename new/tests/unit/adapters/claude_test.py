@@ -10,7 +10,7 @@ from unittest import mock
 
 from new.tests import hermetic
 from adapters.base import (Access, Activity, ConfigError, Launch, LimitHit, Reply, SessionBound, SessionStatus, Spec,
-                           TurnEnd, Usage)
+                           TurnEnd, Usage, Window)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless_run import ClaudeHeadlessRun
@@ -331,6 +331,11 @@ def info_line(info) -> str:
     return json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
 
 
+def unified(**found) -> str:
+    """An allowed rate_limit_event line whose unifiedWindows are `found`."""
+    return info_line({"status": "allowed", "unifiedWindows": found})
+
+
 def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
@@ -345,42 +350,100 @@ class ParseUsageTest(unittest.TestCase):
                 ([event(five=0.1, seven_day=1.0)], False),
                 ([event(five=0.89, seven_day=0.99, seven_day_opus=0.5)], True),
                 ([event(five=0.1, seven_day=0.2, seven_day_opus=1.0)], False),
+                ([event(status="rejected", five=0.1, kind="seven_day_opus", seven_day=0.2)], False),
                 ([event(status="allowed_warning", five=0.5)], True),
                 ([event(five=0.1), event(five=0.9)], False),
                 ([event(five=0.9), "{}", event(five=0.1)], True))
         for row, (lines, ok) in enumerate(rows):
             with self.subTest(row=row):
                 found = usage(*lines)
-                self.assertEqual(found is not None and found.five_hour < 90 and not found.weekly_full, ok)
+                self.assertEqual(found is not None and found.five_hour is not None
+                                 and found.five_hour.used_percent < 90
+                                 and (found.weekly is None or found.weekly.used_percent < 100), ok)
 
-    def test_the_fields(self):
-        rows = ((event(five=0.25, seven_day=0.5), Usage(25.0, False, 1.0)),
-                (event(five=1, seven_day=1), Usage(100.0, True, 1.0)),
-                (event(five=0.25, seven_day_opus=2), Usage(25.0, True, 1.0)),
-                (event(five=0.25, seven_day="1", seven_day_sonnet=True), Usage(25.0, False, 1.0)),
-                (event(status="rejected", five=0.25), Usage(100.0, False, 1.0)),
-                (event(status="rejected", five=1.5), Usage(150.0, False, 1.0)),
-                (event(status="rejected", five=0.25, kind="seven_day"), Usage(25.0, True, 1.0)),
-                (event(status="rejected", five=0.25, kind="seven_day_opus"), Usage(25.0, True, 1.0)),
-                (event(status="rejected", five=0.25, kind=None), Usage(100.0, False, 1.0)),
-                (event(resets=1700000000.5), Usage(10.0, False, 1700000000.5)),
-                (event(resets=None), Usage(10.0, False, None)),
-                (event(resets=True), Usage(10.0, False, None)),
-                (event(resets="1"), Usage(10.0, False, None)),
-                (event(resets=10 ** 400), Usage(10.0, False, None)))
-        for row, (found, want) in enumerate(rows):
+    def test_each_window(self):
+        rows = ((event(five=0.25), Usage(Window(25.0, 1.0), None)),
+                (event(five=0.25, seven_day=0.5), Usage(Window(25.0, 1.0), Window(50.0, 2.0))),
+                (event(five=1, seven_day=1), Usage(Window(100.0, 1.0), Window(100.0, 2.0))),
+                (event(five=1.5, seven_day_opus=2), Usage(Window(150.0, 1.0), Window(200.0, 2.0))),
+                (event(five=0.25, seven_day="1", seven_day_sonnet=True), Usage(Window(25.0, 1.0), None)),
+                (event(five=0.25, seven_day=None, seven_day_opus=1e999), Usage(Window(25.0, 1.0), None)),
+                (event(five=None, seven_day=0.5), Usage(None, Window(50.0, 2.0))),
+                (event(five="0.5"), Usage(None, None)), (event(five=True), Usage(None, None)),
+                (event(five=1e999), Usage(None, None)), (event(five=10 ** 400), Usage(None, None)),
+                (unified(five_hour=0.5, seven_day=[1]), Usage(None, None)),
+                (unified(five_hour={"utilization": 0.5}, weekly={"utilization": 0.9},
+                         one_day={"utilization": 0.9}), Usage(Window(50.0, None), None)))
+        for row, (line, want) in enumerate(rows):
             with self.subTest(row=row):
-                self.assertEqual(usage(found), want)
-        weekly = info_line({"unifiedWindows": {"five_hour": {"utilization": 0.25}, "seven_day": "x",
-                                               "seven_day_opus": {"utilization": None}}})
-        self.assertEqual(usage(weekly), Usage(25.0, False, None))
+                self.assertEqual(usage(line), want)
 
-    def test_unknown_is_none(self):
-        rows = ((), ("garbage",), ('{"type":"system"}',), ("[" * 100000,), (event(five=None),), (event(five="0.5"),),
-                (event(five=True),), (event(five=1e999),), (info_line({"unifiedWindows": {}}),),
-                (info_line({"unifiedWindows": {"five_hour": 0.5}}),), (info_line({"unifiedWindows": [1]}),),
-                (info_line({"status": "allowed"}),), (info_line(None),), (info_line([1]),),
-                (event(five=0.1), info_line(None)))
+    def test_weekly_is_the_most_used_seven_day_window(self):
+        rows = ((event(five=0.1, seven_day=0.3, seven_day_opus=0.8, seven_day_sonnet=0.5), Window(80.0, 2.0)),
+                (unified(seven_day={"utilization": 0.5, "resetsAt": 3},
+                         seven_day_opus={"utilization": 0.5, "resetsAt": 4}), Window(50.0, 3.0)),
+                (unified(seven_day_opus={"utilization": 0.5, "resetsAt": 4},
+                         seven_day={"utilization": 0.5, "resetsAt": 3}), Window(50.0, 4.0)),
+                (unified(seven_day={"utilization": "0.9"}, seven_day_opus={"utilization": 0.4}), Window(40.0, None)),
+                (unified(seven_day_x={"utilization": 0.7, "resetsAt": 5}, seven_day={"utilization": 0.2}),
+                 Window(70.0, 5.0)))
+        for row, (line, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(usage(line).weekly, want)
+
+    def test_each_window_resets_at_its_own_time(self):
+        rows = (({"resetsAt": 1700000000.5}, Window(25.0, 1700000000.5)), ({}, Window(25.0, None)),
+                ({"resetsAt": None}, Window(25.0, None)), ({"resetsAt": True}, Window(25.0, None)),
+                ({"resetsAt": "1"}, Window(25.0, None)), ({"resetsAt": 10 ** 400}, Window(25.0, None)))
+        for row, (resets, want) in enumerate(rows):
+            with self.subTest(row=row):
+                line = info_line({"status": "allowed", "resetsAt": 9,
+                                  "unifiedWindows": {"five_hour": {"utilization": 0.25, **resets},
+                                                     "seven_day": {"utilization": 0.5, **resets}}})
+                self.assertEqual(usage(line), Usage(want, Window(50.0, want.resets_at)))
+
+    def test_a_rejected_status_fills_its_window(self):
+        rows = ((event(status="rejected", five=0.25, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=1.5, resets=9), Usage(Window(150.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind=None, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind=5, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind="five_hour_x", seven_day=0.5, resets=9),
+                 Usage(Window(100.0, 1.0), Window(50.0, 2.0))),
+                (event(status="rejected", five=0.25, kind="seven_day", resets=9),
+                 Usage(Window(25.0, 1.0), Window(100.0, 9.0))),
+                (event(status="rejected", five=0.25, kind="seven_day_opus", seven_day=0.5, resets=9),
+                 Usage(Window(25.0, 1.0), Window(100.0, 2.0))),
+                (event(status="rejected", five=0.25, kind="seven_day", seven_day=1.5, resets=9),
+                 Usage(Window(25.0, 1.0), Window(150.0, 2.0))),
+                (event(status="rejected", five="x", resets=9), Usage(Window(100.0, 9.0), None)),
+                (event(status="rejected", five=0.25, resets=None), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=None, resets=None), Usage(Window(100.0, None), None)),
+                (event(status="rejected", five=None, resets=True), Usage(Window(100.0, None), None)),
+                (info_line({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": 9}),
+                 Usage(Window(100.0, 9.0), None)),
+                (info_line({"status": "rejected", "rateLimitType": "seven_day", "resetsAt": 9,
+                            "unifiedWindows": {"five_hour": {"utilization": 0.25},
+                                               "seven_day": {"utilization": 0.5}}}),
+                 Usage(Window(25.0, None), Window(100.0, 9.0))),
+                (info_line({"status": "rejected", "resetsAt": 9,
+                            "unifiedWindows": {"five_hour": {"utilization": 0.25}}}), Usage(Window(100.0, 9.0), None)),
+                (event(status="allowed_warning", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
+                (event(status="Rejected", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)))
+        for row, (line, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(usage(line), want)
+
+    def test_an_event_without_windows_is_a_reading(self):
+        for line in (info_line({}), info_line({"status": "allowed", "resetsAt": 9}), info_line({"unifiedWindows": {}}),
+                     info_line({"unifiedWindows": [1]}), info_line({"unifiedWindows": None}),
+                     info_line({"unifiedWindows": {"five_hour": 0.5}})):
+            with self.subTest(line=line):
+                self.assertEqual(usage(line), Usage(None, None))
+
+    def test_no_event_or_a_bad_info_is_none(self):
+        rows = ((), ("garbage",), ('{"type":"system"}',), ("[" * 100000,), ('[{"type": "rate_limit_event"}]',),
+                (json.dumps({"type": "rate_limit_event"}),), (info_line(None),), (info_line([1]),),
+                (info_line("x"),), (event(five=0.1), info_line(None)))
         for lines in rows:
             with self.subTest(lines=[x[:40] for x in lines]):
                 self.assertIsNone(usage(*lines))
@@ -460,7 +523,7 @@ class AdapterTest(Base):
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
         self.assertEqual(ClaudeAdapter(CONFIG).usage_probe(), Launch(PROBE, env={**CEILING, "K": "v"}, unset=UNSET))
-        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(25.0, False, 1.0))
+        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
         self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
 
     def test_session_status(self):

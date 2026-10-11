@@ -15,7 +15,7 @@ import stat
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Usage
+from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Usage, Window
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
@@ -31,6 +31,18 @@ def number(value) -> float | None:
     except OverflowError:
         return None
     return value if math.isfinite(value) else None
+
+
+def _window(value) -> Window | None:
+    used = number(value.get("utilization")) if isinstance(value, dict) else None
+    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
+
+
+def _full(window: Window | None, resets: float | None) -> Window:
+    """`window` at least 100% used; its reset time, else `resets`."""
+    if window is None:
+        return Window(100.0, resets)
+    return Window(max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at)
 
 
 def _strings(value) -> bool:
@@ -123,8 +135,11 @@ class ClaudeCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """The probe's last rate_limit_event as Usage; None when there is none or its five-hour utilization is no
-        number. A rejected status folds in: a seven_day* limit type fills the week, any other the five hours."""
+        """The probe's last rate_limit_event as Usage; None when there is none or its rate_limit_info is no object.
+        five_hour is the five_hour window of its unifiedWindows, weekly the most-used seven_day* one (first on a tie);
+        a window counts only as an object whose utilization is a number. A rejected status folds in: its window (a
+        seven_day* limit type's weekly, any other's five_hour) is at least 100% used and, giving no reset time, resets
+        at the info's resetsAt."""
         info = None
         for line in output.splitlines():
             try:
@@ -133,24 +148,21 @@ class ClaudeCommon:
                 continue
             if isinstance(record, dict) and record.get("type") == "rate_limit_event":
                 info = record.get("rate_limit_info")
-        windows = info.get("unifiedWindows") if isinstance(info, dict) else None
-        if not isinstance(windows, dict):
+        if not isinstance(info, dict):
             return None
-        five = windows.get("five_hour")
-        five = number(five.get("utilization")) if isinstance(five, dict) else None
-        if five is None:
-            return None
-        five_hour = 100 * five
-        weekly_full = any(name.startswith("seven_day") and isinstance(window, dict)
-                          and (used := number(window.get("utilization"))) is not None and used >= 1
-                          for name, window in windows.items())
+        windows = info.get("unifiedWindows")
+        windows = windows if isinstance(windows, dict) else {}
+        five_hour = _window(windows.get("five_hour"))
+        weeks = filter(None, (_window(window) for name, window in windows.items() if name.startswith("seven_day")))
+        weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
+            resets = number(info.get("resetsAt"))
             kind = info.get("rateLimitType")
             if isinstance(kind, str) and kind.startswith("seven_day"):
-                weekly_full = True
+                weekly = _full(weekly, resets)
             else:
-                five_hour = max(five_hour, 100.0)
-        return Usage(five_hour, weekly_full, number(info.get("resetsAt")))
+                five_hour = _full(five_hour, resets)
+        return Usage(five_hour, weekly)
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         """Resumable when its transcript is a regular file; last active at the newest write of the transcript and the

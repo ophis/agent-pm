@@ -21,7 +21,7 @@ from typing import Protocol
 
 from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, HeadlessRun, Launch,
                            LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage,
-                           sid_error)
+                           Window, sid_error)
 from driver import records, registry
 from driver.errors import DriverError
 from driver.modes import headless_run
@@ -30,8 +30,8 @@ from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
            "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo",
-           "SessionStatus", "Spec", "Stderr", "TurnEnd", "Usage", "attach", "records", "session", "session_info",
-           "start", "usage"]
+           "SessionStatus", "Spec", "Stderr", "TurnEnd", "Usage", "Window", "attach", "records", "session",
+           "session_info", "start", "usage"]
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
@@ -246,9 +246,9 @@ def _probe_dir() -> str | None:
 
 def usage(runtime: str) -> Usage | None:
     """`runtime`'s account usage: its Adapter's usage probe run (headless_run.probe, _child_env, at most PROBE_TIMEOUT
-    s) in the launch's cwd, else PROBE_DIR, its stdout read by the Adapter's usage(); None (unknown) when the Adapter
-    has no probe, the probe fails, times out or the reading raises. A registry error is a ConfigError. Writes no run
-    record."""
+    s) in the launch's cwd, else PROBE_DIR, its stdout read by the Adapter's usage(); None only when the probe fails:
+    the Adapter has no probe, it fails to start or times out, or its output has no reading (usage() gives None or
+    raises). A registry error is a ConfigError. Writes no run record."""
     adapter = registry.adapter(runtime)
     launch = adapter.usage_probe()
     if launch is None or not launch.argv:

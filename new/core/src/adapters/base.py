@@ -145,11 +145,17 @@ RESUMABLE = ("yes", "no", "unknown")
 
 
 @dataclass(frozen=True)
+class Window:
+    """One usage limit window."""
+    used_percent: float       # percent used, 0-100 (may exceed 100)
+    resets_at: float | None   # when it resets, epoch seconds; None: not given
+
+
+@dataclass(frozen=True)
 class Usage:
-    """A runtime account's usage."""
-    five_hour: float          # percent of the 5-hour window used, 0–100 (may exceed 100)
-    weekly_full: bool         # a weekly limit is full
-    resets_at: float | None   # when the reported limit resets, epoch seconds; None: not given
+    """A runtime account's usage; a window the runtime does not report is None."""
+    five_hour: Window | None
+    weekly: Window | None
 
 
 @dataclass(frozen=True)
@@ -201,7 +207,8 @@ class Adapter(ABC):
         return None
 
     def usage(self, output: str) -> Usage | None:
-        """The probe's stdout as Usage; None: unknown. Never raises on bad output."""
+        """The probe's stdout as Usage; None only when the probe failed (no reading in it). Never raises on bad
+        output."""
         return None
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:

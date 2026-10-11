@@ -1,5 +1,5 @@
-"""new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage and SessionStatus, Adapter,
-HeadlessRun and TuiRun, through stub subclasses; nothing starts a process."""
+"""new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
+Adapter, HeadlessRun and TuiRun, through stub subclasses; nothing starts a process."""
 import dataclasses
 import typing
 import unittest
@@ -9,7 +9,8 @@ from unittest import mock
 from new.tests import hermetic  # noqa: F401
 from adapters import base
 from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch,
-                           LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr, TuiRun, TurnEnd, Usage)
+                           LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr, TuiRun, TurnEnd, Usage,
+                           Window)
 
 
 class StubAdapter(Adapter):
@@ -170,13 +171,16 @@ class EventsTest(unittest.TestCase):
 
 
 class ReportsTest(unittest.TestCase):
-    def test_usage_and_session_status_are_frozen_records(self):
-        usage = Usage(five_hour=120.5, weekly_full=True, resets_at=None)
-        self.assertEqual((usage.five_hour, usage.weekly_full, usage.resets_at), (120.5, True, None))
+    def test_usage_window_and_session_status_are_frozen_records(self):
+        window = Window(used_percent=120.5, resets_at=None)
+        self.assertEqual((window.used_percent, window.resets_at), (120.5, None))
+        usage = Usage(five_hour=window, weekly=None)
+        self.assertEqual((usage.five_hour, usage.weekly), (Window(120.5, None), None))
+        self.assertEqual(Usage(None, Window(3.0, 1.5)).weekly.resets_at, 1.5)
         status = SessionStatus(resumable="yes", last_active=1.5, resume_command="x --resume s")
         self.assertEqual((status.resumable, status.last_active, status.resume_command), ("yes", 1.5, "x --resume s"))
         self.assertEqual(base.RESUMABLE, ("yes", "no", "unknown"))
-        for record, name in ((usage, "five_hour"), (status, "resumable")):
+        for record, name in ((window, "used_percent"), (usage, "five_hour"), (status, "resumable")):
             with self.subTest(name=name), self.assertRaises(dataclasses.FrozenInstanceError):
                 setattr(record, name, "x")
 

@@ -50,15 +50,15 @@ class QuietAdapter(fake_adapter.FakeAdapter):
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is the 5-hour percent
-    (anything else raises), and a session status naming its sid and cwd."""
+    """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is the 5-hour window's
+    percent (anything else raises), and a session status naming its sid and cwd."""
     keys = fake_adapter.FakeAdapter.keys | {"probe"}
 
     def usage_probe(self):
         return Launch(**self.config["probe"])
 
     def usage(self, output):
-        return base.Usage(float(output), False, None)
+        return base.Usage(base.Window(float(output), None), None)
 
     def session_status(self, sid, cwd):
         return base.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
@@ -312,7 +312,7 @@ class HandleTest(Base):
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         handle = self.start(runtime="probe")
         with mock.patch("driver.modes.headless_run.probe", return_value="7") as probe:
-            self.assertEqual(handle.usage(), api.Usage(7.0, False, None))
+            self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         probe.assert_called_once()
         self.assertEqual(self.drain(handle), [api.Exited(0)])
 
@@ -452,7 +452,7 @@ class UsageTest(Base):
 
     def test_the_probes_stdout_as_the_adapter_parses_it(self):
         found, probe = self.usage("42.5")
-        self.assertEqual(found, api.Usage(42.5, False, None))
+        self.assertEqual(found, api.Usage(api.Window(42.5, None), None))
         probe.assert_called_once_with(("probe-cmd", "-x"), cwd=self.probe_dir, env=mock.ANY, timeout=api.PROBE_TIMEOUT)
 
     def test_a_spawn_error_is_none(self):
@@ -465,6 +465,16 @@ class UsageTest(Base):
         found, probe = self.usage(None)
         self.assertIsNone(found)
         self.assertEqual(probe.call_args.kwargs["timeout"], api.PROBE_TIMEOUT)
+
+    def test_a_reading_without_windows_is_a_usage(self):
+        with mock.patch.object(ProbeAdapter, "usage", return_value=base.Usage(None, None)):
+            found, probe = self.usage()
+        self.assertEqual(found, api.Usage(None, None))
+        probe.assert_called_once()
+
+    def test_no_reading_is_none(self):
+        with mock.patch.object(ProbeAdapter, "usage", return_value=None):
+            self.assertIsNone(self.usage()[0])
 
     def test_an_exception_from_the_adapters_parse_is_none(self):
         for out in ("", "garbage"):
@@ -482,7 +492,7 @@ class UsageTest(Base):
         self.assertTrue(stat.S_ISDIR(mode))
         self.assertEqual(stat.S_IMODE(mode), 0o700)
         found, probe = self.usage()
-        self.assertEqual(found, api.Usage(42.5, False, None))
+        self.assertEqual(found, api.Usage(api.Window(42.5, None), None))
         self.assertEqual(probe.call_args.kwargs["cwd"], self.probe_dir)
 
     def test_a_symlink_or_non_directory_at_the_probe_dir_is_none_and_runs_nothing(self):
@@ -544,13 +554,14 @@ class SessionInfoTest(Base):
 class ExportsTest(unittest.TestCase):
     def test_reexports_and_constants(self):
         for name in ("Access", "Spec", "SessionInfo", "ConfigError", "SessionBound", "Activity", "Reply", "TurnEnd",
-                     "Blocked", "LimitHit", "Exited", "Event", "Stderr", "Usage", "SessionStatus", "RESUMABLE"):
+                     "Blocked", "LimitHit", "Exited", "Event", "Stderr", "Usage", "Window", "SessionStatus",
+                     "RESUMABLE"):
             with self.subTest(name=name):
                 self.assertIs(getattr(api, name), getattr(base, name))
         self.assertIs(api.records, records)
         self.assertIs(api.session, records.session)
         self.assertIs(api.DriverError, errors.DriverError)
-        for name in ("LimitHit", "Usage", "SessionStatus", "RESUMABLE", "usage", "session_info", "session",
+        for name in ("LimitHit", "Usage", "Window", "SessionStatus", "RESUMABLE", "usage", "session_info", "session",
                      "DriverError", "Mode"):
             with self.subTest(name=name):
                 self.assertIn(name, api.__all__)
