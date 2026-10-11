@@ -1,9 +1,10 @@
 """The Adapter interface. An Adapter is one runtime's abstract factory, built by src/driver/registry.py from the core
 config's [adapters.<name>] table minus `implementation`; headless_run() and tui_run() give the runtime's HeadlessRun or
 TuiRun, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
-the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, Exited. Stderr, a diagnostic, sits
-beside it. A spec type refuses a bad value with ConfigError when built. Nothing here starts a process or touches tmux;
-imports no other layer."""
+the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited. Stderr, a diagnostic,
+sits beside it. The Adapter also gives its account usage probe's command (usage_probe) and reads that probe's stdout as
+Usage, and a session's SessionStatus. A spec type refuses a bad value with ConfigError when built; sid_error is the one
+sid rule. Nothing here starts a process or touches tmux; imports no other layer."""
 import json
 import os
 from abc import ABC, abstractmethod
@@ -29,6 +30,13 @@ def _clean(value) -> bool:
     return isinstance(value, str) and "\0" not in value
 
 
+def sid_error(sid) -> str | None:
+    """Why `sid` is no agent-pm session id (a non-empty printable str without "/"); None when it is one."""
+    if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
+        return None
+    return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
+
+
 @dataclass(frozen=True)
 class Access:
     """An agent run's runtime-neutral access intent; what each field grants is the adapter's to check."""
@@ -50,7 +58,7 @@ class Spec:
     access: Access = Access()
     tier: int | None = None
     effort: str | None = None
-    sid: str | None = None   # agent-pm's session id; None: the Driver picks one
+    sid: str | None = None   # agent-pm's session id, set by the Driver's start(), never by the caller
 
     def __post_init__(self):
         if not _path(self.workdir):
@@ -62,9 +70,8 @@ class Spec:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
         if self.access.cwd != "" and not _path(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
-        if self.sid is not None and not (isinstance(self.sid, str) and self.sid and self.sid.isprintable()
-                                         and "/" not in self.sid):
-            raise ConfigError(f'sid must be a non-empty printable string without "/", got {self.sid!r:.80}')
+        if self.sid is not None and (error := sid_error(self.sid)):
+            raise ConfigError(error)
 
 
 @dataclass(frozen=True)
@@ -124,12 +131,36 @@ class Blocked:
 
 
 @dataclass(frozen=True)
+class LimitHit:
+    """The runtime reported its usage limit; resets_at: when it resets, epoch seconds, None when not given."""
+    resets_at: float | None = None
+
+
+@dataclass(frozen=True)
 class Exited:
     """The runtime's process ended; in headless mode only the Driver makes it."""
     returncode: int
 
 
-Event = SessionBound | Activity | Reply | TurnEnd | Blocked | Exited
+Event = SessionBound | Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
+
+RESUMABLE = ("yes", "no", "unknown")
+
+
+@dataclass(frozen=True)
+class Usage:
+    """A runtime account's usage."""
+    five_hour: float          # percent of the 5-hour window used, 0–100 (may exceed 100)
+    weekly_full: bool         # a weekly limit is full
+    resets_at: float | None   # when the reported limit resets, epoch seconds; None: not given
+
+
+@dataclass(frozen=True)
+class SessionStatus:
+    """What the runtime's own files say of a session."""
+    resumable: str              # one of RESUMABLE
+    last_active: float | None   # its newest write, epoch seconds; None: none found
+    resume_command: str         # the shell command a human resumes it with; "": none
 
 
 @dataclass(frozen=True)
@@ -167,8 +198,18 @@ class Adapter(ABC):
     def tui_run(self) -> "TuiRun | None":
         """The runtime's TuiRun; None: tui mode unsupported."""
 
-    def usage(self, info: SessionInfo) -> dict | None:
+    def usage_probe(self) -> Launch | None:
+        """The command of a short headless runtime call whose stdout carries the account's usage (the Driver runs it
+        and gives its stdout to usage()); None: no source. A stdout-based source; step 4 (Codex) may revisit."""
         return None
+
+    def usage(self, output: str) -> Usage | None:
+        """The probe's stdout as Usage; None: unknown. Never raises on bad output."""
+        return None
+
+    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+        """Session `sid` started in `cwd`, from the runtime's files; never raises on a file error."""
+        return SessionStatus("unknown", None, "")
 
 
 class HeadlessRun(ABC):

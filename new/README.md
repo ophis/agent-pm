@@ -7,8 +7,10 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 | Path | What |
 |---|---|
 | `core/src/` | the layers, one package each: `adapters/`, `driver/`; `composer` and `delegate` come later |
-| `core/config.toml` | the `[adapters.<name>]` tables; this machine's settings go in `~/.agent-pm/core-new.local.toml` (the file's header) |
-| `tests/` | `unit/`, `integration/`, `fake_adapter/` (the test-only runtime `fake`), `guards.py` |
+| `core/src/adapters/claude/` | Claude Code's Adapter, runtime `claude` |
+| `core/config.toml` | the `[adapters.<name>]` tables; this machine's settings go in `~/.agent-pm/core-new.local.toml` (the file's header); the registry reads `[adapters]` once per process |
+| `tests/` | `unit/`, `integration/`, `fake_adapter/` (the test-only runtime `fake`), `fake_claude.py` (a fake `claude` for the integration tests), `guards.py` |
+| `tests/live/` | live checks, run by hand with the real HOME and `claude`, never in CI: `python3 new/tests/live/claude_headless.py` |
 
 Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`. `tests/guards.py` (`layer_imports`) enforces it, with the other rules in its docstring.
 
