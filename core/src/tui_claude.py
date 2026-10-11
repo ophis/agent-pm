@@ -32,7 +32,8 @@ OPENER = re.compile(rf"{NAME.pattern}|[A-Za-z0-9]+:{ITERM_ID.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
 RUNNING = "running"
 HANDOVER_TIMEOUT = 10
-POLL = 0.1   # seconds between checks that the wrapper took the handover file
+POLL = 0.1   # seconds between checks: that the wrapper took the handover file; that a respawn's old process ended
+RESPAWN_WAIT = 10   # seconds a respawned pane's wrapper waits for the old process to end
 PAUSE = 0.5   # between typing a text and its Enter
 SHOW_TIMEOUT = 30
 MARK_TIMEOUT = 5   # seconds each of mark's tmux calls may take
@@ -114,11 +115,16 @@ TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM
 PARENT_KEYS = ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_JOB_DIR")
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does. The handover's `block` signals
-# are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them.
-EXEC = f"""import json, os, signal, sys
+# are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them. Its `after`
+# (respawn: the pane's old process) is waited for, once the file is gone, until kill 0 fails, at most RESPAWN_WAIT s.
+EXEC = f"""import json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
 os.unlink(sys.argv[1])
+for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
+    try: os.kill(h['after'], 0)
+    except OSError: break
+    time.sleep({POLL})
 os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
 for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
@@ -218,15 +224,17 @@ def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], pro
             sleep=time.sleep) -> None:
     """Run argv in the session's pane in place of its command (respawn-pane -k), handed over as start hands over its
     command, clearing the pane's history in the same tmux command, so no line the old command prints lands in between.
-    Returns once it runs."""
+    argv starts once the old command's process (#{pane_pid}, read first) is gone, or after RESPAWN_WAIT s (EXEC), so
+    its locks are released. Returns once the wrapper runs."""
     _name(session)
     argv = _command(argv, env)
     tmp = None
     try:
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
-        _handover(path, argv, cwd, env)
         target = f"={session}:"
+        pid = _tmux_ok(["display-message", "-p", "-t", target, "#{pane_pid}"], proc).stdout.strip()
+        _handover(path, argv, cwd, env, after=int(pid) if re.fullmatch(r"[1-9][0-9]*", pid) else None)
         _tmux_ok(["clear-history", "-t", target, ";", "respawn-pane", "-k", "-t", target, *wrapper], proc)
         if not _taken(path, sleep):
             raise TuiError("the pane did not respawn")
@@ -256,12 +264,12 @@ def _wrapper(tmp: str) -> tuple[str, list[str]]:
     return path, [sys.executable, "-I", "-c", EXEC, path]
 
 
-def _handover(path: str, argv: list[str], cwd: str, env: dict[str, str]) -> None:
-    """Writes the handover file at path."""
+def _handover(path: str, argv: list[str], cwd: str, env: dict[str, str], after: int | None = None) -> None:
+    """Writes the handover file at path; `after`, a pid EXEC waits for."""
     cwd = os.path.abspath(cwd)
     child = {k: v for k, v in env.items() if k not in (*TERMINAL_KEYS, *PARENT_KEYS)}
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
-        json.dump({"argv": argv, "cwd": cwd, "env": {**child, "PWD": cwd}}, f)
+        json.dump({"argv": argv, "cwd": cwd, "env": {**child, "PWD": cwd}, **({"after": after} if after else {})}, f)
 
 
 def _taken(path: str, sleep) -> bool:
