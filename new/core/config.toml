@@ -1,0 +1,10 @@
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/core-new.local.toml, read on top of this file. It
+# may override any key: tables merge key by key, the local value wins, a list is replaced whole (repeat the items you
+# keep); a table cannot drop a key this file sets, so a local [adapters.<name>] keeps this file's other keys in that
+# table.
+
+# ── Adapters ────────────────────────────────────────────
+# [adapters.<name>]  one table per runtime, read only by src/driver/registry.py; <name> is the runtime name
+#                    driver.api.start takes and the package src/adapters/<name>/
+#   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
+#   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
