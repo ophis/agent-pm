@@ -19,7 +19,7 @@ import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
-class Plain:
+class Plain(clients.Client):
     """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
     workdir or input."""
     def __init__(self, handover="", methods=None, tasks=None, inline_workdir="", inline_input=""):
@@ -91,7 +91,7 @@ branch = "main"
 def parameters(prompt):
     """{name: value} of the prompt's # Parameters lines after compose.RULE, in order; a line of another shape fails."""
     section = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
-    lines = section.removeprefix(f"{compose.RULE}\n\n").splitlines()
+    lines = section.split("\n\n", 1)[1].splitlines()
     return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
 
 
@@ -422,6 +422,17 @@ class Validate(Fake):
 
 
 class Prompt(Fake):
+    def test_client_approval_preserves_claude_and_skill_rule(self):
+        original = ("Each name below stands for its value. Run every command with each name, nested ones included, "
+                    "replaced by its value and written out in full, no name or shell variable left: pre-approved "
+                    "commands match on their exact text and each shell call starts fresh, so anything else waits "
+                    "on a permission prompt.")
+        for client in (clients.ClaudeClient({}), clients.SkillClient({})):
+            prompt = compose.render(self.root, compose.load_run(self.root, "writer"), PARAMS, client=client)
+            self.assertIn("# Parameters\n\n" + original + "\n\n", prompt)
+            self.assertEqual(client.report_interpreter(), "python3")
+        self.assertEqual(clients.Client({}).approval(), "")
+
     def test_sections_in_order(self):
         for task in (None, "long-note"):
             prompt, _ = self.compose(task=task)
@@ -486,10 +497,10 @@ class Prompt(Fake):
 
     def test_the_report_command_quotes_its_paths(self):
         self.assertEqual(compose.report_command("/s", PARAMS),
-                         f"{shlex.quote(sys.executable)} /s/report.py --to /w/run.jsonl")
+                         "python3 /s/report.py --to /w/run.jsonl")
         spaced = replace(PARAMS, workdir="/my w")
         with mock.patch.object(compose.sys, "executable", "/my Python/bin/python 3"):
-            self.assertEqual(compose.report_command("/s s", spaced),
+            self.assertEqual(compose.report_command("/s s", spaced, sys.executable),
                              "'/my Python/bin/python 3' '/s s/report.py' --to '/my w/run.jsonl'")
         self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
@@ -689,7 +700,7 @@ class Parameters(Fake):
 
     def test_the_rule_opens_the_section_and_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
         prompt = self.compose()[0]
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: `/w`\n", prompt)
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}.\n\n- `<Workdir>`: `/w`\n", prompt)
         self.assertEqual(list(parameters(prompt).items()), [
             ("<Workdir>", "`/w`"), ("<scripts>", f"`{self.root}/src`"), ("<tasks>", f"`{self.root}/team/tasks`")])
 
@@ -699,7 +710,7 @@ class Parameters(Fake):
             prompt = compose.render(self.root, run, PARAMS, client=Plain(handover))
             self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"], handover)
             self.assertEqual(parameters(prompt)["report"],
-                             f"`{shlex.quote(sys.executable)} <scripts>/report.py --to <Workdir>/run.jsonl`")
+                             "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
             self.assertIn(f"## Return\n\n{handover}\n", prompt)
         for handover in ("Say it back.", "Send your report; `report.py` gets it."):
             for params in (PARAMS, None):
@@ -1081,8 +1092,11 @@ class RealCore(unittest.TestCase):
     def test_parameter_rule_defers_command_approval_to_client(self):
         for name in ("claude", "codex", "skill"):
             prompt, _ = client_prompt(name, "researcher")
-            self.assertIn("Approval follows the selected client's policy.", prompt)
-            self.assertNotIn("pre-approved commands match on their exact text", prompt)
+            approval = ("Command approvals follow Codex automatic review." if name == "codex"
+                        else "pre-approved commands match on their exact text")
+            self.assertIn(approval, prompt)
+            if name == "codex":
+                self.assertNotIn("pre-approved commands match on their exact text", prompt)
 
     def test_codex_installed_copy_uses_absolute_core_resources(self):
         with tempfile.TemporaryDirectory() as parent:

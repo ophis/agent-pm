@@ -52,8 +52,7 @@ PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", 
               "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
               REPORT: (r"`report[` ]", REPORT)}   # only a code span starting with it: prose says "report" too
 RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
-        "value and written out in full, no name or shell variable left. Run each shell call separately. Approval follows "
-        "the selected client's policy.")
+        "value and written out in full, no name or shell variable left")
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
@@ -76,6 +75,8 @@ class PromptClient(Protocol):
     def methods_path(self, root: str) -> str: ...
     def tasks_path(self, root: str) -> str: ...
     def handover(self) -> str: ...
+    def approval(self) -> str: ...
+    def report_interpreter(self) -> str: ...
 
 
 class ConfigClient(Protocol):
@@ -216,7 +217,8 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
             overlays: Sequence[Mapping] = (), trusted: bool = False) -> RunConfig:
-    """Resolve one run using base, selected client, then trusted caller overlays.
+    """Resolve base (including local config), selected client, then caller overlays: later layers win,
+    role values beat global values within a layer, and output tables replace rather than merge.
 
     The caller must set `trusted` only for operator-controlled local configuration. An
     in-process caller can opt in, so this is an API contract rather than a sandbox.
@@ -333,9 +335,9 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     return _unique(prompt)
 
 
-def report_command(scripts: str, params: RunParams) -> str:
+def report_command(scripts: str, params: RunParams, interpreter: str = "python3") -> str:
     """The shell command an agent run reports its progress and outcome with, up to its subcommand."""
-    return (f"{shlex.quote(sys.executable)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
+    return (f"{shlex.quote(interpreter)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
             f"--to {shlex.quote(params.channel)}")
 
 
@@ -432,7 +434,7 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
     values = {"workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
               "scripts": _code(client.scripts_path(root)), "tasks": _code(client.tasks_path(root)),
               "methods": _code(client.methods_path(root)), "gate": _code(run.gate or "none"),
-              REPORT: _code(f"{shlex.quote(sys.executable)} <scripts>/report.py --to <Workdir>/{CHANNEL}")
+              REPORT: _code(f"{shlex.quote(client.report_interpreter())} <scripts>/report.py --to <Workdir>/{CHANNEL}")
               if params else ""}
     values |= {f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()}
     unset = {"workdir": "no run params and the client has no inline_workdir", REPORT: "no run params"}
@@ -444,7 +446,8 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
                               f"({unset.get(source, f'{source} is not set')})")
         if values.get(source) and (where or name in ("<Workdir>", "<scripts>", "<tasks>")):
             lines.append(f"- `{name}`: {values[source]}\n")
-    return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
+    rule = RULE + (client.approval() or ".")
+    return f"# Parameters\n\n{rule}\n\n" + "".join(lines)
 
 
 def _unique(text: str) -> str:

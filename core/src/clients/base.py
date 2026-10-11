@@ -12,7 +12,7 @@ from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, Ru
 class Access:
     """An agent run's client-neutral access intent; the selected client decides its effective grants."""
     dirs: list[str]       # combined extra dirs from read/write; effective access is client-specific
-    commands: list[str]   # requested shell commands; pre-approved only when the client supports it
+    commands: list[str]   # client interpretation: core/CLAUDE.md › An agent run's command
     cwd: str = ""         # the dir the agent run starts in (drive.place)
     project: bool = False   # whether the client loads cwd's project settings and instructions (drive.place)
 
@@ -84,6 +84,13 @@ class Client:
     def tasks_path(self, root: str) -> str:
         """How prompts name core's team/tasks/ dir: its absolute path unless the client says otherwise."""
         return os.path.join(os.path.abspath(root), TEXT, "tasks")
+
+    def approval(self) -> str:
+        """Client policy appended to the Parameters rule, including its punctuation."""
+        return ""
+
+    def report_interpreter(self) -> str:
+        return "python3"
 
     def handover(self) -> str:
         """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; a code span

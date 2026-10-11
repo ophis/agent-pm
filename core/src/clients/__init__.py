@@ -13,6 +13,12 @@ NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 def get(name: str, root: str) -> Client:
     """The client named `name`, built from config.toml's [clients.<name>]."""
+    cls, table = definition(name, root)
+    return cls(table if cls.needs_config else {})
+
+
+def definition(name: str, root: str) -> tuple[type[Client], dict]:
+    """Resolve the implementation before constructor validation, retaining its run capability on failure."""
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise ConfigError(f"unsafe client name {name!r}: want a lowercase module identifier")
     table = dict(load_config(name, root))
@@ -31,7 +37,7 @@ def get(name: str, root: str) -> Client:
         raise ConfigError(f"client {name!r} module has no {class_name} class")
     if not isinstance(cls, type) or cls is Client or not issubclass(cls, Client):
         raise ConfigError(f"client {name!r} {class_name} must be a Client subclass")
-    return cls(table if cls.needs_config else {})
+    return cls, table
 
 
 def catalog(name: str, root: str) -> dict[str, dict[str, str]]:

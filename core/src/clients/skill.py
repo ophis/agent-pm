@@ -1,6 +1,7 @@
 """Agent Skill: the composed role run, printed for the calling Claude Code conversation to follow (the act-as skill)
 instead of starting an agent run."""
 from .base import PROGRESS, Client
+from .claude import APPROVAL
 
 REPORT = (f"At each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, send a text message "
           "containing only that line: the mark, then your report")
@@ -11,6 +12,9 @@ class SkillClient(Client):
     runs = False
     inline_workdir = "the dir `mktemp -d` prints, run once at the start and reused for this invocation"
     inline_input = "The text after `<role>[:<task>]` in your `/agent-pm:act-as` arguments."
+
+    def approval(self) -> str:
+        return APPROVAL
 
     def handover(self) -> str:
         return ("End with your final reply in this conversation: the outcome's fields as YAML frontmatter, with its "

@@ -233,7 +233,7 @@ class Claude(Base):
             "--add-dir", TASKS, "--add-dir", METHODS,
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn(f"\n- `report`: `{shlex.quote(sys.executable)} <scripts>/report.py --to "
+        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to "
                       "<Workdir>/run.jsonl`\n", launch.argv[2])
         self.assertIn("## Return\n\nReport through `report`, never in a reply:", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
@@ -383,10 +383,19 @@ class Claude(Base):
 class Codex(Base):
     def setUp(self):
         super().setUp()
+        hermetic.home(self)
+        os.environ.pop("CODEX_HOME", None)
         self.enterContext(unittest.mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
 
+    def test_report_interpreter_matches_prompt_and_access_command(self):
+        interpreter = "/owned Python/bin/python3"
+        with unittest.mock.patch.object(sys, "executable", interpreter):
+            launch = self.plan("dummy-tester", "echo", client="codex", cwd=self.work)
+        self.assertIn(f"`{shlex.quote(interpreter)} <scripts>/report.py", launch.argv[-1])
+        self.assertIn(compose.report_command(f"{CORE}/src", self.params(), interpreter) + " *",
+                      launch.session_state["commands"])
+
     def saved_session(self, *, client_id=None):
-        hermetic.home(self)
         codex_home = os.path.join(self.tmp.name, "user-codex")
         os.makedirs(codex_home)
         extra = os.path.join(self.tmp.name, "extra")
@@ -552,7 +561,7 @@ class Codex(Base):
         found = client.session_info(self.work, SID)
         self.assertEqual((found.client_id, found.exists, found.transcript), (client_id, True, path))
         self.assertAlmostEqual(found.last_activity, os.stat(path).st_mtime, delta=1)
-        self.assertIn("codex resume --approve-for-me", found.resume)
+        self.assertIn("codex resume -s workspace-write", found.resume)
         self.assertTrue(found.resume.endswith(client_id))
         self.assertIn("CODEX_HOME=", found.resume)
         self.assertIn("--add-dir", found.resume)
@@ -604,13 +613,13 @@ class Codex(Base):
                         CORE, clients.get("codex", CORE), role, task, params=self.params(), cwd=self.work)
                     argv = launch.argv
                     self.assertEqual(argv[:3], ["codex", "exec", "--json"])
-                    self.assertNotIn("--sandbox", argv)
+                    self.assertEqual(argv[argv.index("-s") + 1], "workspace-write")
                     self.assertIn("--skip-git-repo-check", argv)
-                    self.assertIn("--approve-for-me", argv)
+                    self.assertIn('approvals_reviewer="auto_review"', argv)
+                    self.assertIn('approval_policy="on-request"', argv)
                     self.assertIn("sandbox_workspace_write.network_access=false", argv)
                     self.assertEqual(argv[argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
-                    self.assertEqual(argv[argv.index("-c") + 1],
-                                     f"model_reasoning_effort={config['efforts'][resolved.effort]}")
+                    self.assertIn(f"model_reasoning_effort={config['efforts'][resolved.effort]}", argv)
                     self.assertIn("project_doc_max_bytes=0", argv)
                     self.assertTrue(argv[-1].startswith("# Guide"))
                     self.assertNotIn("--ignore-rules", argv)
@@ -657,7 +666,9 @@ class Codex(Base):
             launch = clients.get("codex", CORE).launch("prompt", run(), params=self.params(), access=access)
         self.assertEqual([launch.argv[i + 1] for i, value in enumerate(launch.argv) if value == "--add-dir"],
                          [read_dir, write_dir])
-        self.assertIn("--approve-for-me", launch.argv)
+        self.assertIn('approvals_reviewer="auto_review"', launch.argv)
+        self.assertIn('approval_policy="on-request"', launch.argv)
+        self.assertEqual(launch.argv[launch.argv.index("-s") + 1], "workspace-write")
         self.assertIn("configured commands are subject to Codex approval", notice.getvalue())
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", launch.argv)
         self.assertFalse(any(".rules" in value for value in launch.argv))
@@ -1052,7 +1063,7 @@ class Skill(Base):
                       "<repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}{clients.SkillClient({}).approval()}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
                       "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
         self.assertTrue(text.endswith("\n# Input\n\nThe text after `<role>[:<task>]` in your "
@@ -2843,6 +2854,38 @@ class Detach(Base):
                 self.assertEqual(self.lines(), [f"d-drive outcome {word}\n"])
                 os.unlink(self.events)
 
+    def test_malformed_client_config_keeps_detached_outcome_and_inline_authority(self):
+        original = clients.load_config
+        for name, expected in (("claude", True), ("skill", False), ("missing", True)):
+            with self.subTest(client=name):
+                def invalid(client_name, root):
+                    return {**original(client_name, root), "invalid_key": True}
+                with unittest.mock.patch.object(clients, "load_config", side_effect=invalid):
+                    code, calls = self.inner(argv=self.argv("--client", name, "--events", self.events,
+                                                           "--driver", "d-drive"))
+                self.assertEqual((code, calls), (2, []))
+                self.assertEqual(os.path.exists(self.events), expected)
+                if expected:
+                    self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+                    os.unlink(self.events)
+
+    def test_detached_definition_errors_and_custom_inline_constructor_failures(self):
+        class Inline(clients.Client):
+            runs = False
+
+        for resolved in (compose.ConfigError("missing implementation"), ImportError("missing dependency"),
+                         (Inline, {"invalid_key": True})):
+            with self.subTest(resolved=resolved):
+                expected = isinstance(resolved, Exception)
+                patch = ({"side_effect": resolved} if expected else {"return_value": resolved})
+                with unittest.mock.patch.object(clients, "definition", **patch):
+                    code, calls = self.inner(argv=self.argv("--events", self.events, "--driver", "d-drive"))
+                self.assertEqual((code, calls), (2, []))
+                self.assertEqual(os.path.exists(self.events), expected)
+                if expected:
+                    self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+                    os.unlink(self.events)
+
     def test_a_driver_that_cannot_start_its_run_appends_error(self):
         code, calls = self.inner(argv=self.argv("--task", "essay", "--events", self.events, "--driver", "d-drive"))
         self.assertEqual((code, calls), (2, []))
@@ -2858,7 +2901,8 @@ class Detach(Base):
 
     def test_driver_cleanup_does_not_reload_the_selected_client(self):
         selected = clients.get("claude", CORE)
-        with unittest.mock.patch.object(clients, "get", side_effect=[selected, compose.ConfigError("config changed")]) as get:
+        with unittest.mock.patch.object(clients, "definition", side_effect=[(type(selected), selected.config),
+                                                                          compose.ConfigError("config changed")]) as get:
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 code = drive.main(self.argv("--events", self.events, "--driver", "d-drive", "--dry-run"), root=CORE)
         self.assertEqual(code, 0)
@@ -3360,7 +3404,7 @@ class CodexRecoveryDriver(Base):
         info = drive.session_info(self.client, self.work, SID)
         self.assertEqual((info.client_id, info.exists, info.transcript), (self.native, True, path))
         self.assertIsInstance(info.last_activity, float)
-        self.assertIn(f"codex resume --approve-for-me", info.resume)
+        self.assertIn(f"codex resume -s workspace-write", info.resume)
         self.assertIn(self.native, info.resume)
         self.assertFalse(info.usage_supported)
         self.assertIsNone(info.usage)

@@ -159,8 +159,8 @@ GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
 
 
 def old_key(key):
-    return (f"orchestrator/config.toml [core]: [core.roles.researcher] has {key!r}: task-level config and default_task "
-            "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)")
+    return (f"core: [overlay.roles.researcher] has {key!r}: task-level config and default_task "
+            "are gone; set run keys in [overlay.roles.researcher] (a run without a task picks one)")
 
 
 class Runnable(ConfigFile, unittest.TestCase):
@@ -229,12 +229,12 @@ class Runnable(ConfigFile, unittest.TestCase):
         core = os.path.join(self.dir, "core")
         for task in (None, "product-design"):
             with self.subTest(task), mock.patch.object(config, "overlay", return_value={"tier": 3}) as overlay, \
-                    mock.patch.object(config.clients, "load_config", return_value={"flags": []}) as client, \
-                    mock.patch.object(config.compose, "load_run", return_value="run") as load_run:
+                    mock.patch.object(config.clients, "get", return_value="client") as client, \
+                    mock.patch.object(config.compose, "resolve", return_value="run") as resolve:
                 self.assertEqual(config.run_config("pm", task, self.dir), "run")
                 overlay.assert_called_once_with(self.dir)
                 client.assert_called_once_with("claude", core)
-                load_run.assert_called_once_with(core, "pm", task, layers=[{"flags": []}, {"tier": 3}])
+                resolve.assert_called_once_with(core, "client", "pm", task, overlays=[{"tier": 3}], trusted=True)
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
@@ -342,22 +342,40 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(config.run_config("researcher", root=self.root).gate, "")
 
     def test_overlay_unknown_keys(self):
-        unknown = "orchestrator/config.toml [core]: unknown key "
-        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in the global table"),
-                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in the global table"),
-                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in the global table"),
-                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in the global table"),
-                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in the global table"),
-                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in the global table"),
-                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in roles.researcher")]
+        unknown = "core: unknown key "
+        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in run overlay"),
+                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in run overlay"),
+                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in run overlay"),
+                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in run overlay"),
+                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in run overlay"),
+                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in run overlay"),
+                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in run overlay roles.researcher")]
         cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),
                   ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks"))]
         for text, message in cases:
             with self.subTest(message):
                 self.load(PIPELINE + text)
                 with self.assertRaises(SystemExit) as cm:
-                    config.overlay(self.root)
+                    config.runnable(config.load_config(os.path.join(self.dir, "config.toml")), root=self.root)
                 self.assertEqual(cm.exception.code, message)
+
+    def test_resolution_rejects_unknown_overlay_roles_and_output_keys_before_runnable(self):
+        for overlay in ({"roles": {"reseacher": {"tier": 2}}}, {"output": {"type": "local", "typo": 1}},
+                        {"roles": {"researcher": {"output": {"type": "local", "typo": 1}}}}):
+            with self.subTest(overlay=overlay), mock.patch.object(config, "overlay", return_value=overlay):
+                with self.assertRaises(config.compose.ConfigError):
+                    config.run_config("researcher", root=self.root)
+                with self.assertRaises(SystemExit):
+                    self.runs()
+
+    def test_resolution_rejects_unknown_client_role_before_runnable(self):
+        self.load(PIPELINE)
+        client = clients.ClaudeClient({"roles": {"reseacher": {"tier": 2}}})
+        with mock.patch.object(clients, "get", return_value=client):
+            with self.assertRaises(config.compose.ConfigError):
+                config.run_config("researcher", root=self.root)
+            with self.assertRaises(SystemExit):
+                self.runs()
 
     def test_core_errors(self):
         """A core config error, in core's file or the overlay, stops the caller."""

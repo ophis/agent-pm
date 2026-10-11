@@ -62,9 +62,10 @@ class CodexIntegration(unittest.TestCase):
         self.assertTrue(call["stdin_eof"])
         self.assertEqual(os.path.realpath(call["cwd"]), os.path.realpath(self.work))
         self.assertEqual(call["argv"][0:2], ["exec", "--json"])
-        self.assertNotIn("--sandbox", call["argv"])
+        self.assertEqual(call["argv"][call["argv"].index("-s") + 1], "workspace-write")
         self.assertIn("--skip-git-repo-check", call["argv"])
-        self.assertIn("--approve-for-me", call["argv"])
+        self.assertIn('approvals_reviewer="auto_review"', call["argv"])
+        self.assertIn('approval_policy="on-request"', call["argv"])
         self.assertIn("# Input\n\nHello.", call["prompt"])
         self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [CLIENT_ID])
 
@@ -78,7 +79,7 @@ class CodexIntegration(unittest.TestCase):
         with open(self.log) as f:
             call = json.load(f)
         self.assertEqual(call["resume_id"], CLIENT_ID)
-        self.assertLess(call["argv"].index("--approve-for-me"), call["argv"].index("resume"))
+        self.assertLess(call["argv"].index("-s"), call["argv"].index("resume"))
         self.assertEqual([e["text"] for e in self.events() if e["kind"] == "progress"],
                          ["first turn", "second turn"])
         self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],

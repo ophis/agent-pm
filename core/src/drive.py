@@ -97,7 +97,7 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, tasks: str,
-           cwd: str | None = None, project: bool = False) -> Access:
+           cwd: str | None = None, project: bool = False, interpreter: str = "python3") -> Access:
     """The agent run's client-neutral access intent: the `tasks` dir, then combined read/write entries with
     `{{methods}}` filled; commands with `{{scripts}}` and `{{workdir}}` filled, then the report command and gate verbatim.
     The selected client determines effective grants and approvals. The workdir is the first extra dir when `cwd`
@@ -111,7 +111,7 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
             if p and p not in dirs:
                 dirs.append(p)
     values = {"scripts": scripts, "workdir": workdir}
-    commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params)} *"]
+    commands = [fill(c, values, "commands") for c in run.commands] + [f"{report_command(scripts, params, interpreter)} *"]
     return Access(dirs, commands + ([run.gate] if run.gate else []), cwd=cwd, project=project)
 
 
@@ -187,7 +187,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     here, project = place(root, run, params, cwd, client=client)
     prompt = render(root, run, params, client=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
-                 tasks=client.tasks_path(root), cwd=here, project=project)
+                 tasks=client.tasks_path(root), cwd=here, project=project, interpreter=client.report_interpreter())
     launch = client.launch(prompt, run, params=params, access=acc)
     return replace(launch, project=project, status_line=status_line(root), per_column=workers_per_column(root),
                    retile=grid_retile(root)), run
@@ -900,11 +900,13 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     if a.driver is None:
         return _main(a, root, popen, proc)[0]
     # Resolve while signals remain blocked: even a stop before _main starts still knows whether this client runs.
+    a.running_client = True
     try:
-        a.selected_client = clients.get(a.client or "claude", root)
-        a.running_client = a.selected_client.runs
+        implementation, table = clients.definition(a.client or "claude", root)
+        a.running_client = implementation.runs
+        a.selected_client = implementation(table if implementation.needs_config else {})
     except (ConfigError, ImportError) as e:
-        a.client_error = e
+        a.client_error = ConfigError(str(e))
     for s in SIGNALS:
         signal.signal(s, _stop)
     status = None
@@ -916,7 +918,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
     finally:   # a stop that cut the block short comes here too, blocked by _stop
-        # The act-as skill pre-approves `--client skill --role *`: only a client that runs may write the outcome line.
+        # Known inline clients never gain event-write authority, even when constructor validation fails.
         if a.running_client and a.events is not None:
             try:
                 append_line(tui_claude.events_file(a.events),

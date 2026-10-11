@@ -147,7 +147,8 @@ def _session_file(snapshot: dict, client_id: str) -> tuple[str, float] | None:
 
 
 def _flags(snapshot: dict, *, interactive: bool) -> list[str]:
-    flags = ["--approve-for-me", "-m", snapshot["model"],
+    flags = ["-s", "workspace-write", "-c", 'approval_policy="on-request"',
+             "-c", 'approvals_reviewer="auto_review"', "-m", snapshot["model"],
              "-c", f"model_reasoning_effort={snapshot['effort']}",
              "-c", f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}"]
     if not snapshot["project"]:
@@ -173,6 +174,12 @@ class CodexClient(Client):
             for key, value in values.items():
                 if not isinstance(value, str) or not value.strip() or not value.isprintable():
                     raise ConfigError(f"[clients.codex] {label} {key!r} must map to printable text")
+
+    def approval(self) -> str:
+        return ". Run each shell call separately. Command approvals follow Codex automatic review."
+
+    def report_interpreter(self) -> str:
+        return sys.executable
 
     def handover(self) -> str:
         return ("Report through `report`, never in a final reply:\n\n"

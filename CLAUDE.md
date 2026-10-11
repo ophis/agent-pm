@@ -16,9 +16,9 @@ claude plugin validate core && claude plugin validate .   # plugin and marketpla
 ./gen-preview.sh                                          # every role × task's composed prompt into previews/ (gitignored)
 ```
 
-CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (the three suites) and Integration tests (each suite's `integration/`; installs tmux); a test must pass on Linux too.
+CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (the three suites) and separate Core, Orchestrator and sharded Tmux integration jobs (each installs tmux); a test must pass on Linux too.
 
-Integration tests (real processes end to end) go in a suite's `integration/` as `<x>_integration_test.py`, with no `__init__.py` (the unit discovery then skips them). A new such dir gets a step in the Integration tests job (guarded like the unit job's later steps) and a line in Commands.
+Integration tests (real processes end to end) go in a suite's `integration/` as `<x>_integration_test.py`, with no `__init__.py` (the unit discovery then skips them). A new such dir gets an integration job and a line in Commands. Assign each tmux integration test class once in `.github/tmux_shards.py`; its gate checks every `*_integration_test.py` and requires its shard names to match the workflow's inline JSON matrix.
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
