@@ -30,7 +30,7 @@ TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 CATALOG = """from utils import config_file
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(config_file.read(composer.CONFIG))
+team.check_all(config_file.read_config(composer.CONFIG))
 params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
 rows = {}
 for role, tasks in composer.catalog(team).items():

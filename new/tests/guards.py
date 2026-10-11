@@ -3,15 +3,14 @@
 
 layer_imports(core)  the layers under src/ (LAYERS) import each other only as delegate → composer or driver, driver →
                      adapters, a module outside the layers → driver; outside driver/, of the driver only driver.api.
-                     Imports read by ast: nested ones, relative ones resolved, literal-string import_module/__import__
+                     No module imports repo as a library. Imports read by ast: nested ones, relative ones resolved, literal-string import_module/__import__
 runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/adapters/; in a .toml, comments, a table
                      header [adapters.<name>…], an implementation = "adapters.<name>:<Class>Adapter" line and a
                      runtime = "<name>" line under any table (the config naming an Adapter) are exempt
 old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
 adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
-utils_imports(core)  each module under src/utils/ imports only the stdlib (sys.stdlib_module_names) and utils
-repo_library(core)   no module under src/ imports repo (repo.py is only the agents' git CLI)
+pure_utils(core)     src/utils/ imports only the Python standard library
 modes_import_api(core)  no module under src/driver/modes/ imports driver.api (a Mode raises driver.errors' DriverError)
 tmux_calls(core)     no str constant "tmux" outside src/driver/tmux_host.py (TMUX_HOST), the only module that calls tmux
 syntax_39(core)      each standalone file (STANDALONE) parses as Python 3.9
@@ -44,9 +43,20 @@ def layer_imports(core: str) -> list[str]:
         layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
         for module in _imports(ast.parse(text, rel), names[:-1] if names else None):
             top = module.split(".")[0]
-            if top in LAYERS and top != layer and ((layer, top) not in ALLOWED
-                                                   or top == "driver" and module != "driver.api"):
+            if top == "repo" or (top in LAYERS and top != layer and ((layer, top) not in ALLOWED
+                                                   or top == "driver" and module != "driver.api")):
                 found.add(f"{rel}: {layer} imports {module}")
+    return sorted(found)
+
+
+def pure_utils(core: str) -> list[str]:
+    found = set()
+    for rel, text in _files(core, ".py"):
+        if rel.startswith("src/utils/"):
+            package = rel[:-3].split("/")[1:-1]
+            for module in _imports(ast.parse(text, rel), package):
+                if module.split(".")[0] not in sys.stdlib_module_names:
+                    found.add(f"{rel}: utils imports {module}")
     return sorted(found)
 
 
@@ -87,22 +97,6 @@ def syntax_311(new: str) -> list[str]:
             ast.parse(text, rel, feature_version=(3, 11))
         except SyntaxError as e:
             found.append(f"{rel}: {e}")
-    return sorted(found)
-
-
-def utils_imports(core: str) -> list[str]:
-    found = set()
-    for rel, names, tree in _src_modules(core):
-        if names[0] == "utils":
-            found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
-                         if m.split(".")[0] not in ("utils", *sys.stdlib_module_names))
-    return sorted(found)
-
-
-def repo_library(core: str) -> list[str]:
-    found = set()
-    for rel, names, tree in _src_modules(core):
-        found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1]) if m.split(".")[0] == "repo")
     return sorted(found)
 
 

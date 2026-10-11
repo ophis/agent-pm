@@ -81,7 +81,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def cfg(self):
-        return config_file.read(self.config)
+        return config_file.read_config(self.config)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""

@@ -1,55 +1,71 @@
-"""new/core/src/utils/paths.py: printable_abs, under and temp_dirs (moved from repo.py's tests)."""
+"""new/core/src/utils/paths.py: real_dirs, under, temp_dirs and printable_abs."""
 import os
 import subprocess
 import tempfile
 import unittest
-import unittest.mock
+from pathlib import Path
+from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
-from utils import paths
+from new.tests import NEW
+from utils.paths import printable_abs, real_dirs, temp_dirs, under
+
+
+class PathsTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.alias = self.root / "alias"
+        self.alias.symlink_to(self.home)
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.home)}))
+
+    def test_real_dirs_expands_home_resolves_symlinks_and_deduplicates(self):
+        paths = ["~/project", str(self.alias / "project"), str(self.home / "other")]
+        self.assertEqual(real_dirs(paths, "roots"), {str(self.home / "project"), str(self.home / "other")})
+        self.assertEqual(real_dirs([], "roots"), frozenset())
+
+    def test_real_dirs_rejects_invalid_collections_and_paths(self):
+        for paths in (None, "~/project", (str(self.home),), [1], ["relative"], ["~unknown-task318-user/project"]):
+            with self.subTest(paths=paths), self.assertRaisesRegex(ValueError, "^roots:"):
+                real_dirs(paths, "roots")
+
+    def test_under_returns_first_real_root_and_respects_path_boundaries(self):
+        path = str(self.home / "project")
+        self.assertEqual(under(path, [self.alias, self.root]), str(self.home))
+        self.assertEqual(under(path, [self.root, self.alias]), str(self.root))
+        self.assertIsNone(under(str(self.root / "home-other"), [self.home]))
+
+    def test_under_a_root_equal_to_the_path_holds_it_and_no_roots_hold_nothing(self):
+        self.assertEqual(under(str(self.home), [self.alias]), str(self.home))
+        self.assertIsNone(under(str(self.home), []))
+
+    def test_temp_dirs_collects_environment_python_system_and_darwin_roots(self):
+        value = subprocess.CompletedProcess([], 0, str(self.root / "darwin") + "\n", "")
+        with mock.patch.dict(os.environ, {"TMPDIR": str(self.alias)}), \
+                mock.patch("tempfile.gettempdir", return_value=str(self.home)), \
+                mock.patch("subprocess.run", return_value=value) as run:
+            actual = temp_dirs()
+        self.assertEqual(actual, tuple(dict.fromkeys(os.path.realpath(path) for path in
+                         (self.alias, self.home, "/tmp", "/var/tmp", self.root / "darwin"))))
+        run.assert_called_once_with(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True,
+                                    timeout=60, stdin=subprocess.DEVNULL)
+
+    def test_temp_dirs_keeps_roots_when_getconf_is_unavailable_or_times_out(self):
+        for error in (OSError("no getconf"), subprocess.TimeoutExpired("getconf", 60)):
+            with self.subTest(error=error), mock.patch("subprocess.run", side_effect=error):
+                self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
 
 
 class PrintableAbs(unittest.TestCase):
     def test_a_printable_absolute_str_only(self):
         for value in ("/", "/a/b", "/a b/é", "/x/../y"):
             with self.subTest(value=value):
-                self.assertTrue(paths.printable_abs(value))
+                self.assertTrue(printable_abs(value))
         for value in ("", "rel", "./a", "~/a", "/c\n", "/x\x1b[2J", "/a\0b", b"/a", None, 1, ["/a"]):
             with self.subTest(value=value):
-                self.assertFalse(paths.printable_abs(value))
-
-
-class Under(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-
-    def test_the_first_root_holding_the_path_by_real_path(self):
-        a, b = os.path.join(self.root, "a"), os.path.join(self.root, "b")
-        os.mkdir(a)
-        os.symlink(a, b)
-        inner = os.path.join(a, "x")
-        self.assertEqual(paths.under(inner, [os.path.join(self.root, "other"), b, self.root]), a)
-        self.assertEqual(paths.under(a, [a]), a)
-        self.assertIsNone(paths.under(inner, [os.path.join(self.root, "a2"), os.path.join(self.root, "other")]))
-        self.assertIsNone(paths.under(inner, []))
-
-
-class TempDirs(unittest.TestCase):
-    def test_every_temp_dir_counts(self):
-        getconf = subprocess.CompletedProcess([], 0, "/x/d/\n", "")
-        with unittest.mock.patch.dict(os.environ, {"TMPDIR": "/x/e/"}), \
-                unittest.mock.patch("tempfile.gettempdir", return_value="/x/t"), \
-                unittest.mock.patch("subprocess.run", return_value=getconf) as sub:
-            dirs = paths.temp_dirs()
-        self.assertEqual(sub.call_args.args[0], ["getconf", "DARWIN_USER_TEMP_DIR"])
-        self.assertEqual(dirs, tuple(dict.fromkeys(os.path.realpath(d) for d in ("/x/e", "/x/t", "/tmp", "/var/tmp",
-                                                                                   "/x/d"))))
-
-    def test_getconf_failing_is_ignored(self):
-        with unittest.mock.patch("subprocess.run", side_effect=OSError("no getconf")):
-            self.assertIn(os.path.realpath("/var/tmp"), paths.temp_dirs())
+                self.assertFalse(printable_abs(value))
 
 
 if __name__ == "__main__":

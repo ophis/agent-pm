@@ -30,7 +30,8 @@ try:
                                 resume=req.get("resume", False))
     print(json.dumps({"run": dataclasses.asdict(run), "intent": dataclasses.asdict(intent),
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
-                      "files": [composer.__file__, sys.modules["utils"].__file__]}))
+                      "files": [composer.__file__, sys.modules["utils.config_file"].__file__,
+                                sys.modules["utils.paths"].__file__], "repo_imported": "repo" in sys.modules}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

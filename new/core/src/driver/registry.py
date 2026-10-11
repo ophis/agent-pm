@@ -11,7 +11,7 @@ import threading
 from collections.abc import Mapping
 
 from adapters.base import Adapter, ConfigError
-from utils.config_file import CONFIG, LOCAL, read
+from utils.config_file import CONFIG, LOCAL, read_config
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
@@ -22,7 +22,7 @@ _cache: dict[str, dict] | None = None
 def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
     """The merged config's [adapters]; {} when it is absent or not a table."""
     try:
-        found = read(path, local).get("adapters")
+        found = read_config(path, local).get("adapters")
     except (OSError, ValueError) as e:
         raise ConfigError(f"core config {path}: {e}") from e
     return found if isinstance(found, dict) else {}

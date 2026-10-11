@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, _text, _title, unfenced
-from utils import config_file
+from utils.config_file import LOCAL, read_config
 from utils.paths import temp_dirs, under
 
 PROGRESS = "agent-pm-progress"   # the progress mark (the package docstring)
@@ -59,7 +59,7 @@ class Team:
         text = _text(path)
         if text.split("\n", 1)[0].strip() == "---":
             raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
-                              f"{config_file.LOCAL}")
+                              f"{LOCAL}")
         if m := PLACEHOLDER.search(text):
             raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
         for m in METHOD.findall(text):
@@ -112,14 +112,14 @@ class Team:
 
 
 def team_dirs(config: str = CONFIG) -> tuple[str, ...]:
-    """The real paths of the global `team_dirs` of `config` with config_file.LOCAL on top, in order; () when unset.
+    """The real paths of the global `team_dirs` of `config` with LOCAL on top, in order; () when unset.
     ConfigError when `config` itself sets it, it is malformed or the config can't be read."""
     try:
-        own, value = "team_dirs" in config_file.read(config, os.devnull), config_file.read(config).get("team_dirs")
+        own, value = "team_dirs" in read_config(config, os.devnull), read_config(config, LOCAL).get("team_dirs")
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
-        raise ConfigError(f"team_dirs: set it in {config_file.LOCAL}, not {os.path.basename(config)}")
+        raise ConfigError(f"team_dirs: set it in {LOCAL}, not {os.path.basename(config)}")
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -185,7 +185,7 @@ def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str
     docstring). `team` None: the team root alone; `config` names an unknown role apart from a charterless one."""
     team = _team(team)
     if not (charter := team.charter(role)):
-        raise _no_charter(role, config_file.read(config), team)
+        raise _no_charter(role, read_config(config, LOCAL), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -213,14 +213,14 @@ def catalog(team: Team | None = None, config: str = CONFIG) -> dict[str, dict[st
     """Every role (roles(), so configured ones in config order first) and its task index; `team` as index's."""
     team = _team(team)
     _roles(config)
-    return {role: index(role, team, config) for role in roles(team, config_file.read(config))}
+    return {role: index(role, team, config) for role in roles(team, read_config(config, LOCAL))}
 
 
 def _roles(config: str) -> Mapping:
     """The merged base role tables, checked before the catalog or a resolution uses them."""
     if not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = config_file.read(config).get("roles")
+    roles = read_config(config, LOCAL).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():

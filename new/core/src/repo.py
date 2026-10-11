@@ -31,8 +31,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from utils import config_file
-from utils.paths import temp_dirs, under
+from utils.config_file import CONFIG, read_config
+from utils.paths import real_dirs, temp_dirs, under
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
 NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
@@ -107,6 +107,11 @@ def redact(text: str) -> str:
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
+
+
+def trusted_dirs(cfg: dict) -> frozenset[str]:
+    """The CLI's configured trusted roots, validated by utils.paths.real_dirs."""
+    return real_dirs(cfg.get("trusted_dirs", []), "trusted_dirs")
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
@@ -222,7 +227,7 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
              links=frozenset()) -> dict:
     """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
     clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
-    local clones whose worktrees get symlinks (config_file.trusted_dirs(), matched exactly)."""
+    local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -379,8 +384,7 @@ def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: R
             "others": _oldest_first(others)}
 
 
-def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = config_file.CONFIG,
-         temp=None) -> int:
+def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = CONFIG, temp=None) -> int:
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("worktree", "status"):
@@ -393,9 +397,9 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = config_file.read(config)
+        cfg = read_config(config)
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=config_file.trusted_dirs(cfg))
+            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
         else:
             r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"), base_branch=a.base)
     except Invalid as e:
