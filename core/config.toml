@@ -28,6 +28,9 @@
 #   status_line     local, global only: true → TUI sessions (the tui runner's, `/agent-pm:tmux`'s workers) show tmux's
 #                   status line; unset → false
 #   workers_per_column local, global only: worker panes per grid column (tmux grid), 1..9999; unset → 3
+#   grid_retile     local, global only: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all"
+#                   (also a drag or a window resize), "off" (never by itself: core/src/tui_claude.py tile @N);
+#                   unset → "open-close"
 tier = 2
 effort = "high"
 language = "English"
@@ -38,6 +41,7 @@ language = "English"
 # local: trusted_dirs = ["~/src/<name>"]
 # local: status_line = true
 # local: workers_per_column = 2
+# local: grid_retile = "all"
 
 # Destination; a lower level's [output] replaces the whole table.
 #   type    required: github (publish to repo, branch, dir) | local (save to drive.py's --out) | pull-request (a PR on

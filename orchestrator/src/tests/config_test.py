@@ -346,6 +346,8 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         cases = [("[core]\nfoo = 1\n", unknown + "'foo' in the global table"),
                  ('[core]\nusers = ["octocat"]\n', unknown + "'users' in the global table"),
                  ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in the global table"),
+                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in the global table"),
+                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in the global table"),
                  ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in the global table"),
                  ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in roles.researcher")]
         cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),

@@ -36,6 +36,7 @@ Outside Resume, never retry or replace a round's run or an angle's agent. No usa
 ## Standards
 
 - **Report**: per the Template; the outcome's `title` is `[Title]` alone.
+- **Concise**: after writing the report, cut repetition and preamble ([Principles › Writing](#writing)); length follows content.
 - Known claims in the input are claims to verify.
 - A reader's code source: `<owner>/<name>:<path from its worktree root>:<a>-<b>`; each reader prompt asks for it.
 - A code permalink: `<permalink_base><path>#L<a>-L<b>` (`#L<n>` for one line), with that repo's `permalink_base` and the path from its worktree root.
