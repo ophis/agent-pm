@@ -27,7 +27,7 @@ class CodexClient(Client):
                 "run `report progress <name> <your report>`.\n"
                 "- **Outcome:** as your last action, after all background work has finished, run "
                 "`report outcome --status <done|needs_input|failed> --title <one line> --summary <text> "
-                "[--question <q>]... [--url <url>]... [--file <path>]... [--deliverable <file>]`. "
+                "[--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`. "
                 "If it fails, fix it and run it again. A final reply is not an outcome.")
 
     def launch(self, prompt: str, run: RunConfig, *, params: RunParams, access: Access) -> Launch:
