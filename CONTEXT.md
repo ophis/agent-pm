@@ -18,6 +18,10 @@ Rules every role follows; precedence: `core/team/guide.md`.
 **Charter**:
 A role's text: its task index and the rules shared by all of that role's tasks.
 
+**Team dir**:
+A dir listed in core config's `team_dirs`, outside the plugin, adding roles (each with its own tasks) and templates to the core pack's, never replacing or extending them.
+_Avoid_: custom pack
+
 **Agent run**:
 One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
@@ -34,13 +38,14 @@ The part of the delegate that assembles principles, role and input into a prompt
 
 **Driver**:
 The part of the delegate that starts an agent run through a client and checks its output; the same for every client.
+_Avoid_: runtime, harness
 
 **Client**:
-A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or a prompt to print) and enforces what hard constraints it can.
+A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or a prompt to print) and enforces what hard constraints it can. Elsewhere: a coding runtime; its code here, an adapter.
 _Avoid_: runtime, backend, vehicle
 
 **Runner**:
-How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up).
+How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up). Elsewhere: headless and interactive modes.
 
 **Attended run**:
 An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
@@ -53,7 +58,7 @@ The Markdown an agent run delivers to its destination (report, PRD, PR descripti
 _Avoid_: document, result, report
 
 **Orchestration layer**:
-The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear; the orchestrator of the pipeline's agent runs.
+The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear; the orchestrator of the pipeline's agent runs. Elsewhere: a control plane.
 _Avoid_: runner
 
 **Write-back**:

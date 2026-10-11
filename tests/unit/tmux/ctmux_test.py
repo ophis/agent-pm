@@ -1,6 +1,5 @@
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,7 +16,7 @@ sys.exit(int(os.environ["HAS_RC"]) if sys.argv[1] == "has" else 0)
 """
 START = ["start-server", ";", "set", "-g", "mouse", "on", ";", "set", "-g", "history-limit", "50000",
          ";", "set", "-s", "extended-keys", "on", ";", "set", "-s", "terminal-features[99]", "xterm*:extkeys",
-         ";", "new", "-d", "-s", "s1"]
+         ";", "new", "-d", "-s", "s1", "-c"]
 
 
 class CtmuxTest(unittest.TestCase):
@@ -36,8 +35,8 @@ class CtmuxTest(unittest.TestCase):
         self.log = os.path.join(self.tmp, "log")
         self.env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": self.home, "CTMUX_LOG": self.log}
 
-    def run_ctmux(self, *args, has_rc=1):
-        p = subprocess.run([CTMUX, *args], cwd=self.cwd, env={**self.env, "HAS_RC": str(has_rc)},
+    def run_ctmux(self, *args, has_rc=1, script=CTMUX):
+        p = subprocess.run([script, *args], cwd=self.cwd, env={**self.env, "HAS_RC": str(has_rc)},
                            capture_output=True, text=True)
         calls = []
         if os.path.exists(self.log):
@@ -56,16 +55,25 @@ class CtmuxTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual([c[1:] for c in calls], [["has", "-t", "=s1"], ["-CC", "attach", "-t", "=s1"]])
 
-    def test_new_session_starts_claude_in_cwd_then_attaches(self):
+    def test_new_session_in_cwd_then_attaches(self):
         p, calls = self.run_ctmux("s1")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([c[1:] for c in calls[:2]], [["has", "-t", "=s1"], START])
+        self.assertEqual([c[1:] for c in calls],
+                         [["has", "-t", "=s1"], START + [self.cwd], ["-CC", "attach", "-t", "=s1"]])
         self.assertEqual(calls[1][0], self.home)
-        send, attach = calls[2][1:], calls[3][1:]
-        self.assertEqual(send[:3] + send[4:], ["send-keys", "-t", "=s1:", "Enter"])
-        self.assertEqual(shlex.split(send[3]), ["cd", self.cwd, "&&", "claude", "--permission-mode", "auto"])
-        self.assertEqual(attach, ["-CC", "attach", "-t", "=s1"])
-        self.assertEqual(len(calls), 4)
+
+    def test_install_copies_itself_to_agent_pm_bin(self):
+        dst = os.path.join(self.home, ".agent-pm", "bin", "ctmux")
+        with open(CTMUX, "rb") as f:
+            src = f.read()
+        for script in (CTMUX, dst):
+            p, calls = self.run_ctmux("--install", script=script)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(p.stdout.strip(), dst)
+            self.assertTrue(os.access(dst, os.X_OK))
+            with open(dst, "rb") as f:
+                self.assertEqual(f.read(), src)
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

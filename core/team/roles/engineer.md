@@ -47,7 +47,7 @@ Add verbatim, placeholders filled in:
 ```
 Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.
 Commits merged from `origin/<base>` are not this build's work.
-Skip S8; keep the commits. After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
+Skip S7; keep the commits. After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
 ```
 
 ## Finish

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Manager claude inside tmux, attached via iTerm2 tmux integration (-CC).
-s=${1:?usage: ctmux <session-name>}
+# A tmux session for the manager, attached via iTerm2 tmux integration (-CC); you start claude or codex in it.
+if [ "$1" = --install ]; then
+  dst=$HOME/.agent-pm/bin/ctmux
+  mkdir -p "${dst%/*}" && { [ "$0" -ef "$dst" ] || install -m 755 "$0" "$dst"; } && echo "$dst"
+  exit
+fi
+s=${1:?usage: ctmux <session-name> | ctmux --install}
 dir=$PWD
 tmux has -t "=$s" 2>/dev/null || {
   # Start from ~ so the tmux server never sits in a directory that later gets deleted.
   (cd ~ && tmux start-server \; set -g mouse on \; set -g history-limit 50000 \
     \; set -s extended-keys on \; set -s 'terminal-features[99]' 'xterm*:extkeys' \
-    \; new -d -s "$s")
-  tmux send-keys -t "=$s:" "cd $(printf %q "$dir") && claude --permission-mode auto" Enter
+    \; new -d -s "$s" -c "$dir")
 }
 exec tmux -CC attach -t "=$s"
