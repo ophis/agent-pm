@@ -30,6 +30,7 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
                       "cwd"})
+OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column",
                           "grid_retile"}
 OLD_KEYS = frozenset({"default_task", "tasks"})
@@ -229,6 +230,8 @@ def resolve(root: str, client: ConfigClient, role: str, task: str | None = None,
     if not isinstance(client_roles, Mapping):
         raise ConfigError("selected client roles must be a table")
     for name, table in client_roles.items():
+        if name not in roles:
+            raise ConfigError(f"unknown role {name!r} in selected client")
         if not isinstance(table, Mapping):
             raise ConfigError(f"selected client roles.{name} must be a table")
     for overlay in overlays:
@@ -259,8 +262,7 @@ def _check_overlay(overlay: Mapping, roles: Mapping) -> None:
     if not isinstance(overlay, Mapping):
         raise ConfigError("run overlay must be a table")
     _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, "run overlay")
-    if "output" in overlay and not isinstance(overlay["output"], Mapping):
-        raise ConfigError("run overlay output must be a table")
+    _check_overlay_output(overlay, "run overlay")
     if "roles" not in overlay:
         return
     if not isinstance(overlay["roles"], Mapping):
@@ -272,8 +274,15 @@ def _check_overlay(overlay: Mapping, roles: Mapping) -> None:
             raise ConfigError(f"run overlay roles.{role} must be a table")
         check_old_keys(table, role, "overlay.")
         _check_overlay_keys(table, RUN_KEYS, f"run overlay roles.{role}")
-        if "output" in table and not isinstance(table["output"], Mapping):
-            raise ConfigError(f"run overlay roles.{role}.output must be a table")
+        _check_overlay_output(table, f"run overlay roles.{role}")
+
+
+def _check_overlay_output(table: Mapping, where: str) -> None:
+    if "output" not in table:
+        return
+    if not isinstance(table["output"], Mapping):
+        raise ConfigError(f"{where} output must be a table")
+    _check_overlay_keys(table["output"], OUTPUT_KEYS, f"{where} output")
 
 
 def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:

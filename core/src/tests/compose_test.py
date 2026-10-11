@@ -222,9 +222,11 @@ class PublicResolution(Fake):
 
     def test_trusted_overlay_rejects_unknown_and_legacy_keys(self):
         bad = (({"flags": []}, "flags"), ({"tasks": {}}, "tasks"),
+               ({"output": {"type": "local", "typo": "value"}}, "typo"),
                ({"roles": {"writer": {"default_task": "short-note"}}}, "default_task"),
                ({"roles": {"writer": {"tasks": {}}}}, "tasks"),
                ({"roles": {"writer": {"allow": []}}}, "allow"),
+               ({"roles": {"writer": {"output": {"type": "local", "typo": "value"}}}}, "typo"),
                ({"roles": {"stranger": {"tier": 3}}}, "stranger"))
         for overlay, message in bad:
             with self.subTest(overlay=overlay), self.assertRaisesRegex(compose.ConfigError, message):
@@ -239,7 +241,7 @@ class PublicResolution(Fake):
     def test_unknown_role_and_malformed_selected_client_roles(self):
         with self.assertRaisesRegex(compose.ConfigError, "unknown role"):
             compose.resolve(self.root, clients.Client({}), "stranger")
-        for roles in ([], {"writer": []}):
+        for roles in ([], {"writer": []}, {"stranger": {"tier": 3}}):
             with self.subTest(roles=roles), self.assertRaises(compose.ConfigError):
                 compose.resolve(self.root, clients.SkillClient({"roles": roles}), "writer")
 

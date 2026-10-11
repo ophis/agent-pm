@@ -843,10 +843,19 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--driver", help=argparse.SUPPRESS)   # --detach's: this is the driver in tmux session DRIVER
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    a.running_client = False   # the selected client's capability, retained for detached-driver cleanup
+    a.selected_client = None
+    a.client_error = None
     if a.input == "-" and a.driver is None:   # the driver's is the caller's stdin text, even a "-"
         a.input = sys.stdin.read()
     if a.driver is None:
         return _main(a, root, popen, proc)[0]
+    # Resolve while signals remain blocked: even a stop before _main starts still knows whether this client runs.
+    try:
+        a.selected_client = clients.get(a.client or "claude", root)
+        a.running_client = a.selected_client.runs
+    except (ConfigError, ImportError) as e:
+        a.client_error = e
     for s in SIGNALS:
         signal.signal(s, _stop)
     status = None
@@ -859,11 +868,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
     finally:   # a stop that cut the block short comes here too, blocked by _stop
         # The act-as skill pre-approves `--client skill --role *`: only a client that runs may write the outcome line.
-        try:
-            running_client = clients.get(a.client or "claude", root).runs if a.events is not None else False
-        except (ConfigError, ImportError):
-            running_client = False   # _main already reported an invalid client; cleanup must not mask it
-        if running_client:
+        if a.running_client and a.events is not None:
             try:
                 append_line(tui_claude.events_file(a.events),
                             f"{time.strftime('%H:%M:%S')} {a.driver} outcome {status or 'error'}\n")
@@ -886,7 +891,10 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         if a.manager is not None and a.runner != "tui" and not a.detach:
             raise ConfigError("--manager needs --runner tui or --detach")
         check_naming(a.runner, a.prefix, None if a.detach or a.driver is not None else a.events)
-        client = clients.get(name, root)
+        if a.client_error is not None:
+            raise a.client_error
+        client = a.selected_client if a.selected_client is not None else clients.get(name, root)
+        a.running_client = client.runs
         if client.runs:
             if a.input is None or a.out is None or a.workdir is None:
                 raise ConfigError(f"client {name!r} needs --input, --out and --workdir")

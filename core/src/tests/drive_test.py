@@ -197,6 +197,9 @@ class ClientDiscovery(unittest.TestCase):
             module.ThirdClient = object
             with self.assertRaisesRegex(compose.ConfigError, "subclass"):
                 clients.get("third", self.tmp.name)
+            module.ThirdClient = clients.Client
+            with self.assertRaisesRegex(compose.ConfigError, "subclass"):
+                clients.get("third", self.tmp.name)
 
     def test_failure_inside_an_existing_module_is_not_disguised_as_missing_module(self):
         self.config('[clients.third]\nimplementation = "ThirdClient"\n')
@@ -2406,6 +2409,15 @@ class Detach(Base):
         with redirect_stderr(io.StringIO()):
             code = drive.main(self.argv("--events", self.events, "--driver", "d-drive"), root=CORE, popen=popen)
         self.assertEqual((code, self.lines()), (0, ["d-drive outcome done\n"]))
+
+    def test_driver_cleanup_does_not_reload_the_selected_client(self):
+        selected = clients.get("claude", CORE)
+        with unittest.mock.patch.object(clients, "get", side_effect=[selected, compose.ConfigError("config changed")]) as get:
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                code = drive.main(self.argv("--events", self.events, "--driver", "d-drive", "--dry-run"), root=CORE)
+        self.assertEqual(code, 0)
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_a_signal_ends_the_driver_with_one_error_line_and_kills_its_tui_session(self):
         killed = []

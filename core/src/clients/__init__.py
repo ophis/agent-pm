@@ -29,7 +29,7 @@ def get(name: str, root: str) -> Client:
     cls = getattr(module, class_name, None)
     if cls is None:
         raise ConfigError(f"client {name!r} module has no {class_name} class")
-    if not isinstance(cls, type) or not issubclass(cls, Client):
+    if not isinstance(cls, type) or cls is Client or not issubclass(cls, Client):
         raise ConfigError(f"client {name!r} {class_name} must be a Client subclass")
     return cls(table if cls.needs_config else {})
 
