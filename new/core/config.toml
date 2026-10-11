@@ -143,3 +143,23 @@ medium = "medium"
 high = "high"
 xhigh = "xhigh"
 max = "max"
+
+[adapters.codex]
+implementation = "adapters.codex:CodexAdapter"
+shell_network = false
+
+[adapters.codex.tiers]
+1 = "gpt-6-astra"
+2 = "gpt-6.1-sol"
+3 = "gpt-6-luna"
+4 = "gpt-5.6-terra"
+
+[adapters.codex.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+# Optional local env table supplies launch/probe variables, including CODEX_HOME; resume keeps the saved CODEX_HOME.
+[adapters.codex.env]

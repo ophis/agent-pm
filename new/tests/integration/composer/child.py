@@ -14,7 +14,7 @@ from new.tests import SRC, hermetic
 TIMEOUT = 60   # seconds
 PRELUDE = "import json, os, sys\nsys.path.insert(0, sys.argv[1])\nimport composer\n"
 # After PRELUDE; argv[2]: {role, task?, overlays?, input, out, workdir, cwd, resume?}; prints {"error"} on a
-# ConfigError, else run, intent, prompt, the trusted dirs and the files composer and repo were loaded from.
+# ConfigError, else run, intent, prompt, the trusted dirs and the files composer and utils were loaded from.
 COMPOSE = """import dataclasses
 req = json.loads(sys.argv[2])
 try:
@@ -30,7 +30,8 @@ try:
                                 resume=req.get("resume", False))
     print(json.dumps({"run": dataclasses.asdict(run), "intent": dataclasses.asdict(intent),
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
-                      "files": [composer.__file__, sys.modules["repo"].__file__]}))
+                      "files": [composer.__file__, sys.modules["utils.config_file"].__file__,
+                                sys.modules["utils.paths"].__file__], "repo_imported": "repo" in sys.modules}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

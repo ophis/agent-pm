@@ -1,0 +1,53 @@
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from new.tests import NEW
+from utils.paths import real_dirs, temp_dirs, under
+
+
+class PathsTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.alias = self.root / "alias"
+        self.alias.symlink_to(self.home)
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.home)}))
+
+    def test_real_dirs_expands_home_resolves_symlinks_and_deduplicates(self):
+        paths = ["~/project", str(self.alias / "project"), str(self.home / "other")]
+        self.assertEqual(real_dirs(paths, "roots"), {str(self.home / "project"), str(self.home / "other")})
+        self.assertEqual(real_dirs([], "roots"), frozenset())
+
+    def test_real_dirs_rejects_invalid_collections_and_paths(self):
+        for paths in (None, "~/project", (str(self.home),), [1], ["relative"], ["~unknown-task318-user/project"]):
+            with self.subTest(paths=paths), self.assertRaisesRegex(ValueError, "^roots:"):
+                real_dirs(paths, "roots")
+
+    def test_under_returns_first_real_root_and_respects_path_boundaries(self):
+        path = str(self.home / "project")
+        self.assertEqual(under(path, [self.alias, self.root]), str(self.home))
+        self.assertEqual(under(path, [self.root, self.alias]), str(self.root))
+        self.assertIsNone(under(str(self.root / "home-other"), [self.home]))
+
+    def test_temp_dirs_collects_environment_python_system_and_darwin_roots(self):
+        value = subprocess.CompletedProcess([], 0, str(self.root / "darwin") + "\n", "")
+        with mock.patch.dict(os.environ, {"TMPDIR": str(self.alias)}), \
+                mock.patch("tempfile.gettempdir", return_value=str(self.home)), \
+                mock.patch("subprocess.run", return_value=value) as run:
+            actual = temp_dirs()
+        self.assertEqual(actual, tuple(dict.fromkeys(os.path.realpath(path) for path in
+                         (self.alias, self.home, "/tmp", "/var/tmp", self.root / "darwin"))))
+        run.assert_called_once_with(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True,
+                                    timeout=60, stdin=subprocess.DEVNULL)
+
+    def test_temp_dirs_keeps_roots_when_getconf_is_unavailable_or_times_out(self):
+        for error in (OSError("no getconf"), subprocess.TimeoutExpired("getconf", 60)):
+            with self.subTest(error=error), mock.patch("subprocess.run", side_effect=error):
+                self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
