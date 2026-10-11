@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Reads top to bottom, from callers to the agent runtimes. Solid arrow: import or call, the only direction allowed; dotted: implemented by; thick: events and replies the Driver passes up uninterpreted. Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Reads top to bottom, from callers to the agent runtimes. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick: events and replies the Driver passes up uninterpreted. Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -32,15 +32,19 @@ flowchart TB
     CL["claude/: one factory<br>ClaudeAdapter<br>ClaudeHeadlessRun · ClaudeTuiRun<br>ClaudeCommon"]
     CX["codex/: one factory<br>CodexAdapter<br>CodexHeadlessRun · CodexTuiRun<br>CodexCommon"]
   end
-  P["agent runtimes: claude / codex"]
+  subgraph RT[agent runtimes]
+    P1[Claude Code]
+    P2[Codex CLI]
+  end
   O & M -->|"API / CLI --detach"| D
   W -->|API| DR
   D --> C & DR
   DR -->|"loads; headless_run() / tui_run()"| B
   B -.->|implemented by| CL & CX
-  DR -->|"starts & hosts (pipe / tmux); argv from adapter"| P
+  DR -->|"starts & hosts (pipe / tmux)"| P1 & P2
   DR ==>|events, replies| D
-  CL & CX ~~~ P
+  CL -.->|"wraps (argv, output, hooks)"| P1
+  CX -.->|wraps| P2
 ```
 
 ## Install
