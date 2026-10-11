@@ -5,7 +5,8 @@ layer_imports(core)  the layers under src/ (LAYERS) import each other only as de
                      adapters, a module outside the layers → driver; outside driver/, of the driver only driver.api.
                      Imports read by ast: nested ones, relative ones resolved, literal-string import_module/__import__
 runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/adapters/; in a .toml, comments, a table
-                     header [adapters.<name>…] and an implementation = "adapters.<name>:<Class>Adapter" line are exempt
+                     header [adapters.<name>…], an implementation = "adapters.<name>:<Class>Adapter" line and a
+                     runtime = "<name>" line under any table (the config naming an Adapter) are exempt
 old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
 adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
@@ -24,6 +25,7 @@ TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z')
+TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))   # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
 
@@ -60,7 +62,7 @@ def runtime_names(core: str) -> list[str]:
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
                 line = code if line[len(code):len(code) + 1] in ("", "#") else line   # an unclosed quote: whole line
-                if TOML_HEADER.match(line) or TOML_IMPLEMENTATION.match(line):
+                if TOML_HEADER.match(line) or TOML_IMPLEMENTATION.match(line) or TOML_RUNTIME.match(line):
                     continue
             found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
     return sorted(found)
@@ -106,7 +108,7 @@ def _files(root, suffixes, skip=None):
 
 def _imports(tree, package):
     """Each module tree imports. `package`, the importing module's package as a list of names, resolves relative
-    imports (None: they are skipped). `from P import n` yields P.n when P is top-level (a layer's __init__ holds no
+    imports (None: they are skipped). `from P import n` yields P.n when P is top-level (the driver's __init__ holds no
     names), else P."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
