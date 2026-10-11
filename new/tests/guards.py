@@ -1,16 +1,13 @@
-"""Guards for the new core's rules. Each takes a root and returns its sorted violations, `<path relative to root>: <what>`
-([] when clean); string constants include docstrings.
+"""The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)  the layers under src/ (LAYERS) import each other only as delegate → composer or driver, driver →
-                     adapters, a module outside the layers → driver; outside driver/, of the driver only driver.api.
-                     No module imports repo as a library. Imports read by ast: nested ones, relative ones resolved, literal-string import_module/__import__
-runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/adapters/; in a .toml, comments, a table
-                     header [adapters.<name>…], an implementation = "adapters.<name>:<Class>Adapter" line and a
-                     runtime = "<name>" line under any table (the config naming an Adapter) are exempt
-old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
+layer_imports(core)  imports go one way (new/README.md), none imports repo; reads nested, relative and literal
+                     import_module/__import__ imports
+runtime_names(core)  no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
+                     Adapter
+old_core(new)        no import of top-level `core`, no string constant naming the old core's source dir (OLD)
 adapters_key(core)   no string constant "adapters" outside src/driver/
 syntax_311(new)      every .py parses as Python 3.11
-pure_utils(core)     src/utils/ imports only the Python standard library
+pure_utils(core)     src/utils/ imports only the standard library
 """
 import ast
 import os
@@ -61,7 +58,7 @@ def runtime_names(core: str) -> list[str]:
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
-                line = code if line[len(code):len(code) + 1] in ("", "#") else line   # an unclosed quote: whole line
+                line = code if line[len(code):len(code) + 1] in ("", "#") else line
                 if TOML_HEADER.match(line) or TOML_IMPLEMENTATION.match(line) or TOML_RUNTIME.match(line):
                     continue
             found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
@@ -96,7 +93,6 @@ def syntax_311(new: str) -> list[str]:
 
 
 def _files(root, suffixes, skip=None):
-    """(path relative to root with / separators, text) of each file under root ending in suffixes, but under skip."""
     for top, dirs, names in os.walk(root):
         dirs.sort()
         for name in sorted(names):
@@ -107,9 +103,6 @@ def _files(root, suffixes, skip=None):
 
 
 def _imports(tree, package):
-    """Each module tree imports. `package`, the importing module's package as a list of names, resolves relative
-    imports (None: they are skipped). `from P import n` yields P.n when P is top-level (the driver's __init__ holds no
-    names), else P."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             yield from (alias.name for alias in node.names)
@@ -132,5 +125,4 @@ def _imports(tree, package):
 
 
 def _strings(tree):
-    """(line, value) of each str constant in tree, docstrings included."""
     return ((n.lineno, n.value) for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))

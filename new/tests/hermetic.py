@@ -1,5 +1,4 @@
-"""Imported by new/tests/__init__.py, so before any test module loads: points HOME at a temp dir of this process's own
-(removed at exit), never this machine's ~/.agent-pm, which may hold this checkout."""
+"""Before any test module loads, HOME becomes a temp dir of this process's own, never this machine's ~/.agent-pm."""
 import atexit
 import os
 import shutil
@@ -12,7 +11,6 @@ os.environ["HOME"] = HOME
 
 
 def home(case) -> str:
-    """A HOME of its own for the rest of `case`'s test; returns its ~/.agent-pm (created)."""
     tmp = tempfile.TemporaryDirectory()
     case.addCleanup(tmp.cleanup)
     patch = mock.patch.dict(os.environ, {"HOME": tmp.name})

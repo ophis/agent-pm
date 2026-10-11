@@ -1,6 +1,5 @@
 """The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a run whose role picks
-its task, a draft left at the deliverable's path. Main's tests/integration/core/resume_integration_test.py, the
-Composer's part."""
+its task, a draft left at the deliverable's path."""
 import os
 import re
 import unittest
@@ -33,7 +32,6 @@ class RolePicks(child.Case):
         self.tasks = re.findall(r"^- `([\w-]+)` \(`<tasks>/", self.index, re.M)
 
     def picks(self, text: str) -> None:
-        """`text`'s guide has the run pick its task, naming none."""
         guide = text.split("\n# Principles\n", 1)[0]
         self.assertIn(PICK, guide)
         self.assertEqual([t for t in self.tasks if f"`{t}`" in guide], [], "tasks the guide names")

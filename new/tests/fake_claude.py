@@ -1,27 +1,13 @@
-"""A stand-in `claude` for the new core's integration tests, print mode only; install() puts it on PATH. Stdlib only,
-importing no core module: it models Claude Code's CLI, never the adapter.
+"""A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose` only; install() puts it on
+PATH. Stdlib only. An option src/adapters/claude/ never emits exits 2.
 
-claude -p [PROMPT] [--session-id SID | --resume SID] --output-format stream-json --verbose ... [--] [PROMPT]
-Knows only the options src/adapters/claude/ (with core/config.toml's flags) and its usage probe emit: any other, no -p
-or another output format is a usage error (exit 2). Exits 1 with a stderr line on: -p without a prompt; both
---session-id and --resume; --settings not a JSON object; stream-json without --verbose (Claude Code's rule); --resume
-SID without SID's transcript.
-
-Session: --resume's SID, else --session-id's, else a new uuid4. Its transcript (Claude Code's path rule, restated:
-<$CLAUDE_CONFIG_DIR, else ~/.claude>/projects/<realpath(cwd), each non-[A-Za-z0-9] char "-">/<sid>.jsonl) gets a user
-line (the prompt), then an assistant line per step; a resume appends.
-
-Stdout, one JSON line each: system init; the `rate_limit` event, if any; each step's lines; unless it hangs, a result
-(exit 0: success, `result` the last text, "" none; else error_during_execution).
-
-Scenario: the JSON object in file $FAKE_CLAUDE_SCENARIO (unset, unreadable, a bad value or any other key: exit 1).
-  steps       run in order; default []. A string: assistant text. {"kind": "tool", "name": N}: an assistant tool_use of
-              tool N. {"kind": "limit", "resets_at": T}: a rejected rate_limit_event (resetsAt T; null: none), then an
-              assistant message with error "rate_limit" and text LIMIT.
-  rate_limit  a rate_limit_info object, printed as a rate_limit_event after init; default none.
-  exit        the exit code; default 0.
-  hang        true: after the steps, sleep until killed; it exits 1 by itself once orphaned or after HANG_CAP s.
-  log         a file; on start the fake appends {"pid", "argv" (without argv[0]), "cwd"} to it as a JSON line.
+Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
+  steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use; {"kind": "limit", "resets_at": T}: a
+              rejected rate_limit_event, then the assistant text LIMIT with error "rate_limit"
+  rate_limit  a rate_limit_info, printed after init
+  exit        the exit code
+  hang        true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
+  log         a file each start appends {"pid", "argv", "cwd"} to
 """
 import argparse
 import json
@@ -33,14 +19,12 @@ import time
 import uuid
 
 ENV = "FAKE_CLAUDE_SCENARIO"
-HANG_CAP = 120   # seconds
+HANG_CAP = 120
 DEFAULTS = {"steps": [], "rate_limit": None, "exit": 0, "hang": False, "log": None}
 LIMIT = "You've hit your usage limit."
 
 
 def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
-    """Writes the `claude` shim into `bin_dir`, exec'ing this fake (so the pid the Driver starts is the fake's).
-    Returns the PATH "<bin_dir>:<tail>"."""
     q = shlex.quote
     path = os.path.join(bin_dir, "claude")
     with open(path, "w", encoding="utf-8") as f:
