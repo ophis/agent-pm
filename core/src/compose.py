@@ -76,6 +76,11 @@ class PromptClient(Protocol):
     def handover(self) -> str: ...
 
 
+class ConfigClient(Protocol):
+    """The client configuration that run resolution needs, without importing clients here."""
+    config: Mapping
+
+
 @dataclass(frozen=True, kw_only=True)
 class RunConfig:
     """A role's resolved config; checked on creation and on dataclasses.replace."""
@@ -205,6 +210,75 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
         raise ConfigError(f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
     rel = f"roles/{role}.md"
     return replace(run, role_title=_title(_read(os.path.join(root, TEXT), rel), rel))
+
+
+def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
+            overlays: Sequence[Mapping] = (), trusted: bool = False) -> RunConfig:
+    """Resolve one run using base, selected client, then trusted caller overlays.
+
+    The caller must set `trusted` only for operator-controlled local configuration. An
+    in-process caller can opt in, so this is an API contract rather than a sandbox.
+    """
+    overlays = tuple(overlays)
+    if not trusted and any(overlay for overlay in overlays):
+        raise ConfigError("nonempty run overlays require a trusted caller")
+    roles = _roles(root)
+    if role not in roles:
+        raise ConfigError(f"unknown role {role!r}")
+    client_roles = client.config.get("roles", {})
+    if not isinstance(client_roles, Mapping):
+        raise ConfigError("selected client roles must be a table")
+    for name, table in client_roles.items():
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"selected client roles.{name} must be a table")
+    for overlay in overlays:
+        _check_overlay(overlay, roles)
+    return load_run(root, role, task, layers=(client.config, *overlays))
+
+
+def catalog(root: str) -> dict[str, dict[str, str]]:
+    """Configured roles and their markdown task indexes, preserving config order."""
+    return {role: index(root, role) for role in _roles(root)}
+
+
+def _roles(root: str) -> Mapping:
+    """The merged base role tables, checked before public catalog or resolution uses them."""
+    path = os.path.join(root, CONFIG)
+    if not os.path.isfile(path):
+        raise ConfigError(f"no core config {path}")
+    roles = repo.read_config(path).get("roles")
+    if not isinstance(roles, Mapping):
+        raise ConfigError(f"malformed [roles] table in {path}")
+    for role, table in roles.items():
+        if not isinstance(role, str) or not isinstance(table, Mapping):
+            raise ConfigError(f"malformed [roles.{role}] table in {path}")
+    return roles
+
+
+def _check_overlay(overlay: Mapping, roles: Mapping) -> None:
+    if not isinstance(overlay, Mapping):
+        raise ConfigError("run overlay must be a table")
+    _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, "run overlay")
+    if "output" in overlay and not isinstance(overlay["output"], Mapping):
+        raise ConfigError("run overlay output must be a table")
+    if "roles" not in overlay:
+        return
+    if not isinstance(overlay["roles"], Mapping):
+        raise ConfigError("run overlay roles must be a table")
+    for role, table in overlay["roles"].items():
+        if role not in roles:
+            raise ConfigError(f"unknown role {role!r} in run overlay")
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"run overlay roles.{role} must be a table")
+        check_old_keys(table, role, "overlay.")
+        _check_overlay_keys(table, RUN_KEYS, f"run overlay roles.{role}")
+        if "output" in table and not isinstance(table["output"], Mapping):
+            raise ConfigError(f"run overlay roles.{role}.output must be a table")
+
+
+def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
+    if extra := sorted(set(table) - allowed, key=str):
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:

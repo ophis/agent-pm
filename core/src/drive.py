@@ -47,8 +47,8 @@ import manager  # noqa: E402
 import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill, load_run,  # noqa: E402
-                     outcome_schema, render, report_command, tui_session)
+from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill,  # noqa: E402
+                     outcome_schema, render, report_command, resolve, tui_session)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
@@ -176,7 +176,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     the client's config; `cwd` is the cwd when the run key is unset (place())."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
-    run = load_run(root, role, task, layers=[client.config, *layers])
+    run = resolve(root, client, role, task, overlays=layers, trusted=True)
     here, project = place(root, run, params, cwd)
     prompt = render(root, run, params, client=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
@@ -190,7 +190,7 @@ def inline(root: str, client: Client, role: str, task: str | None = None) -> str
     """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
-    run = load_run(root, role, task, layers=[client.config])
+    run = resolve(root, client, role, task)
     return client.inline(render(root, run, client=client))
 
 

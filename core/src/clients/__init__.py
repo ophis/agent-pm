@@ -4,8 +4,7 @@ import os
 import re
 
 import repo
-from compose import ConfigError
-from compose import CONFIG
+from compose import CONFIG, ConfigError, catalog as role_catalog
 
 from .base import PROGRESS, Access, Client, Event, Launch, load_config  # noqa: F401
 from .claude import ClaudeClient
@@ -44,3 +43,9 @@ def get(name: str, root: str) -> Client:
     if not isinstance(cls, type) or not issubclass(cls, Client):
         raise ConfigError(f"client {name!r} {class_name} must be a Client subclass")
     return cls(table if cls.needs_config else {})
+
+
+def catalog(name: str, root: str) -> dict[str, dict[str, str]]:
+    """The roles and tasks available to a selected, configured client."""
+    get(name, root)
+    return role_catalog(root)

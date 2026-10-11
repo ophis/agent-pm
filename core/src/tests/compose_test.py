@@ -202,6 +202,70 @@ class Resolve(Fake):
         self.assertEqual(run.tier, 1)
 
 
+class PublicResolution(Fake):
+    def test_base_client_and_trusted_overlay_precedence(self):
+        self.local('language = "French"\n[roles.writer]\neffort = "max"\n')
+        client = clients.SkillClient({"effort": "low", "output": {"type": "orchestrator"},
+                                      "roles": {"writer": {"tier": 3, "effort": "medium"}}})
+        run = compose.resolve(self.root, client, "writer", "long-note", overlays=(
+            {"tier": 4, "effort": "high"},
+            {"roles": {"writer": {"tier": 1, "output": {"type": "local"}}}},
+        ), trusted=True)
+        self.assertEqual((run.tier, run.effort, run.language, run.task, run.output),
+                         (1, "high", "French", "long-note", {"type": "local"}))
+        self.assertEqual(compose.resolve(self.root, client, "writer").output, {"type": "orchestrator"})
+
+    def test_nonempty_overlay_requires_trust_even_when_valid(self):
+        with self.assertRaisesRegex(compose.ConfigError, "trusted"):
+            compose.resolve(self.root, clients.Client({}), "writer", overlays=({"read": ["/private"]},))
+        self.assertEqual(compose.resolve(self.root, clients.Client({}), "writer", overlays=({},)).tier, 2)
+
+    def test_trusted_overlay_rejects_unknown_and_legacy_keys(self):
+        bad = (({"flags": []}, "flags"), ({"tasks": {}}, "tasks"),
+               ({"roles": {"writer": {"default_task": "short-note"}}}, "default_task"),
+               ({"roles": {"writer": {"tasks": {}}}}, "tasks"),
+               ({"roles": {"writer": {"allow": []}}}, "allow"),
+               ({"roles": {"stranger": {"tier": 3}}}, "stranger"))
+        for overlay, message in bad:
+            with self.subTest(overlay=overlay), self.assertRaisesRegex(compose.ConfigError, message):
+                compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True)
+
+    def test_malformed_overlay_tables_fail_clearly(self):
+        for overlay in (None, [], {"roles": []}, {"roles": {"writer": 2}}, {"output": []},
+                        {"roles": {"writer": {"output": []}}}):
+            with self.subTest(overlay=overlay), self.assertRaises(compose.ConfigError):
+                compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True)
+
+    def test_unknown_role_and_malformed_selected_client_roles(self):
+        with self.assertRaisesRegex(compose.ConfigError, "unknown role"):
+            compose.resolve(self.root, clients.Client({}), "stranger")
+        for roles in ([], {"writer": []}):
+            with self.subTest(roles=roles), self.assertRaises(compose.ConfigError):
+                compose.resolve(self.root, clients.SkillClient({"roles": roles}), "writer")
+
+    def test_non_string_overlay_key_is_a_config_error(self):
+        with self.assertRaises(compose.ConfigError):
+            compose.resolve(self.root, clients.Client({}), "writer", overlays=({1: "bad", "typo": "bad"},), trusted=True)
+
+    def test_catalog_lists_configured_roles_and_markdown_tasks_in_order(self):
+        self.config(CONFIG + "\n[clients.skill]\n")
+        expected = {"writer": {"short-note": "a note; most times; light.",
+                                "long-note": "a long note; when asked; heavy."},
+                    "editor": {"long-note": "a long note; always; heavy."}}
+        self.assertEqual(compose.catalog(self.root), expected)
+        self.assertEqual(list(clients.catalog("skill", self.root)), ["writer", "editor"])
+        self.assertEqual(clients.catalog("skill", self.root), expected)
+        with self.assertRaisesRegex(compose.ConfigError, "clients.nope"):
+            clients.catalog("nope", self.root)
+
+    def test_catalog_rejects_malformed_roles(self):
+        for config in ('tier = 2\neffort = "high"\nroles = 1\n[output]\ntype = "local"\n',
+                       'tier = 2\neffort = "high"\n[output]\ntype = "local"\n[roles]\nwriter = 1\n'):
+            self.config(config)
+            with self.subTest(config=config), self.assertRaises(compose.ConfigError):
+                compose.catalog(self.root)
+
+
 class Index(Fake):
     def test_the_tasks_section_lists_each_task_and_its_description_in_order(self):
         self.assertEqual(list(compose.index(self.root, "writer").items()),

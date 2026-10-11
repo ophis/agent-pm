@@ -381,6 +381,16 @@ class Generic(Base):
         self.assertEqual((plain.tier, plain.effort), (3, "low"))
         self.assertEqual((layered.tier, layered.effort), (1, "low"))
 
+    def test_plan_uses_public_resolution_and_checks_trusted_overlays(self):
+        client = Recorder({"tier": 3, "effort": "low"})
+        overlays = ({"effort": "high"}, {"roles": {"researcher": {"tier": 1}}})
+        _, planned = drive.plan(CORE, client, "researcher", "light-research", params=self.params(),
+                                layers=overlays, cwd=self.work)
+        resolved = compose.resolve(CORE, client, "researcher", "light-research", overlays=overlays, trusted=True)
+        self.assertEqual(planned, resolved)
+        with self.assertRaisesRegex(compose.ConfigError, "unknown key"):
+            drive.plan(CORE, client, "researcher", params=self.params(), layers=({"surprise": 1},), cwd=self.work)
+
     def test_access_fills_the_dirs_and_commands_report_then_gate_last(self):
         gate = "python3 /u/usage.py {{workdir}} *"
         report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
