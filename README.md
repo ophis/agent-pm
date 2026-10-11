@@ -15,17 +15,24 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Reads top to bottom, from callers to the agent runtimes. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick: events and replies the Driver passes up uninterpreted. Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom, from entry points to the agent runtimes. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick: events, replies and callbacks passed up (the Driver's uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
-  subgraph L1[callers]
-    O[orchestrator]
+  subgraph EN[entry points]
+    LD[launchd]
+    HU["the user: router --issue · --tui"]
     M["manager: /agent-pm:tmux"]
-    W[crew.py]
   end
+  subgraph OR[orchestrator/]
+    R["router.py<br>lock · liveness · per-runtime usage gate · pick · detach"]
+    RU["run.py (in its detached session)<br>delegate.run · Linear write-back<br>sessions.py · writeback.py"]
+    PP["promote.py → prune.py"]
+    CF["config.py<br>load() once per process → Config"]
+  end
+  W[crew.py]
   D["delegate/<br>API · CLI · reply parsing · run policy"]
-  C["composer/<br>prompt · run spec"]
+  C["composer/<br>prompt · run spec · resolve"]
   DR["driver/<br>api · registry · records<br>modes: headless_run · tui_run<br>tmux_host"]
   subgraph AD[adapters/]
     B["base.py<br>Adapter (abstract factory)<br>HeadlessRun · TuiRun (abstract)"]
@@ -36,8 +43,14 @@ flowchart TB
     P1[Claude Code]
     P2[Codex CLI]
   end
-  O & M -->|"API / CLI --detach"| D
+  LD --> R & PP
+  HU --> R
+  M -->|"CLI --detach"| D
   W -->|API| DR
+  RU -->|delegate.run| D
+  D ==>|"begun · progress · outcome"| RU
+  CF -->|resolve| C
+  OR -->|"sessions · usage · session_info · detach · show · close"| DR
   D --> C & DR
   DR -->|"loads; headless_run() / tui_run()"| B
   B -.->|implemented by| CL & CX
