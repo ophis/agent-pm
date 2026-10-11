@@ -1,19 +1,24 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadless's launch and parse; ClaudeAdapter's hooks; the committed [adapters.claude] table. HOME and
-CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
+committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 import json
 import os
+import re
 import shlex
 import tempfile
+import time
 import unittest
+from datetime import datetime
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 from new.tests import hermetic
-from adapters.base import (Access, Activity, ConfigError, Launch, LimitHit, Reply, SessionBound, SessionStatus, Spec,
-                           TurnEnd, Usage, Window)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Blocked, ConfigError, Launch, LimitHit, Reply,
+                           SessionBound, SessionStatus, Spec, TurnEnd, Usage, Window)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless import ClaudeHeadless
+from adapters.claude.tui import ClaudeTui
 from driver import registry
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -509,16 +514,264 @@ class SessionStatusTest(Base):
                 self.assertEqual(self.status(sid), SessionStatus("no", None, ""))
 
 
+HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
+HOOKS = {"Stop": TURN_END, "PermissionRequest": BLOCKED, "Notification": BLOCKED, "PostToolUse": ACTIVITY,
+         "UserPromptSubmit": ACTIVITY}
+
+
+def entry(label) -> dict:
+    return {"hooks": [{"type": "command", "command": shlex.join((*HOOK, label))}]}
+
+
+TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": {
+    "Stop": [entry("Stop")], "PermissionRequest": [entry("PermissionRequest")],
+    "Notification": [{"matcher": "^(?!idle_prompt$)", **entry("Notification")}],
+    "PostToolUse": [entry("PostToolUse")], "UserPromptSubmit": [entry("UserPromptSubmit")]}})
+
+
+class TuiArgvTest(Base):
+    def tui(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
+        spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
+        return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+
+    def test_a_new_session_with_every_part(self):
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        self.assertEqual(self.tui("do it", tier=4, effort="low", access=access).argv,
+                         ("claude", "--session-id", SID, "--model", "haiku", "--effort", "lo",
+                          "--permission-mode", "auto", "--setting-sources", "user", "--settings", TUI_SETTINGS,
+                          "--add-dir", "/d1", "--add-dir", "/d 2",
+                          "--allowedTools", "Bash(git status)", "Bash(ls)", "Read", "Edit(/x)", "--", "do it"))
+
+    def test_resume_with_none_of_the_optional_parts(self):
+        self.assertEqual(self.tui(config={}, resume=True).argv,
+                         ("claude", "--resume", SID, "--setting-sources", "user", "--settings", TUI_SETTINGS, "--",
+                          "hi"))
+
+    def test_an_empty_prompt_has_no_separator(self):
+        self.assertEqual(self.tui("", config={}).argv[-2:], ("--settings", TUI_SETTINGS))
+        self.assertEqual(self.tui("", config={"allow": ["Read"]}).argv[-2:], ("--allowedTools", "Read"))
+        self.assertEqual(self.tui("-p --help", config={}).argv[-2:], ("--", "-p --help"))
+
+    def test_each_hook_runs_the_hook_argv_and_its_label(self):
+        self.assertEqual(ClaudeTui.hooks, HOOKS)
+        hooks = json.loads(self.tui(config={}).argv[6])["hooks"]
+        self.assertEqual(list(hooks), list(HOOKS))
+        for label, entries in hooks.items():
+            with self.subTest(label=label):
+                self.assertEqual(shlex.split(entries[0]["hooks"][0]["command"]), [*HOOK, label])
+
+    def test_the_notification_matcher_skips_only_idle_prompt(self):
+        self.assertEqual(ClaudeTui.MATCHER, "^(?!idle_prompt$)")
+        for kind, hit in (("idle_prompt", False), ("permission_prompt", True), ("auth_success", True),
+                          ("idle_prompt_x", True), ("", True)):
+            with self.subTest(kind=kind):
+                self.assertEqual(re.search(ClaudeTui.MATCHER, kind) is not None, hit)
+
+    def test_a_project_run_and_the_rest_as_headless(self):
+        cwd = os.path.join(self.tmp, "cwd")
+        os.mkdir(cwd)
+        with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        access = Access(cwd=cwd, project=True)
+        tui, headless = self.tui(access=access), self.launch(access=access)
+        self.assertEqual(tui.argv[3:9], ("--permission-mode", "auto", "--setting-sources", "user,project,local",
+                                         "--mcp-config", os.path.join(cwd, ".mcp.json")))
+        self.assertEqual(dict(tui.env), {**CEILING, "K": "v"})
+        self.assertEqual((tui.env, tui.unset, tui.cwd, tui.transcript, tui.resume),
+                         (headless.env, headless.unset, headless.cwd, headless.transcript, headless.resume))
+
+    def test_a_bad_sid_or_tier_is_refused(self):
+        self.refused(lambda: self.tui(sid="abc"), "claude session ids are UUIDs, got 'abc'")
+        self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
+
+
+def said(mid, *blocks) -> dict:
+    """An assistant transcript record of message `mid` (None: no id)."""
+    return {"type": "assistant", "message": {**({"id": mid} if mid else {}), "content": list(blocks)}}
+
+
+class TuiPayloadTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.run = ClaudeAdapter({}).tui()
+        self.path = os.path.join(self.tmp, "t.jsonl")
+
+    def transcript(self, *records):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("".join(f"{r if isinstance(r, str) else json.dumps(r)}\n" for r in records))
+
+    def test_the_last_assistant_message_first(self):
+        self.transcript(said("m1", text("old")))
+        self.assertEqual(self.run.reply({"last_assistant_message": "new", "transcript_path": self.path}), "new")
+        self.assertEqual(self.run.reply({"last_assistant_message": "", "transcript_path": self.path}), "")
+
+    def test_else_the_transcripts_last_assistant_message(self):
+        self.transcript({"type": "user", "message": {"content": "q"}}, said("m1", text("old")),
+                        said("m2", text("first")), said("m2", tool("Bash")),
+                        {"type": "user", "message": {"content": [{"type": "tool_result"}]}},
+                        said("m2", text("second")), said("m3", tool("Read")), "not json", "[1]", "")
+        for extra in ({}, {"last_assistant_message": None}, {"last_assistant_message": 1}):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.run.reply({"transcript_path": self.path, **extra}), "first\nsecond")
+
+    def test_a_record_without_an_id_is_its_own_message(self):
+        self.transcript(said(None, text("x")), said(None, text("y")))
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "y")
+        self.transcript(said("m1", text("x")), {"type": "assistant", "message": {"id": 1, "content": [text("y")]}})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "y")
+
+    def test_wrong_typed_records_are_skipped(self):
+        self.transcript(said("m1", text("ok")), {"type": "assistant", "message": "x"},
+                        {"type": "assistant", "message": {"content": "x"}}, {"type": "assistant"},
+                        said("m2", text(1), {"type": "text"}, "x", 1),
+                        {"type": "user", "message": said("m3", text("u"))})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "ok")
+
+    def test_only_the_last_4_mib_is_read(self):
+        self.transcript(said("m1", text("early")), {"type": "user", "message": {"content": "x" * (5 << 20)}})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "")
+        self.transcript(said("m1", text("x" * (5 << 20))), said("m2", text("late")))
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "late")
+
+    def test_no_readable_transcript_is_empty(self):
+        self.transcript(said("m1", text("ok")))
+        link = os.path.join(self.tmp, "link.jsonl")
+        os.symlink(self.path, link)
+        fifo = os.path.join(self.tmp, "fifo.jsonl")
+        os.mkfifo(fifo)
+        for path in (link, fifo, self.tmp, os.path.join(self.tmp, "absent.jsonl"), "", 1, None, "a\0b", "\ud800"):
+            with self.subTest(path=path):
+                self.assertEqual(self.run.reply({"transcript_path": path}), "")
+        self.assertEqual(self.run.reply({}), "")
+
+    def test_pending_activity_and_blocked_reason(self):
+        rows = ((self.run.pending, {"background_tasks": [1, {}]}, 2), (self.run.pending, {"background_tasks": []}, 0),
+                (self.run.pending, {}, 0), (self.run.pending, {"background_tasks": 3}, 0),
+                (self.run.pending, {"background_tasks": "ab"}, 0),
+                (self.run.pending, {"background_tasks": {"a": 1}}, 0),
+                (self.run.activity, {"tool_name": "Bash"}, "Bash"), (self.run.activity, {}, ""),
+                (self.run.activity, {"tool_name": 1}, ""),
+                (self.run.blocked_reason, {"tool_name": "Bash", "message": "m"}, "Bash"),
+                (self.run.blocked_reason, {"message": "Claude needs your permission"}, "Claude needs your permission"),
+                (self.run.blocked_reason, {"tool_name": 1, "message": "m"}, "m"),
+                (self.run.blocked_reason, {"tool_name": "", "message": "m"}, "m"),
+                (self.run.blocked_reason, {"tool_name": None, "message": 2}, ""), (self.run.blocked_reason, {}, ""))
+        for row, (call, payload, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(call(payload), want)
+
+    def test_hook_events_by_label(self):
+        rows = (("Stop", {"session_id": "n1", "last_assistant_message": "hi", "background_tasks": [1, 2]},
+                 [SessionBound("n1"), TurnEnd("hi", 2)]),
+                ("PermissionRequest", {"session_id": "n0", "tool_name": "Bash"}, [Blocked("Bash")]),
+                ("Notification", {"message": "Claude is waiting"}, [Blocked("Claude is waiting")]),
+                ("PostToolUse", {"tool_name": "Edit"}, [Activity("Edit")]),
+                ("UserPromptSubmit", {"prompt": "x"}, [Activity("")]),
+                ("SessionStart", {"session_id": "n0"}, []))
+        for label, payload, events in rows:
+            with self.subTest(label=label):
+                self.assertEqual(self.run.hook_events(label, payload, "n0"), events)
+
+    def test_the_trust_dialog(self):
+        self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
+
+
+LA = "America/Los_Angeles"
+
+
+def epoch(stamp, zone=LA) -> float:
+    return datetime.fromisoformat(stamp).replace(tzinfo=ZoneInfo(zone)).timestamp()
+
+
+NOW = epoch("2026-10-11 10:00")   # a Sunday
+
+
+class LimitTest(unittest.TestCase):
+    def limit(self, screen):
+        with mock.patch("time.time", return_value=NOW):
+            return ClaudeAdapter({}).tui().limit(screen)
+
+    def check(self, rows):
+        for screen, resets in rows:
+            with self.subTest(screen=screen):
+                self.assertEqual(self.limit(screen), LimitHit(resets))
+
+    def test_the_limit_messages_and_their_reset(self):
+        self.check((
+            ("You've hit your session limit · resets 3pm (America/Los_Angeles)", epoch("2026-10-11 15:00")),
+            ("You've hit your session limit · resets 9:30am (America/Los_Angeles)", epoch("2026-10-12 09:30")),
+            ("You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles) · progress saved",
+             epoch("2026-10-15 09:00")),
+            ("You've hit your Opus limit · resets Jan 2, 2027, 12am (Europe/London)",
+             epoch("2027-01-02 00:00", "Europe/London")),
+            ("You've hit your usage limit · resets 12pm (UTC)", epoch("2026-10-12 12:00", "UTC")),
+            ("You've hit your org's monthly spend limit · your session limit resets 4pm (Asia/Tokyo)",
+             epoch("2026-10-12 16:00", "Asia/Tokyo")),
+            ("You've hit your limit · resets 11pm (Etc/GMT+5)", epoch("2026-10-11 23:00", "Etc/GMT+5")),
+            ("Usage limit reached · resets 3pm (America/New_York)", epoch("2026-10-11 15:00", "America/New_York")),
+            ("> go on\n\n  ⎿  You've hit your\n   session  limit ·\n resets 3pm\n  (America/Los_Angeles)\n",
+             epoch("2026-10-11 15:00"))))
+
+    def test_a_weekday_is_the_next_such_day(self):
+        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
+        self.check(((week.format("Monday 9am"), epoch("2026-10-12 09:00")),
+                    (week.format("Sun 11am"), epoch("2026-10-11 11:00")),
+                    (week.format("Sunday, 9am"), epoch("2026-10-18 09:00")),
+                    (week.format("sat 9am"), epoch("2026-10-17 09:00"))))
+
+    def test_no_known_zone_is_local_time(self):
+        self.addCleanup(time.tzset)
+        patch = mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        time.tzset()
+        today = epoch("2026-10-12 15:00", "Asia/Tokyo")
+        self.check((("You've hit your session limit · resets 3pm", today),
+                    ("You've hit your session limit · resets 3pm (Mars/Olympus)", today),
+                    ("You've hit your session limit · resets 3pm (America)", today),
+                    ("You've hit your session limit · resets 3pm (../../etc/passwd)", today),
+                    ("You've hit your session limit · resets 3pm ()", today),
+                    ("You've hit your session limit · resets 3pm (A/B/C/D)", today),
+                    ("You've hit your weekly limit · resets Oct 15, 9am", epoch("2026-10-15 09:00", "Asia/Tokyo"))))
+
+    def test_the_last_message_counts(self):
+        session = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        self.check(((f"{session} … You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles)",
+                     epoch("2026-10-15 09:00")),
+                    (f"{session} You've hit your fast limit · resets in 5m", epoch("2026-10-11 15:00"))))
+
+    def test_an_unparseable_reset_is_none(self):
+        self.check((("You've hit your session limit", None),
+                    ("Usage limit reached · continuing automatically in 2h · esc to cancel", None),
+                    ("You've hit your session limit · resets soon", None),
+                    ("You've hit your session limit · resets 13pm (UTC)", None),
+                    ("You've hit your session limit · resets 0am (UTC)", None),
+                    ("You've hit your session limit · resets 3:75pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Feb 30, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Monday 15, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Smarch 3, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Funday 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Oct 3pm (UTC)", None)))
+
+    def test_no_limit_message_is_none(self):
+        for screen in ("", "Welcome back", "You've hit your fast limit · resets in 5m",
+                       "You've used 90% of your session limit · resets 3pm (America/Los_Angeles)",
+                       "Approaching weekly limit", "Your usage limit has reset", "usage limit reached"):
+            with self.subTest(screen=screen):
+                self.assertIsNone(self.limit(screen))
+
+
 class AdapterTest(Base):
     def test_its_parts(self):
         adapter = ClaudeAdapter(CONFIG)
         self.assertEqual(ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"}))
         self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
         self.assertIsInstance(adapter.common, ClaudeCommon)
-        self.assertIs(type(adapter.headless()), ClaudeHeadless)
-        self.assertIsNot(adapter.headless(), adapter.headless())
-        self.assertIs(adapter.headless().adapter, adapter)
-        self.assertIsNone(adapter.tui())
+        for mode, kind in ((adapter.headless, ClaudeHeadless), (adapter.tui, ClaudeTui)):
+            with self.subTest(kind=kind):
+                self.assertIs(type(mode()), kind)
+                self.assertIsNot(mode(), mode())
+                self.assertIs(mode().adapter, adapter)
 
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)

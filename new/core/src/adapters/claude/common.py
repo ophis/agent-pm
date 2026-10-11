@@ -5,7 +5,12 @@ It gives a tier's model and an effort's value; a command's env (ENV, then the co
 keys a parent Claude Code session sets, which a child must not inherit; the config dir (that env's CLAUDE_CONFIG_DIR,
 else the process's, else ~/.claude) and a session's transcript under it; a human's resume command; uuid(), Claude's sid
 rule (a canonical lowercase UUID: Claude takes the sid as its own session id); the usage probe (PROBE) and its stdout as
-Usage; a session's SessionStatus from its files. Starts no process."""
+Usage; a session's SessionStatus from its files. Starts no process.
+
+launch is a Mode's claude command in the spec's cwd: Claude's session id bound to the sid (--session-id; --resume
+continues it), --model and --effort when the spec has a tier and effort, the config's flags, the setting sources (user;
+a project run adds project and local, and cwd's .mcp.json when it is a file), the Mode's --settings, each access dir
+(--add-dir), the pre-approved tools (each access command as Bash(<command>), then the config's allow)."""
 import json
 import math
 import os
@@ -15,7 +20,7 @@ import stat
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Usage, Window
+from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Spec, Usage, Window
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
@@ -129,6 +134,28 @@ class ClaudeCommon:
         if isinstance(sid, str) and UUID.fullmatch(sid):
             return sid
         raise ConfigError(f"claude session ids are UUIDs, got {sid!r:.80}")
+
+    def launch(self, spec: Spec, resume: bool, settings: Mapping, head: tuple[str, ...] = (),
+               output: tuple[str, ...] = (), tail: tuple[str, ...] = ()) -> Launch:
+        """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
+        sid = self.uuid(spec.sid)
+        model, effort = self.model(spec.tier), self.effort(spec.effort)
+        access = spec.access
+        cwd = access.cwd or spec.workdir
+        mcp = os.path.join(cwd, ".mcp.json")
+        allow = (*(f"Bash({command})" for command in access.commands), *self.allow)
+        argv = ("claude", *head, "--resume" if resume else "--session-id", sid,
+                *(("--model", model) if model is not None else ()),
+                *(("--effort", effort) if effort is not None else ()),
+                *self.flags,
+                "--setting-sources", "user,project,local" if access.project else "user",
+                *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
+                *output, "--settings", json.dumps(settings),
+                *(arg for d in access.dirs for arg in ("--add-dir", d)),
+                *(("--allowedTools", *allow) if allow else ()),
+                *tail)
+        return Launch(argv, env=self.env(), unset=self.UNSET, transcript=self.transcript(cwd, sid),
+                      resume=self.resume(cwd, sid, spec.workdir))
 
     def probe(self) -> Launch:
         return Launch(self.PROBE, env=self.env(), unset=self.UNSET)
