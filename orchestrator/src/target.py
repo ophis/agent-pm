@@ -1,4 +1,3 @@
-"""The target repo of an issue: `Repo:` line or project mapping, the engineering pre-check, branch name, PR title."""
 import json
 import os
 import re
@@ -19,7 +18,7 @@ class Target:
     owner: str
     name: str
     branch: str = ""
-    clone: str = ""  # the local clone path the input's `Repo:` names; "" = owner/name
+    clone: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,7 +48,6 @@ def parse_repo(description) -> tuple[str, str] | Invalid:
     for line in (description or "").splitlines():
         if line.rstrip("\r") == "## Comments":
             break
-        # Markdown a pasted line may carry: a list or quote marker, `code`, **bold**.
         m = re.match(r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I)
         if m:
             one = _one(m.group(1).strip("`*").strip())
@@ -74,13 +72,12 @@ def slug(title):
 
 
 def pr_title(ident, title):
-    """`<ID>: <title without prefix>` reduced to Unicode letters/digits, spaces and .,:()_/- (safe in single quotes)."""
+    # safe in single quotes
     t = f"{ident}: " + re.sub(r"^[A-Z][A-Z0-9]*: ", "", title, count=1)
     return " ".join(re.sub(r"[^\w .,:()/-]", " ", t).split())
 
 
 def research_repo(issue, repos) -> Target | None:
-    """The project's mapped repo when the description has no `Repo:` line, else None."""
     if parse_repo(issue.description) != NO_LINE or issue.project_id not in repos:
         return None
     one = repo_slug(repos[issue.project_id])
@@ -88,7 +85,6 @@ def research_repo(issue, repos) -> Target | None:
 
 
 def _repo_info(o, n, run):
-    """(full_name's (owner, name), push permission, default branch) from `gh api repos/…`, or an Invalid/Transient."""
     res = run(["gh", "api", f"repos/{o}/{n}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
@@ -106,14 +102,11 @@ def _repo_info(o, n, run):
 
 
 def checkout(ident, owner, name, *, work=RUNS_DIR) -> str:
-    """The issue's checkout of owner/name: core's rule, the issue id as its slug (the input's `Checkout:`)."""
     return repo.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
 def _branches(ident, o, n, run, work):
-    """Names of the <ident>-* branches but read-only tasks' `<ident>-<task>`: in the agent run's own clone, else on
-    GitHub (gh's credentials, no shared clone); or a Transient. A worktree's are read on GitHub: its clone is known only
-    from a `.git` file the agent run could have changed."""
+    # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run could have changed
     path = checkout(ident, o, n, work=work)
     git = os.path.join(path, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
@@ -133,7 +126,6 @@ def _branches(ident, o, n, run, work):
 
 
 def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Transient:
-    """The engineering pre-check: the repo is reachable with push permission and a safe default branch; its branch name."""
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
     tag = MAPPED if mapped else ""
@@ -164,8 +156,8 @@ def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Tran
 
 
 def with_clone(t, ident, clones, *, work=RUNS_DIR, writable=None, run=sh_run) -> Target:
-    """`t` with `clone` set: what the issue's existing checkout was made from, else its `[local_clones]` entry, else "". The
-    checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the right origin."""
+    # the checkout is agent-writable, so a clone its `.git` file names counts only outside `writable` and with the
+    # right origin
     path = checkout(ident, t.owner, t.name, work=work)
     git, full = os.path.join(path, ".git"), f"{t.owner}/{t.name}"
     if os.path.isdir(git) and not os.path.islink(git):

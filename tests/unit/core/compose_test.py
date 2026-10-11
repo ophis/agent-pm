@@ -21,8 +21,6 @@ import compose
 import drive
 
 class Plain(clients.Client):
-    """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
-    workdir or input."""
     def __init__(self, handover="", methods=None, tasks=None, inline_workdir="", inline_input=""):
         self._handover = handover
         self._methods = methods
@@ -90,15 +88,12 @@ branch = "main"
 
 
 def parameters(prompt):
-    """{name: value} of the prompt's # Parameters lines after compose.RULE, in order; a line of another shape fails."""
     section = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
     lines = section.split("\n\n", 1)[1].splitlines()
     return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
 
 
 def expanded(prompt):
-    """`prompt` with each # Parameters name written as its value, as the rule says a run writes a command: `report` at
-    a code span's start, then the names its value holds and every other."""
     values = {name: value.strip("`") for name, value in parameters(prompt).items()}
     if report := values.pop(compose.REPORT, None):
         prompt = re.sub(r"`report(?=[` ])", lambda m: f"`{report}", prompt)
@@ -569,12 +564,10 @@ class Prompt(Fake):
 
 
 def own_text(prompt):
-    """`prompt` up to and including its # Input heading line: the input text, always last, is dropped."""
     return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
 
 
 def heading_anchors(prompt):
-    """The anchor of each heading of the prompt's own text, in order."""
     return [a for _, _, a, heading in compose.outline(own_text(prompt)) if heading]
 
 
@@ -588,7 +581,6 @@ FRONT = "---\ncommands: [\"rm *\"]\n---\n"
 
 
 class TeamDirs(Fake):
-    """Team dirs under a hermetic HOME, passed to compose as a Team."""
     def setUp(self):
         super().setUp()
         self.home = hermetic.home(self)
@@ -598,7 +590,6 @@ class TeamDirs(Fake):
             f.write(text)
 
     def team_dir(self, files, name="team"):
-        """Writes {rel: text} under <home>/<name> (files 0o644, dirs 0o755) and returns its real path."""
         top = os.path.realpath(os.path.join(self.home, name))
         for rel, text in files.items():
             path = os.path.join(top, rel)
@@ -629,7 +620,6 @@ class TeamDirs(Fake):
     def cfg(self):
         return compose.repo.read_config(os.path.join(self.root, compose.CONFIG))
 
-    # FR-1
     def test_team_dirs_values(self):
         self.assertEqual(compose.team_dirs(self.root), ())
         top = self.team_dir({"roles/poet.md": POET})
@@ -669,7 +659,6 @@ class TeamDirs(Fake):
         self.assertIsNone(compose.team(self.root, compose.team_dirs(self.root)).lookup("roles", "poet"))
         self.fails("unknown role 'poet'", "poet")
 
-    # FR-2
     def test_a_new_role_without_a_table_takes_the_global_keys(self):
         team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE})
         prompt, run = self.go(team, "poet")
@@ -681,7 +670,6 @@ class TeamDirs(Fake):
         self.assertEqual(self.go(team, "poet", "verse")[1].task, "verse")
         self.fails("unknown role 'poet'", "poet")
 
-    # FR-2, FR-3: compose.resolve and compose.catalog (and clients.catalog) take the Team
     def test_resolve_and_catalog_take_a_teams_roles_and_tasks(self):
         team = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE})
         client = SkillClient({"roles": {"poet": {"tier": 3}}})
@@ -702,7 +690,6 @@ class TeamDirs(Fake):
         self.assertEqual(list(clients.catalog("skill", self.root, team)), ["writer", "editor", "poet"])
         self.assertNotIn("poet", compose.catalog(self.root))
 
-    # FR-3: no extension of a role; each role's tasks are in its own dir
     def test_a_role_runs_only_tasks_from_its_own_dir(self):
         a = self.team_dir({"roles/poet.md": POET.replace("verse", "long-note")})
         b = self.team_dir({"roles/poet.md": POET}, "b")
@@ -733,7 +720,6 @@ class TeamDirs(Fake):
         self.assertEqual((team.tasks_dir("poet"), team.tasks_dir("writer"), team.tasks_dir("nobody")),
                          (self.path("tasks"), None, None))
 
-    # FR-4
     def test_a_custom_template_keeps_its_heading(self):
         team = self.team({"templates/card.md": "# Card\n"})
         self.local('[roles.writer]\ntemplates = ["note", "card"]\n')
@@ -741,7 +727,6 @@ class TeamDirs(Fake):
         self.assertIn("# Template: `templates/note.md`\n", prompt)
         self.assertIn("# Template: `templates/card.md`\n\n```markdown\n# Card\n```\n", prompt)
 
-    # FR-5
     def test_a_name_defined_twice_names_both_files(self):
         builtin = os.path.join(self.root, "team")
         for files, role, kind, name, first in (
@@ -788,7 +773,6 @@ class TeamDirs(Fake):
         self.local("")
         self.assertEqual(compose.roles(self.root, team, self.cfg()), ["writer", "editor", "poet"])
 
-    # FR-6
     def test_front_matter_in_any_team_dir_file(self):
         self.local('[roles.writer]\ntemplates = ["note", "card"]\n')
         for files, rel, role in (({"roles/poet.md": POET, "tasks/verse.md": FRONT + VERSE}, "tasks/verse.md", "poet"),
@@ -799,7 +783,6 @@ class TeamDirs(Fake):
                 self.refused(team, f"{self.path(rel, rel.replace('/', '-'))}: front matter (---) is not read: team dir "
                                    "files hold text only; run keys go in ~/.agent-pm/core.local.toml", role)
 
-    # FR-7
     def test_each_defect_of_a_team_dir_file_names_it(self):
         task, charter = self.path("tasks/verse.md"), self.path("roles/poet.md")
         for verse, poet, msg in (
@@ -858,7 +841,6 @@ class TeamDirs(Fake):
         self.refused(team, "unknown role 'Nobody'", "Nobody")
         self.refused(team, "task 'Other' is not one of writer's tasks", task="Other")
 
-    # NFR-1
     def test_without_a_team_dir_for_this_role_every_prompt_is_unchanged(self):
         other = self.team({"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"})
         self.assertEqual(compose.team(self.root, ()), compose.team(self.root))
@@ -1179,7 +1161,7 @@ class Outline(unittest.TestCase):
 with open(os.path.join(CORE, compose.CONFIG), "rb") as _f:
     ROLES = list(tomllib.load(_f)["roles"])
 ALL = [(r, t) for r in ROLES for t in compose.index(CORE, r)]
-RUNS = [(r, None) for r in ROLES] + ALL   # each role given no task, then each role and task
+RUNS = [(r, None) for r in ROLES] + ALL
 TASKS = os.path.join(CORE, "team", "tasks")
 
 
@@ -1198,20 +1180,16 @@ def guide(prompt):
 
 
 def parameter_names(role, task=None, **changes):
-    """The # Parameters names of the claude client's prompt for `role`, its run changed by `changes`."""
     run = replace(compose.load_run(CORE, role, task), **changes)
     return list(parameters(compose.render(CORE, run, PARAMS, client=clients.get("claude", CORE))))
 
 
-TICKET = re.compile(r"TASK-\d+")   # an internal ticket id
-# The format examples shipped core text may hold: core path → its examples, each allowed once.
+TICKET = re.compile(r"TASK-\d+")
 TICKET_EXAMPLES = {"team/principles.md": ["(e.g. `TASK-142`)"],
                    "skills/tmux/SKILL.md": ["`pm-TASK-9-…`", "`pm-TASK-10-…`"]}
 
 
 def tickets(root):
-    """{core path: its ticket ids beyond TICKET_EXAMPLES} of root's shipped text: team/, skills/ (tests aside)
-    and config.toml."""
     paths = [os.path.join(root, compose.CONFIG)]
     for d in (compose.TEXT, "skills"):
         for top, dirs, files in os.walk(os.path.join(root, d)):
@@ -1253,20 +1231,16 @@ RETURN = """Report through `report`, never in a reply:
 
 
 def client_prompt(name, role, task=None):
-    """The prompt of the client `name` for `role`, with RUN when that client runs, and its run."""
     client = clients.get(name, CORE)
     run = compose.load_run(CORE, role, task, layers=[client.config])
     return compose.render(CORE, run, RUN if client.runs else None, client=client), run
 
 
 def claude_prompt(role, task=None):
-    """The claude client's prompt for `role` with RUN, and its run."""
     return client_prompt("claude", role, task)
 
 
 def role_sources(role, client="claude"):
-    """What `reference_errors` takes for `role` and `client`: the prompt's own text, the role's task files and the
-    method files these name."""
     own = own_text(client_prompt(client, role)[0])
     tasks = {t: task_text(t) for t in compose.index(CORE, role)}
     named = sorted(set(compose.METHOD.findall(own + "".join(tasks.values()))))
@@ -1286,7 +1260,6 @@ class GenericNames(unittest.TestCase):
 
 class References(unittest.TestCase):
     def errors(self, text):
-        """The errors in `text` as a method file beside the real engineer prompt and task files."""
         own, tasks, methods = role_sources("engineer")
         return [e for e in compose.reference_errors(own, tasks, methods | {"fixture": text}) if e.startswith("fixture:")]
 
@@ -1453,7 +1426,7 @@ class RealCore(unittest.TestCase):
         self.assertIn(point, findings)
         self.assertIn("`(<confidence: high, medium or low>; [n]…; <single-source or unverified, when so>)`", findings)
         self.assertIn("`1. <URL or code permalink> (primary|secondary|code)`", section(light, "Sources"))
-        self.assertEqual(light.count("type line"), 1)   # the Template's, deep research only
+        self.assertEqual(light.count("type line"), 1)
         self.assertIn("Deep research's type line (light research gives its own)", light)
         self.assertEqual(task_text("light-research").count("`<Light Research type line, translated>`"), 1)
 
@@ -1532,7 +1505,6 @@ class RealCore(unittest.TestCase):
             self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
     def test_task_files_have_no_frontmatter_no_placeholder_and_one_start_mark(self):
-        # The start mark: the root CLAUDE.md › Gotchas.
         for name in os.listdir(TASKS):
             text = task_text(name.removesuffix(".md"))
             self.assertTrue(text.startswith("# "), name)
@@ -1715,7 +1687,6 @@ class RealCore(unittest.TestCase):
                 ("research hand-off phrases", task_text("light-research"), "`<Light Research type line, translated>`"),
                 ("research hand-off phrases", task_text("light-research"), "`Suggest upgrading to Deep Research: "),
                 ("research hand-off phrases", task_text("deep-research"), "its Light Research type line"),
-                # target.py leaves <id>-<task> branches of read-only tasks out of a build's branch check.
                 ("a read-only task's branch is <id>-<task>", researcher,
                  "`<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`"),
                 ("a read-only task's branch is <id>-<task>", task_text("product-design"),
@@ -1888,7 +1859,6 @@ def section(text, name):
 
 
 def item(text, name):
-    """The top-level bold item `- **name**` of `text`, up to the next top-level item."""
     m = re.search(rf"^- \*\*{re.escape(name)}\*\*(.*?)(?=^- |\Z)", text, re.M | re.S)
     return m.group(1) if m else ""
 
@@ -1932,7 +1902,7 @@ class Methods(unittest.TestCase):
                 with self.subTest(m, phrase=phrase):
                     self.assertIn(phrase, text)
         self.assertNotIn("as each search agent's results arrive", method("deep-research"))
-        for phrase in voting:  # the Voting rule's one home is ultracode
+        for phrase in voting:
             with self.subTest("deep-research", not_in=phrase):
                 self.assertNotIn(phrase, method("deep-research"))
 

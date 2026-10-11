@@ -1,4 +1,3 @@
-"""fake_gh.py run as a process: the `gh` shim on PATH, and real git reading a bare repo through the gitconfig."""
 import json
 import os
 import subprocess

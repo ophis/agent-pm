@@ -1,4 +1,3 @@
-"""live_tmux.py against a real tmux server: its env, control-mode client, readers, cleanup, grid assertion and wait."""
 import os
 import shutil
 import stat
@@ -112,7 +111,6 @@ class Cleanup(unittest.TestCase):
 
 class Grid(Live):
     def split(self, pane: str, flag: str, size: int) -> str:
-        """The new pane, `size` wide (-h, right of `pane`) or high (-v, below)."""
         return self.ok("split-window", "-d", flag, "-l", str(size), "-t", pane, "-P", "-F", "#{pane_id}",
                        *live_tmux.IDLE)
 
@@ -120,7 +118,6 @@ class Grid(Live):
         self.server.start("mgr")
         manager = self.ok("display-message", "-p", "-t", "=mgr:", "#{pane_id}")
         self.ok("set-option", "-w", "-t", "=mgr:", "@grid-manager", manager)
-        # 200x50: manager 99 wide; column 1 (x 100, 50 wide): w1 over s1, s2; column 2 (x 151, 49 wide): p, z1 over z2
         right = self.split(manager, "-h", 100)
         col2 = self.split(right, "-h", 49)
         group = self.split(right, "-v", 25)

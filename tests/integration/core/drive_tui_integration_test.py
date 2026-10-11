@@ -1,6 +1,3 @@
-"""drive.py's tui runner run as a process against a private tmux server, fake_claude.py as `claude`: the Stop hook's
-stop line, the nudge, the outcome; --detach from the manager, with and without --events, its driver session and
-outcome event."""
 import functools
 import json
 import os
@@ -25,14 +22,10 @@ DRIVER = f"{TUI}-drive"
 STAMP = "[0-9]{2}:[0-9]{2}:[0-9]{2}"
 TURN_END = re.compile(rf"{STAMP} {TUI} done")
 OUTCOME = re.compile(rf"{STAMP} {DRIVER} outcome done")
-TIMEOUT = 60   # seconds: a drive.py process; the detached driver's outcome line
+TIMEOUT = 60
 
 
 class TuiRun(unittest.TestCase):
-    """As drive_integration_test's Integration (HOME, proj as cwd, work, out, the fake's log, its transcript), on a
-    private tmux server with mgr started and attached; one events file. The fake's scenario: turn 1 reports progress
-    start, turn 2 (the nudge's) the outcome."""
-
     def setUp(self):
         self.agent_pm = hermetic.home(self)
         self.server = live_tmux.Server(self, os.path.dirname(self.agent_pm))
@@ -50,8 +43,6 @@ class TuiRun(unittest.TestCase):
                                                     projects=os.path.join(self.server.home, ".claude", "projects"))
 
     def drive(self, *extra: str, inside: str | None = None, events: bool = True) -> subprocess.CompletedProcess:
-        """drive.py --runner tui in proj, --events self.events unless not `events`, env Server.env() plus the scenario
-        and, with `inside`, that session's pane."""
         env = self.server.env(**(self.server.inside(inside) if inside else {}), **{fake_claude.ENV: self.scenario})
         argv = [sys.executable, DRIVE, "--role", "dummy-tester", "--runner", "tui",
                 *(["--events", self.events] if events else []), "--input", "Hello.", "--out", self.out, "--workdir",
@@ -60,7 +51,6 @@ class TuiRun(unittest.TestCase):
                               timeout=TIMEOUT)
 
     def record(self) -> list[dict]:
-        """The run's record, <workdir>/run.jsonl: its events."""
         return self.jsonl(os.path.join(self.work, compose.CHANNEL))
 
     def result(self) -> dict:
@@ -71,12 +61,10 @@ class TuiRun(unittest.TestCase):
             return [json.loads(line) for line in f]
 
     def jsonl(self, path: str) -> list[dict]:
-        """A JSON-lines file's objects, blank lines skipped."""
         with open(path) as f:
             return [json.loads(line) for line in f if line.strip()]
 
     def until(self, enough, what: str, timeout: float = live_tmux.TIMEOUT, events: str | None = None) -> list[str]:
-        """The events file's (self.events, else `events`) lines once enough(lines) holds."""
         path = events or self.events
 
         def check():

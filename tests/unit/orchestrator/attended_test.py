@@ -14,8 +14,6 @@ NO_SERVER = (1, "no server running on /private/tmp/tmux-501/default\n")
 
 
 class Tmux:
-    """Fake tmux: `live` sessions answer status, list-sessions (none: no server) and kill-session, which fails for
-    `fail` ones; `listing` (rc, stderr) replaces list-sessions' answer."""
     def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 0 /tmp/s\n", listing=None):
         self.live, self.fail, self.own, self.clients, self.listing = dict.fromkeys(live), set(fail), own, clients, listing
         self.calls = []
@@ -29,7 +27,7 @@ class Tmux:
         elif args[0] == "list-clients":
             out = self.clients
         elif args[0] == "display-message":
-            name = args[3][1:-1]  # =name:
+            name = args[3][1:-1]
             out = "0  \n" if name in self.live else "\n"
         elif args[0] == "list-sessions":
             rc, err = self.listing or (NO_SERVER if not self.live else (0, ""))
@@ -56,18 +54,14 @@ class LayoutTest(unittest.TestCase):
             return attended.layout(split, split_from, proc=tmux)
 
     def test_layout(self):
-        """(split, split_from, environ, tmux, want, no tmux calls)."""
         iterm_bad = {**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}
         cases = [
-            # split_from given: kept, with the caller's opener if any
             ("below", "dev", {}, dict(live=["dev"]), drive.Layout("below", "dev", None), False),
             ("below", "dev", ITERM, dict(live=["dev"]), drive.Layout("below", "dev", "w0t0p0:ABC"), False),
             ("below", "dev", iterm_bad, dict(live=["dev"]), drive.Layout("below", "dev", None), False),
             ("below", "dev", PANE, dict(live=["dev"]), drive.Layout("below", "dev", "mine"), False),
-            # inside tmux the own session is the opener, never split_from
             (None, None, PANE, dict(own="mine"), drive.Layout(None, None, "mine"), False),
             ("below", None, PANE, dict(own="mine"), drive.Layout("below", None, "mine"), False),
-            # inside tmux, unshown: falls back to iTerm2
             (None, None, {**PANE, **ITERM}, dict(own="mine", clients=""), drive.Layout(None, None, "mine"), False),
             ("below", None, ITERM, {}, drive.Layout("below", None, "w0t0p0:ABC"), True),
         ]
@@ -79,7 +73,6 @@ class LayoutTest(unittest.TestCase):
                     self.assertEqual(tmux.calls, [])
 
     def test_bad(self):
-        """(split, split_from, environ, tmux, message regex, no tmux calls)."""
         cases = [
             ("left", None, ITERM, {}, "split must be one of right, below", True),
             (None, "a:b", {}, {}, "bad tmux session name", True),
@@ -91,7 +84,6 @@ class LayoutTest(unittest.TestCase):
             *((None, None, environ, {}, self.NO_ANCHOR, False)
               for environ in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": "w0t0p0:ABC"},
                               {**ITERM, "TERM_PROGRAM": "Apple_Terminal"})),
-            # a pane but no opener, without split_from
             (None, None, {**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}, {},
              r"^no pane to show the TUI beside \(bad \$ITERM_SESSION_ID 'w0t0p0:A_B'.*\): run from tmux or iTerm2, or pass "
              r"--split-from SESSION$", False),

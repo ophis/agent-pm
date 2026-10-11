@@ -1,52 +1,3 @@
-"""A stand-in `codex` for process tests; install() puts it on PATH. Stdlib only, importing no core module; it never
-reads the user's Codex account or config. It models Codex 0.162.1 as the manager's answers describe it; the two modes
-below agree with each other, not necessarily with Codex, on keys and hashes. Mode by the first word:
-
-codex exec …  strict `codex exec --json` for drive.py's headless runs (parse, scenario: steps, log, thread_id).
-
-codex app-server [-c K=V]… [--enable F]… [--disable F]…  (any other option, -p included: exit 2)
-  JSON lines on stdin until EOF (exit 0). A message with an `id` is a request; before each answer one notification
-  line. `initialize` → a result; any other request before it → an error; `hooks/list {"cwds": [...]}` → {"data": per
-  cwd {"cwd", "hooks": the catalog, "warnings": [], "errors": the scenario's errors, [] with hooks off}}; else an error.
-
-codex [resume ID] [-C DIR] [--no-daemon] [-c K=V]… [--enable F]… [--disable F]… [-m M] [-s S] [-a A] [--add-dir D]…
-      [--] [PROMPT]  (any other option, or resume without ID: exit 2)
-  Session: ID, whose rollout must exist (else exit 1), or a new UUID. Rollout: $CODEX_HOME (else ~/.codex)
-  /sessions/2026/10/10/rollout-2026-10-10-<id>.jsonl, a session_meta line, made at the first turn. -C: chdir; payload
-  `cwd` is DIR made absolute, symlinks kept. A catalog hook enabled, not managed and `untrusted` or `modified`: prints
-  `Hooks need review` and `<n> hook(s) … new or changed.`, then reads stdin lines, running no turn and no hook.
-  Else turns, as fake_claude's interactive mode: the prompt, then each stdin line; turn k runs [steps, *turns][k]; stdin
-  EOF: exit `exit`; orphaned or fake_claude.HANG_CAP s without a line: exit 1. A turn: SessionStart (the run's first
-  turn only), UserPromptSubmit, the steps, Stop. An event runs each catalog hook of its eventName, enabled, `trusted`
-  or `managed`, matcher absent, "" or "*": /bin/sh -c <command>, in the session cwd and the fake's env, the payload JSON
-  on stdin, stdout captured, its timeoutSec.
-  Payload: {session_id, transcript_path (the rollout), cwd, hook_event_name, model (-m, else "fake-model"),
-  permission_mode: "default"}, plus: SessionStart `source` (startup or resume); the others `turn_id` (the turn's);
-  UserPromptSubmit `prompt`; PermissionRequest `tool_name`, `tool_input` (+ `agent_id`, `agent_type`); Stop
-  `stop_hook_active`: false, `last_assistant_message` (the turn's last text, else null).
-  Steps: a string is assistant text, a stdout line, in color unless NO_COLOR is set and not "0". {"kind": "permission",
-  "tool_name"? (default "Bash"), "tool_input"?, "agent_id"?, "agent_type"?}: PermissionRequest; with agent_id it is a
-  sub-agent's (session_id stays the root's). {"kind": "interrupt"}: Interrupt, ending the turn with no Stop.
-
-Config: -c K=V sets dotted key K to V read as a TOML value (failing that, the string V); --enable/--disable F set
-features.F true/false; in argv order. Catalog (empty when features.hooks is false): per command handler h of group g of
-hooks.<Event> (any key of `hooks` but `state`) an entry {key "/<session-flags>/config.toml:<event_snake>:<g>:<h>",
-eventName <event camelCase>, handlerType "command", command, matcher, timeoutSec (timeout, default 600, min 1;
-Interrupt and SessionEnd default 1, within 1-3), sourcePath, source "sessionFlags", enabled (false only by
-hooks.state[key].enabled), isManaged false, currentHash "sha256:<hex>" (sha256 of the key-sorted compact JSON of
-{event_name, hooks: [{async, command, timeout, type}], matcher if set}), trustStatus: trusted when
-hooks.state[key].trusted_hash equals currentHash, modified when it differs, else untrusted}; then the user hook.
-
-Scenario: the JSON object in file $FAKE_CODEX_SCENARIO (unset, unreadable or any other key: exit 1); both modes.
-  steps, turns, exit  as fake_claude's; steps as above.
-  log        a file: JSON lines appended, each with "pid": a start {"argv" (without argv[0]), "cwd", "env": LOGGED's
-             set keys}; a hook run {"hook": event, "key", "payload", "exit", "stdout"} (null both: failed or timed
-             out); an app-server message {"received"}.
-  user_hook  the user's own hook, default none: {"event": "Stop", "command": "true", "trustStatus": "trusted",
-             "enabled": true, "isManaged": false}, each key optional; entry source "user", key
-             "$CODEX_HOME/hooks.json:<event_snake>:0:0", trustStatus as given.
-  errors     a list, default []: each hooks/list cwd's `errors`.
-"""
 import argparse
 import hashlib
 import json
@@ -78,7 +29,6 @@ SHORT = ("Interrupt", "SessionEnd")
 
 
 def install(bin_dir: str) -> str:
-    """Put only this fake and the test interpreter on PATH for the driver and report.py."""
     for name, target in (("codex", f"{shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))}"),
                          ("python3", shlex.quote(sys.executable))):
         path = os.path.join(bin_dir, name)
@@ -193,7 +143,6 @@ def exec_mode(argv: list[str]) -> int:
 
 
 def session_scenario() -> dict:
-    """The app-server and interactive modes' scenario, defaults filled in; exits 1 on a bad one."""
     path = os.environ.get(ENV)
     if not path:
         sys.exit(f"fake_codex.py: {ENV} is unset")
@@ -237,7 +186,6 @@ def start(s: dict, argv: list[str]) -> None:
 
 
 class Override(argparse.Action):
-    """-c, --enable and --disable, kept in argv order in `overrides` as (dest, value)."""
     def __call__(self, parser, namespace, value, option_string=None):
         if self.dest == "config" and "=" not in value:
             parser.error(f"{option_string} {value}: want KEY=VALUE")
@@ -284,7 +232,6 @@ def snake(event: str) -> str:
 
 
 def entry(event: str, key: str, source_path: str, source: str, command: str, timeout, sync, matcher) -> dict:
-    """A hooks/list entry, enabled and untrusted."""
     if type(timeout) is not int:
         timeout = 1 if event in SHORT else 600
     timeout = min(max(timeout, 1), 3) if event in SHORT else max(timeout, 1)
@@ -298,7 +245,6 @@ def entry(event: str, key: str, source_path: str, source: str, command: str, tim
 
 
 def catalog(config: dict, home: str, user_hook: dict | None) -> list[dict]:
-    """hooks/list's entries for any cwd (the module docstring's Catalog)."""
     if not hooks_on(config):
         return []
     hooks = config["hooks"] if isinstance(config.get("hooks"), dict) else {}

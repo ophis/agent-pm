@@ -1,5 +1,3 @@
-"""Process checks for the Codex headless client, with a hermetic Codex CLI; fake_codex.py's interactive and app-server
-modes run as processes, no tmux (its docstring: the format)."""
 import json
 import os
 import re
@@ -213,7 +211,6 @@ class Fake(unittest.TestCase):
             json.dump({"log": self.log, **scenario}, f)
 
     def hook_args(self, *events: str) -> list[str]:
-        """A worker's hook `-c` args: per event one command hook appending its stdin JSON to hooklog."""
         args = []
         for event in events:
             args += ["-c", f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(self.record)},timeout=10}}]}}]']
@@ -221,12 +218,10 @@ class Fake(unittest.TestCase):
 
     @staticmethod
     def state(hashes: dict) -> list[str]:
-        """The `-c hooks.state=…` arg trusting each key's hash."""
         body = ",".join(f"{json.dumps(k)}={{trusted_hash={json.dumps(h)}}}" for k, h in hashes.items())
         return ["-c", f"hooks.state={{{body}}}"]
 
     def rpc(self, *args: str, messages=None) -> tuple[subprocess.CompletedProcess, list[dict]]:
-        """app-server with `args`, fed `messages` (default: INIT, then hooks/list id 2 of the project dir)."""
         if messages is None:
             messages = [*INIT, {"id": 2, "method": "hooks/list", "params": {"cwds": [self.proj]}}]
         res = subprocess.run([sys.executable, FAKE, "app-server", *args], cwd=self.proj, env=self.env,
@@ -245,7 +240,6 @@ class Fake(unittest.TestCase):
         return entry["hooks"]
 
     def trusted(self, *events: str) -> list[str]:
-        """hook_args(events) plus the hooks.state arg trusting the hashes app-server lists for them."""
         args = self.hook_args(*events)
         return [*args, *self.state({h["key"]: h["currentHash"] for h in self.listed(*args)})]
 
@@ -277,11 +271,9 @@ class Fake(unittest.TestCase):
             return []
 
     def fired(self) -> list[dict]:
-        """The stdin JSON of each recording hook run so far, in order."""
         return self.lines(self.hooklog)
 
     def started(self) -> int:
-        """How many interactive runs have logged their start line."""
         return sum(line.get("argv", ["app-server"])[:1] != ["app-server"] for line in self.lines(self.log))
 
 

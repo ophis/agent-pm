@@ -1,7 +1,6 @@
 """CodexClient's worker capability: a crew.py worker is an interactive `codex` whose hooks run _codex_hook.py. Its
 hooks are trusted for that invocation only, as one `codex app-server` hooks/list call lists them (hooks.state); its
-worker record binds crew's session id to the Codex native ID the first hook reports. Pinned to codex 0.162.1: an
-answer of another shape fails closed (core/CLAUDE.md › Codex workers)."""
+worker record binds crew's session id to the Codex native ID the first hook reports."""
 import fcntl
 import hashlib
 import json
@@ -21,39 +20,35 @@ from compose import ConfigError
 from . import _codex_hook, codex   # codex imports this module: use its names at call time
 from .base import WorkerCommand, WorkerSpec
 
-# (Config event, hooks/list eventName, helper word)
 HOOKS = (("SessionStart", "sessionStart", "session"), ("UserPromptSubmit", "userPromptSubmit", "working"),
          ("PermissionRequest", "permissionRequest", "blocked"), ("Stop", "stop", "done"),
          ("Interrupt", "interrupt", "interrupt"))
-# Notifications as BEL, not OSC 9 carrying the reply's text; the first -c, so a user's own after it wins.
+# the first -c, so a user's own after it wins
 NOTIFY = 'tui.notification_method="bel"'
 HOOK = os.path.abspath(_codex_hook.__file__)
-SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # core's src/
+SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK_TIMEOUT = 10
 INTERRUPT_TIMEOUT = 3   # Codex clamps an Interrupt hook's to 1-3 s
-# Option names, any spelling: (-c X, -cX, -c=X, --config X, --config=X); each takes a value.
 VALUED = {"-c": "-c", "--config": "-c", "-C": "-C", "--cd": "-C", "-p": "-p", "--profile": "-p",
           "--enable": "--enable", "--disable": "--disable", "--add-dir": "--add-dir"}
 RESERVED = ("-C", "-p", "resume", "fork", "--last", "--dangerously-bypass-hook-trust")
-RESERVED_KEYS = ("hooks", "sandbox_workspace_write")   # -c keys, with their subkeys, crew.py sets or keeps
-PASSED = ("-c", "--enable", "--disable")   # the user's options app-server takes too
+RESERVED_KEYS = ("hooks", "sandbox_workspace_write")
+PASSED = ("-c", "--enable", "--disable")
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
-LOCK_WAIT = 30   # seconds for another start's hooks/list call on the same CODEX_HOME
-ANSWER_WAIT = 20   # seconds for app-server's answers
-EXIT_WAIT = 5   # seconds for app-server to exit once its stdin is closed
-RETRY = 1   # seconds before the one retry of an app-server that exits before answering
+LOCK_WAIT = 30
+ANSWER_WAIT = 20
+EXIT_WAIT = 5
+RETRY = 1
 POLL = 0.1
 BLOCK = 1 << 16
-ANSWER_MAX = 64 << 20   # bytes in one answer line
+ANSWER_MAX = 64 << 20
 
 
 class _Exited(Exception):
-    """app-server closed its stdout before answering."""
+    pass
 
 
 def worker(spec: WorkerSpec) -> WorkerCommand:
-    """CodexClient.worker. New: a worker record, unbound, made first and left on a later failure. Resume: the record's
-    native session, cwd and CODEX_HOME."""
     if not roster.SID.fullmatch(spec.sid):
         raise ConfigError(f"bad session id {spec.sid!r}")
     _refuse(spec.flags)
@@ -83,15 +78,12 @@ def worker(spec: WorkerSpec) -> WorkerCommand:
 
 
 def reply(sid: str) -> str:
-    """CodexClient.worker_reply: the bound worker's reply file (_codex_hook.reply_path), "" when none yet."""
     path, _ = _record(sid)
     data = _read(_codex_hook.reply_path(path), _codex_hook.PAYLOAD_MAX, "Codex worker reply")
     return "" if data is None else data.decode("utf-8", "replace")
 
 
 def _options(flags):
-    """flags before a bare `--`: (name, value, as written) for a VALUED option, the name its short one; (word, None,
-    flag) for any other, the word before a long option's `=`."""
     i = 0
     while i < len(flags) and flags[i] != "--":
         flag = flags[i]
@@ -113,8 +105,6 @@ def _options(flags):
 
 
 def _refuse(flags) -> None:
-    """Raises on a flag, before a bare `--`, that sets what crew.py sets: hooks and their trust, the session, the cwd
-    or a profile (app-server cannot load one, so its hooks could not be checked); or the sandbox's writable roots."""
     for name, value, text in _options(flags):
         key = value.partition("=")[0].split(".", 1)[0].strip().strip("\"'") if name == "-c" else ""
         if name in RESERVED or key in RESERVED_KEYS:
@@ -129,8 +119,6 @@ def _which(name: str, env) -> str:
 
 
 def _protect(spec: WorkerSpec, exe: str, tmux: str) -> None:
-    """Raises when a root the worker may write, its cwd or an --add-dir (relative: to its cwd), holds or lies inside
-    what its hooks run or write outside the sandbox, or codex itself (exe)."""
     roots = [os.path.realpath(spec.cwd), *(os.path.realpath(os.path.join(spec.cwd, value))
                                            for name, value, _ in _options(spec.flags) if name == "--add-dir")]
     paths = [os.path.realpath(p) for p in (SRC, sys.prefix, sys.base_prefix, sys.executable, tmux, exe,
@@ -143,8 +131,6 @@ def _protect(spec: WorkerSpec, exe: str, tmux: str) -> None:
 
 
 def _workers(*, create: bool) -> str | None:
-    """The worker record dir, <realpath ~>/.agent-pm/core-sessions/workers, and each dir to it checked
-    (codex._private_dir); None: one is missing."""
     root = codex._store_root()
     for path, parent in ((os.path.dirname(root), True), (root, False), (os.path.join(root, "workers"), False)):
         try:
@@ -175,7 +161,6 @@ def _create(path: str, record: dict) -> None:
 
 
 def _record(sid: str) -> tuple[str, dict]:
-    """sid's worker record, bound: its path and fields."""
     if not roster.SID.fullmatch(sid):
         raise ConfigError(f"bad session id {sid!r}")
     workers = _workers(create=False)
@@ -192,8 +177,6 @@ def _record(sid: str) -> tuple[str, dict]:
 
 
 def _read(path: str, limit: int, what: str, *, shared: bool = False) -> bytes | None:
-    """The file at path, a 0600 regular file of ours of at most limit bytes (_codex_hook.unsafe), never followed;
-    None: missing. shared: read under a shared lock (the hook helper rewrites a record in place)."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -203,16 +186,13 @@ def _read(path: str, limit: int, what: str, *, shared: bool = False) -> bytes | 
     with os.fdopen(fd, "rb") as f:
         if why := _codex_hook.unsafe(f.fileno(), limit):
             raise ConfigError(f"{what} {path}: {why}")
+        # the hook helper rewrites a record in place
         if shared:
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
         return f.read(limit + 1)
 
 
 def _hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], commands: list[str]) -> str:
-    """The -c arg trusting exactly the worker's hooks (args' hooks.* items, running commands in HOOKS order) for this
-    invocation: hooks.state with each one's key and hash as `codex app-server <args>` (in cwd, with env) lists them
-    for cwd. One such call per CODEX_HOME at a time (a cold home fails concurrent ones); one retry of an app-server
-    that exits before answering. Fails closed (_trusted)."""
     lock = os.path.join(codex._store_root(), "workers",
                         hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest()[:16] + ".lock")
     try:
@@ -243,9 +223,6 @@ def _hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], comman
 
 
 def _hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str]):
-    """hooks/list's result for cwd from a new `exe app-server` in its own process group: initialize, initialized,
-    hooks/list, answers matched by id (notifications interleave), all within ANSWER_WAIT s. Then its stdin closed, it
-    gets EXIT_WAIT s to exit; only then is its group killed."""
     try:
         proc = subprocess.Popen([exe, "app-server", *args], cwd=cwd, env=env, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -279,8 +256,6 @@ def _send(proc, message: dict) -> None:
 
 
 class _Lines:
-    """A pipe's lines, each read before a deadline."""
-
     def __init__(self, fd: int, deadline: float):
         self.fd, self.deadline, self.buf, self.seen = fd, deadline, bytearray(), 0
 
@@ -305,7 +280,6 @@ class _Lines:
 
 
 def _answer(lines: _Lines, ident: int, method: str):
-    """The result of request `ident` (`method`); other lines skipped."""
     while True:
         try:
             message = json.loads(next(lines))
@@ -322,8 +296,6 @@ def _answer(lines: _Lines, ident: int, method: str):
 
 
 def _close(proc) -> None:
-    """Close proc's stdin, read its stdout to the end and wait for its exit, EXIT_WAIT s in all; then kill its
-    process group."""
     deadline = time.monotonic() + EXIT_WAIT
     try:
         proc.stdin.close()
@@ -346,12 +318,7 @@ def _close(proc) -> None:
 
 
 def _trusted(result, cwd: str, commands: list[str]) -> str:
-    """hooks.state={"<key>"={trusted_hash="<hash>"},…} for the HOOKS rows' entries of hooks/list's result, asked for
-    cwd alone: its one entry, whatever path that gives (Codex may normalize it). Fails unless that entry has no errors
-    and hooks (none: hooks are off, and turning them on would run the user's other hooks too); each row has exactly one
-    sessionFlags entry, enabled, a command handler running its command, with a string key and a sha256 hash, and there
-    is no other sessionFlags entry; and no other entry is enabled, unmanaged and untrusted or modified (its review
-    dialog would invite a write to the user's Codex config)."""
+    # asked for cwd alone: its one entry, whatever path that gives (Codex may normalize it)
     data = result.get("data") if isinstance(result, dict) else None
     data = data if isinstance(data, list) else []
     if len(data) != 1:
@@ -362,6 +329,7 @@ def _trusted(result, cwd: str, commands: list[str]) -> str:
     hooks = entry.get("hooks")
     if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
         raise ConfigError(f"codex hooks/list: malformed hooks for {cwd}")
+    # hooks off: turning them on would run the user's other hooks too
     if not hooks:
         raise ConfigError("codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them")
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
@@ -383,6 +351,7 @@ def _trusted(result, cwd: str, commands: list[str]) -> str:
     for h in ours:
         if not any(h is t for t in trusted):
             raise ConfigError(f"codex hooks/list: a session-flags hook not ours: {h.get('key')}")
+    # an untrusted or modified hook's review dialog would invite a write to the user's Codex config
     for h in hooks:
         if (h.get("source") != "sessionFlags" and h.get("enabled") is not False and h.get("isManaged") is not True
                 and h.get("trustStatus") in ("untrusted", "modified")):

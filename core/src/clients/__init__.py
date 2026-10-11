@@ -1,4 +1,3 @@
-"""Clients: one module per agent client, turning a composed agent run into its launch command."""
 import importlib
 import os
 import re
@@ -16,7 +15,6 @@ NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 
 def load_module(name: str) -> ModuleType:
-    """Load the client's config-independent run capability before reading operator config."""
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise ConfigError(f"unsafe client name {name!r}: want a lowercase module identifier")
     module_name = f"{__name__}.{name}"
@@ -34,7 +32,6 @@ def load_module(name: str) -> ModuleType:
 
 
 def get(name: str, root: str, *, module: ModuleType | None = None) -> Client:
-    """The client named `name`, built from config.toml's [clients.<name>]."""
     try:
         cls, table = definition(name, root, module=module)
         return cls(table if cls.needs_config else {})
@@ -43,7 +40,6 @@ def get(name: str, root: str, *, module: ModuleType | None = None) -> Client:
 
 
 def definition(name: str, root: str, *, module: ModuleType | None = None) -> tuple[type[Client], dict]:
-    """Resolve the configured class, requiring its capability to match the module's declaration."""
     module = module if module is not None else load_module(name)
     table = dict(load_config(name, root))
     class_name = table.pop("implementation", None)
@@ -60,13 +56,11 @@ def definition(name: str, root: str, *, module: ModuleType | None = None) -> tup
 
 
 def catalog(name: str, root: str, team=None) -> dict[str, dict[str, str]]:
-    """The roles and tasks available to a selected, configured client; `team` as compose.catalog's."""
     get(name, root)
     return role_catalog(root, team)
 
 
 def configured(root: str) -> list[str]:
-    """The [clients.<name>] names of <root>/config.toml with repo.LOCAL on top, sorted."""
     try:
         return sorted(client_tables(root))
     except (OSError, tomllib.TOMLDecodeError) as e:
@@ -74,7 +68,6 @@ def configured(root: str) -> list[str]:
 
 
 def loaded(root: str) -> dict[str, type[Client]]:
-    """The class of each configured client; one whose definition fails is left out, with one stderr line."""
     classes = {}
     for name in configured(root):
         try:
@@ -85,7 +78,6 @@ def loaded(root: str) -> dict[str, type[Client]]:
 
 
 def caller(env: Mapping[str, str], classes: Mapping[str, type[Client]]) -> str | None:
-    """The manager client: the one of classes whose session marker (Client.session_env) env holds; None: none."""
     found = [(name, cls.session_env) for name, cls in classes.items() if cls.session_env and cls.session_env in env]
     if len(found) > 1:
         raise ConfigError("the caller runs inside more than one client's session "
