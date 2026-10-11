@@ -10,7 +10,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import drive  # noqa: E402
 import linear  # noqa: E402
 from linear import one_line  # noqa: E402
@@ -41,19 +41,20 @@ def command(rec):
     """The resume command, in the cwd the session's record names (drive.session; none: the workdir). Built here, never
     read from the record: the agent run can write it."""
     entry = drive.session(rec["workdir"], rec["sid"])
-    return clients.claude.resume(entry["cwd"] if entry else rec["workdir"], rec["sid"], rec["workdir"])
+    return claude_client.resume(entry["cwd"] if entry else rec["workdir"], rec["sid"], rec["workdir"])
 
 
 def prefix(sid):
     return f"Run {sid} · "
 
 
-def body(rec, rc=None, ended_at=None):
-    """The comment: a status line, then the resume command in a code block."""
+def body(rec, rc=None, ended_at=None, *, outcome=None):
+    """The comment uses a validated outcome when available, retaining the native exit code."""
     if rc is None:
         line = f"running · {rec['started_at']}"
     else:
-        line = f"{'done' if rc == 0 else 'interrupted'} · {rec['started_at']} → {ended_at} · exit {rc}"
+        status = outcome.status if outcome is not None else "done" if rc == 0 else "interrupted"
+        line = f"{status} · {rec['started_at']} → {ended_at} · exit {rc}"
     return f"{prefix(rec['sid'])}{line}\n\n```\n{command(rec)}\n```"
 
 
@@ -87,9 +88,9 @@ def write(gql, issue, sid, text, limit=LIMIT):
     return None if out["ok"] else "success: false"
 
 
-def post(issue, rec, rc=None, *, gql=None, ended_at=None):
+def post(issue, rec, rc=None, *, gql=None, ended_at=None, outcome=None):
     """Record the session rec on issue: running for rc None, else its end (ended_at defaults to now). gql defaults to
     the harness account's, bounded by LIMIT. None once written, else why not, one line (the caller logs
     registry-error)."""
-    text = body(rec) if rc is None else body(rec, rc, ended_at or now())
+    text = body(rec) if rc is None else body(rec, rc, ended_at or now(), outcome=outcome)
     return write(gql or functools.partial(linear.linear_gql, timeout=LIMIT), issue, rec["sid"], text)

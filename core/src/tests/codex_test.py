@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from clients import codex  # noqa: E402
-from clients import ClaudeClient  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
 from clients.base import Client, SessionInfo  # noqa: E402
 from compose import ConfigError  # noqa: E402
 
@@ -80,6 +81,40 @@ class Store(unittest.TestCase):
         with open(path, "w") as f:
             json.dump(data, f)
         with self.assertRaisesRegex(ConfigError, "writable"):
+            codex._load_session(self.work, self.sid)
+
+    def test_private_fifo_is_rejected_without_blocking(self):
+        self.create()
+        root = os.path.join(os.path.realpath(self.home), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), self.sid)
+        os.unlink(path)
+        os.mkfifo(path, 0o600)
+        code = """import sys
+from clients import codex
+from compose import ConfigError
+try:
+    codex._read(*sys.argv[1:])
+except ConfigError as exc:
+    print(exc)
+else:
+    sys.exit(1)
+"""
+        result = subprocess.run([sys.executable, "-c", code, path, self.work, self.sid],
+                                cwd=os.path.dirname(codex.__file__) + "/..", capture_output=True,
+                                text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unsafe recovery state file", result.stdout)
+
+    def test_deep_private_json_is_a_config_error(self):
+        self.create()
+        root = os.path.join(os.path.realpath(self.home), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), self.sid)
+        with open(path, "w") as stream:
+            stream.write("[" * 2000 + "0" + "]" * 2000)
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        with mock.patch.object(json, "_default_decoder", decoder), \
+                self.assertRaisesRegex(ConfigError, "malformed recovery state"):
             codex._load_session(self.work, self.sid)
 
     def test_duplicate_and_missing(self):

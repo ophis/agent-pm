@@ -68,6 +68,16 @@ class Record(unittest.TestCase):
                 self.assertEqual(linear.calls, ["comments", "commentCreate", *ended])
                 self.assertEqual(linear.only()["body"], f"Run {SID} · {line}\n\n```\n{CMD}\n```")
 
+    def test_terminal_outcome_keeps_status_and_native_exit_diagnostic(self):
+        for status in ("done", "needs_input", "failed"):
+            with self.subTest(status=status):
+                linear = FakeLinear()
+                self.assertIsNone(sessions.post(ISSUE, record(), 3, gql=linear, ended_at=T2,
+                                               outcome=sessions.drive.Outcome(status, "title", "summary")))
+                line = linear.only()["body"].splitlines()[0]
+                self.assertEqual(line, f"Run {SID} · {status} · {T1} → {T2} · exit 3")
+                self.assertNotIn("interrupted", line)
+
     def test_command(self):
         """The workdir is quoted; a run.jsonl session entry gives the cwd, never the command (the agent run can write
         it)."""

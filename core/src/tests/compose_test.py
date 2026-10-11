@@ -16,6 +16,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
+from clients.skill import SkillClient  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
@@ -206,7 +208,7 @@ class Resolve(Fake):
 class PublicResolution(Fake):
     def test_base_client_and_trusted_overlay_precedence(self):
         self.local('language = "French"\n[roles.writer]\neffort = "max"\n')
-        client = clients.SkillClient({"effort": "low", "output": {"type": "orchestrator"},
+        client = SkillClient({"effort": "low", "output": {"type": "orchestrator"},
                                       "roles": {"writer": {"tier": 3, "effort": "medium"}}})
         run = compose.resolve(self.root, client, "writer", "long-note", overlays=(
             {"tier": 4, "effort": "high"},
@@ -244,7 +246,7 @@ class PublicResolution(Fake):
             compose.resolve(self.root, clients.Client({}), "stranger")
         for roles in ([], {"writer": []}, {"stranger": {"tier": 3}}):
             with self.subTest(roles=roles), self.assertRaises(compose.ConfigError):
-                compose.resolve(self.root, clients.SkillClient({"roles": roles}), "writer")
+                compose.resolve(self.root, SkillClient({"roles": roles}), "writer")
 
     def test_non_string_overlay_key_is_a_config_error(self):
         with self.assertRaises(compose.ConfigError):
@@ -427,7 +429,7 @@ class Prompt(Fake):
                     "replaced by its value and written out in full, no name or shell variable left: pre-approved "
                     "commands match on their exact text and each shell call starts fresh, so anything else waits "
                     "on a permission prompt.")
-        for client in (clients.ClaudeClient({}), clients.SkillClient({})):
+        for client in (ClaudeClient({}), SkillClient({})):
             prompt = compose.render(self.root, compose.load_run(self.root, "writer"), PARAMS, client=client)
             self.assertIn("# Parameters\n\n" + original + "\n\n", prompt)
             self.assertEqual(client.report_interpreter(), "python3")
@@ -1277,12 +1279,12 @@ class RealCore(unittest.TestCase):
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role in ROLES:
-            for client in ("claude", "skill"):
+            for client in ("claude", "codex", "skill"):
                 self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
         for role, task in RUNS:
-            for client in ("claude", "skill"):
+            for client in ("claude", "codex", "skill"):
                 anchors = heading_anchors(client_prompt(client, role, task)[0])
                 self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
 

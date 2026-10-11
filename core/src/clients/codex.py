@@ -74,7 +74,6 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
             if os.path.lexists(candidate) and (os.path.isdir(candidate) or os.path.islink(candidate)):
                 real_candidate = os.path.realpath(candidate)
                 genuine_user_home = (candidate in (default_home, real_default_home)
-                                     and os.path.realpath(config_home) == real_default_home
                                      and real_candidate == real_default_home
                                      and not os.path.islink(candidate)
                                      and not _inside(candidate, workdir)
@@ -133,7 +132,7 @@ def _session_file(snapshot: dict, client_id: str) -> tuple[str, float] | None:
             fd = -1
             try:
                 metadata = json.loads(stream.readline(128 * 1024))
-            except (ValueError, UnicodeError) as exc:
+            except (ValueError, UnicodeError, RecursionError) as exc:
                 raise ConfigError(f"malformed Codex session metadata: {path}") from exc
         if (not isinstance(metadata, dict) or metadata.get("type") != "session_meta"
                 or not isinstance(metadata.get("payload"), dict)
@@ -198,7 +197,7 @@ class CodexClient(Client):
                 raise ConfigError(f"missing Codex recovery state for run ID {params.sid!r}")
             if state.client_id is None:
                 raise ConfigError(f"missing Codex client ID for run ID {params.sid!r}")
-            snapshot = _snapshot(state.snapshot)
+            snapshot = _recovery_snapshot(state)
             if not _session_file(snapshot, state.client_id):
                 raise ConfigError(f"missing Codex session file for client ID {state.client_id}")
             if not snapshot["project"]:
@@ -241,6 +240,7 @@ class CodexClient(Client):
                     or state.writable_roots != list(dict.fromkeys([os.path.realpath(workdir),
                                                                   *map(os.path.realpath, launch.writable_roots)]))):
                 raise ConfigError(f"missing or changed Codex recovery state for run ID {params.sid!r}")
+            _recovery_snapshot(state)
         else:
             _create_session(workdir, params.sid, launch.session_state, launch.writable_roots)
 
@@ -251,14 +251,14 @@ class CodexClient(Client):
         state = _load_session(workdir, sid)
         if state is None or state.client != "codex":
             raise ConfigError(f"missing Codex recovery state for run ID {sid!r}")
-        snapshot = _snapshot(state.snapshot)
+        snapshot = _recovery_snapshot(state)
         return snapshot["cwd"], snapshot["project"]
 
     def session_info(self, workdir: str, sid: str) -> SessionInfo:
         state = _load_session(workdir, sid)
         if state is None or state.client != "codex":
             return SessionInfo(resume_supported=True, inspection_supported=True)
-        snapshot = _snapshot(state.snapshot)
+        snapshot = _recovery_snapshot(state)
         if state.client_id is None:
             return SessionInfo(resume_supported=True, inspection_supported=True)
         found = _session_file(snapshot, state.client_id)
@@ -275,7 +275,7 @@ class CodexClient(Client):
         for line in lines:
             try:
                 event = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 yield Event("stderr", "codex: invalid JSON event")
                 continue
             if not isinstance(event, dict):
@@ -317,6 +317,17 @@ class _SessionState:
     snapshot: dict
     writable_roots: list[str]
     client_id: str | None = None
+
+
+def _recovery_snapshot(state: _SessionState) -> dict:
+    snapshot = _snapshot(state.snapshot)
+    paths = [state.workdir, snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
+    root = os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-sessions")
+    _unsafe_root(root, paths)
+    for path in paths:
+        if not any(_inside(path, grant) for grant in state.writable_roots):
+            raise ConfigError(f"invalid Codex recovery writable grants: no recorded root covers {path}")
+    return snapshot
 
 
 def _copy_snapshot(value: object) -> dict:
@@ -426,7 +437,7 @@ def _unsafe_root(root: str, paths: list[str]) -> None:
 def _read(path: str, workdir: str, sid: str) -> _SessionState | None:
     _check_ancestors(path)
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -440,7 +451,7 @@ def _read(path: str, workdir: str, sid: str) -> _SessionState | None:
         with os.fdopen(fd, "r", encoding="utf-8") as stream:
             fd = -1
             data = json.load(stream)
-    except (ValueError, UnicodeError) as exc:
+    except (ValueError, UnicodeError, RecursionError) as exc:
         raise ConfigError(f"malformed recovery state: {path}") from exc
     finally:
         if fd >= 0:

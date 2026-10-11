@@ -22,7 +22,11 @@ class CodexIntegration(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = tmp.name
         # Recovery authority cannot live in Codex's implicitly writable temporary directories.
-        home = tempfile.TemporaryDirectory(prefix=".fake-codex-home-", dir=os.path.dirname(CORE))
+        homes = os.path.join(os.path.dirname(CORE), "work", "fake-codex-homes")
+        os.makedirs(homes, mode=0o700, exist_ok=True)
+        if os.path.realpath(homes) != homes:
+            raise RuntimeError("fake Codex HOME namespace must not contain symlinks")
+        home = tempfile.TemporaryDirectory(prefix="home-", dir=homes)
         self.addCleanup(home.cleanup)
         self.home = home.name
         self.work, bin_dir = (os.path.join(self.root, d) for d in ("work", "bin"))
@@ -45,6 +49,14 @@ class CodexIntegration(unittest.TestCase):
     def events(self):
         with open(os.path.join(self.work, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
+
+    def test_fixture_home_is_ignored_and_owned_cleanup_removes_it(self):
+        result = subprocess.run(["git", "check-ignore", self.home], cwd=os.path.dirname(CORE),
+                                capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isdir(self.home))
+        self.doCleanups()
+        self.assertFalse(os.path.exists(self.home))
 
     def test_reports_start_and_valid_outcome_through_channel(self):
         res = self.drive([{"kind": "progress", "name": "start", "text": "echoing"},

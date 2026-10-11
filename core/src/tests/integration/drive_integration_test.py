@@ -11,7 +11,7 @@ import unittest
 TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.dirname(TESTS), TESTS]
 import hermetic  # noqa: E402
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import fake_claude  # noqa: E402
 from drive_test import SID, outcome, progress  # noqa: E402
 
@@ -35,7 +35,7 @@ class Integration(unittest.TestCase):
         self.scenario, self.log = os.path.join(self.root, "scenario.json"), os.path.join(self.root, "log.jsonl")
         self.env = {"PATH": fake_claude.install(bin_dir), "HOME": home, "PYTHONUTF8": "1",
                     fake_claude.ENV: self.scenario}
-        self.transcript = clients.claude.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
+        self.transcript = claude_client.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
 
     def argv(self, *extra) -> list[str]:
         return [sys.executable, DRIVE, "--role", self.ROLE, "--input", "Hello.", "--out", self.out, "--workdir",

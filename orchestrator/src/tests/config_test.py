@@ -15,6 +15,8 @@ import hermetic  # noqa: E402
 from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
 import config  # noqa: E402
 import clients  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import repo  # noqa: E402
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
@@ -370,7 +372,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_resolution_rejects_unknown_client_role_before_runnable(self):
         self.load(PIPELINE)
-        client = clients.ClaudeClient({"roles": {"reseacher": {"tier": 2}}})
+        client = ClaudeClient({"roles": {"reseacher": {"tier": 2}}})
         with mock.patch.object(clients, "get", return_value=client):
             with self.assertRaises(config.compose.ConfigError):
                 config.run_config("researcher", root=self.root)
@@ -677,7 +679,7 @@ class Paths(unittest.TestCase):
         sid = "0f0f0f0f-1111-2222-3333-444444444444"
         with tempfile.TemporaryDirectory() as work, mock.patch.object(config, "RUNS_DIR", work):
             rd = config.run_dir("TASK-9")
-            self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), clients.claude.transcript(rd, sid, "/p"))
+            self.assertEqual(config.transcript("TASK-9", sid, projects="/p"), claude_client.transcript(rd, sid, "/p"))
             os.makedirs(rd)
             with open(os.path.join(rd, "run.jsonl"), "w") as f:
                 f.write(json.dumps({"ts": "t", "kind": "session", "sid": sid, "cwd": "/data/x.y",

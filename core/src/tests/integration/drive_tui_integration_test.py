@@ -12,7 +12,7 @@ import unittest
 TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.dirname(TESTS), TESTS]
 import hermetic  # noqa: E402
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import fake_claude  # noqa: E402
@@ -48,7 +48,7 @@ class TuiRun(unittest.TestCase):
         self.scenario, self.log = os.path.join(root, "scenario.json"), os.path.join(root, "log.jsonl")
         with open(self.scenario, "w") as f:
             json.dump({"steps": [progress("start", "echoing")], "turns": [[outcome(DONE)]], "log": self.log}, f)
-        self.transcript = clients.claude.transcript(self.proj, SID,
+        self.transcript = claude_client.transcript(self.proj, SID,
                                                     projects=os.path.join(self.server.home, ".claude", "projects"))
 
     def drive(self, *extra: str, inside: str | None = None, events: bool = True) -> subprocess.CompletedProcess:

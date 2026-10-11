@@ -51,8 +51,8 @@ def inner(a, *, layout, gql, popen, root):
         log("run", f"tui-{c.status}", a.issue, session=c.name, msg=c.msg or None)
     rec = sessions.base(sid=a.sid, workdir=rd, started_at=sessions.now())
 
-    def post(rc=None):  # as begun: run.jsonl now names the session's cwd, which the comment's resume command needs
-        if error := sessions.post(a.issue, rec, rc, gql=harness):
+    def post(rc=None, *, outcome=None):  # as begun: run.jsonl now names the session's cwd, which the comment's resume command needs
+        if error := sessions.post(a.issue, rec, rc, gql=harness, outcome=outcome):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
     ctx = router.context(a, cfg, name, role, gql, a.uuid, repo_slug(a.target) if a.target else None)
     rc, result = 1, None
@@ -77,7 +77,7 @@ def inner(a, *, layout, gql, popen, root):
             writeback.finish(ctx, result.outcome)
         else:
             log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
-        post(rc)
+        post(rc, outcome=result.outcome if result else None)
     return 0
 
 

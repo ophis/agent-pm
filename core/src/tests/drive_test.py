@@ -23,6 +23,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
+from clients.skill import SkillClient  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import manager  # noqa: E402
@@ -53,7 +56,7 @@ class Recorder(clients.Client):
 
 
 def claude(**overrides):
-    return clients.ClaudeClient({**clients.get("claude", CORE).config, **overrides})
+    return ClaudeClient({**clients.get("claude", CORE).config, **overrides})
 
 
 def own(session="mgr"):
@@ -141,11 +144,24 @@ class ClientDiscovery(unittest.TestCase):
         with open(self.path, "w") as f:
             f.write(text)
 
+    def test_package_import_does_not_load_unselected_concrete_clients(self):
+        code = """import sys
+import clients
+assert "clients.claude" not in sys.modules
+assert "clients.skill" not in sys.modules
+assert clients.load_module("codex").RUNS
+assert "clients.claude" not in sys.modules
+assert "clients.skill" not in sys.modules
+"""
+        result = subprocess.run([sys.executable, "-c", code], cwd=os.path.join(CORE, "src"),
+                                capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_existing_clients_use_explicit_implementations(self):
         self.config('[clients.skill]\nimplementation = "SkillClient"\n'
                     '[clients.claude]\nimplementation = "ClaudeClient"\n')
-        self.assertIsInstance(clients.get("skill", self.tmp.name), clients.SkillClient)
-        self.assertIsInstance(clients.get("claude", self.tmp.name), clients.ClaudeClient)
+        self.assertIsInstance(clients.get("skill", self.tmp.name), SkillClient)
+        self.assertIsInstance(clients.get("claude", self.tmp.name), ClaudeClient)
         self.assertFalse(hasattr(clients, "names"))
 
     def test_configured_class_receives_only_runtime_config(self):
@@ -376,14 +392,14 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
 
     def test_transcript_and_resume_command_follow_the_cwd(self):
-        self.assertEqual(clients.claude.transcript("/a/b.c d", SID, "/p"), f"/p/-a-b-c-d/{SID}.jsonl")
+        self.assertEqual(claude_client.transcript("/a/b.c d", SID, "/p"), f"/p/-a-b-c-d/{SID}.jsonl")
         launch = self.plan(client="claude")
         self.assertEqual((launch.resume, launch.transcript),
-                         (f"cd {self.work} && claude --resume {SID}", clients.claude.transcript(self.work, SID)))
+                         (f"cd {self.work} && claude --resume {SID}", claude_client.transcript(self.work, SID)))
         with redirect_stderr(io.StringIO()):
             launch = self.plan(client="claude", cwd=self.repo)
         self.assertEqual(launch.resume, f"cd {self.repo} && claude --resume {SID} --add-dir {self.work}")
-        self.assertEqual(launch.transcript, clients.claude.transcript(self.repo, SID))
+        self.assertEqual(launch.transcript, claude_client.transcript(self.repo, SID))
 
 
 class Codex(Base):
@@ -468,6 +484,55 @@ class Codex(Base):
             json.dump(dict(original, client_id="not-a-uuid"), f)
         with self.assertRaisesRegex(compose.ConfigError, "Codex.*ID"):
             client.session_info(self.work, SID)
+
+    def test_saved_effective_paths_require_recorded_grants_and_store_isolation(self):
+        snapshot = self.saved_session(client_id=SID)
+        self.metadata(SID, snapshot)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), SID)
+        with open(path) as stream:
+            original = json.load(stream)
+        client = clients.get("codex", CORE)
+        changes = [dict(original, writable_roots=[grant for grant in original["writable_roots"] if grant != omitted])
+                   for omitted in original["writable_roots"]]
+        changes.append(dict(original, snapshot={**snapshot, "dirs": [os.path.realpath(os.path.expanduser("~"))]}))
+        for data in changes:
+            with open(path, "w") as stream:
+                json.dump(data, stream)
+            launch = drive.Launch(["fake"], session_state=data["snapshot"], writable_roots=data["writable_roots"])
+            for use in (lambda: client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS),
+                        lambda: client.resume_location(self.work, SID), lambda: client.session_info(self.work, SID),
+                        lambda: client.prepare_session(launch, self.params(resume=True))):
+                with self.subTest(data=data), self.assertRaisesRegex(compose.ConfigError, "writable|grant|changed"):
+                    use()
+
+    def test_saved_paths_may_be_covered_by_parent_grants(self):
+        snapshot = self.saved_session(client_id=SID)
+        self.metadata(SID, snapshot)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), SID)
+        with open(path) as stream:
+            data = json.load(stream)
+        data["writable_roots"] = [os.path.realpath(self.work), os.path.realpath(self.tmp.name)]
+        with open(path, "w") as stream:
+            json.dump(data, stream)
+        client = clients.get("codex", CORE)
+        self.assertEqual(client.resume_location(self.work, SID), (snapshot["cwd"], False))
+        self.assertTrue(client.session_info(self.work, SID).exists)
+        launch = client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        self.assertEqual(launch.session_state, snapshot)
+        client.prepare_session(launch, self.params(resume=True))
+
+    def test_deep_native_metadata_is_a_config_error(self):
+        snapshot = self.saved_session(client_id=SID)
+        path = self.metadata(SID, snapshot)
+        with open(path, "w") as stream:
+            stream.write("[" * 2000 + "0" + "]" * 2000)
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        with unittest.mock.patch.object(json, "_default_decoder", decoder), \
+                self.assertRaisesRegex(compose.ConfigError, "malformed Codex session metadata"):
+            clients.get("codex", CORE).session_info(self.work, SID)
 
     def test_resume_uses_saved_options_and_parent_flags(self):
         client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -753,6 +818,34 @@ class Codex(Base):
             launch = client.launch("p", run(), params=self.params(workdir=work),
                                    access=drive.Access(dirs=[], commands=[], cwd=work))
         self.assertEqual(launch.cwd, work)
+
+    def test_default_user_settings_with_custom_codex_home_are_not_project_settings(self):
+        default = os.path.join(self.tmp.name, ".codex")
+        os.mkdir(default)
+        work = os.path.join(self.tmp.name, "runs", "work")
+        os.makedirs(work)
+        custom = os.path.join(self.tmp.name, "custom-config")
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": custom}), \
+                redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch("p", run(), params=self.params(workdir=work),
+                         access=drive.Access(dirs=[], commands=[], cwd=work))
+        self.assertEqual(launch.env["CODEX_HOME"], os.path.realpath(custom))
+        os.rmdir(default)
+        os.symlink(custom, default)
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": custom}), \
+                self.assertRaisesRegex(compose.ConfigError, "project Codex settings"):
+            clients.get("codex", CORE).launch("p", run(), params=self.params(workdir=work),
+                         access=drive.Access(dirs=[], commands=[], cwd=work))
+
+    def test_deep_event_does_not_drop_later_valid_output(self):
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        with unittest.mock.patch.object(json, "_default_decoder", decoder):
+            seen = list(clients.get("codex", CORE).events([
+                "[" * 2000 + "0" + "]" * 2000,
+                '{"type":"item.completed","item":{"type":"agent_message","text":"later"}}']))
+        self.assertEqual(seen, [clients.Event("stderr", "codex: invalid JSON event"),
+                               clients.Event("text", "later")])
 
     def test_custom_codex_home_at_untrusted_project_ancestor_is_rejected(self):
         client = clients.get("codex", CORE)
@@ -1069,7 +1162,7 @@ class Skill(Base):
                       "<repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}{clients.SkillClient({}).approval()}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}{SkillClient({}).approval()}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
                       "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
         self.assertTrue(text.endswith("\n# Input\n\nThe text after `<role>[:<task>]` in your "
@@ -1293,10 +1386,10 @@ class ClaudeEvents(unittest.TestCase):
 
 class Handover(unittest.TestCase):
     def test_each_client_names_the_progress_mark(self):
-        for c in (claude(), clients.SkillClient({})):
+        for c in (claude(), SkillClient({})):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
         self.assertIn("before calling the next tool, send a text message containing only that line",
-                      clients.SkillClient({}).handover())
+                      SkillClient({}).handover())
         text = claude().handover()
         self.assertNotIn("ultracode", text)
         self.assertNotIn("progress:budget", text)
@@ -3223,7 +3316,7 @@ class Main(Base):
         entry = drive.session(self.work, SID)
         self.assertEqual((entry["cwd"], entry["project"]), (os.getcwd(), False))
         self.assertEqual(entry["resume"], f"cd {os.getcwd()} && claude --resume {SID} --add-dir {self.work}")
-        self.assertEqual(entry["transcript"], clients.claude.transcript(os.getcwd(), SID))
+        self.assertEqual(entry["transcript"], claude_client.transcript(os.getcwd(), SID))
 
     def test_input_is_text_from_the_argument_or_stdin_never_a_files_content(self):
         here = os.getcwd()
@@ -3298,7 +3391,8 @@ class CodexRecoveryDriver(Base):
             return [json.loads(line) for line in f]
 
     def run_codex(self, native=None, *, resume=False, begun=None, sinks=(), popen=None):
-        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
         lines = stream({"type": "thread.started", "thread_id": native or self.native})
         return drive.start(launch, run(), self.params(resume=resume), client=self.client,
                            begun=begun, sinks=sinks, popen=popen or (lambda argv, **kw: FakeProc(lines)))
@@ -3344,7 +3438,8 @@ class CodexRecoveryDriver(Base):
     def test_resume_rejects_changed_snapshot_before_spawn(self):
         self.run_codex()
         launch = drive.Launch(["fake"], cwd=self.work,
-                              session_state={**self.snapshot, "network": True}, writable_roots=[self.work])
+                              session_state={**self.snapshot, "network": True},
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
         popen = unittest.mock.Mock()
         with self.assertRaisesRegex(compose.ConfigError, "changed Codex recovery state"):
             drive.start(launch, run(), self.params(resume=True), client=self.client, popen=popen, sinks=[])
@@ -3392,7 +3487,8 @@ class CodexRecoveryDriver(Base):
         self.assertFalse(info.exists)
 
     def test_no_native_id_does_not_count_as_a_recoverable_run(self):
-        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
         result = drive.start(launch, run(), self.params(), client=self.client, sinks=[],
                              popen=lambda argv, **kw: FakeProc(stream({"type": "turn.completed"})))
         self.assertIsNone(result.outcome)
@@ -3407,7 +3503,7 @@ class CodexRecoveryDriver(Base):
             with self.subTest(event=event):
                 params = self.params(sid=f"{SID}-{index}")
                 launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
-                                      writable_roots=[self.work])
+                                      writable_roots=[self.work, self.snapshot["codex_home"]])
                 seen = []
                 def popen(argv, **kw):
                     items = [progress("start", "unbound progress"), outcome(DONE), *stream(event)]
@@ -3421,7 +3517,8 @@ class CodexRecoveryDriver(Base):
                 self.assertFalse(os.path.exists(params.out))
 
     def test_startup_process_stderr_is_logged_without_accepting_unbound_output(self):
-        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
         params, seen = self.params(), []
         diagnostics = ["authentication failed", "please sign in"]
         def popen(argv, **kw):
@@ -3469,7 +3566,7 @@ class CodexRecoveryDriver(Base):
                     return process
                 seen = []
                 launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
-                                      writable_roots=[self.work])
+                                      writable_roots=[self.work, self.snapshot["codex_home"]])
                 with unittest.mock.patch.object(os, "fsync", fsync):
                     with self.assertRaisesRegex(OSError, "cannot fsync mapping"):
                         drive.start(launch, run(), params, client=self.client, popen=popen, sinks=[seen.append])

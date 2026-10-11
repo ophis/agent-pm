@@ -7,8 +7,6 @@ from types import ModuleType
 from compose import ConfigError, catalog as role_catalog
 
 from .base import PROGRESS, Access, Client, Event, Launch, load_config  # noqa: F401
-from .claude import ClaudeClient
-from .skill import SkillClient
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 

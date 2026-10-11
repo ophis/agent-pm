@@ -23,6 +23,7 @@ if os.environ.get("AGENT_PM_PATH"):
 # Module names this reserves: CLAUDE.md › Architecture (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import repo  # noqa: E402
@@ -87,7 +88,7 @@ def transcript(issue, sid, projects=PROJECTS):
         return None
     rd = run_dir(issue)
     entry = drive.session(rd, sid)
-    return clients.claude.transcript(entry["cwd"] if entry else rd, sid, projects)
+    return claude_client.transcript(entry["cwd"] if entry else rd, sid, projects)
 
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
