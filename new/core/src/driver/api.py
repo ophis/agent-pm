@@ -14,14 +14,14 @@ from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
-from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, Reply, SessionBound,
-                           SessionInfo, Spec, Stderr, TurnEnd)
+from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, LimitHit, Reply, SessionBound,
+                           SessionInfo, Spec, Stderr, TurnEnd, Usage)
 from driver import records, registry
 from driver.modes.headless_run import HeadlessMode
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
-           "MODES", "POLL", "Reply", "STATES", "SessionBound", "SessionInfo", "Spec", "Stderr", "TurnEnd", "attach",
-           "records", "start"]
+           "LimitHit", "MODES", "POLL", "Reply", "STATES", "SessionBound", "SessionInfo", "Spec", "Stderr", "TurnEnd",
+           "Usage", "attach", "records", "session_info", "start", "usage"]
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
@@ -118,6 +118,11 @@ class Handle:
         self._host.stop()
 
     def info(self) -> SessionInfo:
+        if self._info.native_id:
+            found = self._adapter.session_info(self.sid, self._info.cwd)
+            if found.native_id:
+                return found
+            return replace(self._info, resumable=found.resumable, last_active=found.last_active)
         return self._info
 
     @property
@@ -125,14 +130,15 @@ class Handle:
         """The last reply's text; None before any."""
         return self._reply
 
-    def usage(self) -> dict | None:
+    def usage(self) -> Usage | dict | None:
         return self._adapter.usage(self._info)
 
 
 def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None = None,
-          idle_timeout: float | None = None, name: str | None = None) -> Handle:
+          idle_timeout: float | None = None, name: str | None = None, *, sid: str | None = None) -> Handle:
     """Starts a session of `runtime` in `mode` on `prompt` and returns its Handle. resume continues that session id;
-    otherwise spec.sid, else a new uuid4, names it. With access commands, the adapter's runtime_note follows the prompt
+    otherwise sid, spec.sid, else a new uuid4, names it. Explicit ids must agree. With access commands, the
+    adapter's runtime_note follows the prompt
     after a blank line. Refusals (ConfigError, nothing started): a bad mode, idle_timeout or resume, a resume other
     than spec.sid, a registry error, a Mode the runtime lacks, tui (not available yet), a name in headless mode, a
     launch with no command; an exception from the run's launch or the session record's write propagates. The child
@@ -147,6 +153,12 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
         raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
     if resume is not None and spec.sid is not None and resume != spec.sid:
         raise ConfigError(f"resume {resume} differs from spec.sid {spec.sid}")
+    if sid is not None:
+        replace(spec, sid=sid)
+        if spec.sid is not None and sid != spec.sid:
+            raise ConfigError(f"sid {sid} differs from spec.sid {spec.sid}")
+        if resume is not None and sid != resume:
+            raise ConfigError(f"sid {sid} differs from resume {resume}")
     adapter = registry.adapter(runtime)
     run = adapter.headless_run() if mode == "headless" else adapter.tui_run()
     if run is None:
@@ -155,7 +167,7 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
         raise ConfigError(NO_TUI)
     if name is not None:
         raise ConfigError("name: tui mode only")
-    sid = resume or spec.sid or str(uuid.uuid4())
+    sid = resume or sid or spec.sid or str(uuid.uuid4())
     spec = replace(spec, sid=sid)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
@@ -179,3 +191,14 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
 def attach(name: str) -> Handle:
     """A tui session's Handle, in another process, by its name."""
     raise ConfigError(NO_TUI)
+
+
+def usage(runtime: str) -> Usage:
+    """One account probe; unsupported or unavailable data is an unknown Usage."""
+    found = registry.adapter(runtime).usage()
+    return found if isinstance(found, Usage) else Usage()
+
+
+def session_info(runtime: str, sid: str, cwd: str) -> SessionInfo:
+    """The Adapter's recovery status and latest session activity, queried by session cwd."""
+    return registry.adapter(runtime).session_info(sid, cwd)

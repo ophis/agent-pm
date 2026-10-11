@@ -94,6 +94,21 @@ class SessionInfo:
     project: bool
     transcript: str
     resume: str
+    resumable: str = "unknown"
+    last_active: float | None = None
+
+    @property
+    def resume_command(self) -> str:
+        return self.resume
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Account limits; None marks an unavailable field, reset times are Unix seconds."""
+    five_hour_percent: float | None = None
+    weekly_limit_reached: bool | None = None
+    resets_at: float | None = None
+    weekly_resets_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -172,8 +187,11 @@ class Adapter(ABC):
     def tui_run(self) -> "TuiRun | None":
         """The runtime's TuiRun; None: tui mode unsupported."""
 
-    def usage(self, info: SessionInfo) -> dict | None:
+    def usage(self, info: SessionInfo | None = None) -> Usage | dict | None:
         return None
+
+    def session_info(self, sid: str, cwd: str) -> SessionInfo:
+        return SessionInfo(sid, "", cwd, False, "", "")
 
 
 class HeadlessRun(ABC):

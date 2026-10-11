@@ -1,17 +1,22 @@
-"""Codex access, effective settings and one protected recovery store shared by both Modes."""
+"""Codex access, settings, account probe and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
+recovery and session files have bounded nonblocking reads with regular-file, ownership and symlink checks."""
 import fcntl
 import fnmatch
 import hashlib
 import json
+import math
 import os
+import selectors
 import shlex
 import stat
+import subprocess
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from adapters.base import ConfigError
+from adapters.base import ConfigError, Usage
 
 
 def _absolute(path: str, label: str) -> str:
@@ -458,6 +463,94 @@ class Inspection:
     last_active: float | None = None
 
 
+def _number(value) -> bool:
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _usage(snapshot) -> Usage:
+    if not isinstance(snapshot, dict):
+        return Usage()
+    windows = {}
+    for key in ("primary", "secondary"):
+        window = snapshot.get(key)
+        if not isinstance(window, dict):
+            continue
+        duration = window.get("windowDurationMins")
+        if type(duration) is int and duration in (300, 10080) and duration not in windows:
+            windows[duration] = window
+    five, weekly = windows.get(300, {}), windows.get(10080, {})
+    percent, used = five.get("usedPercent"), weekly.get("usedPercent")
+    reset, weekly_reset = five.get("resetsAt"), weekly.get("resetsAt")
+    return Usage(percent if _number(percent) and percent >= 0 else None,
+                 used >= 100 if _number(used) and used >= 0 else None,
+                 reset if _number(reset) and reset >= 0 else None,
+                 weekly_reset if _number(weekly_reset) and weekly_reset >= 0 else None)
+
+
+def _account_probe(env: dict, timeout: float) -> dict | None:
+    process = None
+    try:
+        process = subprocess.Popen(("codex", "app-server"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, env=env, bufsize=0)
+        deadline, pending, read_bytes = time.monotonic() + timeout, bytearray(), 0
+        os.set_blocking(process.stdout.fileno(), False)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+
+            def send(value):
+                process.stdin.write(json.dumps(value).encode("utf-8") + b"\n")
+
+            def response(identifier):
+                nonlocal read_bytes
+                while True:
+                    while b"\n" in pending:
+                        line, _, rest = pending.partition(b"\n")
+                        pending[:] = rest
+                        record = json.loads(line)
+                        if (isinstance(record, dict) and type(record.get("id")) is int
+                                and record["id"] == identifier):
+                            result = record.get("result")
+                            return result if isinstance(result, dict) and "error" not in record else None
+                    left = deadline - time.monotonic()
+                    if left <= 0 or not selector.select(left):
+                        return None
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    if not chunk:
+                        return None
+                    read_bytes += len(chunk)
+                    if read_bytes > 1024 * 1024:
+                        return None
+                    pending.extend(chunk)
+
+            send({"id": 1, "method": "initialize", "params": {
+                "clientInfo": {"name": "agent_pm", "version": "0.1.0"}}})
+            if response(1) is None:
+                return None
+            send({"method": "initialized"})
+            send({"id": 2, "method": "account/rateLimits/read"})
+            return response(2)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return None
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=0.2)
+                    except subprocess.TimeoutExpired:
+                        pass
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    stream.close()
+
+
 class CodexCommon:
     unset = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
              "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")
@@ -520,6 +613,16 @@ class CodexCommon:
 
     def environment(self, snapshot: dict) -> dict[str, str]:
         return {**self.defaults, **self.config.get("env", {}), "CODEX_HOME": snapshot["codex_home"]}
+
+    def usage(self, *, timeout: float = 10) -> Usage:
+        """One no-model account/rateLimits/read request to the installed app-server; no cached fallback."""
+        env = {key: value for key, value in os.environ.items() if key not in self.unset}
+        result = _account_probe({**env, **self.defaults, **self.config.get("env", {})}, timeout)
+        if not isinstance(result, dict):
+            return Usage()
+        limits = result.get("rateLimitsByLimitId")
+        snapshot = limits.get("codex") if isinstance(limits, dict) else None
+        return _usage(snapshot if isinstance(snapshot, dict) else result.get("rateLimits"))
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot

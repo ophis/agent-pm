@@ -8,3 +8,23 @@
 #                    driver.api.start takes and the package src/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
+
+[adapters.codex]
+implementation = "adapters.codex:CodexAdapter"
+shell_network = false
+
+[adapters.codex.tiers]
+1 = "gpt-6-astra"
+2 = "gpt-6.1-sol"
+3 = "gpt-6-luna"
+4 = "gpt-5.6-terra"
+
+[adapters.codex.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+# Optional local env table supplies launch/probe variables, including CODEX_HOME; resume keeps the saved CODEX_HOME.
+[adapters.codex.env]

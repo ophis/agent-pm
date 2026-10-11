@@ -1,5 +1,5 @@
 """Codex's abstract factory."""
-from adapters.base import Adapter
+from adapters.base import Adapter, SessionInfo
 from .common import CodexCommon
 from .headless_run import CodexHeadlessRun
 
@@ -17,3 +17,11 @@ class CodexAdapter(Adapter):
 
     def tui_run(self):
         return None
+
+    def usage(self, info=None):
+        return self.common.usage()
+
+    def session_info(self, sid, cwd):
+        found = self.common.inspect(sid, cwd)
+        return SessionInfo(found.sid, found.native_id, found.cwd, found.project, found.transcript, found.resume,
+                           found.resumable, found.last_active)

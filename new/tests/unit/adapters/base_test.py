@@ -8,7 +8,7 @@ from unittest import mock
 
 from new.tests import hermetic  # noqa: F401
 from adapters import base
-from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch, Paste,
+from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch, LimitHit, Paste,
                            Reply, SessionBound, SessionInfo, Spec, Stderr, TuiRun, TurnEnd)
 
 
@@ -141,8 +141,8 @@ class LaunchTest(Refusals):
 
 
 class EventsTest(unittest.TestCase):
-    def test_the_frozen_set_is_the_six_events(self):
-        self.assertEqual(typing.get_args(base.Event), (SessionBound, Activity, Reply, TurnEnd, Blocked, Exited))
+    def test_the_frozen_set_is_the_seven_events(self):
+        self.assertEqual(typing.get_args(base.Event), (SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited))
         self.assertNotIn(Stderr, typing.get_args(base.Event))
 
     def test_defaults(self):

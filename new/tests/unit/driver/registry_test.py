@@ -126,9 +126,11 @@ class ReadConfigTest(Base):
 
 
 class TablesTest(Base):
-    def test_committed_config_parses_with_no_tables(self):
-        self.assertEqual(registry.tables(), {})
-        self.assertEqual(registry.configured(), [])
+    def test_committed_config_loads_the_available_adapter(self):
+        self.assertEqual(registry.configured(), ["codex"])
+        adapter = registry.adapter("codex")
+        self.assertIsNotNone(adapter.headless_run())
+        self.assertIsNone(adapter.tui_run())
 
     def test_the_merged_tables_and_their_sorted_names(self):
         path = self.write("config.toml", '[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n')

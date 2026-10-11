@@ -109,3 +109,14 @@ class HeadlessIntegrationTest(Base):
         found = self.drain(api.start("codex", "headless", "one", self.spec))
         self.assertIn(LimitHit(None), found)
         self.assertEqual(found[-1], Exited(0))
+
+    def test_caller_sid_and_handle_info_inspect_native_binding(self):
+        spec = dataclasses.replace(self.spec, sid=None)
+        handle = api.start("codex", "headless", "hello", spec, sid="caller-owned")
+        self.drain(handle)
+        info = handle.info()
+        self.assertEqual((handle.sid, info.sid, info.native_id, info.resumable),
+                         ("caller-owned", "caller-owned", NATIVE, "yes"))
+        self.assertTrue(info.transcript.endswith(f"-{NATIVE}.jsonl"))
+        self.assertIsNotNone(info.last_active)
+        self.assertIn(NATIVE, info.resume_command)
