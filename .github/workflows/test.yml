@@ -25,15 +25,9 @@ jobs:
           python-version: "3.11"
       - name: Check tmux shard inventory
         run: python3 .github/tmux_shards.py --check
-      - name: Orchestrator tests
+      - name: Unit tests
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"
-      - name: Core tests
-        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s core/src/tests -p "*_test.py"
-      - name: Tmux skill script tests
-        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
+        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
 
   integration-core:
     name: Core integration (Python 3.11)
@@ -54,7 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
       - name: Core integration tests
-        run: python3 -m unittest discover -v -s core/src/tests/integration -p "*_integration_test.py"
+        run: python3 -m unittest discover -v -s tests/integration/core -t . -p "*_test.py"
 
   integration-orchestrator:
     name: Orchestrator integration (Python 3.11)
@@ -74,7 +68,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
       - name: Orchestrator integration tests
-        run: python3 -m unittest discover -v -s orchestrator/src/tests/integration -p "*_integration_test.py"
+        run: python3 -m unittest discover -v -s tests/integration/orchestrator -t . -p "*_test.py"
 
   integration-tmux:
     name: Tmux integration (${{ matrix.shard }}, Python 3.11)

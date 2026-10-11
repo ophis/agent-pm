@@ -6,18 +6,25 @@ from pathlib import Path
 import sys
 import unittest
 
-DIRECTORY = Path(__file__).resolve().parents[1] / "core/skills/tmux/scripts/integration"
+ROOT = Path(__file__).resolve().parents[1]
+DIRECTORY = ROOT / "tests/integration/tmux"
 WORKFLOW = Path(__file__).resolve().parent / "workflows/test.yml"
 SHARDS = {
-    "A": ["crew_integration_test.Grid", "crew_integration_test.Lifecycle", "crew_integration_test.Splits"],
-    "B": ["crew_integration_test.Roster"],
-    "C": ["crew_integration_test.Retile", "crew_integration_test.Managers", "crew_integration_test.Settle"],
+    "A": ["tests.integration.tmux.crew_integration_test.Grid", "tests.integration.tmux.crew_integration_test.Lifecycle",
+          "tests.integration.tmux.crew_integration_test.Splits"],
+    "B": ["tests.integration.tmux.crew_integration_test.Roster"],
+    "C": ["tests.integration.tmux.crew_integration_test.Retile",
+          "tests.integration.tmux.crew_integration_test.Managers", "tests.integration.tmux.crew_integration_test.Settle"],
 }
 
 
 def discover(directory):
+    """<module>.<class> of each test class under `directory`, the module named from its nearest non-package ancestor."""
+    top = Path(directory)
+    while (top / "__init__.py").is_file():
+        top = top.parent
     loader = unittest.TestLoader()
-    suite = loader.discover(str(directory), pattern="*_integration_test.py")
+    suite = loader.discover(str(directory), pattern="*_integration_test.py", top_level_dir=str(top))
     if loader.errors:
         raise ValueError("\n".join(loader.errors))
     def classes(tests):
@@ -52,6 +59,7 @@ def validate(discovered, groups, labels):
 
 
 def main():
+    sys.path.insert(0, str(ROOT))
     validate(discover(DIRECTORY), SHARDS, workflow_shards(WORKFLOW))
     if sys.argv[1:] == ["--check"]:
         print("Tmux shard inventory matches discovery and workflow")
