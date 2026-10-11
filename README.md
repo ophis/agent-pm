@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom, from entry points to the agent runtimes. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick: events, replies and callbacks passed up (the Driver's uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom, from entry points to the agent runtimes. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -48,15 +48,14 @@ flowchart TB
   M -->|"--issue · --tui"| R
   M -->|"CLI --detach"| D
   W -->|API| DR
-  RU -->|delegate.run| D
-  D ==>|"begun · progress · outcome"| RU
+  RU <==>|"delegate.run · begun, progress, outcome"| D
   CF -->|resolve| C
   OR -->|"sessions · usage · session_info · detach · show · close"| DR
-  D --> C & DR
+  D --> C
+  D <==>|"start · events, replies"| DR
   DR -->|"loads; headless_run() / tui_run()"| B
   B -.->|implemented by| CL & CX
   DR -->|"starts & hosts (pipe / tmux)"| RT
-  DR ==>|events, replies| D
   CL -.->|"wraps (argv, output, hooks)"| P1
   CX -.->|wraps| P2
 ```
