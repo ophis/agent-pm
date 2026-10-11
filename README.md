@@ -15,36 +15,59 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Reads top to bottom, from callers to the agent runtimes. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick: events and replies the Driver passes up uninterpreted. Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
-  subgraph L1[callers]
-    O[orchestrator]
+  subgraph EN[entry points]
+    LD[launchd]
+    HU[the user]
     M["manager: /agent-pm:tmux"]
+  end
+  subgraph L1[orchestration]
+    subgraph OR[orchestrator/]
+      R["router.py<br>lock · liveness · per-runtime usage gate · pick · detach"]
+      RU["run.py (in its detached session)<br>delegate.run · Linear write-back<br>sessions.py · writeback.py"]
+      PP["promote.py → prune.py"]
+      CF["config.py<br>load() once per process → Config"]
+    end
     W[crew.py]
   end
-  D["delegate/<br>API · CLI · reply parsing · run policy"]
-  C["composer/<br>prompt · run spec"]
-  DR["driver/<br>api · registry · records<br>modes: headless_run · tui_run<br>tmux_host"]
-  subgraph AD[adapters/]
-    B["base.py<br>Adapter (abstract factory)<br>HeadlessRun · TuiRun (abstract)"]
-    CL["claude/: one factory<br>ClaudeAdapter<br>ClaudeHeadlessRun · ClaudeTuiRun<br>ClaudeCommon"]
-    CX["codex/: one factory<br>CodexAdapter<br>CodexHeadlessRun · CodexTuiRun<br>CodexCommon"]
+  subgraph L2["role runs (role · task)"]
+    D["delegate/<br>API · CLI · reply parsing · run policy"]
+    C["composer/<br>prompt · run spec · resolve"]
+  end
+  subgraph L3[sessions]
+    DR["driver/<br>api · registry · records<br>modes: headless_run · tui_run<br>tmux_host"]
+    subgraph AD[adapters/]
+      B["base.py<br>Adapter (abstract factory)<br>HeadlessRun · TuiRun (abstract)"]
+      CL["claude/: one factory<br>ClaudeAdapter<br>ClaudeHeadlessRun · ClaudeTuiRun<br>ClaudeCommon"]
+      CX["codex/: one factory<br>CodexAdapter<br>CodexHeadlessRun · CodexTuiRun<br>CodexCommon"]
+      PP2["print_prompt/: one factory<br>PrintPromptAdapter<br>PrintPromptHeadlessRun (prints the prompt; no tui)"]
+    end
   end
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
   end
-  O & M -->|"API / CLI --detach"| D
+  LD --> R & PP
+  HU -->|"--issue · --tui"| R
+  M -->|"--issue · --tui"| R
+  M -->|"CLI --detach"| D
   W -->|API| DR
-  D --> C & DR
+  RU <==>|"delegate.run · begun, progress, outcome"| D
+  CF -->|resolve| C
+  OR -->|"sessions · usage · session_info · detach · show · close"| DR
+  D --> C
+  D <==>|"start · events, replies"| DR
   DR -->|"loads; headless_run() / tui_run()"| B
-  B -.->|implemented by| CL & CX
+  B -.->|implemented by| CL & CX & PP2
   DR -->|"starts & hosts (pipe / tmux)"| RT
-  DR ==>|events, replies| D
   CL -.->|"wraps (argv, output, hooks)"| P1
   CX -.->|wraps| P2
+  R ~~~ RU
+  PP ~~~ CF
+  C ~~~ DR
 ```
 
 ## Install

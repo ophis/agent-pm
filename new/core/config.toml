@@ -118,3 +118,28 @@ effort = "low"
 #                    driver.api.start takes and the package src/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
+
+# [adapters.claude]  Claude Code (src/adapters/claude/); each key optional
+#   flags            claude flags added to every session command; never --setting-sources (the Driver's)
+#   allow            tool rules pre-approved for every session (--allowedTools), after the run's own commands
+#   env              variables added to every command's environment, over the adapter's defaults
+# [adapters.claude.tiers]    tier "1".."4" → its --model
+# [adapters.claude.efforts]  effort (low, medium, high, xhigh, max) → its --effort
+#                            starting a run whose tier or effort has no entry here is a config error
+[adapters.claude]
+implementation = "adapters.claude:ClaudeAdapter"
+flags = ["--permission-mode", "auto", "--strict-mcp-config"]
+# allow = ["<rule>"]
+
+[adapters.claude.tiers]
+1 = "fable"
+2 = "opus"
+3 = "sonnet"
+4 = "haiku"
+
+[adapters.claude.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
