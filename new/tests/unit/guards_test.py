@@ -26,7 +26,8 @@ class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
                             (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.utils_imports, CORE),
-                            (guards.repo_library, CORE), (guards.modes_import_api, CORE)):
+                            (guards.repo_library, CORE), (guards.modes_import_api, CORE), (guards.tmux_calls, CORE),
+                            (guards.syntax_39, CORE)):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
 
@@ -183,6 +184,34 @@ class ModesImportApi(Sample):
                                                    "from ..errors import DriverError\n",
                           "src/driver/x.py": "from driver import api\n", "src/y.py": "import driver.api\n"})
         self.assertEqual(guards.modes_import_api(root), [])
+
+
+class TmuxCalls(Sample):
+    def test_the_tmux_constant_only_in_tmux_host(self):
+        sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
+        root = self.tree({"src/driver/tmux_host.py": sample, "src/driver/modes/x.py": sample,
+                          "src/composer/y.py": 'TOOL = "tmux"\n', "tests/z.py": sample})
+        self.assertEqual(guards.tmux_calls(root), ['src/composer/y.py:1: str constant "tmux"',
+                                                   'src/driver/modes/x.py:2: str constant "tmux"',
+                                                   'tests/z.py:2: str constant "tmux"'])
+
+    def test_tmux_inside_a_longer_string_is_clean(self):
+        root = self.tree({"src/driver/x.py": 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'})
+        self.assertEqual(guards.tmux_calls(root), [])
+
+
+class Syntax39(Sample):
+    def test_newer_syntax_in_a_standalone_file_is_a_violation(self):
+        root = self.tree({"src/driver/tmux_host.py": "def f(x: int | None): pass\nmatch x:\n    case _: pass\n",
+                          "src/driver/api.py": "match x:\n    case _: pass\n"})
+        found = guards.syntax_39(root)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("src/driver/tmux_host.py: "), found)
+
+    def test_3_9_syntax_is_clean(self):
+        root = self.tree({"src/driver/tmux_host.py": "from __future__ import annotations\n"
+                                                     "def f(x: int | None) -> list[str]: return []\n"})
+        self.assertEqual(guards.syntax_39(root), [])
 
 
 class Syntax311(Sample):

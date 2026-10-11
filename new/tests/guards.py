@@ -13,6 +13,8 @@ syntax_311(new)      every .py parses as Python 3.11
 utils_imports(core)  each module under src/utils/ imports only the stdlib (sys.stdlib_module_names) and utils
 repo_library(core)   no module under src/ imports repo (repo.py is only the agents' git CLI)
 modes_import_api(core)  no module under src/driver/modes/ imports driver.api (a Mode raises driver.errors' DriverError)
+tmux_calls(core)     no str constant "tmux" outside src/driver/tmux_host.py (TMUX_HOST), the only module that calls tmux
+syntax_39(core)      each standalone file (STANDALONE) parses as Python 3.9
 """
 import ast
 import os
@@ -30,6 +32,8 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))   # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
+TMUX_HOST = "src/driver/tmux_host.py"
+STANDALONE = (TMUX_HOST,)   # run with -I as files of their own, under the system's Python 3.9 too
 
 
 def layer_imports(core: str) -> list[str]:
@@ -108,6 +112,26 @@ def modes_import_api(core: str) -> list[str]:
         if names[:2] == ["driver", "modes"]:
             found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
                          if m.split(".")[:2] == ["driver", "api"])
+    return sorted(found)
+
+
+def tmux_calls(core: str) -> list[str]:
+    found = set()
+    for rel, text in _files(core, ".py"):
+        if rel != TMUX_HOST:
+            found.update(f'{rel}:{line}: str constant "tmux"' for line, s in _strings(ast.parse(text, rel))
+                         if s == "tmux")
+    return sorted(found)
+
+
+def syntax_39(core: str) -> list[str]:
+    found = []
+    for rel, text in _files(core, ".py"):
+        if rel in STANDALONE:
+            try:
+                ast.parse(text, rel, feature_version=(3, 9))
+            except SyntaxError as e:
+                found.append(f"{rel}: {e}")
     return sorted(found)
 
 
