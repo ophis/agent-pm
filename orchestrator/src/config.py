@@ -264,7 +264,8 @@ def run_config(role, task=None, root=ROOT):
     """compose.RunConfig of the role (task: None or one it names): core config, then its `[clients.claude]`, then
     layers(root)."""
     core = os.path.join(root, "core")
-    return compose.resolve(core, clients.get("claude", core), role, task, overlays=layers(root), trusted=True)
+    return compose.resolve(core, clients.get("claude", core), role, task, overlays=layers(root), trusted=True,
+                           label=("orchestrator/config.toml", "core"))
 
 
 def writable(work=RUNS_DIR):

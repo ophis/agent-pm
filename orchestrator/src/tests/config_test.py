@@ -161,8 +161,8 @@ GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
 
 
 def old_key(key):
-    return (f"core: [overlay.roles.researcher] has {key!r}: task-level config and default_task "
-            "are gone; set run keys in [overlay.roles.researcher] (a run without a task picks one)")
+    return (f"core: orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
+            "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)")
 
 
 class Runnable(ConfigFile, unittest.TestCase):
@@ -236,7 +236,8 @@ class Runnable(ConfigFile, unittest.TestCase):
                 self.assertEqual(config.run_config("pm", task, self.dir), "run")
                 overlay.assert_called_once_with(self.dir)
                 client.assert_called_once_with("claude", core)
-                resolve.assert_called_once_with(core, "client", "pm", task, overlays=[{"tier": 3}], trusted=True)
+                resolve.assert_called_once_with(core, "client", "pm", task, overlays=[{"tier": 3}], trusted=True,
+                                                label=("orchestrator/config.toml", "core"))
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
@@ -344,14 +345,14 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.assertEqual(config.run_config("researcher", root=self.root).gate, "")
 
     def test_overlay_unknown_keys(self):
-        unknown = "core: unknown key "
-        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in run overlay"),
-                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in run overlay"),
-                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in run overlay"),
-                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in run overlay"),
-                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in run overlay"),
-                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in run overlay"),
-                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in run overlay roles.researcher")]
+        unknown = "core: orchestrator/config.toml: unknown key "
+        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in [core]"),
+                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in [core]"),
+                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in [core]"),
+                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in [core]"),
+                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in [core]"),
+                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in [core]"),
+                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in [core.roles.researcher]")]
         cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),
                   ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks"))]
         for text, message in cases:

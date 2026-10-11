@@ -216,9 +216,11 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
 
 
 def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
-            overlays: Sequence[Mapping] = (), trusted: bool = False) -> RunConfig:
+            overlays: Sequence[Mapping] = (), trusted: bool = False,
+            label: tuple[str, str] = ("run overlay", "overlay")) -> RunConfig:
     """Resolve base (including local config), selected client, then caller overlays: later layers win,
-    role values beat global values within a layer, and output tables replace rather than merge.
+    role values beat global values within a layer, and output tables replace rather than merge; an overlay error
+    names `label` (source, the overlays' TOML table).
 
     The caller must set `trusted` only for operator-controlled local configuration. An
     in-process caller can opt in, so this is an API contract rather than a sandbox.
@@ -237,8 +239,12 @@ def resolve(root: str, client: ConfigClient, role: str, task: str | None = None,
             raise ConfigError(f"unknown role {name!r} in selected client")
         if not isinstance(table, Mapping):
             raise ConfigError(f"selected client roles.{name} must be a table")
+    source, where = label
     for overlay in overlays:
-        _check_overlay(overlay, roles)
+        try:
+            _check_overlay(overlay, roles, where)
+        except ConfigError as e:
+            raise ConfigError(f"{source}: {e}") from None
     return load_run(root, role, task, layers=(client.config, *overlays))
 
 
@@ -261,36 +267,36 @@ def _roles(root: str) -> Mapping:
     return roles
 
 
-def _check_overlay(overlay: Mapping, roles: Mapping) -> None:
+def _check_overlay(overlay: Mapping, roles: Mapping, where: str) -> None:
     if not isinstance(overlay, Mapping):
-        raise ConfigError("run overlay must be a table")
-    _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, "run overlay")
-    _check_overlay_output(overlay, "run overlay")
+        raise ConfigError(f"[{where}] must be a table")
+    _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, where)
+    _check_overlay_output(overlay, where)
     if "roles" not in overlay:
         return
     if not isinstance(overlay["roles"], Mapping):
-        raise ConfigError("run overlay roles must be a table")
+        raise ConfigError(f"[{where}.roles] must be a table")
     for role, table in overlay["roles"].items():
         if role not in roles:
-            raise ConfigError(f"unknown role {role!r} in run overlay")
+            raise ConfigError(f"unknown role {role!r} in [{where}.roles]")
         if not isinstance(table, Mapping):
-            raise ConfigError(f"run overlay roles.{role} must be a table")
-        check_old_keys(table, role, "overlay.")
-        _check_overlay_keys(table, RUN_KEYS, f"run overlay roles.{role}")
-        _check_overlay_output(table, f"run overlay roles.{role}")
+            raise ConfigError(f"[{where}.roles.{role}] must be a table")
+        check_old_keys(table, role, f"{where}.")
+        _check_overlay_keys(table, RUN_KEYS, f"{where}.roles.{role}")
+        _check_overlay_output(table, f"{where}.roles.{role}")
 
 
 def _check_overlay_output(table: Mapping, where: str) -> None:
     if "output" not in table:
         return
     if not isinstance(table["output"], Mapping):
-        raise ConfigError(f"{where} output must be a table")
-    _check_overlay_keys(table["output"], OUTPUT_KEYS, f"{where} output")
+        raise ConfigError(f"[{where}.output] must be a table")
+    _check_overlay_keys(table["output"], OUTPUT_KEYS, f"{where}.output")
 
 
 def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed, key=str):
-        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
+        raise ConfigError(f"unknown key {extra[0]!r} in [{where}]")
 
 
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
