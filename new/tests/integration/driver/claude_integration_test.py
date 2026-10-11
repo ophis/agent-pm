@@ -1,23 +1,28 @@
 """driver.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
 registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
-api.session_info. HOME and CLAUDE_CONFIG_DIR are temp dirs."""
+api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
+CLAUDE_CONFIG_DIR are temp dirs."""
 import json
 import os
 import shlex
 import signal
 import stat
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from unittest import mock
 
-from new.tests import fake_claude, hermetic
+from new.tests import SRC, fake_claude, hermetic
 from adapters.base import Activity, Exited, LimitHit, Reply, SessionBound, SessionStatus, Stderr, TurnEnd, Usage
 from driver import api, registry
 
 WAIT = 20    # upper bound on any wait, in seconds
 IDLE = 0.5   # idle_timeout, in seconds
+SETTLE = 0.5   # seconds a caller gets to wait in events() again after printing an event
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 RESETS = 1760000000
 TABLE = {"implementation": "adapters.claude:ClaudeAdapter",
@@ -25,6 +30,37 @@ TABLE = {"implementation": "adapters.claude:ClaudeAdapter",
          "tiers": {"4": "haiku"}, "efforts": {"low": "low"}}
 PROBE = ["-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
          "--setting-sources", "user", "--strict-mcp-config"]
+# A caller: argv[1] goes first on sys.path, argv[2] is the claude table, argv[3] the workdir. It prints each event's
+# name; on a KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
+CALLER = """import json, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+from driver import api, registry
+signal.signal(signal.SIGINT, signal.default_int_handler)
+registry.configure({"adapters": {"claude": json.loads(sys.argv[2])}})
+handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[3]))
+try:
+    for event in handle.events():
+        print(type(event).__name__, flush=True)
+except KeyboardInterrupt:
+    print("KeyboardInterrupt", flush=True)
+    time.sleep(60)
+"""
+
+
+def running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def kill(pid: int) -> None:
+    """SIGKILL to a test's stray process, if it still runs."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 class Base(unittest.TestCase):
@@ -121,12 +157,54 @@ class RunTest(Base):
         self.assertEqual(self.drain(again), [SessionBound(first.sid), Reply("second"), TurnEnd("second", 0),
                                              Exited(0)])
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", first.sid])
+        self.assertNotIn("--session-id", self.logged()[1]["argv"])
         self.assertEqual(again.info().transcript, first.info().transcript)
         with open(again.info().transcript, encoding="utf-8") as f:
             turns = [(r["type"], r["message"]["content"]) for r in map(json.loads, f)]
         self.assertEqual(turns, [("user", "hello"), ("assistant", [{"type": "text", "text": "first"}]),
                                  ("user", "more"), ("assistant", [{"type": "text", "text": "second"}])])
         self.assertEqual([e["kind"] for e in self.written()], ["session", "client_session"] * 2)
+
+    def test_a_run_in_its_own_cwd_is_recorded_there_and_resumes_there(self):
+        proj = os.path.join(self.dir, "proj")
+        os.mkdir(proj)
+        first = self.start(spec=api.Spec(workdir=self.workdir, access=api.Access(cwd=proj)))
+        sid, transcript = first.sid, first.info().transcript
+        self.assertEqual(self.drain(first)[-1], Exited(0))
+        self.assertTrue(os.path.isfile(transcript))
+        self.assertEqual(os.listdir(self.workdir), ["run.jsonl"])
+        resume = f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
+        recorded = api.session(self.workdir, sid)
+        self.assertEqual({k: v for k, v in recorded.items() if k != "ts"},
+                         {"kind": "session", "sid": sid, "cwd": proj, "project": False, "transcript": transcript,
+                          "resume": resume})
+
+        again = self.start("more", api.Spec(workdir=self.workdir, access=api.Access(cwd=recorded["cwd"])),
+                           resume=sid)
+        self.assertEqual(self.drain(again)[-1], Exited(0))
+        calls = self.logged()
+        self.assertEqual([call["cwd"] for call in calls], [proj, proj])
+        self.assertEqual(calls[1]["argv"][:3], ["-p", "--resume", sid])
+        self.assertNotIn("--session-id", calls[1]["argv"])
+        with open(transcript, encoding="utf-8") as f:
+            users = [r["message"]["content"] for r in map(json.loads, f) if r["type"] == "user"]
+        self.assertEqual(users, ["hello", "more"])
+        self.assertEqual([e["cwd"] for e in self.written() if e["kind"] == "session"], [proj, proj])
+
+    def test_a_session_killed_outside_the_driver_ends_with_its_signal_and_resumes(self):
+        self.scenario(steps=["first"], hang=True)
+        first = self.start()
+        sid = first.sid
+
+        def on(event):
+            if isinstance(event, Reply):
+                os.kill(self.logged()[0]["pid"], signal.SIGKILL)
+        self.assertEqual(self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)])
+        self.assertEqual(api.session_info("claude", sid, self.workdir).resumable, "yes")
+        self.scenario(steps=["second"])
+        again = self.start("more", resume=sid)
+        self.assertEqual(self.drain(again), [SessionBound(sid), Reply("second"), TurnEnd("second", 0), Exited(0)])
+        self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", sid])
 
     def test_a_caller_sid_names_the_session(self):
         handle = self.start(sid=SID)
@@ -155,9 +233,11 @@ class RunTest(Base):
         handle = self.start()
         self.assertEqual(self.drain(handle), [SessionBound(handle.sid), Reply("partial"), TurnEnd("", 0), Exited(3)])
 
-    def test_resuming_a_session_without_a_transcript_exits_1(self):
-        self.assertEqual(self.drain(self.start(resume=SID)),
-                         [Stderr(f"No conversation found with session ID: {SID}"), Exited(1)])
+    def test_resuming_a_session_without_a_transcript_exits_1_and_its_stderr_is_recorded(self):
+        said = f"No conversation found with session ID: {SID}"
+        self.assertEqual(self.drain(self.start(resume=SID)), [Stderr(said), Exited(1)])
+        self.assertEqual([e["kind"] for e in self.written()], ["session", "stderr"])
+        self.assertEqual(self.written()[1]["text"], said)
 
     def test_a_silent_session_yields_idle_timeouts_until_stop_ends_it(self):
         self.scenario(steps=["working"], hang=True)
@@ -173,6 +253,39 @@ class RunTest(Base):
         self.assertEqual([e for e in found if not isinstance(e, api.IdleTimeout)],
                          [SessionBound(handle.sid), Reply("working"), Exited(-signal.SIGKILL)])
         self.assertEqual(found[-2], api.IdleTimeout(IDLE))
+
+
+class InterruptTest(Base):
+    def until(self, caller: subprocess.Popen, check, what: str) -> None:
+        """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s pass."""
+        deadline = time.monotonic() + WAIT
+        while not check():
+            if caller.poll() is not None or time.monotonic() > deadline:
+                self.fail(f"the caller never {what} (rc {caller.poll()}): {self.printed()}")
+            time.sleep(0.05)
+
+    def printed(self) -> list[str]:
+        with open(self.out, encoding="utf-8") as f:
+            return f.read().split()
+
+    def test_an_interrupt_while_events_waits_kills_the_hung_session(self):
+        self.scenario(steps=["working"], hang=True)
+        self.out = os.path.join(self.dir, "caller.out")
+        with open(self.out, "w", encoding="utf-8") as f:
+            caller = subprocess.Popen([sys.executable, "-I", "-c", CALLER, SRC, json.dumps(TABLE), self.workdir],
+                                      env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=f,
+                                      stderr=subprocess.STDOUT)
+        self.addCleanup(caller.wait)
+        self.addCleanup(caller.kill)
+        self.until(caller, lambda: "Reply" in self.printed(), "printed the Reply")
+        (entry,) = self.logged()
+        self.addCleanup(kill, entry["pid"])
+        # SIGINT must land while events() waits, not in the loop body, where it would only close the iterator.
+        time.sleep(SETTLE)
+        caller.send_signal(signal.SIGINT)
+        self.until(caller, lambda: "KeyboardInterrupt" in self.printed(), "caught the KeyboardInterrupt")
+        self.assertEqual(self.printed(), ["SessionBound", "Reply", "KeyboardInterrupt"])
+        self.assertFalse(running(entry["pid"]))
 
 
 class UsageTest(Base):
