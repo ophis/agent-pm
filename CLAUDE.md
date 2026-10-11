@@ -5,20 +5,17 @@ Agent pipeline on a Linear board (README). `core/` runs one role, on a task give
 ## Commands
 
 ```bash
-python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"
-python3 -m unittest discover -s core/src/tests -p "*_test.py"
-python3 -m unittest discover -s core/skills/tmux/scripts -p "*_test.py"
-python3 -m unittest discover -s core/src/tests/integration -p "*_integration_test.py"
-python3 -m unittest discover -s core/skills/tmux/scripts/integration -p "*_integration_test.py"
-python3 -m unittest discover -s orchestrator/src/tests/integration -p "*_integration_test.py"
+python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
+python3 -m unittest discover -s tests/integration -t . -p "*_test.py"
+python3 -m unittest tests.unit.core.drive_test            # one module
 claude --plugin-dir core                                  # this checkout's plugin as agent-pm@inline; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
 ./gen-preview.sh                                          # every role × task's composed prompt into previews/ (gitignored)
 ```
 
-CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (the three suites) and separate Core, Orchestrator and sharded Tmux integration jobs (each installs tmux); a test must pass on Linux too.
+CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Unit tests (all of `tests/unit`) and separate Core, Orchestrator and sharded Tmux integration jobs (each installs tmux); a test must pass on Linux too.
 
-Integration tests (real processes end to end) go in a suite's `integration/` as `<x>_integration_test.py`, with no `__init__.py` (the unit discovery then skips them). A new such dir gets an integration job and a line in Commands. Assign each tmux integration test class once in `.github/tmux_shards.py`; its gate checks every `*_integration_test.py` and requires its shard names to match the workflow's inline JSON matrix.
+Tests: a unit test of module `<m>` is `tests/unit/<pkg>/<m>_test.py`, an integration test (real processes end to end) `tests/integration/<pkg>/<m>_integration_test.py`; `<pkg>` is `core` (`core/src`), `tmux` (`core/skills/tmux/scripts`) or `orchestrator` (`orchestrator/src`); existing files keep their names. Every dir under `tests/` has an `__init__.py` (discovery skips a dir without one); import a helper by package path (`from tests.integration.core import fake_claude`). A new `<pkg>` needs its source dir in `tests/__init__.py` and an integration job. Assign each tmux integration test class once in `.github/tmux_shards.py`; its gate checks every `*_integration_test.py` and requires its shard names to match the workflow's inline JSON matrix.
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
@@ -43,7 +40,7 @@ A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs 
 
 ## Roles, tasks, rules
 
-- Config: each `config.toml` documents every key and has a local file merged over it (its header); `repo.read_config` is the only loader, and validation runs on the merge. An invalid config stops router, run and promote (`config.runnable`). Tests never read a real local file: a test module reading the repo's config (every orchestrator one) imports `hermetic` first; a test writes its own local file under `hermetic.home`.
+- Config: each `config.toml` documents every key and has a local file merged over it (its header); `repo.read_config` is the only loader, and validation runs on the merge. An invalid config stops router, run and promote (`config.runnable`). Tests never read a real local file: a test module reading the repo's config (every orchestrator one) imports `tests/hermetic.py` first (`from tests import hermetic`); a test writes its own local file under `hermetic.home`.
 - Core owns roles, tasks, methods, principles and templates (`core/team/`, `core/config.toml`); `orchestrator/config.toml` adds what core must not know, plus the overlay.
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `core/team/guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
