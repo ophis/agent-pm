@@ -1,5 +1,3 @@
-"""Agent Skill: the composed role run, printed for the calling Claude Code conversation to follow (the act-as skill)
-instead of starting an agent run."""
 from .base import PROGRESS, Client
 from .claude import APPROVAL
 
