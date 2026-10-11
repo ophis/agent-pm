@@ -62,6 +62,21 @@ Add `--dry-run` to inspect the command without starting Codex. `[clients.codex.t
 - **Project settings:** an untrusted run must start inside its workdir. The client disables project AGENTS.md loading and rejects project-local `.codex` settings in its cwd ancestry or a project-controlled `CODEX_HOME`; use a clean workdir, or mark an operator-controlled cwd in `trusted_dirs` when its project settings are intended. Trusted runs may load those settings.
 - **Portable resources:** prompts and access grants use absolute paths to the installed core's `src/`, `team/tasks/`, and `team/methods/`. A Codex role run does not load the Claude plugin wrappers in `skills/` or need `${CLAUDE_SKILL_DIR}`. `src/tests/integration/fake_codex.py` gives process tests a fake CLI and an isolated HOME.
 
+**Operating setup.** Install and authenticate the `codex` CLI and use Python 3.11+. Start each role in a clean workdir with `--client codex`, `--input`, `--out`, and `--workdir`; select a role/task from `team/roles/` and `team/tasks/`. Run `--dry-run` first to check the model, cwd, and directory grants. Update `[clients.codex.tiers]` in the operator's local config when a model changes. The access, network, project-setting, and recovery rules above apply to every role. A fresh run needs its own workdir and run ID; an interrupted run resumes with the original `--sid`.
+
+**TASK-293 live role smoke (2026-10-11).** These runs used a disposable local core copy and a no-remote Git fixture, with Engineer output changed to `local` only in that copy. No smoke published anything. Each row below records a real `drive.validate`-accepted terminal report; `needs_input` is a correct boundary report, not a completed build. All six dry-runs selected valid Codex commands before live execution.
+
+| Role / task | Terminal report | Observed result |
+| --- | --- | --- |
+| researcher / `deep-research` | `done` | Sourced 139-word report on `Path.exists()`; one round of 12 children completed, then `round` progress and outcome. |
+| researcher / `light-research` | `done` | Sourced 161-word report on `Path.exists()`, with three child findings collected before outcome. |
+| pm / `product-design` | `done` | Local timer PRD with two flows and acceptance criteria; self-grill and review children finished before outcome. |
+| engineer / `build` | `needs_input` | Missing target repository and PRD; no build or publication. Portable method completion belongs to TASK-147. |
+| engineer / `light-build` | `needs_input` | Missing target repository; no build or publication. Portable method completion belongs to TASK-147. |
+| dummy-tester / `echo` | `done` | Fresh no-newline input was identical, byte for byte, in the raw input record, reported deliverable and `out.md`. |
+
+For role handover, the Codex prompt requires each marked progress report immediately, then waits for every spawned child and collects its result before the terminal outcome as its last tool action. A final chat reply is not a report. The smoke run's `run.jsonl` records progress and the validated result; the native transcript confirms child completion order. The first echo attempt dropped its input's trailing newline despite a schema-valid outcome, so it was excluded. The fresh echo run used an explicit byte equality assertion across the raw input, deliverable and file; schema validation alone cannot establish a verbatim echo.
+
 ## Add a client
 
 1. **Module and config**: add `src/clients/<name>.py` and `[clients.<name>]` in `config.toml`. The name is a lowercase Python module identifier (`[a-z][a-z0-9_]*`); export a `Client` subclass and set `implementation` to its class name (for example, `grok.py` exports `GrokClient`, and `[clients.grok]` declares `implementation = "GrokClient"`). `clients.get(name, root)` imports that class from `clients.<name>` and removes `implementation` before passing the table to its constructor. The table is the registry; adding a client needs no shared code edit. The table is required even if the class sets `needs_config = False` (then its constructor receives `{}`). `Client.keys` declares client-specific config keys, including `"roles"` if it accepts per-role entries; run keys are allowed already.
