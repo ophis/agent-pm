@@ -553,7 +553,7 @@ def _account_probe(env: dict, timeout: float) -> dict | None:
 
 class CodexCommon:
     unset = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-             "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")
+             "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CLAUDECODE")
     defaults = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
 
     def __init__(self, config):
