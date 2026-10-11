@@ -43,25 +43,31 @@ print(json.dumps(rows))
 """
 
 
+def make_team(case: unittest.TestCase) -> str:
+    """A team dir of TEAM's files under TEAMS, removed after `case`'s test."""
+    os.makedirs(TEAMS, mode=0o700, exist_ok=True)
+    if os.path.realpath(TEAMS) != TEAMS:
+        raise RuntimeError(f"{TEAMS} must not contain symlinks")
+    os.chmod(TEAMS, 0o700)
+    team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
+    case.addCleanup(shutil.rmtree, team, ignore_errors=True)
+    os.chmod(team, 0o755)
+    for rel, text in TEAM.items():
+        path = os.path.join(team, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.chmod(os.path.dirname(path), 0o755)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(path, 0o644)
+    return team
+
+
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class TeamDirs(child.Case):
     """A team dir (TEAM) as the local config's `team_dirs`."""
     def setUp(self):
         super().setUp()
-        os.makedirs(TEAMS, mode=0o700, exist_ok=True)
-        if os.path.realpath(TEAMS) != TEAMS:
-            raise RuntimeError(f"{TEAMS} must not contain symlinks")
-        os.chmod(TEAMS, 0o700)
-        self.team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
-        self.addCleanup(shutil.rmtree, self.team, ignore_errors=True)
-        os.chmod(self.team, 0o755)
-        for rel, text in TEAM.items():
-            path = os.path.join(self.team, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            os.chmod(os.path.dirname(path), 0o755)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
-            os.chmod(path, 0o644)
+        self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
         self.local(f"team_dirs = {json.dumps([self.team])}\n")
 

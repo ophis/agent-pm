@@ -73,8 +73,9 @@ def main():
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"type": "user", "text": prompt}) + "\n")
     print(json.dumps({"type": "thread.started", "thread_id": native}), flush=True)
-    steps = scenario.get("steps", [*(message(text) for text in ("one\n\nnext line\n", "two", "three")),
-                                   {"out": {"type": "turn.completed", "usage": {"input_tokens": 10}}}])
+    steps = scenario.get("resume" if resume and "resume" in scenario else "steps",
+                         [*(message(text) for text in ("one\n\nnext line\n", "two", "three")),
+                          {"out": {"type": "turn.completed", "usage": {"input_tokens": 10}}}])
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
