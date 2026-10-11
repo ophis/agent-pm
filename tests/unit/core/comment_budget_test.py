@@ -15,12 +15,22 @@ spec.loader.exec_module(budget)
 
 CODE = "def f(x):\n    return [x * 2 for x in range(100) if x % 3]\n" * 20
 DOC = '"""' + "A long docstring that only explains what the code already says. " * 20 + '"""\n'
+INIT = '"""' + "d" * 494 + '"""\n'
 PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
            "never by adding code to lower the ratio.")
+SOURCE_RULE = "source (15% of code + 500 characters per directory)"
+TESTS_RULE = "tests (10% of code + 500 characters per directory)"
 
 
 def chars(text):
     return len("".join(text.split()))
+
+
+def over(folder, n, code, limit):
+    allowed = limit * code // 100 + 500
+    ratio = f"{n / code:.2%}" if code else "inf"
+    return (f"  {folder}: {ratio} ({n} comment+docstring / {code} code characters; "
+            f"{allowed} allowed, {n - allowed} over)")
 
 
 class Measure(unittest.TestCase):
@@ -74,56 +84,55 @@ class Main(unittest.TestCase):
                 code = budget.main(root)
             return code, out.getvalue().splitlines(), err.getvalue()
 
-    def test_under_budget_passes(self):
-        code, lines, err = self.run_in({"core/a.py": CODE, "tests/a_test.py": CODE})
+    def test_under_budget_passes_with_a_summary_per_rule(self):
+        code, lines, err = self.run_in({"x.py": INIT, "core/a.py": CODE, "core/sub/b.py": CODE,
+                                        "tests/a_test.py": CODE})
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual([line.split(":")[0] for line in lines], ["ok source", "ok tests"])
-        self.assertNotIn(PURPOSE, lines)
+        self.assertEqual(lines, [f"ok {SOURCE_RULE}: 3 checked", f"ok {TESTS_RULE}: 1 checked"])
 
-    def test_each_limit_is_inclusive(self):
-        body = "a = 0\n" * 100
+    def test_each_limit_plus_the_allowance_is_inclusive(self):
+        body = "a = 0\n" * 100 + "x\n"
         for path, limit in (("core/a.py", 15), ("tests/a.py", 10)):
+            allowed = limit * chars(body) // 100 + 500
             for extra, expected in ((0, 0), (1, 1)):
                 with self.subTest(path=path, extra=extra):
-                    comment = "#" + "c" * (3 * limit - 1 + extra)
+                    comment = "#" + "c" * (allowed - 1 + extra)
                     self.assertEqual(self.run_in({path: body + comment + "\n"})[0], expected)
 
-    def test_a_large_docstring_fails_its_rule_and_lists_its_file(self):
-        for path, failing, limit, passing in (("core/scratch.py", budget.SOURCE, 15, "tests"),
-                                              ("tests/scratch.py", budget.TESTS, 10, "source")):
-            with self.subTest(path=path):
-                code, lines, err = self.run_in({"core/a.py": CODE, "tests/a_test.py": CODE, path: DOC + CODE})
-                n, total = chars(DOC), 2 * chars(CODE)
-                fail = (f"FAIL {failing.name}: {n / total:.2%} > {limit}% ({n} comment+docstring / {total} "
-                        f"code characters; {n - limit * total // 100} over budget)")
-                self.assertEqual((code, err), (1, ""))
-                self.assertIn(fail, lines)
-                self.assertEqual(lines[lines.index(fail) + 1], f"  {n / chars(CODE):.2%} {path}")
-                self.assertTrue(any(line.startswith(f"ok {passing}:") for line in lines))
-                self.assertEqual((lines.count(PURPOSE), lines[-1]), (1, PURPOSE))
+    def test_a_docstring_only_init_passes_within_the_allowance(self):
+        self.assertEqual(chars(INIT), 500)
+        self.assertEqual(self.run_in({"core/__init__.py": INIT})[0], 0)
+        self.assertEqual(self.run_in({"core/__init__.py": INIT.replace("d", "dd", 1)})[0], 1)
 
-    def test_both_rules_failing_state_the_purpose_once_after_the_rule_lines(self):
-        code, lines, _ = self.run_in({"core/scratch.py": DOC, "tests/scratch.py": DOC})
-        self.assertEqual(code, 1)
-        self.assertEqual([line.split(":")[0] for line in lines[:-1]],
-                         ["FAIL source", "  inf core/scratch.py", "FAIL tests", "  inf tests/scratch.py"])
-        self.assertEqual(lines[-1], PURPOSE)
+    def test_a_subdirectory_does_not_count_toward_its_parent(self):
+        self.assertEqual(self.run_in({"core/__init__.py": INIT, "core/sub/__init__.py": INIT})[0], 0)
+        code, lines, _ = self.run_in({"core/a.py": DOC, "core/sub/b.py": CODE * 10})
+        self.assertEqual((code, lines[:2]),
+                         (1, [f"FAIL {SOURCE_RULE}: 1 of 2 over budget", over("core", chars(DOC), 0, 15)]))
+
+    def test_source_and_tests_in_one_directory_are_judged_separately(self):
+        code, lines, _ = self.run_in({"core/a.py": CODE * 10, "core/a_test.py": DOC})
+        self.assertEqual((code, lines), (1, [f"ok {SOURCE_RULE}: 1 checked", f"FAIL {TESTS_RULE}: 1 of 1 over budget",
+                                             over("core", chars(DOC), 0, 10), PURPOSE]))
+
+    def test_one_directory_over_budget_fails_though_the_total_is_under(self):
+        code, lines, _ = self.run_in({"core/a.py": CODE * 10, "lib/b.py": DOC + CODE})
+        self.assertLess(chars(DOC) * 100, 15 * 11 * chars(CODE))
+        self.assertEqual((code, lines[:2]), (1, [f"FAIL {SOURCE_RULE}: 1 of 2 over budget",
+                                                 over("lib", chars(DOC), chars(CODE), 15)]))
+
+    def test_failure_lists_each_failing_directory_with_its_numbers_then_the_purpose_once(self):
+        n, code = chars(DOC), chars(CODE)
+        status, lines, err = self.run_in({"setup.py": DOC, "core/a.py": CODE, "core/x/b.py": DOC,
+                                          "lib/c.py": DOC + CODE, "tests/a_test.py": CODE,
+                                          "tests/unit/b_test.py": DOC})
+        self.assertEqual((status, err), (1, ""))
+        self.assertEqual(lines, [f"FAIL {SOURCE_RULE}: 3 of 4 over budget", over(".", n, 0, 15),
+                                 over("core/x", n, 0, 15), over("lib", n, code, 15),
+                                 f"FAIL {TESTS_RULE}: 1 of 2 over budget", over("tests/unit", n, 0, 10), PURPOSE])
 
     def test_untracked_files_are_ignored(self):
         self.assertEqual(self.run_in({"core/a.py": CODE}, {"core/scratch.py": DOC})[0], 0)
-
-    def test_a_docstring_only_file_ranks_first(self):
-        code, lines, _ = self.run_in({"core/a.py": CODE, "core/b.py": DOC + CODE, "core/c.py": DOC})
-        self.assertEqual(code, 1)
-        self.assertEqual(lines[1:3], ["  inf core/c.py", f"  {chars(DOC) / chars(CODE):.2%} core/b.py"])
-        self.assertTrue(lines[3].startswith("ok tests:"))
-
-    def test_at_most_ten_files_are_listed(self):
-        code, lines, _ = self.run_in({f"core/{name}.py": DOC for name in "abcdefghijkl"})
-        self.assertEqual(code, 1)
-        self.assertEqual(lines[1:11], [f"  inf core/{name}.py" for name in "abcdefghij"])
-        self.assertTrue(lines[11].startswith("ok tests:"))
-        self.assertEqual(lines[12:], [PURPOSE])
 
     def test_a_syntax_error_exits_2_naming_the_file(self):
         code, lines, err = self.run_in({"core/a.py": CODE, "core/bad.py": "def f(:\n"})
