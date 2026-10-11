@@ -837,7 +837,7 @@ class CommonDir(Clone):
 
 
 class Status(Base):
-    def plan_doc(self, branch="TASK-1-x", phase="S9"):
+    def plan_doc(self, branch="TASK-1-x", phase="S8"):
         os.makedirs(os.path.join(self.wt, "docs"), exist_ok=True)
         path = os.path.join(self.wt, "docs", "plan.md")
         with open(path, "w") as f:
@@ -866,7 +866,7 @@ class Status(Base):
         self.assertEqual(code, 0, r)
         self.assertEqual(r["pr"], {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a"})
         self.assertIn("number,url,state,baseRefName,isCrossRepository,author", next(c for c in run.calls if c[1] == "pr"))
-        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S9"}])
+        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S8"}])
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
 

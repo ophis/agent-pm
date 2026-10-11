@@ -1758,7 +1758,7 @@ class RealCore(unittest.TestCase):
         self.assertEqual(heads, ["Tasks", "Rules", "Input processing", "Repo", "Autopilot", "Finish"])
         lines = ("Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
                  "or branch.", "Commits merged from `origin/<base>` are not this build's work.",
-                 "Skip S8; keep the commits. After <your task's push points>, run exactly "
+                 "Skip S7; keep the commits. After <your task's push points>, run exactly "
                  "`git -C <worktree> push -u origin <branch>`.")
         self.assertIn("\nAdd verbatim, placeholders filled in:\n\n```\n" + "\n".join(lines) + "\n```\n",
                       section(charter, "Autopilot"))
