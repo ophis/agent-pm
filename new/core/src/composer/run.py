@@ -8,7 +8,7 @@ from typing import Literal, get_args
 
 import repo
 from composer.base import CONFIG, SRC, ConfigError, _title, fill
-from composer.team import Team, _no_charter, _roles, _team, index, tasks_path
+from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)

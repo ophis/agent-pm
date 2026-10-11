@@ -1,4 +1,4 @@
-"""composer/team.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
+"""composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
 TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
 import os
 import re
@@ -9,8 +9,8 @@ from unittest import mock
 from new.tests import hermetic
 import repo
 from composer.base import TEAM, ConfigError
-from composer.team import (catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team, team_dirs,
-                           team_paths)
+from composer.teams import (catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team, team_dirs,
+                            team_paths)
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +

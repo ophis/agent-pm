@@ -14,7 +14,7 @@ import composer.run
 from composer.base import ConfigError
 from composer.run import (RUN_KEYS, Intent, RunConfig, RunParams, access, bind, check_old_keys, resolve,
                           trusted_dirs)
-from composer.team import team
+from composer.teams import team
 
 CONFIG = """\
 tier = 2
