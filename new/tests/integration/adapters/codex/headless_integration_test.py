@@ -135,7 +135,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
     def direct_launch(self, prompt, resume=False):
         adapter = CodexAdapter({key: value for key, value in self.config["adapters"]["codex"].items()
                                 if key != "implementation"})
-        run = adapter.headless_run()
+        run = adapter.headless()
         launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume)
         env = {key: value for key, value in os.environ.items() if key not in launch.unset}
         result = subprocess.run(launch.argv, cwd=launch.cwd, env={**env, **launch.env, "PWD": launch.cwd},

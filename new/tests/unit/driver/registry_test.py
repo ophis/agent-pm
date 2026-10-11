@@ -25,7 +25,7 @@ class OddAdapter:
 
 
 class HalfAdapter(Adapter):
-    def headless_run(self):
+    def headless(self):
         return None
 
 
@@ -236,7 +236,7 @@ class AdapterTest(Base):
         self.refused("adapters.empty has no EmptyAdapter", lambda: registry.adapter("empty"))
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
-        for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadlessRun):
+        for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadless):
             with self.subTest(value=value):
                 self.register(odd=package("odd", OddAdapter=value))
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')

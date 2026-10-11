@@ -33,11 +33,11 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose launch also takes its env, unset and cwd from its config."""
     keys = fake_adapter.FakeAdapter.keys | {"env", "unset", "cwd"}
 
-    def headless_run(self):
+    def headless(self):
         return LaunchingRun(self)
 
 
-class LaunchingRun(fake_adapter.FakeHeadlessRun):
+class LaunchingRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         config = self.adapter.config
         return dataclasses.replace(super().launch(prompt, spec, resume), env=config.get("env", {}),
@@ -52,11 +52,11 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose runtime is this Python running its config's `script`."""
     keys = fake_adapter.FakeAdapter.keys | {"script"}
 
-    def headless_run(self):
+    def headless(self):
         return ScriptRun(self)
 
 
-class ScriptRun(fake_adapter.FakeHeadlessRun):
+class ScriptRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 

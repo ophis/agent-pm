@@ -1,5 +1,5 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadlessRun's launch and parse; ClaudeAdapter's hooks; the committed [adapters.claude] table. HOME and
+ClaudeHeadless's launch and parse; ClaudeAdapter's hooks; the committed [adapters.claude] table. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 import json
 import os
@@ -13,7 +13,7 @@ from adapters.base import (Access, Activity, ConfigError, Launch, LimitHit, Repl
                            TurnEnd, Usage, Window)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless_run import ClaudeHeadlessRun
+from adapters.claude.headless import ClaudeHeadless
 from driver import registry
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -60,7 +60,7 @@ class Base(unittest.TestCase):
 
     def launch(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless_run().launch(prompt, spec, resume)
+        return ClaudeAdapter(config).headless().launch(prompt, spec, resume)
 
 
 class ConfigTest(Base):
@@ -246,7 +246,7 @@ INIT = {"type": "system", "subtype": "init", "session_id": SID}
 class ParseTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).headless_run()
+        self.run = ClaudeAdapter({}).headless()
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -292,28 +292,28 @@ class ParseTest(Base):
                 ({"type": "rate_limit_event"}, []))
         for record, events in rows:
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(record)), events)
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), events)
 
     def test_a_rejected_rate_limit_event_is_a_limit_hit(self):
         self.assertEqual(self.parse(rejected(1700000000)), [LimitHit(1700000000.0)])
         for record in (rejected(status="allowed"), rejected(status="allowed_warning")):
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(record)), [])
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), [])
         for resets in (None, True, "1700000000", 1e999):
             with self.subTest(resets=resets):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(rejected(resets))), [LimitHit(None)])
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(rejected(resets))), [LimitHit(None)])
 
     def test_an_assistant_rate_limit_error_is_one_limit_hit_with_the_remembered_reset(self):
         self.assertEqual(self.parse(rejected(5), assistant(text("limit"), error="rate_limit"), rejected(6)),
                          [LimitHit(5.0), Reply("limit")])
-        run = ClaudeAdapter({}).headless_run()
+        run = ClaudeAdapter({}).headless()
         self.assertEqual([e for r in (assistant(text("limit"), error="rate_limit"), assistant(error="rate_limit"),
                                       rejected(7)) for e in run.parse(r)], [LimitHit(None), Reply("limit")])
-        self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(assistant(error="other"))), [])
+        self.assertEqual(list(ClaudeAdapter({}).headless().parse(assistant(error="other"))), [])
 
     def test_each_run_sends_its_own(self):
         adapter = ClaudeAdapter({})
-        first, second = adapter.headless_run(), adapter.headless_run()
+        first, second = adapter.headless(), adapter.headless()
         self.assertIsNot(first, second)
         self.assertEqual(list(first.parse(rejected(1))), [LimitHit(1.0)])
         self.assertEqual(list(second.parse(assistant(error="rate_limit"))), [LimitHit(None)])
@@ -515,10 +515,10 @@ class AdapterTest(Base):
         self.assertEqual(ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"}))
         self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
         self.assertIsInstance(adapter.common, ClaudeCommon)
-        self.assertIs(type(adapter.headless_run()), ClaudeHeadlessRun)
-        self.assertIsNot(adapter.headless_run(), adapter.headless_run())
-        self.assertIs(adapter.headless_run().adapter, adapter)
-        self.assertIsNone(adapter.tui_run())
+        self.assertIs(type(adapter.headless()), ClaudeHeadless)
+        self.assertIsNot(adapter.headless(), adapter.headless())
+        self.assertIs(adapter.headless().adapter, adapter)
+        self.assertIsNone(adapter.tui())
 
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
@@ -544,7 +544,7 @@ class CommittedConfigTest(Base):
         self.addCleanup(registry.reset)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
-        argv = adapter.headless_run().launch("hi", Spec(workdir=self.work, tier=4, effort="low", sid=SID), False).argv
+        argv = adapter.headless().launch("hi", Spec(workdir=self.work, tier=4, effort="low", sid=SID), False).argv
         self.assertEqual(argv[4:12], ("--model", "haiku", "--effort", "low", "--permission-mode", "auto",
                                       "--strict-mcp-config", "--setting-sources"))
 

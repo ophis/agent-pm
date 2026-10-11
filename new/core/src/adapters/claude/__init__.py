@@ -1,9 +1,9 @@
 """Claude Code's Adapter, runtime `claude`: ClaudeAdapter, built from [adapters.claude] (keys: core/config.toml).
-Headless mode is ClaudeHeadlessRun (headless_run.py); no tui mode yet. Its usage probe, the probe's reading and a
+Headless mode is ClaudeHeadless (headless.py); no tui mode yet. Its usage probe, the probe's reading and a
 session's status are ClaudeCommon's. Imports only adapters.base and the stdlib."""
 from adapters.base import Adapter
 from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless_run import ClaudeHeadlessRun
+from adapters.claude.headless import ClaudeHeadless
 
 
 class ClaudeAdapter(Adapter):
@@ -14,10 +14,10 @@ class ClaudeAdapter(Adapter):
         super().__init__(config)
         self.common = ClaudeCommon(self.config)
 
-    def headless_run(self):
-        return ClaudeHeadlessRun(self)
+    def headless(self):
+        return ClaudeHeadless(self)
 
-    def tui_run(self):
+    def tui(self):
         return None
 
     def usage_probe(self):

@@ -1,7 +1,7 @@
 """new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
-usage()'s probe is headless_run.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
+usage()'s probe is headless.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
 Mode on a fake clock (time.monotonic patched)."""
 import inspect
 import itertools
@@ -20,27 +20,27 @@ from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, errors, records, registry
-from driver.modes import headless_run
+from driver.modes import headless
 
 WAIT = 10   # upper bound on any wait, in seconds
 
 
 class BlankAdapter(fake_adapter.FakeAdapter):
-    def headless_run(self):
+    def headless(self):
         return BlankRun(self)
 
 
-class BlankRun(fake_adapter.FakeHeadlessRun):
+class BlankRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         return Launch(())
 
 
 class FailingAdapter(fake_adapter.FakeAdapter):
-    def headless_run(self):
+    def headless(self):
         return FailingRun(self)
 
 
-class FailingRun(fake_adapter.FakeHeadlessRun):
+class FailingRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         raise LookupError("no binding")
 
@@ -311,7 +311,7 @@ class HandleTest(Base):
     def test_usage_is_its_runtimes(self):
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         handle = self.start(runtime="probe")
-        with mock.patch("driver.modes.headless_run.probe", return_value="7") as probe:
+        with mock.patch("driver.modes.headless.probe", return_value="7") as probe:
             self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         probe.assert_called_once()
         self.assertEqual(self.drain(handle), [api.Exited(0)])
@@ -330,7 +330,7 @@ class ModeTest(unittest.TestCase):
         self.assertEqual(members, ["poll", "returncode", "screen", "send", "state", "stop"])
         for name in members:
             with self.subTest(name=name):
-                self.assertEqual(params(getattr(headless_run.HeadlessMode, name)), params(getattr(api.Mode, name)))
+                self.assertEqual(params(getattr(headless.HeadlessMode, name)), params(getattr(api.Mode, name)))
 
 
 class Clock:
@@ -439,13 +439,13 @@ class HandleOverAModeTest(unittest.TestCase):
 class UsageTest(Base):
     def usage(self, out="42.5", **launch):
         """api.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x") unless given) and
-        headless_run.probe patched to give `out`; its result and the patch's mock."""
+        headless.probe patched to give `out`; its result and the patch's mock."""
         self.configure("probe", probe={"argv": ("probe-cmd", "-x"), **launch})
-        with mock.patch("driver.modes.headless_run.probe", return_value=out) as probe:
+        with mock.patch("driver.modes.headless.probe", return_value=out) as probe:
             return api.usage("probe"), probe
 
     def test_no_probe_is_none_and_runs_nothing(self):
-        with mock.patch("driver.modes.headless_run.probe", side_effect=AssertionError("probed")) as probe:
+        with mock.patch("driver.modes.headless.probe", side_effect=AssertionError("probed")) as probe:
             self.assertIsNone(api.usage("fake"))
         probe.assert_not_called()
         self.assertFalse(os.path.exists(self.probe_dir))

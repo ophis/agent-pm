@@ -2,17 +2,17 @@
 can register it in-process (sys.modules["adapters.fake"]) or copy it to src/adapters/fake/ unchanged. Its runtime is
 runtime.py (RUNTIME), run by this Python.
 
-Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a TuiRun). FakeHeadlessRun.parse
+Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a Tui). FakeHeadless.parse
 maps each JSON record by its "type": session {id} → SessionBound, activity {name} → Activity, message {text} → Reply,
 blocked {reason} → Blocked, result {text, pending} → TurnEnd, exit → Exited(99) (which the Driver drops); any other
-record → nothing. FakeTuiRun's hook labels: stop (TURN_END: reply its last_message, pending its tasks' count), ask
+record → nothing. FakeTui's hook labels: stop (TURN_END: reply its last_message, pending its tasks' count), ask
 (BLOCKED), tool (ACTIVITY)."""
 import os
 import shlex
 import sys
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, Reply,
-                           SessionBound, TuiRun, TurnEnd)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, Launch, Reply,
+                           SessionBound, Tui, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -21,11 +21,11 @@ class FakeAdapter(Adapter):
     keys = frozenset({"scenario", "log", "tui"})
     runtime_note = "FAKE NOTE"
 
-    def headless_run(self):
-        return FakeHeadlessRun(self)
+    def headless(self):
+        return FakeHeadless(self)
 
-    def tui_run(self):
-        return FakeTuiRun(self) if self.config.get("tui") else None
+    def tui(self):
+        return FakeTui(self) if self.config.get("tui") else None
 
 
 def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
@@ -33,7 +33,7 @@ def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
             "--sid", spec.sid, *(["--resume"] if resume else []), "--", prompt)
 
 
-class FakeHeadlessRun(HeadlessRun):
+class FakeHeadless(Headless):
     def launch(self, prompt, spec, resume):
         return Launch(_argv(self.adapter, prompt, spec, resume),
                       transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
@@ -55,7 +55,7 @@ class FakeHeadlessRun(HeadlessRun):
             yield Exited(99)
 
 
-class FakeTuiRun(TuiRun):
+class FakeTui(Tui):
     hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
 
     def launch(self, prompt, spec, resume, hook):

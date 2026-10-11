@@ -46,7 +46,7 @@ class CommonTest(Base):
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
         resumed = other.common.prepare(spec, True)
         self.assertEqual(resumed.snapshot, saved.snapshot)
-        launch = other.headless_run().launch("again", spec, True)
+        launch = other.headless().launch("again", spec, True)
         self.assertIn("gpt-test", launch.argv)
         self.assertIn("model_reasoning_effort=low", launch.argv)
         self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
@@ -55,7 +55,7 @@ class CommonTest(Base):
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
-        launch = self.adapter.headless_run().launch("hi", spec, False)
+        launch = self.adapter.headless().launch("hi", spec, False)
         self.assertNotIn("-m", launch.argv)
         self.assertFalse(any(x.startswith("model_reasoning_effort=") for x in launch.argv))
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot["model"])
@@ -169,17 +169,17 @@ class CommonTest(Base):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
                 CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False, **cfg})
         adapter = CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False, "env": {"PROBE": "1"}})
-        launch = adapter.headless_run().launch("hi", dataclasses.replace(self.spec, tier=None, effort=None), False)
+        launch = adapter.headless().launch("hi", dataclasses.replace(self.spec, tier=None, effort=None), False)
         self.assertEqual(launch.env["PROBE"], "1")
         self.assertEqual(launch.env["NO_COLOR"], "1")
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         self.assertIn("CODEX_PERMISSION_PROFILE", launch.unset)
         self.assertIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
-        self.assertIsNone(adapter.tui_run())
+        self.assertIsNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):
         with self.assertRaisesRegex(ConfigError, "model|tier"):
-            CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False}).headless_run().launch(
+            CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False}).headless().launch(
                 "hi", self.spec, False)
 
 

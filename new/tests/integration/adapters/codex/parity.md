@@ -6,7 +6,7 @@ Aliases expand to exact test identities:
 
 | Alias | Module or class |
 |---|---|
-| H | `new.tests.integration.adapters.codex.headless_run_integration_test.HeadlessIntegrationTest` |
+| H | `new.tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
 | G | `new.tests.integration.driver.api_integration_test` |
 | U | `new.tests.unit.adapters.codex.common_test.CommonTest` |
 

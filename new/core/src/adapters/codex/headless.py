@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from adapters.base import Activity, HeadlessRun, Launch, LimitHit, Reply, SessionBound, Stderr, TurnEnd
+from adapters.base import Activity, Headless, Launch, LimitHit, Reply, SessionBound, Stderr, TurnEnd
 from .common import flags, native_id
 
 LIMIT_PREFIXES = ("You've hit your usage limit.", "You've hit your usage limit for ",
@@ -45,7 +45,7 @@ def reset_at(message, environment):
         return None
 
 
-class CodexHeadlessRun(HeadlessRun):
+class CodexHeadless(Headless):
     def __init__(self, adapter):
         super().__init__(adapter)
         self.state = None

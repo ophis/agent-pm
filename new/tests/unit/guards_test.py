@@ -53,7 +53,7 @@ class LayerImports(Sample):
         self.assertEqual(guards.layer_imports(root), ["src/adapters/x.py: adapters imports driver"])
 
     def test_driver_modes_outside_driver_names_it(self):
-        root = self.tree({"src/delegate/x.py": "from driver.modes import headless_run\n"})
+        root = self.tree({"src/delegate/x.py": "from driver.modes import headless\n"})
         self.assertEqual(guards.layer_imports(root), ["src/delegate/x.py: delegate imports driver.modes"])
 
     def test_a_relative_import_is_resolved(self):
@@ -62,8 +62,8 @@ class LayerImports(Sample):
 
     def test_allowed_imports_are_clean(self):
         root = self.tree({"src/delegate/x.py": "from driver.api import start\nfrom composer import y\n",
-                          "src/driver/x.py": "import adapters.base\nfrom .modes import headless_run\n"
-                                             "from driver.modes import headless_run\n",
+                          "src/driver/x.py": "import adapters.base\nfrom .modes import headless\n"
+                                             "from driver.modes import headless\n",
                           "src/x.py": "from driver import api\nimport driver.api\nfrom driver.api import start\n"})
         self.assertEqual(guards.layer_imports(root), [])
 

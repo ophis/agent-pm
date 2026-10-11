@@ -6,7 +6,7 @@ recording `client_session` and `stderr` on the way; nothing else is recorded or 
 Adapter's usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) gives the Adapter's
 SessionStatus; session() is the run records' session query.
 
-A Handle runs over its session's Mode (the Mode protocol; headless: driver/modes/headless_run.py). The tui Mode's
+A Handle runs over its session's Mode (the Mode protocol; headless: driver/modes/headless.py). The tui Mode's
 surface is frozen here: start(mode="tui", name=…), attach(name), and send, state, screen and stop on a tui session's
 Handle. Until the Driver's tui Mode is built, each tui path raises ConfigError("tui mode is not available yet") before
 anything starts."""
@@ -19,12 +19,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, HeadlessRun, Launch,
+from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, Headless, Launch,
                            LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage,
                            Window, sid_error)
 from driver import records, registry
 from driver.errors import DriverError
-from driver.modes import headless_run
+from driver.modes import headless
 from driver.records import session
 from utils.paths import printable_abs
 
@@ -196,7 +196,7 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     if spec.sid is not None:
         raise ConfigError("spec.sid is set by start(): pass sid= or resume=")
     adapter = registry.adapter(runtime)
-    run = adapter.headless_run() if mode == "headless" else adapter.tui_run()
+    run = adapter.headless() if mode == "headless" else adapter.tui()
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
     if mode == "tui":
@@ -219,9 +219,9 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
                   info=SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume))
 
 
-def _begin_headless(run: HeadlessRun, launch: Launch, cwd: str) -> headless_run.HeadlessMode:
+def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.HeadlessMode:
     """The headless Mode running launch.argv in cwd with _child_env's environment; a failed spawn is a DriverError."""
-    host = headless_run.HeadlessMode(run)
+    host = headless.HeadlessMode(run)
     try:
         host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
     except (OSError, ValueError) as e:
@@ -245,7 +245,7 @@ def _probe_dir() -> str | None:
 
 
 def usage(runtime: str) -> Usage | None:
-    """`runtime`'s account usage: its Adapter's usage probe run (headless_run.probe, _child_env, at most PROBE_TIMEOUT
+    """`runtime`'s account usage: its Adapter's usage probe run (headless.probe, _child_env, at most PROBE_TIMEOUT
     s) in the launch's cwd, else PROBE_DIR, its stdout read by the Adapter's usage(); None only when the probe fails:
     the Adapter has no probe, it fails to start or times out, or its output has no reading (usage() gives None or
     raises). A registry error is a ConfigError. Writes no run record."""
@@ -256,7 +256,7 @@ def usage(runtime: str) -> Usage | None:
     cwd = launch.cwd or _probe_dir()
     if cwd is None:
         return None
-    output = headless_run.probe(launch.argv, cwd=cwd, env=_child_env(launch, cwd), timeout=PROBE_TIMEOUT)
+    output = headless.probe(launch.argv, cwd=cwd, env=_child_env(launch, cwd), timeout=PROBE_TIMEOUT)
     if output is None:
         return None
     try:

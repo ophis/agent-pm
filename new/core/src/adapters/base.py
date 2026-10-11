@@ -1,8 +1,8 @@
 """The Adapter interface. An Adapter is one runtime's abstract factory, built by src/driver/registry.py from the core
-config's [adapters.<name>] table minus `implementation`; headless_run() and tui_run() give the runtime's HeadlessRun or
-TuiRun, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
+config's [adapters.<name>] table minus `implementation`; headless() and tui() give the runtime's Headless or
+Tui, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
 the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited. Stderr, a diagnostic,
-sits beside it. A TuiRun's hooks map each of its hook labels to a hook kind (TURN_END, BLOCKED, ACTIVITY), which
+sits beside it. A Tui's hooks map each of its hook labels to a hook kind (TURN_END, BLOCKED, ACTIVITY), which
 hook_events turns into events; no runtime's hook is named here. The Adapter also gives its account usage probe's
 command (usage_probe) and reads that probe's stdout as Usage, and a session's SessionStatus. A spec type refuses a bad
 value with ConfigError when built; sid_error is the one sid rule. Nothing here starts a process or touches tmux;
@@ -122,7 +122,7 @@ class Reply:
 
 @dataclass(frozen=True)
 class TurnEnd:
-    """A turn's end: its reply and the count of background work still running. A headless run's final result."""
+    """A turn's end: its reply and the count of background work still running. A headless session's final result."""
     reply: str = ""
     pending: int = 0
 
@@ -174,7 +174,7 @@ class SessionStatus:
 @dataclass(frozen=True)
 class Stderr:
     """A diagnostic line, outside the frozen event set: recorded as `stderr` and passed up. The Driver makes one per
-    stderr line of a headless run; an adapter may yield one too."""
+    stderr line of a headless session; an adapter may yield one too."""
     text: str
 
 
@@ -199,12 +199,12 @@ class Adapter(ABC):
         self.config = dict(config)
 
     @abstractmethod
-    def headless_run(self) -> "HeadlessRun | None":
-        """A fresh HeadlessRun per call; None: headless mode unsupported."""
+    def headless(self) -> "Headless | None":
+        """A fresh Headless per call; None: headless mode unsupported."""
 
     @abstractmethod
-    def tui_run(self) -> "TuiRun | None":
-        """The runtime's TuiRun; None: tui mode unsupported."""
+    def tui(self) -> "Tui | None":
+        """The runtime's Tui; None: tui mode unsupported."""
 
     def usage_probe(self) -> Launch | None:
         """The command of a short headless runtime call whose stdout carries the account's usage (the Driver runs it
@@ -221,7 +221,7 @@ class Adapter(ABC):
         return SessionStatus("unknown", None, "")
 
 
-class HeadlessRun(ABC):
+class Headless(ABC):
     """One headless session's runtime side, so launch may keep state for parse."""
 
     def __init__(self, adapter: Adapter):
@@ -247,7 +247,7 @@ class HeadlessRun(ABC):
                 yield from self.parse(record)
 
 
-class TuiRun(ABC):
+class Tui(ABC):
     """One tui session's runtime side: its command, its submissions, its hook calls as events and its visible pane's
     usage-limit message."""
     hooks: Mapping[str, str] = {}   # hook label → hook kind, set by each runtime
@@ -258,7 +258,7 @@ class TuiRun(ABC):
 
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
-        """As HeadlessRun.launch; argv installs each label L of `hooks` as a runtime hook running `hook + (L,)` with the
+        """As Headless.launch; argv installs each label L of `hooks` as a runtime hook running `hook + (L,)` with the
         hook's JSON payload on stdin (installing them is the runtime's)."""
 
     @abstractmethod

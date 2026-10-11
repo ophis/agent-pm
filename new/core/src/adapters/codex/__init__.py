@@ -1,7 +1,7 @@
 """Codex's abstract factory."""
 from adapters.base import Adapter, SessionStatus
 from .common import CodexCommon
-from .headless_run import CodexHeadlessRun
+from .headless import CodexHeadless
 
 
 class CodexAdapter(Adapter):
@@ -12,10 +12,10 @@ class CodexAdapter(Adapter):
         super().__init__(config)
         self.common = CodexCommon(self.config)
 
-    def headless_run(self):
-        return CodexHeadlessRun(self)
+    def headless(self):
+        return CodexHeadless(self)
 
-    def tui_run(self):
+    def tui(self):
         return None
 
     def usage_probe(self):

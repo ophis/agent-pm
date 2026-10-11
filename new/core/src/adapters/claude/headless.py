@@ -1,4 +1,4 @@
-"""Claude Code's headless Mode, `claude -p` with stream-json output: ClaudeHeadlessRun.
+"""Claude Code's headless Mode, `claude -p` with stream-json output: ClaudeHeadless.
 
 launch binds Claude's session id to the sid (--session-id; --resume continues it), then: --model and --effort when the
 spec has a tier and effort, the config's flags, the setting sources (user; a project run adds project and local, and
@@ -13,11 +13,11 @@ run."""
 import json
 import os
 
-from adapters.base import Activity, HeadlessRun, Launch, LimitHit, Reply, SessionBound, TurnEnd
+from adapters.base import Activity, Headless, Launch, LimitHit, Reply, SessionBound, TurnEnd
 from adapters.claude.common import number
 
 
-class ClaudeHeadlessRun(HeadlessRun):
+class ClaudeHeadless(Headless):
     def __init__(self, adapter):
         super().__init__(adapter)
         self.limit_sent = False
