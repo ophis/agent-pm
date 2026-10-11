@@ -25,6 +25,7 @@ import compose  # noqa: E402
 import drive  # noqa: E402
 import manager  # noqa: E402
 import report  # noqa: E402
+import run_session  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SID = "11111111-2222-3333-4444-555555555555"
@@ -378,6 +379,117 @@ class Claude(Base):
 
 
 class Codex(Base):
+    def saved_session(self, *, client_id=None):
+        hermetic.home(self)
+        codex_home = os.path.join(self.tmp.name, "user-codex")
+        os.makedirs(codex_home)
+        extra = os.path.join(self.tmp.name, "extra")
+        os.makedirs(extra)
+        snapshot = {"cwd": self.work, "project": False, "dirs": [extra], "commands": ["make test"],
+                    "model": "saved-model", "effort": "low", "network": True, "codex_home": codex_home}
+        state = run_session.create(self.work, SID, "codex", snapshot, [])
+        if client_id:
+            run_session.bind(self.work, SID, client_id)
+        return state.snapshot
+
+    def metadata(self, client_id, snapshot, *, filename=None, payload_id=None, cwd=None):
+        folder = os.path.join(snapshot["codex_home"], "sessions", "2026", "10", "11")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, filename or f"rollout-2026-10-11T01-02-03-{client_id}.jsonl")
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": payload_id or client_id,
+                       "cwd": cwd or snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        return path
+
+    def test_new_launch_captures_effective_options(self):
+        config_home = os.path.join(self.tmp.name, "user-codex")
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": config_home}), redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch(
+                "prompt", run(), params=self.params(),
+                access=drive.Access(dirs=[self.repo], commands=["make test"], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], os.path.realpath(config_home))
+        self.assertEqual(launch.session_state, {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.repo)], "commands": ["make test"], "model": "gpt-6.1-sol",
+                         "effort": "high", "network": False, "codex_home": os.path.realpath(config_home)})
+
+    def test_resume_uses_saved_options_and_parent_flags(self):
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        self.metadata(client_id, snapshot)
+        changed = type(clients.get("codex", CORE))({**clients.get("codex", CORE).config,
+                   "tiers": {"2": "changed-model"}, "shell_network": False})
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "changed-home")}), \
+                redirect_stderr(io.StringIO()):
+            launch = changed.launch("next", run(), params=self.params(resume=True),
+                                    access=drive.Access(dirs=[self.repo], commands=[], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], snapshot["codex_home"])
+        self.assertEqual(launch.cwd, snapshot["cwd"])
+        self.assertEqual(launch.session_state, snapshot)
+        self.assertEqual(launch.argv[-3:], ["resume", client_id, "next"])
+        self.assertLess(launch.argv.index("--add-dir"), launch.argv.index("resume"))
+        self.assertEqual(launch.argv[launch.argv.index("--add-dir") + 1], snapshot["dirs"][0])
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], "saved-model")
+        self.assertIn("sandbox_workspace_write.network_access=true", launch.argv)
+        self.assertNotIn("changed-model", launch.argv)
+        self.assertNotIn(self.repo, launch.argv)
+
+    def test_resume_rejects_missing_state_id_file_and_mismatched_metadata(self):
+        client = clients.get("codex", CORE)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex recovery state"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        snapshot = self.saved_session()
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex client ID"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        run_session.bind(self.work, SID, client_id)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex session file"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        path = self.metadata(client_id, snapshot, payload_id="ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        self.metadata(client_id, snapshot)
+        self.metadata(client_id, snapshot, filename=f"rollout-duplicate-{client_id}.jsonl")
+        with self.assertRaisesRegex(compose.ConfigError, "duplicate Codex session files"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_resume_rejects_session_file_symlink_and_wrong_cwd(self):
+        client = clients.get("codex", CORE)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        path = self.metadata(client_id, snapshot, cwd=self.repo)
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        target = os.path.join(self.tmp.name, "target.jsonl")
+        with open(target, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": client_id, "cwd": snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        os.symlink(target, path)
+        with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file symlink"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_session_info_reports_native_metadata_and_unsupported_usage(self):
+        client = clients.get("codex", CORE)
+        snapshot = self.saved_session()
+        self.assertEqual(client.session_info(self.work, SID).client_id, None)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        run_session.bind(self.work, SID, client_id)
+        missing = client.session_info(self.work, SID)
+        self.assertEqual((missing.resume_supported, missing.inspection_supported, missing.client_id,
+                          missing.exists, missing.usage_supported, missing.usage),
+                         (True, True, client_id, False, False, None))
+        path = self.metadata(client_id, snapshot)
+        found = client.session_info(self.work, SID)
+        self.assertEqual((found.client_id, found.exists, found.transcript), (client_id, True, path))
+        self.assertAlmostEqual(found.last_activity, os.stat(path).st_mtime, delta=1)
+        self.assertIn("codex resume --approve-for-me", found.resume)
+        self.assertTrue(found.resume.endswith(client_id))
+        self.assertIn("CODEX_HOME=", found.resume)
+        self.assertIn("--add-dir", found.resume)
+        self.assertFalse(found.usage_supported)
+
     def test_four_tiers_select_astra_sol_luna_terra_and_show_the_model(self):
         expected = {"1": "gpt-6-astra", "2": "gpt-6.1-sol",
                     "3": "gpt-6-luna", "4": "gpt-5.6-terra"}
@@ -436,7 +548,8 @@ class Codex(Base):
                     self.assertNotIn("--ignore-rules", argv)
                     self.assertNotIn("--ignore-user-config", argv)
                     self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
-                    self.assertEqual((launch.cwd, launch.env, launch.interactive), (self.work, {}, []))
+                    self.assertEqual((launch.cwd, launch.env, launch.interactive),
+                                     (self.work, {"CODEX_HOME": os.path.realpath(os.path.expanduser("~/.codex"))}, []))
                     self.assertIn("--add-dir", argv)
                     self.assertEqual(drive.command(launch, "headless", clients.get("codex", CORE)), argv)
                     with self.assertRaisesRegex(compose.ConfigError, "has no tui command"):
@@ -573,6 +686,7 @@ class Codex(Base):
     def test_json_events_show_only_user_readable_text(self):
         client = clients.get("codex", CORE)
         lines = [
+            '{"type":"thread.started","thread_id":"11111111-2222-3333-4444-555555555555"}\n',
             '{"type":"thread.started","thread_id":"123"}\n',
             '{"type":"turn.started"}\n',
             '{"type":"item.completed","item":{"type":"agent_message","text":"Hello\\nworld"}}\n',
@@ -585,7 +699,8 @@ class Codex(Base):
             '[]\n',
         ]
         seen = list(client.events(lines))
-        self.assertEqual(seen, [clients.Event("text", "Codex session 123 started"),
+        self.assertEqual(seen, [clients.Event("session", session_id=SID),
+                                clients.Event("stderr", "codex: invalid thread.started ID"),
                                 clients.Event("text", "Hello"), clients.Event("text", "world"),
                                 clients.Event("stderr", "rate limit"),
                                 clients.Event("stderr", "nested problem"),
