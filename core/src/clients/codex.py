@@ -122,7 +122,7 @@ def _session_file(snapshot: dict, client_id: str) -> tuple[str, float] | None:
     path = matches[0]
     _no_symlink_ancestors(path)
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except OSError as exc:
         raise ConfigError(f"cannot read Codex session file {path}: {exc}") from exc
     try:

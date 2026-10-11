@@ -511,6 +511,33 @@ class Codex(Base):
         with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file symlink"):
             client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
 
+    def test_fifo_transcript_is_rejected_without_blocking_resume_or_inspection(self):
+        client = clients.get("codex", CORE)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        path = self.metadata(client_id, snapshot)
+        os.unlink(path)
+        os.mkfifo(path)
+
+        def expire(signum, frame):
+            self.fail("Codex session access blocked on a FIFO transcript")
+
+        previous = signal.signal(signal.SIGALRM, expire)
+        try:
+            for name, use in (
+                    ("resume", lambda: client.launch("next", run(), params=self.params(resume=True),
+                                                    access=NO_ACCESS)),
+                    ("inspection", lambda: drive.session_info(client, self.work, SID))):
+                with self.subTest(operation=name):
+                    signal.alarm(2)
+                    try:
+                        with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file"):
+                            use()
+                    finally:
+                        signal.alarm(0)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
     def test_session_info_reports_native_metadata_and_unsupported_usage(self):
         client = clients.get("codex", CORE)
         snapshot = self.saved_session()
