@@ -103,19 +103,3 @@ jobs:
         env:
           TEST_CLASSES: ${{ matrix.tests }}
         run: python3 -m unittest -v $TEST_CLASSES
-
-  integration:
-    name: Integration tests (Python 3.11)
-    if: ${{ always() }}
-    needs: [integration-core, integration-orchestrator, integration-tmux]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check integration results
-        env:
-          CORE_RESULT: ${{ needs.integration-core.result }}
-          ORCHESTRATOR_RESULT: ${{ needs.integration-orchestrator.result }}
-          TMUX_RESULT: ${{ needs.integration-tmux.result }}
-        run: |
-          test "$CORE_RESULT" = success
-          test "$ORCHESTRATOR_RESULT" = success
-          test "$TMUX_RESULT" = success
