@@ -3,7 +3,7 @@ import os
 import re
 from collections.abc import Mapping
 
-from utils.markdown import FENCE, unfenced
+from utils.markdown import unfenced
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # <scripts>'s value
 CONFIG = os.path.join(os.path.dirname(SRC), "config.toml")

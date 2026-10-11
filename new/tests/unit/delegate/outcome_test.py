@@ -120,7 +120,7 @@ class Validate(Base):
         os.symlink(outside, os.path.join(self.work, "link.md"))
         os.link(outside, os.path.join(self.work, "hard.md"))
         for bad in (self.touch("notes.txt"), os.path.join(self.work, "missing.md"), sibling, "link.md", "hard.md",
-                    os.path.join(self.work, "..", "secret.md"), os.path.expanduser("~/.ssh/id_rsa"), 7):
+                    os.path.join(self.work, "..", "secret.md"), os.path.expanduser("~/.ssh/id_rsa"), 7, "a\0b.md"):
             self.fails({**DONE, "files": [bad]}, "single-link .md file under the workdir")
 
 
@@ -170,7 +170,8 @@ class Read(Base):
         outside = self.outside()
         os.symlink(outside, os.path.join(self.work, "link.md"))
         os.link(outside, os.path.join(self.work, "hard.md"))
-        for name in ("missing.md", "notes.txt", "../secret.md", outside, "link.md", "hard.md", 7, None, ["out.md"]):
+        for name in ("missing.md", "notes.txt", "../secret.md", outside, "link.md", "hard.md", 7, None, ["out.md"],
+                     "a\0b.md"):
             with self.subTest(name=name):
                 self.refused({**FILE, "deliverable_file": name}, "single-link .md file under the workdir")
 

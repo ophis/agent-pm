@@ -3,7 +3,7 @@ import unittest
 
 from new.tests import SRC  # noqa: F401
 from composer import base
-from utils.markdown import FENCE, fenced, unfenced
+from utils.markdown import fenced, unfenced
 
 
 class Fenced(unittest.TestCase):
@@ -34,7 +34,6 @@ class Fenced(unittest.TestCase):
 class Moved(unittest.TestCase):
     def test_composer_uses_these(self):
         self.assertIs(base.unfenced, unfenced)
-        self.assertIs(base.FENCE, FENCE)
 
 
 if __name__ == "__main__":

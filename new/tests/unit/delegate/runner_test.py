@@ -292,6 +292,28 @@ class Start(Base):
         r = self.go(said(START), {"exit": 143})
         self.assertEqual((r, os.path.lexists(self.out)), (Result(143, None, "the client exited 143"), False))
 
+    def test_a_driver_refusal_leaves_out_as_it_was(self):
+        for name, kw in (("an unknown runtime", {"runtime": "nope"}), ("a bad sid", {"sid": "a/b"})):
+            with self.subTest(name):
+                self.write(self.out, "# Earlier\n")
+                with self.assertRaises(ConfigError):
+                    self.go(said(START, block(DONE)), **kw)
+                self.assertEqual(self.read(self.out), "# Earlier\n")
+
+    def test_a_stale_out_that_cannot_be_removed_stops_the_session_as_the_result(self):
+        blocker, procs, popen = os.path.join(self.tmp, "file"), [], subprocess.Popen
+        self.write(blocker, "")
+
+        def spawn(*args, **kw):
+            procs.append(popen(*args, **kw))
+            return procs[-1]
+        with mock.patch("subprocess.Popen", side_effect=spawn):
+            r = self.go({"sleep": 30}, said(START, block(DONE)), out=os.path.join(blocker, "out.md"))
+        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, []))
+        self.assertRegex(r.error, r"^cannot remove the stale out: .*Not a directory")
+        self.assertEqual((procs[0].returncode, self.kinds()), (-signal.SIGKILL, ["session", "input", "result", "end"]))
+        self.assertEqual(self.last("result")["error"], r.error)
+
     def test_a_resume_keeps_the_draft_its_session_wrote_to_out(self):
         save_spy = self.spy_save()
         self.write(self.out, "# Draft\n")

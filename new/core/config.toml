@@ -38,8 +38,8 @@
 #                   role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
 #                   template. A team dir is refused when it, its subdirs or files (by real path) lie in a temp dir,
 #                   overlap the workdir, the cwd, a write dir or another dir the run adds (read dirs too; the role's own
-#                   tasks/ aside; src/delegate/plan.py), are writable by group or others, or are not yours; or a
-#                   parent dir of it is writable by group or others (not sticky) or owned by neither you nor root. The
+#                   tasks/ aside), are writable by group or others, or are not yours; or a parent dir of it is writable
+#                   by group or others (not sticky) or owned by neither you nor root (src/delegate/plan.py). The
 #                   orchestrator's runs ignore it, but refuse a team dir overlapping their workdir, cwd or a dir they
 #                   add or can write
 tier = 2

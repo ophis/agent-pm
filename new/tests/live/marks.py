@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """FR-29 live mark comparison, run by hand, never in CI. Per runtime, --runs headless runs each of the new Delegate's
-CLI (new) and main's drive.py (old): researcher light-research on QUESTION, at most --jobs at a time, each interrupted
-after --timeout s. Every run's HOME is a private one in a fresh 0700 root under the repo's work/ (its local configs set
-only the researcher's tier, effort and local output; symlinks to the real runtime state, macOS's login keychain among
-it), its cwd its own workdir (runs/<n>/, its stderr in runs/<n>.err); the root is removed at the end. A runtime whose
-AUTH command fails under the private HOME is not run, its error reported.
+CLI (new) and main's drive.py (old): researcher light-research on QUESTION, at most --jobs at a time, each in its own
+session, interrupted after --timeout s. Every run's HOME is a private one in a fresh 0700 root under the repo's work/
+(its local configs set only the researcher's tier, effort and local output; symlinks to the real runtime state, macOS's
+login keychain among it), its cwd its own workdir (runs/<n>/, its stderr in runs/<n>.err); the root is removed at the
+end. A runtime whose AUTH command fails under the private HOME is not run, its error reported.
 
 Prints one JSON object: per run its marks (progress records in run.jsonl), names, lost (its core's task marks absent),
 status (the result record's outcome) or error, seconds; per runtime each core's totals and the check new lost <= old
@@ -101,16 +101,16 @@ def one(runtime: str, impl: str, workdir: str, env: dict, timeout: float, expect
     start, late = time.monotonic(), False
     with open(workdir + ".err", "w+", encoding="utf-8", errors="replace") as err:
         proc = subprocess.Popen(argv, cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=err)
+                                stderr=err, start_new_session=True)
         try:
             rc = proc.wait(timeout)
         except subprocess.TimeoutExpired:
             late = True
-            proc.send_signal(signal.SIGINT)   # both CLIs stop their client and write the result record on it
+            os.killpg(proc.pid, signal.SIGINT)   # both CLIs stop their client and write the result record on it
             try:
                 rc = proc.wait(WAIT)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                kill_session(proc.pid)
                 rc = proc.wait()
         err.seek(0)
         last = next((line.strip() for line in reversed(err.read().splitlines()) if line.strip()), "")
@@ -137,6 +137,19 @@ def totals(runs: list[dict], runtime: str) -> dict:
                 "marks": sum(r["marks"] for r in mine if r["impl"] == impl),
                 "lost": sum(len(r["lost"]) for r in mine if r["impl"] == impl)} for impl in CLI}
     return {**t, "check": t["new"]["lost"] <= t["old"]["lost"]}
+
+
+def kill_session(sid: int) -> None:
+    """SIGKILL to the group of session `sid`'s leader, not yet reaped, then to each other group in the session: the new
+    core's agent leads its own."""
+    os.killpg(sid, signal.SIGKILL)
+    ps = subprocess.run(["ps", "-A", "-o", "pid=,pgid="], capture_output=True, text=True).stdout
+    for pid, pgid in (map(int, line.split()) for line in ps.splitlines()):
+        try:
+            if os.getsid(pid) == sid:
+                os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def auth(runtime: str, home: str, env: dict) -> str | None:

@@ -13,7 +13,7 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 | `core/team/` | the Composer's built-in team: the root `core/team/` as on main at a0bf18c, except that `output/output.md` and `output/destinations/{local,orchestrator}.md` name the outcome's `deliverable_file`. The root `core/team/` stays the old core's, unchanged from main (`tests/unit/composer/real_test.py`) |
 | `core/config.toml` | the Composer's run keys (`runtime` among them) and `[roles.<role>]` tables, the Driver's `[adapters.<name>]` tables (the registry reads `[adapters]` once per process); which layer reads which keys, and this machine's settings in `~/.agent-pm/core-new.local.toml`: the file's header |
 | `tests/` | `unit/`, `integration/`, `fake_adapter/` (the test-only runtime `fake`), `fake_claude.py` (a fake `claude` for the integration tests), `guards.py` |
-| `tests/live/` | live checks, run by hand with the real HOME and `claude` or `codex`, never in CI: `python3 new/tests/live/claude_headless.py`; `python3 new/tests/live/headless.py --workdir /absolute/private/workdir` |
+| `tests/live/` | live checks, run by hand with `claude` or `codex`, never in CI. With the real HOME: `python3 new/tests/live/claude_headless.py`; `python3 new/tests/live/headless.py --workdir /absolute/private/workdir`. With a private HOME, FR-29's mark comparison against main's `drive.py`: `python3 new/tests/live/marks.py [--runtimes claude codex] [--runs N] [--jobs N] [--timeout S]` |
 
 Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`. `tests/guards.py` (`layer_imports`) enforces it, with the other rules in its docstring.
 

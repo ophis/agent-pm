@@ -140,7 +140,7 @@ def _url(url: str, run: RunConfig) -> str:
 def _file(path, workdir: str) -> str:
     """A regular .md file under the workdir with one link, symlinks resolved; a relative path is the workdir's."""
     base = Path(workdir).resolve()
-    real = (base / path).resolve() if isinstance(path, str) else None
+    real = (base / path).resolve() if isinstance(path, str) and "\0" not in path else None
     # A hard link is the same file under another name: it could carry, e.g., a key into the workdir.
     if (real is None or real.suffix != ".md" or not real.is_relative_to(base) or not real.is_file()
             or real.stat().st_nlink != 1):

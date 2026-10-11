@@ -89,8 +89,6 @@ def run(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime: 
     ConfigError before anything starts."""
     p = plan(run, task, input, workdir, runtime=runtime, mode=mode, sid=sid, resume=resume, name=name, events=events,
              out=out, repo=repo, cwd=cwd, team=team)
-    if p.out and not p.resume and not os.path.isdir(p.out):   # a resume keeps its session's draft
-        Path(p.out).unlink(missing_ok=True)   # an earlier deliverable never stands for this run's
     attempts = _Attempts(p, on_event or (lambda event: None))
     try:
         result = attempts.result()
@@ -143,10 +141,15 @@ class _Attempts:
             self.refused = True
             raise ConfigError(str(e)) from None
         except api.DriverError as e:
+            self.drop_stale_out()
             self.note("input", text=p.params.input)
             return Result(1, None, f"{p.mode}: {e}")
         try:
+            stale = self.drop_stale_out()
             self.note("input", text=p.params.input)
+            if stale:
+                handle.stop()
+                return Result(1, None, stale)
             self.on_event(Begun(p.sid))
             fixed = False
             while True:
@@ -173,6 +176,17 @@ class _Attempts:
         except BaseException:
             handle.stop()
             raise
+
+    def drop_stale_out(self) -> str:
+        """Removes a new run's `out` once the Driver took the run (its refusal keeps it): an earlier deliverable never
+        stands for this run's. Returns why it could not, else ""."""
+        p = self.plan
+        if p.out and not p.resume and not os.path.isdir(p.out):   # a resume keeps its session's draft
+            try:
+                Path(p.out).unlink(missing_ok=True)
+            except OSError as e:
+                return f"cannot remove the stale out: {e}"
+        return ""
 
     def attempt(self, handle: api.Handle) -> tuple[int, str | None, Limit | None]:
         """Each event of `handle` handled as it comes, up to Exited: (its returncode, the last reply, a limit)."""
