@@ -708,10 +708,16 @@ class Codex(Base):
         self.assertNotIn("project_doc_max_bytes=0", trusted.argv)
         self.assertEqual(trusted.argv[trusted.argv.index("--add-dir") + 1], TASKS)
 
-    def test_handover_requires_reports_and_waiting_for_background_work(self):
+    def test_handover_requires_progress_child_results_and_terminal_outcome_in_order(self):
         text = clients.get("codex", CORE).handover()
-        for fragment in ("`report progress", "`report outcome", "last action", "background work", "final reply"):
+        for fragment in (f"[{clients.PROGRESS}:<name>]", "immediately", "`report progress <name> <your report>`",
+                         "before calling the next tool", "every spawned child", "available wait mechanism",
+                         "collect each child result", "background work", "last tool action",
+                         "`report outcome --status <done|needs_input|failed>", "final reply is not an outcome"):
             self.assertIn(fragment, text)
+        self.assertLess(text.index("`report progress"), text.index("wait for every spawned child"))
+        self.assertLess(text.index("collect each child result"), text.index("`report outcome"))
+        self.assertNotIn("wait_agent", text)  # the available child API can differ by runtime
 
     def test_json_events_show_only_user_readable_text(self):
         client = clients.get("codex", CORE)

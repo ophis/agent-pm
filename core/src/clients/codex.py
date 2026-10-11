@@ -173,9 +173,10 @@ class CodexClient(Client):
 
     def handover(self) -> str:
         return ("Report through `report`, never in a final reply:\n\n"
-                f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, "
-                "run `report progress <name> <your report>`.\n"
-                "- **Outcome:** as your last action, after all background work has finished, run "
+                f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, immediately run "
+                "`report progress <name> <your report>` before calling the next tool.\n"
+                "- **Outcome:** wait for every spawned child using the available wait mechanism and collect each "
+                "child result. Finish all background work, then as your last tool action run "
                 "`report outcome --status <done|needs_input|failed> --title <one line> --summary <text> "
                 "[--question <q>]... [--url <url>] [--file <path>]... [--deliverable <file>]`. "
                 "If it fails, fix it and run it again. A final reply is not an outcome.")
