@@ -4,13 +4,14 @@ runtime.py (RUNTIME), run by this Python.
 
 Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a TuiRun). FakeHeadlessRun.parse
 maps each JSON record by its "type": session {id} → SessionBound, activity {name} → Activity, message {text} → Reply,
-blocked {reason} → Blocked, result {text, pending} → TurnEnd, exit → Exited(99) (which the Driver drops); any other
-record → nothing."""
+blocked {reason} → Blocked, result {text, pending} → TurnEnd, limit {resets_at} → LimitHit (null or absent: None),
+exit → Exited(99) (which the Driver drops); any other record → nothing."""
 import os
 import shlex
 import sys
 
-from adapters.base import Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, Reply, SessionBound, TuiRun, TurnEnd
+from adapters.base import (Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, LimitHit, Reply, SessionBound,
+                           TuiRun, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -49,6 +50,8 @@ class FakeHeadlessRun(HeadlessRun):
             yield Blocked(record.get("reason", ""))
         elif kind == "result":
             yield TurnEnd(record.get("text", ""), record.get("pending", 0))
+        elif kind == "limit":
+            yield LimitHit(record.get("resets_at"))
         elif kind == "exit":
             yield Exited(99)
 
