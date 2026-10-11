@@ -1,8 +1,3 @@
-"""Imported first (`from tests import hermetic`) by every test module that reads the repo's config (root CLAUDE.md ›
-Roles, tasks, rules): points HOME at a temp dir of this process's own (removed at exit) before anything reads it, never
-this machine's ~/.agent-pm, which may hold this checkout; hides repo.LOCAL and ~/.agent-pm/orchestrator.local.toml
-(os.path.isfile, which repo.read_config asks, says they are absent, through symlinks too); merges
-core.local.fixture.toml over the committed core/config.toml in place of the local file."""
 import atexit
 import os
 import shutil
@@ -31,7 +26,6 @@ def read_config(path, *local):
 
 
 def home(case) -> str:
-    """A HOME of its own for the rest of `case`'s test; returns its ~/.agent-pm."""
     tmp = tempfile.TemporaryDirectory()
     case.addCleanup(tmp.cleanup)
     patch = mock.patch.dict(os.environ, {"HOME": tmp.name})

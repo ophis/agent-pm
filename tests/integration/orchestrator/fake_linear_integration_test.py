@@ -1,4 +1,3 @@
-"""fake_linear.py served over HTTP, reached through linear.linear_gql with AGENT_PM_LINEAR set in this process's env."""
 import functools
 import os
 import time

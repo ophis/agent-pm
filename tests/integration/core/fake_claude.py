@@ -1,24 +1,5 @@
-"""A stand-in `claude` for tests that run drive.py as a process, or crew.py and tmux_host.py through tmux; install()
-puts it on PATH. Stdlib only, importing no core module: it models Claude Code's CLI and `--settings` hooks, never
-drive.py's flags or a role/task.
-
-claude [-p] [PROMPT] [--session-id SID | --resume SID] [--output-format F] [--verbose] [--settings JSON] ...
-Knows only the options src/clients/claude.py and [clients.claude].flags emit: any other is a usage error (exit 2). Exits
-1 with a stderr line on: -p without a prompt; both --session-id and --resume; --settings not a JSON object; -p with
-stream-json but no --verbose (Claude Code's rule); --resume SID without SID's transcript.
-
-Session: --resume's SID, else --session-id's, else a new one. Its transcript (Claude Code's path rule, restated:
-~/.claude/projects/<realpath(cwd), each non-[A-Za-z0-9] char "-">/<sid>.jsonl) gets a user line (a turn's prompt), then
-an assistant line per text step; a resume appends. No turn, no transcript.
-
-Modes: with -p (print) one turn, the prompt's, then `hang` or exit `exit`. Without -p (interactive) the prompt is
-optional: with one, the first turn starts at once; each later turn starts on a line of stdin, its newline stripped. Turn
-k runs the k-th of [steps, *turns], none past the end. Stdin EOF or a read error: exit `exit`. Orphaned or HANG_CAP s
-without a line: exit 1. `hang` is ignored; text steps are plain lines, never stream-json.
-A turn: the UserPromptSubmit hooks, the user transcript line, the steps, the Stop hooks (none if it hangs).
-
-Scenario: the JSON object in file $FAKE_CLAUDE_SCENARIO (unset, unreadable or any other key: exit 1); a later key is an
-explicit extension.
+"""Scenario: the JSON object in file $FAKE_CLAUDE_SCENARIO (unset, unreadable or any other key: exit 1); a later key
+is an explicit extension.
   steps  a turn's steps, run in order; default []. A string is assistant text: with -p and --output-format stream-json
          an assistant line on stdout, else a plain line. A dict is a report line in drive_test's builder shapes,
          {"kind": "progress", "name", "text"} or {"kind": "outcome", "outcome": {status, title, summary, questions, url,
@@ -37,13 +18,6 @@ explicit extension.
   gate   a file; default none. After the log line and before the first turn (either mode; before any transcript, hook
          or output) the fake polls every 0.05 s until the file exists. Orphaned or HANG_CAP s without it: exit 1 with a
          stderr line. A non-string: exit 1.
-stream-json opens with a system init line and, on a normal exit, ends with a result line.
-
-Hooks: the `hooks` object of --settings (none: nothing runs). Event E runs each command hook (`"type": "command"`) of
-each hooks[E] entry whose `matcher` is absent, "" or "*" (any other: skipped; the fake models no tool or notification
-type), in order: /bin/sh -c <command>, in the fake's cwd and env, stdout discarded, stderr the fake's, HOOK_TIMEOUT s.
-Stdin: one JSON object {"session_id", "transcript_path", "cwd", "hook_event_name"} plus "prompt" (UserPromptSubmit) or
-"stop_hook_active": false (Stop). A hook failing, exiting non-zero or timing out is skipped, as is a malformed entry.
 """
 import argparse
 import json
@@ -59,22 +33,21 @@ import uuid
 from collections.abc import Iterator
 
 ENV = "FAKE_CLAUDE_SCENARIO"
-HANG_CAP = 120   # seconds
+HANG_CAP = 120
 DEFAULTS = {"steps": [], "turns": [], "exit": 0, "hang": False, "log": None, "gate": None}
 REPORTS = {"progress": {"kind", "name", "text"}, "outcome": {"kind", "outcome"}}
 FILES = {"write": {"kind", "path", "text"}, "read": {"kind", "path"}}
 STEPS = {**REPORTS, **FILES, "hook": {"kind", "event"}}
 FIELDS = ("status", "title", "summary", "questions", "url", "files", "deliverable")
-REPORT_TIMEOUT = 30   # seconds
-HOOK_TIMEOUT = 60   # seconds
+REPORT_TIMEOUT = 30
+HOOK_TIMEOUT = 60
 SECTION = re.compile(r"^# Parameters\n(.*?)(?=^# |\Z)", re.M | re.S)
 LINE = re.compile(r"^- `([^`\n]+)`: (`+)(.+)\2$", re.M)
 
 
 def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
-    """Writes the shims a run needs on PATH into `bin_dir`, each exec'ing (the pid drive kills is the program's):
-    `claude`, this fake; `python3`, sys.executable, as the prompt's report command starts with `python3` and report.py
-    needs Python >= 3.10. A later shim goes here too. Returns the PATH "<bin_dir>:<tail>"."""
+    # Each shim exec's (the pid drive kills is the program's); python3 is sys.executable, as the prompt's report
+    # command starts with `python3` and report.py needs Python >= 3.10.
     q = shlex.quote
     shims = {"claude": f"{q(sys.executable)} {q(os.path.abspath(__file__))}", "python3": q(sys.executable)}
     for name, cmd in shims.items():
@@ -86,7 +59,6 @@ def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
 
 
 def check(where: str, steps) -> None:
-    """Exits 1 unless `steps` is a list of valid steps."""
     if not isinstance(steps, list):
         sys.exit(f"fake_claude.py: {where}: want a list")
     for step in steps:
@@ -161,7 +133,6 @@ def parse(argv: list[str]) -> argparse.Namespace:
 
 
 def parameters(prompt: str) -> dict[str, str]:
-    """The names and values of `prompt`'s `# Parameters` section, whose lines are `- `<name>`: <inline code>`."""
     section = SECTION.search(prompt)
     # compose._code pads a value holding a backtick with a space each side.
     return {name: value[1:-1] if "`" in value else value
@@ -169,7 +140,6 @@ def parameters(prompt: str) -> dict[str, str]:
 
 
 def report_command(prompts: list[str]) -> list[str] | None:
-    """The `report` value of the first of `prompts` with one, `<scripts>` and `<Workdir>` replaced, split."""
     for prompt in prompts:
         names = parameters(prompt)
         if "report" in names:
@@ -184,7 +154,6 @@ def report_command(prompts: list[str]) -> list[str] | None:
 
 
 def report(command: list[str], step: dict) -> None:
-    """Runs report.py's subcommand for `step`, its stdout kept off drive's pipe."""
     deliverable = None
     try:
         if step["kind"] == "progress":
@@ -211,7 +180,6 @@ def report(command: list[str], step: dict) -> None:
 
 
 def file_step(step: dict) -> str | None:
-    """Runs a write or read step; returns a read's text, else None."""
     try:
         if step["kind"] == "write":
             with open(step["path"], "w", encoding="utf-8") as f:
@@ -225,7 +193,6 @@ def file_step(step: dict) -> str | None:
 
 
 def run_hooks(hooks, event: str, payload: dict) -> None:
-    """Runs `event`'s command hooks from the --settings `hooks` object, `payload` as JSON on their stdin."""
     entries = hooks.get(event) if isinstance(hooks, dict) else None
     for entry in entries if isinstance(entries, list) else []:
         items = entry.get("hooks") if isinstance(entry, dict) and entry.get("matcher", "") in ("", "*") else None
@@ -239,11 +206,10 @@ def run_hooks(hooks, event: str, payload: dict) -> None:
 
 
 class Stranded(Exception):
-    """Orphaned, or HANG_CAP s without a line."""
+    pass
 
 
 def held(path: str, parent: int) -> bool:
-    """Waits for the file `path` to exist; False, a stderr line said, once orphaned or HANG_CAP s have passed."""
     until = time.monotonic() + HANG_CAP
     while not os.path.exists(path):
         if os.getppid() != parent or time.monotonic() > until:
@@ -254,8 +220,6 @@ def held(path: str, parent: int) -> bool:
 
 
 def inputs(prompt: str | None, parent: int) -> Iterator[str]:
-    """`prompt` if any, then stdin's lines without their newline (an unterminated last one too), until EOF or a read
-    error. Waits in short slices to notice orphaning; raises Stranded."""
     if prompt:
         yield prompt
     # os.read, not sys.stdin: select can't see what a buffered reader already holds.

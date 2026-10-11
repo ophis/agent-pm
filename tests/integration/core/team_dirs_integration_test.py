@@ -1,5 +1,3 @@
-"""drive.py run as a process with a local `team_dirs` (core/config.toml's comment), fake_claude.py on PATH as `claude`
-(fake_codex.py as `codex`): a team dir's role runs as core's own, its <tasks> its team dir's tasks/."""
 import json
 import os
 import shutil
@@ -22,7 +20,6 @@ IN_TEMP = repo.under(os.path.realpath(TEAMS), repo.temp_dirs()) is not None
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where drive.py refuses a team dir")
 class Fixture(unittest.TestCase):
-    """A team dir (drive_test.TEAM) as the hermetic local config's `team_dirs`, fake_claude.py on PATH."""
     def setUp(self):
         os.makedirs(TEAMS, mode=0o700, exist_ok=True)
         if os.path.realpath(TEAMS) != TEAMS:
@@ -90,8 +87,7 @@ class TeamDirs(Fixture):
 
 
 class CodexTeamDirs(Fixture):
-    """The same team dir through `--client codex`, whose --add-dir dirs it can write: its HOME (its recovery store)
-    outside the temp dirs too, as fake_codex_integration_test.py's."""
+    # its HOME (its recovery store) outside the temp dirs too, as fake_codex_integration_test.py's
     def setUp(self):
         super().setUp()
         homes = os.path.join(os.path.dirname(hermetic.CORE), "work", "fake-codex-homes")

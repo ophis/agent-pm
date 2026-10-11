@@ -1,4 +1,3 @@
-"""Single source for tmux CI shard membership; discovery guards missing, stale and duplicate classes."""
 from collections import Counter
 import json
 import re
@@ -21,7 +20,6 @@ SHARDS = {
 
 
 def discover(directory):
-    """<module>.<class> of each test class under `directory`, the module named from its nearest non-package ancestor."""
     top = Path(directory)
     while (top / "__init__.py").is_file():
         top = top.parent

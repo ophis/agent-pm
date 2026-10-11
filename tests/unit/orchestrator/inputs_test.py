@@ -23,7 +23,6 @@ def ok(stdout="", code=0, stderr=""):
 
 
 class Gh:
-    """Maps the repos/… endpoint (last argv item) to a result; records (argv, timeout)."""
     def __init__(self, table):
         self.table, self.calls = table, []
 
@@ -155,7 +154,6 @@ class Gather(unittest.TestCase):
         self.assertEqual([d.path for d in src.docs], ["Research/a.md"])
 
     def test_earlier_version_listing_newest_match(self):
-        """A researcher's earlier report, Light or Deep alike: both publish to the role's dir."""
         names = ("2026-08-01-RES-4-old.md", "2026-09-05-RES-4-new.md", "2026-09-09-RES-40-other.md", "2026-09-09-RES-4-x.txt",
                  "2026-09-07-RES-9-nope.md", "README.md")
         gh = Gh({endpoint("Research"): listing(*names), endpoint("Research/2026-09-05-RES-4-new.md"): ok("# New\n")})
@@ -208,7 +206,6 @@ class Gather(unittest.TestCase):
         self.assertEqual([d.path for d in src.docs], ["Product Design/2026-08-01-PM-1-x.md"])
 
     def test_no_listing_hit_and_no_design_link_of_a_design_role_means_no_earlier(self):
-        """A design role without a design link, and a research role with one (no fallback): no earlier version."""
         for role, ident, listed, link, path in (("pm", "PM-9", "Product%20Design", "Research/r.md", "Research/r.md"),
                                                 ("researcher", "RES-4", "Research", "Product%20Design/p.md", "Product Design/p.md")):
             with self.subTest(role=role):
@@ -260,7 +257,6 @@ class RenderResearch(unittest.TestCase):
             "## Earlier version: `Research/2026-09-01-RES-4-q.md`", "", fenced("# Earlier")))
 
     def test_golden_without_optional_sections(self):
-        """No repo or the local clone as Repo; an empty description leaves only the title."""
         for description, t, repo_line in (("Which?", None, ()),
                                           ("Which?", target.Target("ophis", "agent-pm", clone="/x/agent-pm"), ("Repo: /x/agent-pm",)),
                                           ("", None, ())):
@@ -379,7 +375,6 @@ class RenderBuild(unittest.TestCase):
             "- integration, 2026-09-07T00:00:00.000Z:", "  > bot late"))
 
     def test_golden_handoff_without_prd(self):
-        """With the source's comments and the GitHub repo; without them and with the local clone as Repo."""
         head = lines("Handoff from PM-9: u", "", "## Source", f"- PRD: {BASE}Product%20Design/p.md", "",
                      "## Instructions", "Ann, 2026-09-01T00:00:00.000Z:", "Build the PRD.")
         comments = lines("", "## Comments", "- Ann, 2026-09-01T00:00:00.000Z:", "  > hi")

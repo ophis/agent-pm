@@ -70,7 +70,6 @@ Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 
 
 def parse_line(line):
-    """(utc time, kind, issue, sid, role) of a runs.jsonl start/resume line, else None."""
     try:
         d = json.loads(line)
         if d["kind"] in ("start", "resume") and all(isinstance(d[k], str) for k in ("issue", "sid", "role")):
@@ -80,7 +79,6 @@ def parse_line(line):
 
 
 def parse_log(path):
-    """parse_line of every line of the runs.jsonl at path that has one, in file order."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -90,7 +88,6 @@ def parse_log(path):
 
 
 def prune(path, now):
-    """Drops the lines older than KEEP and those parse_log skips; rewrites the file only then."""
     try:
         with open(path) as f:
             lines = f.readlines()
@@ -140,8 +137,6 @@ def is_live(tdir, issue, sid, now):
 
 
 def live_sessions(roles, sh):
-    """{role: sorted IDs of the issues with a session(role, ID)} for every role in roles, from one tmux list-sessions;
-    other names are ignored, and no tmux server means no sessions."""
     out = sh(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True)
     names = out.stdout.splitlines() if out.returncode == 0 else []
     live = {}
@@ -153,7 +148,6 @@ def live_sessions(roles, sh):
 
 
 def full_roles(roles, live):
-    """The roles with max_runs or more live sessions."""
     return {r for r in roles if len(live[r]) >= roles[r].max_runs}
 
 
@@ -162,15 +156,12 @@ def rank(issue):
 
 
 def blockers(issue):
-    """Identifiers of the issue's unfinished direct blockers in API order, UNREADABLE for a null one; empty = ready."""
     nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
     return [n["issue"]["identifier"] if n.get("issue") else UNREADABLE for n in nodes
             if not n.get("issue") or n["issue"]["state"]["type"] not in DONE]
 
 
 def task_for(labels, group, role, role_tasks, label_tasks):
-    """(task, None) from the issue's labels in the task label group (none: (None, None), the agent run picks), or
-    (None, comment) for an invalid one. The task is label_tasks[label id]; only the comment carries label names."""
     found = [n for n in labels if n["parent"] and n["parent"]["id"] == group]
     if not found:
         return None, None
@@ -187,7 +178,6 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 
 
 def gate(lines, max_5h=MAX_5H):
-    """(ok, summary) from the last rate_limit_event of the probe's stream-json."""
     info = None
     for line in lines:
         try:
@@ -209,14 +199,12 @@ def gate(lines, max_5h=MAX_5H):
 
 
 def probe(sh, max_5h=MAX_5H):
-    """(ok, summary) of a fresh usage probe against max_5h. Its cwd is <work_dir>/work itself, not an agent run's <work_dir>/work/<ID>/."""
     os.makedirs(RUNS_DIR, exist_ok=True)
     out = sh(PROBE, cwd=RUNS_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     return gate(out.stdout.splitlines(), max_5h)
 
 
 def q_issues(fields=""):
-    """Board.issues's query text, fields added to each issue's."""
     return ("query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
             "updatedAt project { id name } assignee { id email } " + fields + " } } }")
 
@@ -242,8 +230,6 @@ class Board:
         return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
 
     def todo(self):
-        """The ready Todo issues (direct blockers all done), read once per run; logs each blocked one (once a day) on
-        the first call."""
         if self.ready is None:
             try:
                 issues = self.issues("todo", RELATIONS)
@@ -269,14 +255,12 @@ class Board:
         return self.roles[issue["assignee"]["id"]]
 
     def available(self, issue, full):
-        """Without a live session and of a role not in full."""
         return issue["identifier"] not in self.live and self.role(issue) not in full
 
     def later(self, issue):
         return -self.stage.get(self.role(issue), 0)
 
     def last_move(self, issue, state, by_user=False):
-        """Latest time the issue was moved to state (by_user: by a `human_members` user)."""
         if issue["id"] not in self.hist:
             self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
         return linear.last_move(self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None)
@@ -286,7 +270,6 @@ class Board:
         return n if n < CAP else attempt_count(self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True))
 
     def current_sid(self, issue):
-        """The issue's latest SID, unless it began before the issue's latest move to In Progress (minus SKEW)."""
         sid = latest_sid(self.entries, issue["identifier"])
         if not sid:
             return None
@@ -294,7 +277,6 @@ class Board:
         return sid if moved is None or first_line_time(self.entries, sid) >= moved - SKEW else None
 
     def comment_and_move(self, issue, body, state, frm, step):
-        """linear.comment_and_move from frm to state, the humans subscribed for In Review; a skipped move is logged."""
         if self.dry:
             return
         left = linear.comment_and_move(self.gql, issue["id"], body, self.states[state], self.states[frm],
@@ -303,8 +285,6 @@ class Board:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
     def recover(self, live_ids=()):
-        """Settle the role accounts' In Progress issues, leaving those in live_ids (IDs with a session; take skips them too)
-        untouched; returns the resume candidates [(issue, sid)] in resume order."""
         self.live = set(live_ids)
         mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in self.live]
         mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
@@ -312,11 +292,6 @@ class Board:
         return [(issue, sid) for issue, sid in mine if self.settle(issue, sid)]
 
     def settle(self, issue, sid, wait=True):
-        """Recover's decision for one In Progress issue without a live session, sid its current_sid: True to resume sid,
-        else False, having acted (the attempts cap or a logged role not the assignee's → In Review; no sid or
-        no transcript → Todo). wait (the tick's) leaves the issue alone while its latest transcript changed within
-        LIVE, a sid without a transcript until LIVE after its last line, and no sid until STALE after the last update;
-        --issue trusts tmux ls."""
         ident = issue["identifier"]
         if wait and (latest := latest_sid(self.entries, ident)) and is_live(self.tdir, ident, latest, self.now):
             return False
@@ -341,12 +316,9 @@ class Board:
         return False
 
     def queue(self, full=()):
-        """The available ready Todo issues, highest priority first, then later role, then oldest."""
         return sorted((i for i in self.todo() if self.available(i, full)), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
 
     def next_run(self, cands, full=()):
-        """("resume", issue, sid) for the first available of Recover's cands; else ("new", queue length) while the queue
-        holds an issue; else None."""
         cand = next((c for c in cands if self.available(c[0], full)), None)
         if cand:
             return ("resume", *cand)
@@ -355,14 +327,12 @@ class Board:
         return None
 
     def plan(self, run, live=None):
-        """Logs next_run's run, with live: the live session counts per role."""
         if run[0] == "resume":
             self.say("plan", run[1]["identifier"], mode="resume", sid=run[2], live=live)
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
     def take(self, only=None, full=()):
-        """(claimed Todo issue, its label's task or None) from the queue, or None. Dry: (pick, None), unclaimed."""
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
@@ -375,7 +345,7 @@ class Board:
             self.say("pick", ident, queue=len(queue))
             if self.dry:
                 return issue, None
-            # Claim: re-check right before claiming so a concurrent change isn't overwritten.
+            # re-check right before claiming so a concurrent change isn't overwritten
             current = self.gql(Q_RECHECK, i=issue["id"])["issue"]
             if current["state"]["id"] != self.states["todo"]:
                 self.say("claim-skip", ident, reason="no longer Todo")
@@ -398,18 +368,15 @@ class Board:
 
 
 def fail(issue, kind, reason, rc):
-    """An agent run that does not start: one `<kind>` event; returns the exit code."""
     log("router", kind, issue, reason=reason)
     return rc
 
 
 def _humans(cfg):
-    """The human_members emails, lowercased, in config order."""
     return tuple(e.lower() for e in cfg.get("human_members") or [])
 
 
 def context(a, cfg, name, role, gql, issue_id, repo):
-    """The agent run's write-back Context, acting as the role account."""
     return writeback.Context(
         ident=a.issue, issue_id=issue_id, role=name, sid=a.sid, resume=a.mode == "resume", project=a.project,
         workdir=run_dir(a.issue), gql=functools.partial(gql, service=role.key), humans=_humans(cfg),
@@ -417,15 +384,12 @@ def context(a, cfg, name, role, gql, issue_id, repo):
 
 
 class Setup(Exception):
-    """An agent run that cannot start: message and exit code (1 config, 2 role or task)."""
-
     def __init__(self, msg, rc):
         super().__init__(msg)
         self.msg, self.rc = msg, rc
 
 
 def load(root):
-    """(cfg, roles) of root's orchestrator/config.toml, else Setup."""
     try:
         cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         return cfg, runnable(cfg, root)
@@ -434,7 +398,6 @@ def load(root):
 
 
 def setup(a, root):
-    """(cfg, roles, name, role) for the agent run's assignee and task (None: the run picks), else Setup."""
     cfg, roles = load(root)
     name = role_for(roles, a.assignee)
     if name is None:
@@ -446,9 +409,6 @@ def setup(a, root):
 
 
 def pipeline(a, driver, tui, layout, rd, sh):
-    """drive.detach's roster for a tui run of a.issue, rd its run dir: (d, the pipeline entry's fields), d its roster
-    directory (roster.home of a.manager and a.events); None without one. A RosterError prints its line
-    (roster.unwritten)."""
     if a.events is None:   # home would say None, after an own_session tmux call
         return None
     try:
@@ -465,10 +425,6 @@ def pipeline(a, driver, tui, layout, rd, sh):
 
 
 def outer(a, *, sh, gql, run, projects, keychain, root):
-    """Checks, bounces or prepares the agent run (a: SHARED and the tui runner's options), then starts the inner in tmux.
-    Exits 0 started or bounced, 1 config, input or tmux failure, 2 a bad id, not a role account, config error or a failed
-    tui check, 3 transient; a config error, transient failure, bounce, input or tmux failure is logged (src router).
-    The tui runner's attach commands go to stderr."""
     os.environ["PATH"] = PATH
     if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
@@ -498,13 +454,13 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         return fail(a.issue, "config-error", f"no Keychain item for role key {role.key}", 2)
     try:
         issue = issues.read_issue(gql, a.issue)
-    except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error
+    except (Exception, SystemExit) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     kind, repos, repo = TASKS[name].kind, cfg["project_repos"], None
     if kind == "build":
         try:
             repo = target.check(issue, repos, run=run, work=config.RUNS_DIR)
-        except Exception as e:  # a gh/git timeout or OS error
+        except Exception as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
@@ -523,7 +479,7 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     docs = config.docs(roles, root)
     try:
         sources = inputs.gather(issue, name, docs, run=run)
-    except Exception as e:  # gh's RuntimeError; a decode, timeout or OS error too
+    except Exception as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
@@ -553,7 +509,6 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
 
 
 def begin(mode, issue, sid, role, task, opts, runs):
-    """Appends the agent run's start (mode new) or resume line to runs.jsonl; returns the outer's arguments."""
     ident = issue["identifier"]
     os.makedirs(os.path.dirname(runs), exist_ok=True)
     drive.note(runs, "resume" if mode == "resume" else "start", issue=ident, sid=sid, role=role)
@@ -564,8 +519,6 @@ def begin(mode, issue, sid, role, task, opts, runs):
 
 @contextlib.contextmanager
 def lock(runs, dry):
-    """One router at a time: yields True holding <runs' dir>/router.lock (flock; the OS frees it if the process dies),
-    or False while another router holds it. A dry run takes none: True."""
     if dry:
         yield True
         return
@@ -580,9 +533,6 @@ def lock(runs, dry):
 
 
 def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
-    """One launchd tick; start(outer's arguments) starts the agent run. Returns the exit code. An idle tick (outside
-    hours, every role full, nothing to do) logs nothing, a dry run still prints the first two; the plan is logged
-    once the usage gate passes (a dry run: before the usage)."""
     dry = opts["dry"]
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -635,7 +585,7 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
         a = begin(kind, issue, sid, board.role(issue), task, opts, runs)
         try:
             rc = start(a)
-        except (Exception, SystemExit) as e:  # SystemExit: linear_gql's API error; one issue's failure never breaks the tick
+        except (Exception, SystemExit) as e:
             say("launch-error", a.issue, error=one_line(e))
             return 0
         say("launch", a.issue, exit=rc)
@@ -643,11 +593,8 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
 
 
 def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
-    """router.py --issue ID: nothing while another router runs; refuse a live agent run of the issue (its attach
-    command); In Progress → settle without waiting, then resume; Todo → take, then start (start: as tick's). Returns
-    the exit code."""
     ident, dry = opts["issue"], opts["dry"]
-    stop = 0 if dry else 1  # nothing started
+    stop = 0 if dry else 1
     with lock(runs, dry) as free:
         if not free:
             log("router", "skip", ident, reason=BUSY)
@@ -672,7 +619,6 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
 
 
 def options(argv):
-    """The options from argv, or None for a form USAGE doesn't allow."""
     opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "split_from": None, "events": None,
             "manager": None}
     flags = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
@@ -701,7 +647,6 @@ def options(argv):
 
 def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_LOG, sh=subprocess.run, hour=None,
          root=ROOT, run=sh_run, keychain=linear.has_key, start=None):
-    """start(outer's arguments) starts an agent run; default: outer with these sh, gql, run, tdir, keychain and root."""
     if "--brake" in argv:
         if argv != ["--brake"]:
             print(USAGE, file=sys.stderr)

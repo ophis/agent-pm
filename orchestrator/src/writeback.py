@@ -1,5 +1,3 @@
-"""Write-back: a core agent run's start and progress marks and its outcome, posted to its Linear issue as the role account,
-and the engineering bounce before an agent run; each step logged (linear.log, src writeback)."""
 import fcntl
 import hashlib
 import json
@@ -34,7 +32,6 @@ NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 @dataclass(frozen=True)
 class Context:
-    """What write-back needs of an agent run."""
     ident: str
     issue_id: str
     role: str
@@ -42,12 +39,12 @@ class Context:
     resume: bool
     project: str | None
     workdir: str
-    gql: Callable[..., dict]          # role account (service=role.key)
-    humans: tuple[str, ...]           # human_members, config order
-    states: dict[str, str]            # logical → state id
-    repos: dict[str, str]             # project_repos
-    team: str                         # cfg team id (bounce's SRC check)
-    target: tuple[str, str] | None    # engineering (owner, name) given to the agent run (finish's URL check); else None
+    gql: Callable[..., dict]
+    humans: tuple[str, ...]
+    states: dict[str, str]
+    repos: dict[str, str]
+    team: str
+    target: tuple[str, str] | None
 
 
 def say(lead, text):
@@ -70,14 +67,12 @@ def _error(ctx, step, e):
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
-    """linear.move from frm to to (logical states); a skip, the issue in neither, is logged."""
     now = move(ctx.gql, issue, ctx.states[to], ctx.states[frm])
     if now not in (None, ctx.states[to]):
         log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
 
 def _ledger(ctx):
-    """{sid: [step, …]}; a missing, symlinked or invalid file is {}."""
     try:
         with os.fdopen(os.open(os.path.join(ctx.workdir, LEDGER), NO_FOLLOW), "rb") as f:
             data = json.load(f)
@@ -89,7 +84,6 @@ def _ledger(ctx):
 
 
 def _step(ctx, step, call):
-    """Runs call unless step is ledgered for ctx.sid, then ledgers it; returns the error (logged), else None."""
     if step in _ledger(ctx).get(ctx.sid, []):
         return None
     try:
@@ -106,8 +100,7 @@ def _step(ctx, step, call):
 
 
 def sink(ctx) -> drive.Sink:
-    """Phases 1 and 2: the `start` mark as the role's start comment, once per sid; any other mark as
-    `Progress (<name>): <text>`. Raises only the runner's signal SystemExit: a raising sink kills the agent run."""
+    # raises only the runner's signal SystemExit: a raising sink kills the agent run
     def handle(event):
         try:
             if event.kind != "progress":
@@ -126,8 +119,7 @@ def sink(ctx) -> drive.Sink:
 
 
 def _read_file(path, workdir):
-    """An outcome file's bytes, re-checked on the open fd: a process the agent run left behind could swap it after
-    drive.validate."""
+    # re-checked on the open fd: a process the agent run left behind could swap it after drive.validate
     fd = os.open(path, NO_FOLLOW)
     with os.fdopen(fd, "rb") as f:
         st = os.fstat(fd)
@@ -147,7 +139,6 @@ def _read_file(path, workdir):
 
 
 def _url(ctx, url):
-    """url, or "" when an engineering url is not on ctx.target (every url without one)."""
     if not url or TASKS[ctx.role].kind != "build":
         return url
     if ctx.target and url.lower().startswith(f"https://github.com/{ctx.target[0]}/{ctx.target[1]}/".lower()):
@@ -157,10 +148,8 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: drive.Outcome) -> bool:
-    """Phase 3: the outcome as comments, title, attachment and state; steps ledgered per sid, stopping at the first
-    error. True once every step is done (a file post or subscribe failure is noted in the comment instead); logs,
-    never raises: a signal SystemExit stops the steps and returns False, so the runner still posts the session
-    comment's end."""
+    # never raises: a signal SystemExit stops the steps and returns False, so the runner still posts the session
+    # comment's end
     try:
         return _finish(ctx, outcome)
     except (Exception, SystemExit) as e:
@@ -180,7 +169,7 @@ def _finish(ctx, o):
     else:
         lead, text, state = task.failed, o.summary, "in_review" if ctx.resume else task.failed_new
     body = say(lead, text)
-    if url and (o.status == "failed" or o.status == "done" and task.kind != "build"):  # a done build's PR: attached only
+    if url and (o.status == "failed" or o.status == "done" and task.kind != "build"):
         body += f"\n\n{url}"
     if task.approve and o.status == "done":
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
@@ -232,10 +221,6 @@ def _finish(ctx, o):
 
 
 def bounce(ctx, issue: Issue, reason: str) -> None:
-    """The engineering bounce before an agent run: a Handoff issue whose source is in ctx.team goes back to that source (unarchived,
-    In Review) and this issue is Canceled; else a `Question:` and In Review. A move happens only from the expected state
-    (this issue In Progress, the source Done), else is logged. Raises on any failure but unarchive's and subscribe's
-    (noted in the comment), and on a signal SystemExit."""
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
     if src and src["team"]["id"] == ctx.team:

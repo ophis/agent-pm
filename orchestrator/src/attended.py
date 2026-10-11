@@ -1,6 +1,3 @@
-"""Attended runs: where the TUI pane goes, and the name of an agent run's TUI session, <role>-<ID>-<sid[:8]>
-(CLAUDE.md › Architecture).
-"""
 import os
 import re
 import subprocess
@@ -14,20 +11,16 @@ import linear  # noqa: E402
 import tmux_host  # noqa: E402
 from linear import one_line  # noqa: E402
 
-# the prefix of an issue's TUI session name (drive.TUI_SESSION): <role>-<ID>
 ISSUE_TUI = re.compile(rf"([a-z][a-z0-9-]*)-({linear.ISSUE_ID})")
 # list-sessions' stderr when no server runs: a stale socket, or none (tmux's client.c)
 NO_SERVER = re.compile(r"no server running on .*|error connecting to .* \(No such file or directory\)")
 
 
 class Bad(Exception):
-    """No usable place for the TUI pane; the message is for the user."""
+    pass
 
 
 def layout(split, split_from, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: split and split_from as given, and the caller's opener (tmux_host.opener). Bad
-    unless tmux_host.anchor finds a pane (split_from's, else the caller's), and, without split_from, the caller has an
-    opener."""
     if split is not None and split not in tmux_host.SPLITS:
         raise Bad(f"split must be one of {', '.join(tmux_host.SPLITS)}")
     if split_from is not None:
@@ -50,8 +43,6 @@ def layout(split, split_from, *, proc=subprocess.run):
 
 
 def prefix(role, ident):
-    """The TUI session prefix of role's agent run of issue ident, <role>-<ID>; ValueError when ISSUE_TUI does not match
-    it."""
     name = f"{role}-{ident}"
     if not ISSUE_TUI.fullmatch(name):
         raise ValueError(f"TUI session prefix {name!r}: want {ISSUE_TUI.pattern}")
@@ -59,17 +50,14 @@ def prefix(role, ident):
 
 
 def sessions(ident, *, proc=subprocess.run):
-    """The names of issue ident's live TUI sessions, sorted; [] when no tmux server runs. Raises tmux_host.TuiError."""
     return sorted(name for name, i in _live(proc) if i == ident)
 
 
 def issues(*, proc=subprocess.run):
-    """The issue ids with a live TUI session, sorted; [] when no tmux server runs. Raises tmux_host.TuiError."""
     return sorted({i for _, i in _live(proc)})
 
 
 def _live(proc):
-    """(name, issue id) of each live tmux session named as an issue's TUI session."""
     try:
         res = proc(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True,
                    stdin=subprocess.DEVNULL)
@@ -88,14 +76,12 @@ def _live(proc):
 
 
 class Closed(NamedTuple):
-    """One close result: status closed or error (name None: the listing failed); msg says why for error."""
     status: str
     name: str | None = None
     msg: str = ""
 
 
 def close(ident, *, proc=subprocess.run):
-    """Kill issue ident's live TUI sessions (sessions). Returns the Closed results; never raises."""
     try:
         names = sessions(ident, proc=proc)
     except tmux_host.TuiError as e:

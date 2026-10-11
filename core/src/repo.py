@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG> (checkout()), on the run's branch.
-
-repo.py worktree --dir DIR --branch B [--name SLUG] REPO
-    prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
-    no error
-repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
-    after worktree with the same SLUG: {"pr", "base", "plan_docs", "since", "user", "others"}, `pr` being B's PR
-    {"number", "url", "state", "baseRefName"} or null, `base` the PR's baseRefName, else BASE, else the default branch,
-    `user` and `others` PR comments and reviews by the user (core config's `users`, else the gh login) and by anyone
-    else since the latest plan doc commit
-SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
-REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
-and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
-blobless clone. Symlinks: core/CLAUDE.md › Rules. B: the local B, else tracking origin/B, else new from origin/<default>.
-Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
-second `--dir`.
-Exits 2 when REPO, B, SLUG or status's `base` is invalid or unusable (B the default branch or checked out elsewhere), 1
-on any other failure.
-Errors mask URL userinfo.
-"""
 import argparse
 import json
 import os
@@ -56,6 +36,7 @@ class Invalid(Exception):
 
 
 class Once(argparse.Action):
+    # a command pre-approved by its --dir prefix can't be redirected elsewhere by a second --dir
     def __call__(self, parser, namespace, values, option_string=None):
         if getattr(namespace, self.dest) is not None:
             parser.error(f"{option_string} given twice")
@@ -74,7 +55,6 @@ class Repo:
 
     @classmethod
     def parse(cls, spec: str) -> "Repo":
-        """The repo a REPO argument names; Invalid if unreadable."""
         m = SPEC.fullmatch(spec.strip())
         if not m or m.group(3) in (".", "..") or (m.group(1) is None and spec.strip().startswith("https://")):
             raise Invalid(f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name")
@@ -86,7 +66,6 @@ class Repo:
 
 
 def url_slug(url: str) -> str | None:
-    """host/owner/name of a clone URL as written, or None; an ssh port is no part of the web host."""
     m = URL.fullmatch(url.strip())
     if not m:
         return None
@@ -95,13 +74,11 @@ def url_slug(url: str) -> str | None:
 
 
 def origin(url: str) -> str | None:
-    """host/owner/name of a clone URL, lowercased, or None."""
     slug = url_slug(url)
     return slug.lower() if slug else None
 
 
 def redact(text: str) -> str:
-    """`text` with URL userinfo (a token in an origin URL) masked."""
     return USERINFO.sub("//***@", text)
 
 
@@ -110,7 +87,6 @@ def err_text(res: subprocess.CompletedProcess) -> str:
 
 
 def merge(base: dict, over: dict) -> dict:
-    """`base` with `over` on top: tables merge key by key; any other value of `over` replaces base's."""
     out = dict(base)
     for k, v in over.items():
         out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
@@ -118,7 +94,6 @@ def merge(base: dict, over: dict) -> dict:
 
 
 def read_config(path: str, local: str = LOCAL) -> dict:
-    """TOML file `path`, with TOML file `local` (~ expanded) merged on top when it exists (merge())."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     local = os.path.expanduser(local)
@@ -129,7 +104,6 @@ def read_config(path: str, local: str = LOCAL) -> dict:
 
 
 def trusted_dirs(cfg: dict) -> frozenset[str]:
-    """Realpaths of the config's `trusted_dirs`; ValueError unless it is a list of absolute or expandable ~ paths."""
     paths = cfg.get("trusted_dirs", [])
     if not isinstance(paths, list):
         raise ValueError("trusted_dirs: want a list of local paths")
@@ -140,7 +114,6 @@ def trusted_dirs(cfg: dict) -> frozenset[str]:
 
 
 def status_line(cfg: dict) -> bool:
-    """The global `status_line`: whether a TUI session shows tmux's status line; unset → off."""
     v = cfg.get("status_line", False)
     if not isinstance(v, bool):
         raise ValueError("status_line: want true or false")
@@ -148,7 +121,6 @@ def status_line(cfg: dict) -> bool:
 
 
 def workers_per_column(cfg: dict) -> int | None:
-    """The global `workers_per_column`: worker panes per tmux grid column; unset → None (tmux_host's default)."""
     v = cfg.get("workers_per_column")
     if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 9999):
         raise ValueError("workers_per_column: want an integer from 1 to 9999")
@@ -159,7 +131,6 @@ RETILES = ("all", "open-close", "off")   # tmux_host.RETILES, which repo.py must
 
 
 def grid_retile(cfg: dict) -> str | None:
-    """The global `grid_retile`: when a tmux grid re-tiles; unset → None (tmux_host's default)."""
     v = cfg.get("grid_retile")
     if v is not None and (not isinstance(v, str) or v not in RETILES):
         raise ValueError("grid_retile: want one of all, open-close, off")
@@ -167,8 +138,6 @@ def grid_retile(cfg: dict) -> str | None:
 
 
 def temp_dirs() -> tuple[str, ...]:
-    """Realpaths of the dirs any process, an agent run included, may write: TMPDIR, Python's temp dir, /tmp, /var/tmp
-    and macOS's per-user one."""
     dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
     try:
         dirs.append(subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True, timeout=SHORT,
@@ -179,12 +148,10 @@ def temp_dirs() -> tuple[str, ...]:
 
 
 def under(path: str, roots) -> str | None:
-    """The first of `roots` that holds realpath `path`, or None."""
     return next((r for r in map(os.path.realpath, roots) if os.path.commonpath([path, r]) == r), None)
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
-    """Retries a lock failure: runs may share a clone."""
     for i in range(5):
         res = run(["git", *pre, "-C", wt, *args], timeout)
         if res.returncode == 0:
@@ -207,7 +174,6 @@ def gh_json(run: Runner, argv: list[str]):
 
 
 def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
-    """(push permission, default branch) of the repo; Invalid if not found or no access."""
     res = run(["gh", "api", "--hostname", repo.host, f"repos/{repo.owner}/{repo.name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
@@ -222,7 +188,6 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
 
 
 def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
-    """(repo, local clone or None) of a REPO argument; Invalid if unreadable."""
     if not spec.startswith(("/", "~")):
         return Repo.parse(spec), None
     clone = os.path.realpath(os.path.expanduser(spec))
@@ -237,7 +202,6 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
 
 
 def check_slug(slug: str | None, branch: str = "") -> str:
-    """The checkout slug: `slug`, else `branch` with / → -; Invalid unless a SLUG."""
     slug = branch.replace("/", "-") if slug is None else slug
     if not SLUG.fullmatch(slug):
         raise Invalid(f"unsafe checkout name {slug[:80]!r}")
@@ -245,12 +209,10 @@ def check_slug(slug: str | None, branch: str = "") -> str:
 
 
 def checkout(base: str, owner: str, name: str, slug: str) -> str:
-    """The checkout path of repo owner/name under `base`; Invalid unless `slug` is a SLUG."""
     return os.path.join(os.path.abspath(base), owner, f"{name}-{check_slug(slug)}")
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
-    """(worktree, whether it exists); Invalid if it holds anything but a clone of the repo or a worktree of `clone`."""
     wt = checkout(base, repo.owner, repo.name, slug)
     if not os.path.lexists(wt):
         return wt, False
@@ -281,7 +243,6 @@ def check_branch(branch: str) -> None:
 
 
 def registered(run: Runner, at: str) -> dict[str, str | None]:
-    """{realpath: branch or None} of the worktrees registered in `at`'s clone, existing or not."""
     found, path = {}, None
     for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
@@ -294,12 +255,10 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
 
 def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh, temp=None,
              links=frozenset()) -> dict:
-    """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
-    clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
-    local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
+    # prune treats a clone in a temp dir as untrusted
     if clone and (d := under(clone, temp_dirs() if temp is None else temp)):
         raise Invalid(f"{clone} is under the temp dir {d}: keep local clones outside temp dirs")
     symlinks = "true" if clone is not None and clone in links else "false"
@@ -363,8 +322,6 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
 
 
 def common_dir(wt: str) -> str | None:
-    """The `<clone>/.git` that worktree `wt`'s `.git` file names, found by reading files as git reads them (whole file,
-    trailing CR/LF dropped), never by running git; None if it names none."""
     def read(path):
         if not os.path.isfile(path):   # a FIFO would block open()
             return None
@@ -384,7 +341,6 @@ def common_dir(wt: str) -> str | None:
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
-    """[{"path", "phase"}] of the autopilot plan docs for `branch` in the checkout."""
     found = []
     for parent, dirs, files in os.walk(wt):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".claude")]
@@ -412,8 +368,6 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
 
 def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
            users: list[str] | None = None, base_branch: str | None = None) -> dict:
-    """The branch's PR and base (`base_branch` being BASE: module docstring), plan docs and PR feedback since the latest
-    plan doc commit; raises Invalid or RuntimeError."""
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)

@@ -1,6 +1,3 @@
-"""Paths, orchestrator/config.toml (LOCAL on top), core config with its [core] overlay, and TASKS; imports no
-other orchestrator module.
-"""
 import os
 import re
 import shlex
@@ -14,9 +11,7 @@ CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
 LOCAL = "~/.agent-pm/orchestrator.local.toml"
 CORE = os.path.join(ROOT, "core")
 PROJECTS = os.path.expanduser("~/.claude/projects")
-# launchd starts jobs with /usr/bin:/bin:/usr/sbin:/sbin; tmux and claude live elsewhere.
 PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
-# AGENT_PM_PATH (tests only), when set and non-empty, goes in front: fake claude, gh and python3 beat /opt/homebrew/bin's.
 if os.environ.get("AGENT_PM_PATH"):
     PATH = f"{os.environ['AGENT_PM_PATH']}:{PATH}"
 
@@ -34,8 +29,6 @@ def _overlap(a, b):
 
 
 def work_dir(cfg, root=ROOT, clones=None):
-    """work_dir of a config table, a real path: its absolute or ~ value, else ~/.agent-pm. One that lies in or contains root
-    or a clone of `clones` (repo → real path) stops the caller."""
     real = os.path.realpath(root)
     v = cfg.get("work_dir", "~/.agent-pm")
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
@@ -56,7 +49,6 @@ RUNS_LOG = os.path.join(LOGS_DIR, "runs.jsonl")
 
 
 def session(role, issue):
-    """The tmux session of a role's agent run on an issue."""
     return f"agent-pm-{role}-{issue}"
 
 
@@ -76,14 +68,12 @@ REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 
 
 def repo_slug(value):
-    """(owner, name) of a bare `owner/name`, else None."""
     m = re.fullmatch(rf"({OWNER})/({NAME})", value) if isinstance(value, str) else None
     return m.groups() if m and m.group(2) not in (".", "..") else None
 
 
 def transcript(issue, sid, projects=PROJECTS):
-    """Session file for an agent run, under the cwd its record names (drive.session; none: the workdir); sid must be a
-    UUID (untrusted input) or this returns None."""
+    # sid is untrusted input
     if not UUID_RE.fullmatch(sid):
         return None
     rd = run_dir(issue)
@@ -93,7 +83,6 @@ def transcript(issue, sid, projects=PROJECTS):
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
             "work_dir"}
-# Logical workflow states the code uses -> the name the docs use (a label; Linear is always queried by id).
 STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
           "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
 ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
@@ -101,18 +90,17 @@ ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 
 @dataclass(frozen=True)
 class Task:
-    """Per-role data. Readers: kind → inputs/run; prefix → promote, writeback retitle; the rest → writeback."""
     kind: Literal["research", "design", "build"]
-    prefix: str = ""                    # issue title prefix: promote child titles, retitle
-    start: str = ""                     # start comment lead
-    done: str = ""                      # done comment lead
-    question: str = ""                  # needs_input comment lead
-    failed: str = ""                    # failed comment lead
-    failed_new: str = "in_review"       # state after failed on a new agent run (resume: in_review)
-    retitle: bool = False               # done → title "<prefix>: <outcome title>"
-    approve: bool = False               # done → approve line
-    files: bool = False                 # done/failed → outcome files as Spec/Plan comments
-    hint: str = ""                      # appended to the needs_input footer
+    prefix: str = ""
+    start: str = ""
+    done: str = ""
+    question: str = ""
+    failed: str = ""
+    failed_new: str = "in_review"
+    retitle: bool = False
+    approve: bool = False
+    files: bool = False
+    hint: str = ""
 
 
 REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
@@ -126,19 +114,17 @@ TASKS = {
 
 @dataclass(frozen=True)
 class Role:
-    """An orchestrator/config.toml role checked by runnable()."""
-    account: str        # Linear email
-    key: str            # Keychain service of its API key
-    tasks: tuple        # role_tasks()
-    max_runs: int = 1   # agent runs of the role at once
+    account: str
+    key: str
+    tasks: tuple
+    max_runs: int = 1
 
 
 @dataclass(frozen=True)
 class Docs:
-    """Where core's document roles publish: one github.com repo and branch, a dir per role."""
-    repo: str           # owner/name
+    repo: str
     branch: str
-    dirs: dict          # role → output dir
+    dirs: dict
 
 
 # Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
@@ -164,7 +150,6 @@ def _check_ids(cfg):
 
 
 def _missing(cfg):
-    """The required deployment keys cfg lacks, dotted."""
     missing = [k for k in ("team", "harness_key", "task_label_group") if k not in cfg]
     states = cfg.get("states")
     missing += [f"states.{k}" for k in STATES if not isinstance(states, dict) or k not in states]
@@ -175,8 +160,6 @@ def _missing(cfg):
 
 
 def load_config(path=CONFIG):
-    """`path` with LOCAL on top (repo.read_config), with the checks every consumer needs; the checks against core config
-    are in runnable(), which every consumer calls."""
     cfg = repo.read_config(path, LOCAL)
     if missing := _missing(cfg):
         raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {LOCAL} "
@@ -246,36 +229,28 @@ def _fill_root(value, root):
 
 
 def overlay(root=ROOT):
-    """The operator's [core] overlay with {{root}} filled; compose.resolve validates its run keys."""
     return _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
 
 
 def layers(root=ROOT):
-    """The orchestrator's config layers; the one source for run_config and run.py."""
     return [overlay(root)]
 
 
 def role_tasks(role, root=ROOT):
-    """The role's tasks, its index in order (compose.index): the orchestrator's one path to them."""
     return tuple(compose.index(os.path.join(root, "core"), role))
 
 
 def run_config(role, task=None, root=ROOT):
-    """compose.RunConfig of the role (task: None or one it names): core config, then its `[clients.claude]`, then
-    layers(root)."""
     core = os.path.join(root, "core")
     return compose.resolve(core, clients.get("claude", core), role, task, overlays=layers(root), trusted=True,
                            label=("orchestrator/config.toml", "core"))
 
 
 def writable(work=RUNS_DIR):
-    """The dirs an agent run can write; a clone there gets no git run by the harness."""
     return (work, *repo.temp_dirs())
 
 
 def clone_error(path, slug, *, run=sh_run):
-    """Why realpath `path` is not a local clone of github.com/<slug>, or None. The one git call is guarded: the clone's config
-    is not trusted."""
     if not path.isprintable():
         return f"{path!r} has a non-printable character"
     if not os.path.exists(path):
@@ -292,8 +267,6 @@ def clone_error(path, slug, *, run=sh_run):
 
 
 def runnable(cfg, root=ROOT):
-    """{role: Role} of orchestrator/config.toml's roles in its order, checked against core config with overlay(root) and TASKS; a
-    broken one stops the caller. Core roles absent from orchestrator/config.toml are not orchestrated."""
     core_roles = repo.read_config(os.path.join(root, "core", compose.CONFIG)).get("roles", {})
     try:
         trusted = drive.trusted_dirs(os.path.join(root, "core"))
@@ -340,7 +313,6 @@ def runnable(cfg, root=ROOT):
 
 
 def docs(roles, root=ROOT):
-    """Docs of the github outputs among roles ({role: Role}); they must share one github.com repo and branch."""
     outs = {r: o for r in roles if (o := run_config(r, root=root).output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
@@ -350,12 +322,10 @@ def docs(roles, root=ROOT):
 
 
 def role_for(runs, email):
-    """The role in runs ({role: Role}) whose account is email (case-insensitive), or None."""
     return next((r for r, run in runs.items() if email and run.account.lower() == email.lower()), None)
 
 
 def stage_order(cfg):
-    """{role: position in its next chain}; roles outside a chain are 0."""
     roles = cfg["roles"]
     targets = {p["next"] for p in roles.values() if p.get("next")}
     order = {name: 0 for name in roles}

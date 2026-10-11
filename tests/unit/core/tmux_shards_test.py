@@ -1,4 +1,3 @@
-"""CI shard inventory must account for every discovered test class exactly once."""
 import importlib.util
 from pathlib import Path
 import tempfile

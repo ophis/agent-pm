@@ -37,7 +37,7 @@ import repo
 import roster
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
-AGENT, USER = "agent", "user"   # history actor ids: an agent account, a human_members user
+AGENT, USER = "agent", "user"
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"]}
 NAMES = {i: n for n, i in STATES.items()}
 DR, PD = "Deep Research", "Product Design"
@@ -54,8 +54,7 @@ def setUpModule():
         p.start()
         unittest.addModuleCleanup(p.stop)
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
-LIGHT, DEEP, STRAY, ORPHAN_LABEL = (f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24))   # label ids; STRAY maps to no task
-# ORPHAN_LABEL picks pm's task, none of researcher's.
+LIGHT, DEEP, STRAY, ORPHAN_LABEL = (f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24))
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
 RECHECK = "query($i: String!) { issue(id: $i) { state { id } labels { nodes { id name parent { id } } } } }"
 
@@ -65,7 +64,6 @@ def ago(**kw):
 
 
 def who(role):
-    """assignee node of a role account, or of someone else for a non-role name."""
     return None if role is None else {"id": f"u-{role}", "email": ROLE.get(role, f"{role}@x.com")}
 
 
@@ -77,8 +75,7 @@ class FakeLinear:
         self.queries = []
         self.todo_error = False
         self.unreadable = set()
-        self.refuse = set()   # issues whose state change returns success: false
-        # the task_label_group's issueLabel node, its children the labels TaskLabels maps
+        self.refuse = set()
         self.group = {"isGroup": True, "children": {"nodes": [{"id": i} for i in (LIGHT, DEEP, ORPHAN_LABEL)]}}
 
     def __call__(self, query, **v):
@@ -133,7 +130,6 @@ def op(query):
 
 
 def writes(fake):
-    """(operation, issue) of each mutation and each move's state read ("read"), in order."""
     return [("read" if q == linear.Q_ISSUE_STATE else op(q), v["i"]) for q, v in fake.queries
             if q == linear.Q_ISSUE_STATE or "mutation" in q]
 
@@ -147,17 +143,14 @@ def issue(ident, state, role=None, updated=None, priority=0, created="2026-09-01
 
 
 def blocker(ident, state="started", kind="blocks"):
-    """An inverse relation node: ident (None = unreadable) relates to the issue by kind; state is ident's state type."""
     return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
 
 
 def label(name, id, group=TASK_GROUP):
-    """A labels node of the re-check: id and name in the label group (None = not in a group)."""
     return {"id": id, "name": name, "parent": group and {"id": group}}
 
 
 class Moved(FakeLinear):
-    """A human moves every issue to state `to` right after each list read."""
     def __init__(self, issues, to):
         super().__init__(issues)
         self.to = to
@@ -187,7 +180,7 @@ class Base(unittest.TestCase):
         self.root = config.ROOT
 
     def sid(self, name):
-        """A UUID for a short session name (transcript() accepts UUIDs only); outputs map it back to the name."""
+        # transcript() accepts UUIDs only
         s = str(uuid.uuid5(uuid.NAMESPACE_OID, name))
         self.names[s] = name
         return s
@@ -211,22 +204,18 @@ class Base(unittest.TestCase):
         self.hist.setdefault(ident, []).insert(0, {"createdAt": ago(minutes=minutes_ago), "actorId": actor, "toStateId": state})
 
     def resumable(self, ident, sid, minutes_ago, role="researcher"):
-        """A start line for sid, an old <sid>.jsonl, and a move to In Progress just before the start."""
         self.moved(ident, minutes_ago + 1)
         self.add("start", ident, sid, minutes_ago, role)
         self.touch(ident, sid, 40)
 
     def row(self, kind, ident, sid, role="researcher", **ago):
-        """A runs.jsonl line `ago` before NOW, its ts at a fixed UTC-4 offset."""
         ts = (NOW - timedelta(**ago)).astimezone(timezone(timedelta(hours=-4))).isoformat(timespec="seconds")
         return json.dumps({"ts": ts, "kind": kind, "issue": ident, "sid": self.sid(sid), "role": role})
 
     def add(self, kind, ident, sid, minutes_ago, role="researcher"):
-        """A runs.jsonl line."""
         self.lines.append(self.row(kind, ident, sid, role, minutes=minutes_ago))
 
     def touch(self, ident, sid, minutes_ago, sub=None):
-        """<sid>.jsonl, or sub under <sid>/, in the issue's transcript folder."""
         p = config.transcript(ident, self.sid(sid), self.tdir)
         if sub:
             p = os.path.join(p[:-len(".jsonl")], sub)
@@ -236,14 +225,12 @@ class Base(unittest.TestCase):
         os.utime(p, (t, t))
 
     def log_dir(self, again):
-        """config.LOGS_DIR patched for one board or tick: a fresh dir, or (again) the last one, as the next tick finds it."""
         if not again or self.logs is None:
             self.logs = tempfile.mkdtemp(dir=self.logs_root)
         self.mark = len(logged(self.logs))
         return mock.patch.object(config, "LOGS_DIR", self.logs)
 
     def board(self, fake, use, dry=False):
-        """use(Board) over runs.jsonl lines; its stderr lands in self.err."""
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + "\n")
         err = io.StringIO()
@@ -254,7 +241,6 @@ class Base(unittest.TestCase):
         return out
 
     def plan(self, fake, dry=False):
-        """Recover, then "resume <ID> <SID> <url> <project>", "new" or ""."""
         run = self.board(fake, lambda b: b.next_run(b.recover()), dry)
         if run and run[0] == "resume":
             _, issue, sid = run
@@ -262,7 +248,6 @@ class Base(unittest.TestCase):
         return "new" if run else ""
 
     def claim(self, fake, dry=False, full=(), recover=False):
-        """Take with the full roles, after Recover if asked: "<ID> <url> <project>" or ""."""
         def use(b):
             recover and b.recover()
             return b.take(full=full)
@@ -270,13 +255,11 @@ class Base(unittest.TestCase):
         return taken and f"{taken[0]['identifier']} {taken[0]['url']} {taken[0]['project']['name']}" or ""
 
     def said(self):
-        """The router's events of the last board or tick, logged or (dry) copied to stderr, as show() gives them."""
         events = logged(self.logs)[self.mark:] + [json.loads(x) for x in self.raw.splitlines() if x.startswith("{")]
         self.assertEqual({e["src"] for e in events} - {"router"}, set())
         return [self.unmap(show(e)) for e in events]
 
     def tick(self, fake, *argv, hour=2, shell=None, again=False, now=NOW):
-        """router.main with argv (a tick, or --issue), the outer faked by self.sh.start; again: on the last log."""
         self.sh = shell or FakeShell()
         with open(self.log, "w") as f:
             f.write("\n".join(self.lines) + ("\n" if self.lines else ""))
@@ -292,7 +275,6 @@ class Base(unittest.TestCase):
         return rc
 
     def last_run(self):
-        """(kind, issue, sid, role) of the last runs.jsonl line `tick` left, after checking its keys."""
         entry = json.loads(self.state.splitlines()[-1])
         self.assertEqual(list(entry), ["ts", "kind", "issue", "sid", "role"])
         return entry["kind"], entry["issue"], entry["sid"], entry["role"]
@@ -302,7 +284,6 @@ class Base(unittest.TestCase):
         return launch.issue
 
     def launched_runs(self):
-        """(ID, mode) of each outer call, in order."""
         return [(a.issue, a.mode) for a in self.sh.launches()]
 
     def probes(self):
@@ -315,7 +296,7 @@ class ParseAndLiveness(Base):
             f.write("".join(line + "\n" for line in lines))
 
     def test_parse_log_is_utc_entries_in_file_order(self):
-        self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])   # a missing log is empty
+        self.assertEqual(router.parse_log(os.path.join(self.tmp.name, "nope")), [])
         self.add("start", "TASK-1", "a", 60, "researcher")
         self.add("start", "TASK-2", "b", 50, "pm")
         self.add("resume", "TASK-1", "a", 40, "pm-lead")
@@ -368,7 +349,7 @@ def event(status="allowed", five=0.1, **week):
 class Gate(unittest.TestCase):
     def test_ok_from_the_last_event(self):
         self.assertEqual(router.gate(['{"type":"system"}', "garbage"]), (False, "no rate_limit_event"))
-        self.assertEqual([router.gate([event(five=0.85)], *m)[0] for m in ((), (0.8,))], [True, False])   # max_5h
+        self.assertEqual([router.gate([event(five=0.85)], *m)[0] for m in ((), (0.8,))], [True, False])
         rows = (([event(five=0.89)], True),
                 ([event(five=0.9)], False),
                 ([event(status="rejected", five=0.1)], False),
@@ -696,7 +677,7 @@ class Prune(Base):
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp.name, self.log))
         self.assertEqual(self.read(), "".join(line + "\n" for line in keep))
         self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "runs.jsonl", "transcripts"])
-        self.write([keep[1], "plain text"])  # unparsable lines alone, no old one, still a rewrite
+        self.write([keep[1], "plain text"])
         router.prune(self.log, NOW)
         self.assertEqual(self.read(), keep[1] + "\n")
 
@@ -829,7 +810,6 @@ class Claim(Base):
 
     def test_no_longer_todo_skipped_for_the_next(self):
         class Snatched(FakeLinear):
-            """Someone moves TASK-1 out of Todo right after the Todo list read."""
             def __call__(self, query, **v):
                 out = super().__call__(query, **v)
                 if "issues(filter" in query and "inverseRelations" in query:
@@ -933,7 +913,7 @@ class Blockers(Base):
 
     def test_dry_run_logs_blocked(self):
         for argv, out, last in (("claim", f"TASK-2 https://linear.app/x/TASK-2 {PD}", ["pick TASK-2 queue=1"]),
-                                ("plan", "new", [])):  # next_run logs no plan: the tick does
+                                ("plan", "new", [])):
             fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")]),
                                issue("TASK-2", "Todo", "pm", project=PD)])
             self.assertEqual(self.plan(fake, dry=True) if argv == "plan" else self.claim(fake, dry=True), out, argv)
@@ -943,16 +923,11 @@ class Blockers(Base):
 
 def outer_args(ident, project, assignee, sid, task, mode, runner="headless", split=None, split_from=None, events=None,
                manager=None):
-    """The outer's arguments the router passes."""
     return argparse.Namespace(issue=ident, project=project, assignee=assignee, sid=sid, task=task, mode=mode, runner=runner,
                               split=split, split_from=split_from, events=events, manager=manager)
 
 
 class FakeShell:
-    """sessions: the tmux session names list-sessions prints; none = no tmux server (exit 1). fives: five_hour of the first
-    probes, then probe_five. start, the fake outer, records ("launch", its arguments) in calls; it raises raises.get(ID),
-    else exits exits.get(ID, 0); exit 0 adds agent-pm-<role>-<ID> (role from the assignee) unless ID is in bounce. own: the
-    session name display-message prints."""
     def __init__(self, sessions=(), probe_five=0.2, fives=(), exits=None, bounce=(), raises=None, own="mgr"):
         self.calls, self.five, self.sessions, self.own = [], probe_five, list(sessions), own
         self.fives, self.exits, self.bounce, self.raises = list(fives), exits or {}, set(bounce), raises or {}
@@ -985,7 +960,7 @@ class FakeShell:
 
 @contextlib.contextmanager
 def other_router(runs):
-    """<runs' dir>/router.lock held as another router holds it (flock conflicts across open files in one process too)."""
+    # flock conflicts across open files in one process too
     os.makedirs(os.path.dirname(runs), exist_ok=True)
     with open(os.path.join(os.path.dirname(runs), "router.lock"), "a") as f:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1027,7 +1002,6 @@ class Tick(Base):
         self.assertEqual(sorted(os.listdir(self.tmp.name)), ["cfg", "router.lock", "runs.jsonl", "transcripts"])
 
     def test_an_idle_tick_writes_no_line(self):
-        """FR-10: outside hours, all roles full, nothing to do beside a live session; a blocked issue once a day."""
         full = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"]
         cases = [(12, FakeShell(), [issue("TASK-1", "Todo", "researcher")]),
                  (2, FakeShell(full), [issue("TASK-1", "Todo", "researcher")]),
@@ -1291,7 +1265,6 @@ class Tick(Base):
 
 
 class IssueFlag(Base):
-    """router.py --issue ID: only that issue, without the hours, max_runs and usage gates; the outer faked."""
     def test_todo_is_claimed_and_started_whatever_the_gates(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)),
@@ -1341,8 +1314,6 @@ class IssueFlag(Base):
         self.assertEqual((fake.mutations, self.probes()), ([], 0))
 
     def nothing_resumable(self):
-        """(name, issue, runs.jsonl lines and transcripts, said, state, comment) per kind of In Progress issue Recover
-        settles without resuming; the last two inside Recover's time windows."""
         def capped():
             for m in (390, 380, 370, 360):
                 self.add("start", "TASK-1", f"s{m}", m)
@@ -1435,7 +1406,6 @@ class IssueFlag(Base):
 
 
 class OneRouter(Base):
-    """A router finding router.lock held does nothing else; once it is free, the same call goes on."""
     def test_a_tick_skips_while_another_router_runs(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
         before = self.unmap("\n".join(self.lines) + "\n")
@@ -1444,7 +1414,7 @@ class OneRouter(Base):
             self.assertEqual(self.tick(fake), 0)
             self.assertEqual(self.said(), ["skip reason=another router is running"])
             self.assertEqual((fake.queries, self.sh.calls, self.state, fake.issues["TASK-1"]["state"]), ([], [], before, "Todo"))
-            self.assertEqual((self.tick(fake, hour=12), self.said(), self.sh.calls), (0, [], []))  # outside hours: no lock
+            self.assertEqual((self.tick(fake, hour=12), self.said(), self.sh.calls), (0, [], []))
         self.assertEqual(self.tick(fake), 0)
         self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
@@ -1465,7 +1435,6 @@ class OneRouter(Base):
 
 
 class LostClaim(FakeLinear):
-    """The first state change is applied (updatedAt NOW), its answer lost: Unavailable."""
     def __init__(self, issues):
         super().__init__(issues)
         self.lose = True
@@ -1480,7 +1449,6 @@ class LostClaim(FakeLinear):
 
 
 class Outage(Base):
-    """Linear unavailable: the router stops at the first failure, one linear-error a day, exit 1, the lock released."""
     SAID = {name: f"linear-error op=teams {fields}" for name, fields in FIELDS.items()}
 
     def test_a_failure_at_board_setup_is_one_linear_error_a_day(self):
@@ -1525,15 +1493,12 @@ DISPLAY = ["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]
 
 
 class TuiTick(Base):
-    """router.py --tui: attended.layout (patched) and the events file before the tick or --issue; the outer gets the tui
-    runner. Outside tmux and on a HOME of its own unless a test says otherwise (in_tmux)."""
     def setUp(self):
         super().setUp()
         self.enterContext(mock.patch.dict(os.environ))
         self.fresh(False)
 
     def fresh(self, tmux):
-        """A new HOME (so a new ~/.agent-pm), in tmux or not."""
         self.agent_pm = hermetic.home(self)
         self.managers = os.path.join(self.agent_pm, "managers")
         for k in ("TMUX", "TMUX_PANE"):
@@ -1646,7 +1611,7 @@ class TuiTick(Base):
                 self.assertEqual(launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, None, "new",
                                                     "tui", None, None, want, manager_))
                 self.assertEqual(self.err, "")
-                if name == "mgr":   # no --manager or --events: the own tmux session names it
+                if name == "mgr":
                     self.assertEqual(self.sh.calls[0], DISPLAY)
                 else:
                     self.assertNotIn(DISPLAY, self.sh.calls)
@@ -1716,7 +1681,6 @@ class TuiTick(Base):
 
 
 class TaskLabels(Base):
-    """The repo's core config, whose researcher ships light-research; deliberately depends on it."""
     ORPHAN = ('Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
               "Fix the label or the assignee, then move the issue back to Todo.")
 
@@ -1884,13 +1848,11 @@ class TaskLabels(Base):
 TUI_NAME = "engineer-TASK-7-0b6f2c1e"
 ATTACH = ("router.py: driver: tmux attach -t '=agent-pm-engineer-TASK-7'\n"
           f"router.py: tui: tmux attach -t '={TUI_NAME}'\n")
-# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before a printed `tmux attach`
 PREFIXES = ((None, ""), (" \t", ""), (" docker exec -it box ", "docker exec -it box "))
 LAYOUT = attended.layout
 
 
 class OuterBase(RunBase):
-    """The outer on run_fixtures' root, fake Linear and fake gh/git; its stderr lands in self.err."""
     def outer(self, assignee=ENGINEER, task=None, mode="new", runner="headless", ident=ID, sid=SID, **tui):
         a = outer_args(ident, PROJECT, assignee, sid, task, mode, runner, **tui)
         err = io.StringIO()
@@ -1901,7 +1863,6 @@ class OuterBase(RunBase):
         return rc
 
     def handover(self, role="engineer", iterm=""):
-        """The inner's argv from the last tmux call, drive.detach's: its handover file, cwd the run dir."""
         argv, kw = self.sh_calls[-1]
         self.assertEqual((argv, kw), (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
                                        f"agent-pm-{role}-TASK-7", sys.executable, "-I", "-c", drive.tmux_host.EXEC,
@@ -1911,7 +1872,6 @@ class OuterBase(RunBase):
         return h["argv"]
 
     def input(self, **kw):
-        """The input text the inner gets."""
         *_, last = self.handover(**kw)
         self.assertTrue(last.startswith("--input="), last[:40])
         return last.removeprefix("--input=")
@@ -1969,7 +1929,6 @@ class Outer(OuterBase):
                 self.assertEqual(self.run.calls, [(listing, 60)])
 
     def local_clone(self):
-        """A real clone (no network) of the target in the temp root, configured under [local_clones]; its realpath."""
         path = os.path.realpath(os.path.join(self.tmp, "clone"))
         for argv in (["init", "-q", path], ["-C", path, "remote", "add", "origin", "https://github.com/ophis/agent-pm.git"]):
             subprocess.run(["git", *argv], check=True)
@@ -1998,7 +1957,6 @@ class Outer(OuterBase):
         self.local_clone()
         self.transcript()
         name = re.search(r"^Checkout: (.+)$", INPUT, re.M).group(1)
-        # Where `repo.py worktree --dir <Workdir>/src --name <Checkout>` puts it, as core's tasks give the command.
         os.makedirs(os.path.join(repo.checkout(os.path.join(self.rd, "src"), "Ophis", "Agent-PM", name), ".git"))
         self.run.table = [(("git", *target.GUARD, "-C"), res()), *ENG_RUN]
         self.assertEqual(self.outer(mode="resume"), 0)
@@ -2123,11 +2081,9 @@ class Outer(OuterBase):
 
 
 class Attended(OuterBase):
-    """The outer with the tui runner; attended.layout sees a fake tmux, no $TMUX or $ITERM_SESSION_ID, and iTerm2's
-    $TERM_PROGRAM."""
     def setUp(self):
         super().setUp()
-        for k in ("TMUX", "ITERM_SESSION_ID"):  # RunBase's patch.dict restores them
+        for k in ("TMUX", "ITERM_SESSION_ID"):
             os.environ.pop(k, None)
         os.environ["TERM_PROGRAM"] = "iTerm.app"
 
@@ -2138,12 +2094,10 @@ class Attended(OuterBase):
             return self.outer(assignee, runner="tui", **opts)
 
     def driver(self, *tail, iterm=""):
-        """The one tmux call; the inner's argv."""
         self.assertEqual(len(self.sh_calls), 1)
         self.assertEqual(self.handover(iterm=iterm), inner("--target", "Ophis/Agent-PM", *forwarded(), *tail))
 
     def rename_engineer(self, name):
-        """The root's core (linked to the real one) and orchestrator config with the engineer role named `name`."""
         core, roles = os.path.join(self.root, "core"), os.path.join("team", "roles")
         os.remove(core)
         for parent, own in (("", {compose.CONFIG, "team"}), ("team", {"roles"}), (roles, set())):
@@ -2160,8 +2114,6 @@ class Attended(OuterBase):
         self.addCleanup(p.stop)
 
     def test_the_pane_place_reaches_the_inner(self):
-        """split from a session; an iTerm2 pane gets the TUI and a detached driver; the caller's tmux session is the
-        opener, never split-from."""
         rows = (("split-from", {}, dict(split="below", split_from="dev", live=["dev"]),
                  ["--split=below", "--split-from=dev"], ""),
                 ("iterm2", {"ITERM_SESSION_ID": "w0t0p0:ABC"}, {}, ["--opener=w0t0p0:ABC"], "w0t0p0:ABC"),
@@ -2172,7 +2124,7 @@ class Attended(OuterBase):
                 self.assertEqual(self.tui(**opts), 0)
                 self.driver("--runner=tui", *tail, iterm=iterm)
                 self.assertEqual(self.err, ATTACH)
-                opener = [a[9:] for a in tail if a.startswith("--opener=")]   # the driver session carries it too
+                opener = [a[9:] for a in tail if a.startswith("--opener=")]
                 self.assertEqual(self.options, [("=agent-pm-engineer-TASK-7:", "@opener", o) for o in opener])
 
     def test_events_reach_the_inner_as_an_absolute_path(self):
@@ -2190,7 +2142,7 @@ class Attended(OuterBase):
         self.assertTrue(line.startswith("router config-error TASK-7 reason=ValueError: TUI session prefix 'eng_x-TASK-7': want "),
                         line)
         self.assertEqual((self.sh_calls, self.gql.calls, self.keychain_calls, self.run.calls), ([], [], [], []))
-        self.assertEqual(self.outer("eng_x@agents.test"), 0)  # headless: no TUI session to name
+        self.assertEqual(self.outer("eng_x@agents.test"), 0)
 
     def test_attach_lines_come_before_the_driver_session(self):
         printed, sh = [], self.sh
@@ -2226,7 +2178,6 @@ class Attended(OuterBase):
 
 
 class ClaimLinear(FakeLinear):
-    """FakeLinear for the claim; issues.Q_ISSUE, the outer's read, gets the outer's issue node."""
     def __init__(self, todo, outer_issue):
         super().__init__([todo])
         self.issue = outer_issue
@@ -2239,8 +2190,6 @@ class ClaimLinear(FakeLinear):
 
 
 class AttendedEntry(OuterBase):
-    """router.py --issue ID --tui: the claim on a fake Linear, then the real outer with the tui runner. Outside tmux: the
-    stderr hint (no manager directory) is left out of self.err and noted in self.hinted. A HOME of its own."""
     def setUp(self):
         super().setUp()
         self.managers = os.path.join(hermetic.home(self), "managers")
@@ -2257,8 +2206,6 @@ class AttendedEntry(OuterBase):
         self.addCleanup(p.stop)
 
     def sh(self, argv, **kw):
-        """RunBase's, noting runs.jsonl's text when the driver session starts; display-message prints the next of
-        owns (the caller's tmux session) while one is left; the usage probe answers five_hour 0.2."""
         if argv[1] == "new-session":
             self.at_launch.append(self.read(self.runs))
         if argv[:2] == ["tmux", "display-message"] and self.owns:
@@ -2284,7 +2231,6 @@ class AttendedEntry(OuterBase):
         return self.main(["--issue", ID, "--tui", *extra], tty)
 
     def started(self):
-        """The sid of runs.jsonl's one line, the start of ID as engineer; no runs.log beside it."""
         (line,) = self.read(self.runs).splitlines()
         record = json.loads(line)
         datetime.fromisoformat(record.pop("ts"))
@@ -2390,7 +2336,6 @@ class AttendedEntry(OuterBase):
                                            f"'=agent-pm-engineer-{ID}'\n")
 
     def test_another_router_running_leaves_the_issue_alone(self):
-        """TASK-237: a tick claimed it, its driver session not up yet; --issue must not send it back to Todo."""
         self.todo["state"] = "In Progress"
         with other_router(self.runs):
             self.assertEqual(self.entry("--split-from", "dev"), 1)
@@ -2418,20 +2363,17 @@ class AttendedEntry(OuterBase):
         self.assertFalse(os.path.exists(self.runs))
 
     def fresh(self):
-        """ID back in Todo, no runs.jsonl, no tmux call yet."""
         self.todo["state"], self.sh_calls, self.gql.mutations, self.at_launch = "Todo", [], [], []
         if os.path.exists(self.runs):
             os.remove(self.runs)
 
     def detached(self, argv):
-        """main(argv), drive.detach called once: (exit code, the roster drive.detach got)."""
         with mock.patch.object(drive, "detach", wraps=drive.detach) as detach:
             rc = self.main(argv)
         (call,) = detach.call_args_list
         return rc, call.kwargs.get("roster_entry")
 
     def pipeline(self, sid, d, opener, split):
-        """drive.detach's roster for ID's run sid, split from dev: d and the pipeline entry's fields."""
         return d, {"kind": "pipeline", "sid": sid, "cwd": self.rd, "note": ID, "tui": f"engineer-{ID}-{sid[:8]}",
                    "opener": opener, "split": split, "split_from": "dev",
                    "resume": [sys.executable, os.path.abspath(router.__file__), "--issue", ID, "--tui", "--events",
