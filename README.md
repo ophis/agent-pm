@@ -13,6 +13,66 @@ flowchart LR
     T[router.py] -.->|claims Todo issues| R & P & E
 ```
 
+### Core architecture (planned)
+
+Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Solid arrows: import or call, the only direction allowed; dotted: a subclass implements an abstract class; thick: events and replies the Driver passes up uninterpreted. A factory method returning None means that runtime lacks the mode.
+
+```mermaid
+flowchart TB
+  subgraph callers[callers]
+    O[orchestrator]
+    M["manager: /agent-pm:tmux"]
+    W[crew.py]
+  end
+  subgraph delegate[delegate/]
+    D["API / CLI"]
+  end
+  C[composer/]
+  subgraph driver[driver/]
+    API[api.py]
+    REG[registry.py]
+    HM[modes/headless_run]
+    TM[modes/tui_run]
+    TH[tmux_host]
+    REC[records.py]
+  end
+  subgraph adapters[adapters/]
+    F["Adapter (abstract factory)"]
+    CA[ClaudeAdapter]
+    XA[CodexAdapter]
+    HR[HeadlessRun]
+    TR[TuiRun]
+    CR["Claude/Codex HeadlessRun"]
+    CT["Claude/Codex TuiRun"]
+    CM["common (per runtime)"]
+  end
+  P["claude / codex process"]
+  O -->|Python API| D
+  M -->|"CLI --detach"| D
+  W -->|Python API| API
+  D --> C
+  D --> API
+  API --> REG
+  REG -->|implementation| F
+  API --> HM
+  API --> TM
+  API --> REC
+  HM -->|"headless_run()"| F
+  TM -->|"tui_run()"| F
+  F --> HR
+  F --> TR
+  TM --> TH
+  CA -.->|implements| F
+  XA -.->|implements| F
+  CR -.->|implements| HR
+  CT -.->|implements| TR
+  CR --> CM
+  CT --> CM
+  HM --> P
+  TH --> P
+  API ==>|events, replies| D
+```
+
 ## Install
 
 `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
