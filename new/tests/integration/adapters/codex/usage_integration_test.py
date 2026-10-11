@@ -69,3 +69,16 @@ class UsageIntegrationTest(Base):
                                         "env": {"FAKE_LOG": str(self.log)}}}}
         with mock.patch.object(registry, "read_config", return_value=config):
             self.assertEqual(api.usage("codex"), Usage(62, False, 2000, 4000))
+
+    def test_native_environment_filters_markers_and_keeps_configured_overrides(self):
+        common = CodexAdapter({"shell_network": False, "env": {
+            "FAKE_LOG": str(self.log), "FAKE_ADDITION": "configured", "PAGER": "configured"}}).common
+        inherited = {key: "inherited" for key in (*common.unset, *common.defaults)}
+        with mock.patch.dict(os.environ, inherited):
+            self.assertEqual(common.usage(timeout=2), Usage(62, False, 2000, 4000))
+        env = json.loads(self.log.read_text().splitlines()[0])["env"]
+        for key in common.unset:
+            self.assertIsNone(env[key], key)
+        for key, value in common.defaults.items():
+            self.assertEqual(env[key], "configured" if key == "PAGER" else value, key)
+        self.assertEqual((env["CODEX_HOME"], env["FAKE_ADDITION"]), (str(self.codex_home), "configured"))
