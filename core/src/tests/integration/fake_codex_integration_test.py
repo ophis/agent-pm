@@ -12,6 +12,7 @@ import fake_codex
 CORE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DRIVE = os.path.join(CORE, "src", "drive.py")
 SID = "12345678-1234-1234-1234-123456789abc"
+CLIENT_ID = "11111111-2222-4333-8444-555555555555"
 DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "Hello.\n"}
 
 
@@ -20,8 +21,12 @@ class CodexIntegration(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = tmp.name
-        self.home, self.work, bin_dir = (os.path.join(self.root, d) for d in ("home", "work", "bin"))
-        for path in (self.home, self.work, bin_dir):
+        # Recovery authority cannot live in Codex's implicitly writable temporary directories.
+        home = tempfile.TemporaryDirectory(prefix=".fake-codex-home-", dir=os.path.dirname(CORE))
+        self.addCleanup(home.cleanup)
+        self.home = home.name
+        self.work, bin_dir = (os.path.join(self.root, d) for d in ("work", "bin"))
+        for path in (self.work, bin_dir):
             os.mkdir(path)
         self.out = os.path.join(self.work, "out.md")
         self.scenario = os.path.join(self.root, "scenario.json")
@@ -29,9 +34,9 @@ class CodexIntegration(unittest.TestCase):
         self.env = {"PATH": fake_codex.install(bin_dir), "HOME": self.home, "PYTHONUTF8": "1",
                     fake_codex.ENV: self.scenario}
 
-    def drive(self, steps, *extra):
+    def drive(self, steps, *extra, **scenario):
         with open(self.scenario, "w") as f:
-            json.dump({"steps": steps, "log": self.log}, f)
+            json.dump({"steps": steps, "log": self.log, **scenario}, f)
         argv = [sys.executable, DRIVE, "--client", "codex", "--role", "dummy-tester", "--task", "echo",
                 "--input", "Hello.", "--out", self.out, "--workdir", self.work, "--sid", SID, *extra]
         return subprocess.run(argv, cwd=self.work, env=self.env, stdin=subprocess.DEVNULL,
@@ -47,12 +52,11 @@ class CodexIntegration(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("Progress (start): echoing", res.stderr)
         self.assertIn("Codex says hello.", res.stderr)
-        self.assertIn("Codex session fake-session started", res.stderr)
         self.assertIn("status done", res.stderr)
         with open(self.out) as f:
             self.assertEqual(f.read(), "Hello.\n")
         self.assertEqual([e["kind"] for e in self.events()],
-                         ["input", "session", "progress", "outcome", "result", "end"])
+                         ["input", "session", "client_session", "progress", "outcome", "result", "end"])
         with open(self.log) as f:
             call = json.load(f)
         self.assertTrue(call["stdin_eof"])
@@ -62,6 +66,71 @@ class CodexIntegration(unittest.TestCase):
         self.assertIn("--skip-git-repo-check", call["argv"])
         self.assertIn("--approve-for-me", call["argv"])
         self.assertIn("# Input\n\nHello.", call["prompt"])
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [CLIENT_ID])
+
+    def test_two_turns_resume_the_same_native_session_and_keep_previous_progress(self):
+        first = self.drive([{"kind": "progress", "name": "start", "text": "first turn"},
+                            {"kind": "outcome", "outcome": DONE}])
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.drive([{"kind": "progress", "name": "review", "text": "second turn"},
+                             {"kind": "outcome", "outcome": DONE}], "--resume")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        with open(self.log) as f:
+            call = json.load(f)
+        self.assertEqual(call["resume_id"], CLIENT_ID)
+        self.assertLess(call["argv"].index("--approve-for-me"), call["argv"].index("resume"))
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "progress"],
+                         ["first turn", "second turn"])
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [CLIENT_ID, CLIENT_ID])
+
+    def test_interrupted_first_turn_resumes_same_run_and_keeps_progress(self):
+        first = self.drive([{"kind": "progress", "name": "start", "text": "before interruption"}])
+        self.assertEqual(first.returncode, 1, first.stderr)
+        self.assertIn("the agent run returned no outcome", first.stderr)
+        self.assertFalse(any(e["kind"] == "outcome" for e in self.events()))
+        self.assertFalse(os.path.exists(self.out))
+        second = self.drive([{"kind": "progress", "name": "review", "text": "recovered"},
+                             {"kind": "outcome", "outcome": DONE}], "--resume")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        with open(self.log) as f:
+            self.assertEqual(json.load(f)["resume_id"], CLIENT_ID)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [CLIENT_ID, CLIENT_ID])
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "progress"],
+                         ["before interruption", "recovered"])
+        outcomes = [e for e in self.events() if e["kind"] == "outcome"]
+        self.assertEqual(len(outcomes), 1)
+        with open(self.out) as f:
+            self.assertEqual(f.read(), DONE["deliverable"])
+
+    def test_missing_native_file_fails_before_fake_spawn(self):
+        first = self.drive([{"kind": "outcome", "outcome": DONE}])
+        self.assertEqual(first.returncode, 0, first.stderr)
+        os.unlink(self.log)
+        codex_home = os.path.join(self.home, ".codex", "sessions")
+        for root, _, files in os.walk(codex_home):
+            for name in files:
+                os.unlink(os.path.join(root, name))
+        second = self.drive([], "--resume")
+        self.assertEqual(second.returncode, 2, second.stderr)
+        self.assertIn("missing Codex session file", second.stderr)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_missing_mapping_fails_before_fake_spawn(self):
+        res = self.drive([], "--resume")
+        self.assertEqual(res.returncode, 2, res.stderr)
+        self.assertIn("missing Codex recovery state", res.stderr)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_different_native_id_on_resume_is_rejected(self):
+        first = self.drive([{"kind": "outcome", "outcome": DONE}])
+        self.assertEqual(first.returncode, 0, first.stderr)
+        changed = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        second = self.drive([{"kind": "outcome", "outcome": DONE}], "--resume", thread_id=changed)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("already bound to a different client ID", second.stderr)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [CLIENT_ID])
 
     def test_missing_outcome_is_not_inferred_from_final_reply(self):
         reply = json.dumps(DONE)

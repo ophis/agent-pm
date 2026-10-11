@@ -45,6 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
 import manager  # noqa: E402
 import repo as repos  # noqa: E402
+import run_session  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill,  # noqa: E402
@@ -147,15 +148,21 @@ def grid_retile(root: str) -> str | None:
         raise ConfigError(str(e)) from None
 
 
-def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None) -> tuple[str, bool]:
+def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None,
+          *, client: Client | None = None) -> tuple[str, bool]:
     """(the agent run's cwd, whether its client loads the cwd's project settings and instructions), as config.toml's
     `cwd` and `trusted_dirs` comments say. A new run's cwd is the `cwd` run key, else `cwd`, else the caller's current
-    directory; a resume reuses its session's record (none: the workdir, project off). ConfigError when the cwd is no
-    directory, or project would be on with the cwd in the workdir or no longer trusted."""
+    directory; a resume asks the client's recovery hook, falling back to its session record when unsupported
+    (no record: the workdir, project off). ConfigError when the cwd is no directory, or project would be on with the
+    cwd in the workdir or no longer trusted."""
     workdir, trusted = os.path.abspath(params.workdir), trusted_dirs(root)
     if params.resume:
-        entry = session(workdir, params.sid)
-        here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
+        location = client.resume_location(workdir, params.sid) if client is not None else None
+        if location is not None:
+            here, project = location
+        else:
+            entry = session(workdir, params.sid)
+            here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
         if project and not repos.under(os.path.realpath(here), trusted):
             raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
     else:
@@ -178,7 +185,7 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
     run = resolve(root, client, role, task, overlays=layers, trusted=True)
-    here, project = place(root, run, params, cwd)
+    here, project = place(root, run, params, cwd, client=client)
     prompt = render(root, run, params, client=client)
     acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
                  tasks=client.tasks_path(root), cwd=here, project=project)
@@ -221,7 +228,7 @@ def holds(path: str | Path, text: str) -> bool:
         return False
 
 
-def append_line(path: str | Path, text: str) -> None:
+def append_line(path: str | Path, text: str, *, durable: bool = False) -> None:
     """Appends `text` to `path` (created 0600) in one write, refusing a symlink or anything but a regular file (a FIFO
     would block). A lone surrogate is written as `?`."""
     data = memoryview(text.encode(errors="replace"))
@@ -231,8 +238,16 @@ def append_line(path: str | Path, text: str) -> None:
             raise OSError(errno.EINVAL, "not a regular file", str(path))
         while data:
             data = data[os.write(fd, data):]
+        if durable:
+            os.fsync(fd)
     finally:
         os.close(fd)
+    if durable:
+        parent = os.open(os.path.dirname(os.path.abspath(path)), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
 
 
 def printable(text: str) -> str:
@@ -345,11 +360,15 @@ def stamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def note(path: str, kind: str, *, best_effort: bool = False, **fields) -> None:
+def note(path: str, kind: str, *, best_effort: bool = False, durable: bool = False, **fields) -> None:
     """Appends driver event `kind` to the run's record at `path` as one line {"ts", "kind", **fields}; with best_effort
     an OSError is printed, never raised."""
     try:
-        append_line(path, json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n")
+        line = json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n"
+        if durable:
+            append_line(path, line, durable=True)
+        else:
+            append_line(path, line)
     except OSError as e:
         if not best_effort:
             raise
@@ -378,6 +397,11 @@ def session(workdir: str, sid: str) -> dict | None:
                 and os.path.isabs(e["cwd"]) and e["cwd"].isprintable() and isinstance(e.get("project"), bool)):
             found = e
     return found
+
+
+def session_info(client: Client, workdir: str, sid: str):
+    """Query a client's native session capabilities without dispatching on its name."""
+    return client.session_info(workdir, sid)
 
 
 def report_event(line: str) -> Event | None:
@@ -720,13 +744,27 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
                            status_line=launch.status_line, per_column=launch.per_column, retile=launch.retile)
     workdir = os.path.abspath(params.workdir)
     os.makedirs(workdir, exist_ok=True)
+    if launch.session_state is not None:
+        client_name = type(client).__module__.rsplit(".", 1)[-1]
+        if params.resume:
+            state = run_session.load(workdir, params.sid)
+            if (state is None or state.client != client_name
+                    or state.snapshot != launch.session_state
+                    or state.writable_roots != list(dict.fromkeys([os.path.realpath(workdir),
+                                                                  *map(os.path.realpath, launch.writable_roots)]))):
+                raise ConfigError(f"missing or changed {client_name} recovery state for run ID {params.sid!r}")
+        else:
+            run_session.create(workdir, params.sid, client_name, launch.session_state,
+                               launch.writable_roots)
     sinks = [terminal()] if sinks is None else sinks
     out = Path(params.out).absolute()
     if not out.is_dir() and not params.resume:   # a resumed session keeps the draft it wrote there
         out.unlink(missing_ok=True)   # an earlier deliverable is never read as this agent run's
     note(params.channel, "input", text=params.input)
     note(params.channel, "session", sid=params.sid, cwd=launch.cwd or workdir, project=launch.project,
-         transcript=launch.transcript, resume=launch.resume)
+         transcript=launch.transcript, resume=launch.resume,
+         **({"snapshot": launch.session_state} if launch.session_state is not None else {}),
+         durable=launch.session_state is not None)
     rc = 1
     try:
         if begun:
@@ -752,10 +790,18 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
            sinks: Sequence[Sink], out: Path) -> Result:
     """start()'s loop, from the host's begin to the checked outcome."""
     workdir = os.path.abspath(params.workdir)
-    tail, raw, seen = Tail(params.channel), None, set()
+    tail, raw, seen, session_seen = Tail(params.channel), None, set(), False
+    pending: list[Event] = []
 
     def hand(event: Event) -> None:
-        nonlocal raw
+        nonlocal raw, session_seen
+        if event.kind == "session":
+            if launch.session_state is None:
+                raise ConfigError("client reported a native session without recovery state")
+            run_session.bind(workdir, params.sid, event.session_id)
+            note(params.channel, "client_session", sid=params.sid, client_id=event.session_id, durable=True)
+            session_seen = True
+            return
         if event.kind == "outcome":
             raw = event.outcome
             return
@@ -774,11 +820,19 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         host.begin(argv, cwd=cwd, env={**env, **launch.env, "PWD": cwd})   # Linux claude takes its cwd from $PWD
         while True:
             events, ended = host.poll(POLL)
-            for event in tail():   # first: a report made before a stdout line comes before it
-                host.seen(event)
-                hand(event)
+            # A headless client's first native ID must be durable before reports or later output are observed.
             for event in events:
-                hand(event)
+                if event.kind == "session":
+                    hand(event)
+                else:
+                    pending.append(event)
+            if launch.session_state is None or session_seen:
+                for event in tail():   # first: a report made before a stdout line comes before it
+                    host.seen(event)
+                    hand(event)
+                for event in pending:
+                    hand(event)
+                pending.clear()
             if ended or host.done(raw is not None):
                 break
     except RunnerError as e:
@@ -788,6 +842,8 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
         host.stop()
         raise
     rc = host.returncode()
+    if launch.session_state is not None and not session_seen:
+        return Result(rc, None, "the client did not report a native session ID")
     for event in tail():
         hand(event)
     diagnostic = f"the client exited {rc}" if rc != 0 else ""
@@ -937,8 +993,12 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         return 0, None
     if a.detach:
         return _detach(a, run, params, driver, proc), None
-    result = start(launch, run, params, client=client, runner=a.runner, layout=layout,
-                   events=a.events if a.runner == "tui" else None, popen=popen)
+    try:
+        result = start(launch, run, params, client=client, runner=a.runner, layout=layout,
+                       events=a.events if a.runner == "tui" else None, popen=popen)
+    except ConfigError as e:
+        print(f"drive.py: {e}", file=sys.stderr)
+        return 2, None
     if result.outcome is None:
         print(f"drive.py: {result.error}", file=sys.stderr)
         return (3 if result.returncode != 0 else 1), None

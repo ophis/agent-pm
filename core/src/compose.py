@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import sys
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -120,12 +121,12 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and Claude
-    session."""
+    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and agent-pm
+    run ID."""
     input: str
     out: str
     workdir: str
-    sid: str | None = None   # None → a new session id
+    sid: str | None = None   # None → a new agent-pm run ID
     resume: bool = False
     prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
 
@@ -334,7 +335,8 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
 
 def report_command(scripts: str, params: RunParams) -> str:
     """The shell command an agent run reports its progress and outcome with, up to its subcommand."""
-    return f"python3 {shlex.quote(os.path.join(scripts, 'report.py'))} --to {shlex.quote(params.channel)}"
+    return (f"{shlex.quote(sys.executable)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
+            f"--to {shlex.quote(params.channel)}")
 
 
 def outcome_schema(root: str) -> dict:
@@ -430,7 +432,8 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
     values = {"workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
               "scripts": _code(client.scripts_path(root)), "tasks": _code(client.tasks_path(root)),
               "methods": _code(client.methods_path(root)), "gate": _code(run.gate or "none"),
-              REPORT: _code(f"python3 <scripts>/report.py --to <Workdir>/{CHANNEL}") if params else ""}
+              REPORT: _code(f"{shlex.quote(sys.executable)} <scripts>/report.py --to <Workdir>/{CHANNEL}")
+              if params else ""}
     values |= {f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()}
     unset = {"workdir": "no run params and the client has no inline_workdir", REPORT: "no run params"}
     lines = []

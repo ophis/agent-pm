@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -25,6 +26,7 @@ import compose  # noqa: E402
 import drive  # noqa: E402
 import manager  # noqa: E402
 import report  # noqa: E402
+import run_session  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SID = "11111111-2222-3333-4444-555555555555"
@@ -92,7 +94,7 @@ class Base(unittest.TestCase):
                           layers=layers, cwd=cwd or self.work)[0]
 
     def report(self):
-        return f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl"
+        return compose.report_command(f"{CORE}/src", self.params())
 
 
 class ClientConfig(unittest.TestCase):
@@ -231,7 +233,8 @@ class Claude(Base):
             "--add-dir", TASKS, "--add-dir", METHODS,
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n", launch.argv[2])
+        self.assertIn(f"\n- `report`: `{shlex.quote(sys.executable)} <scripts>/report.py --to "
+                      "<Workdir>/run.jsonl`\n", launch.argv[2])
         self.assertIn("## Return\n\nReport through `report`, never in a reply:", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
@@ -301,7 +304,7 @@ class Claude(Base):
     def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
-        cmd = f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl stop --pending background_tasks"
+        cmd = f"{self.report()} stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"enabledPlugins": {"agent-pm@agent-pm": False},
                           "hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
@@ -378,6 +381,145 @@ class Claude(Base):
 
 
 class Codex(Base):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(unittest.mock.patch.object(run_session, "_implicit_writable_roots", return_value=[]))
+
+    def saved_session(self, *, client_id=None):
+        hermetic.home(self)
+        codex_home = os.path.join(self.tmp.name, "user-codex")
+        os.makedirs(codex_home)
+        extra = os.path.join(self.tmp.name, "extra")
+        os.makedirs(extra)
+        snapshot = {"cwd": os.path.realpath(self.work), "project": False, "dirs": [os.path.realpath(extra)],
+                    "commands": ["make test"], "model": "saved-model", "effort": "low", "network": True,
+                    "codex_home": os.path.realpath(codex_home)}
+        state = run_session.create(self.work, SID, "codex", snapshot,
+                                   [snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]])
+        if client_id:
+            run_session.bind(self.work, SID, client_id)
+        return state.snapshot
+
+    def metadata(self, client_id, snapshot, *, filename=None, payload_id=None, cwd=None):
+        folder = os.path.join(snapshot["codex_home"], "sessions", "2026", "10", "11")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, filename or f"rollout-2026-10-11T01-02-03-{client_id}.jsonl")
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": payload_id or client_id,
+                       "cwd": cwd or snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        return path
+
+    def test_new_launch_captures_effective_options(self):
+        config_home = os.path.join(self.tmp.name, "user-codex")
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": config_home}), redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch(
+                "prompt", run(), params=self.params(),
+                access=drive.Access(dirs=[self.repo], commands=["make test"], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], os.path.realpath(config_home))
+        self.assertEqual(set(launch.writable_roots),
+                         set(map(os.path.realpath, [self.work, config_home, self.repo])))
+        self.assertEqual(launch.session_state, {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.repo)], "commands": ["make test"], "model": "gpt-6.1-sol",
+                         "effort": "high", "network": False, "codex_home": os.path.realpath(config_home)})
+
+    def test_codex_validates_its_own_saved_payload_before_use(self):
+        snapshot = self.saved_session(client_id=SID)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = run_session._path(root, os.path.realpath(self.work), SID)
+        with open(path) as f:
+            original = json.load(f)
+        client = clients.get("codex", CORE)
+        for change in ({"network": "yes"}, {"cwd": "/work/../other"}, {"dirs": [2]}, {"extra": True}):
+            data = dict(original, snapshot={**snapshot, **change})
+            with open(path, "w") as f:
+                json.dump(data, f)
+            for use in (lambda: client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS),
+                        lambda: client.resume_location(self.work, SID), lambda: client.session_info(self.work, SID)):
+                with self.subTest(change=change), self.assertRaisesRegex(compose.ConfigError, "Codex recovery"):
+                    use()
+        with open(path, "w") as f:
+            json.dump(dict(original, client_id="not-a-uuid"), f)
+        with self.assertRaisesRegex(compose.ConfigError, "Codex.*ID"):
+            client.session_info(self.work, SID)
+
+    def test_resume_uses_saved_options_and_parent_flags(self):
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        self.metadata(client_id, snapshot)
+        changed = type(clients.get("codex", CORE))({**clients.get("codex", CORE).config,
+                   "tiers": {"2": "changed-model"}, "shell_network": False})
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "changed-home")}), \
+                redirect_stderr(io.StringIO()):
+            launch = changed.launch("next", run(), params=self.params(resume=True),
+                                    access=drive.Access(dirs=[self.repo], commands=[], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], snapshot["codex_home"])
+        self.assertEqual(launch.cwd, snapshot["cwd"])
+        self.assertEqual(launch.session_state, snapshot)
+        self.assertEqual(launch.argv[-3:], ["resume", client_id, "next"])
+        self.assertLess(launch.argv.index("--add-dir"), launch.argv.index("resume"))
+        self.assertEqual(launch.argv[launch.argv.index("--add-dir") + 1], snapshot["dirs"][0])
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], "saved-model")
+        self.assertIn("sandbox_workspace_write.network_access=true", launch.argv)
+        self.assertNotIn("changed-model", launch.argv)
+        self.assertNotIn(self.repo, launch.argv)
+
+    def test_resume_rejects_missing_state_id_file_and_mismatched_metadata(self):
+        client = clients.get("codex", CORE)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex recovery state"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        snapshot = self.saved_session()
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex client ID"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        run_session.bind(self.work, SID, client_id)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex session file"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        path = self.metadata(client_id, snapshot, payload_id="ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        self.metadata(client_id, snapshot)
+        self.metadata(client_id, snapshot, filename=f"rollout-duplicate-{client_id}.jsonl")
+        with self.assertRaisesRegex(compose.ConfigError, "duplicate Codex session files"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_resume_rejects_session_file_symlink_and_wrong_cwd(self):
+        client = clients.get("codex", CORE)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        path = self.metadata(client_id, snapshot, cwd=self.repo)
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        target = os.path.join(self.tmp.name, "target.jsonl")
+        with open(target, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": client_id, "cwd": snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        os.symlink(target, path)
+        with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file symlink"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_session_info_reports_native_metadata_and_unsupported_usage(self):
+        client = clients.get("codex", CORE)
+        snapshot = self.saved_session()
+        self.assertEqual(client.session_info(self.work, SID).client_id, None)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        run_session.bind(self.work, SID, client_id)
+        missing = client.session_info(self.work, SID)
+        self.assertEqual((missing.resume_supported, missing.inspection_supported, missing.client_id,
+                          missing.exists, missing.usage_supported, missing.usage),
+                         (True, True, client_id, False, False, None))
+        path = self.metadata(client_id, snapshot)
+        found = client.session_info(self.work, SID)
+        self.assertEqual((found.client_id, found.exists, found.transcript), (client_id, True, path))
+        self.assertAlmostEqual(found.last_activity, os.stat(path).st_mtime, delta=1)
+        self.assertIn("codex resume --approve-for-me", found.resume)
+        self.assertTrue(found.resume.endswith(client_id))
+        self.assertIn("CODEX_HOME=", found.resume)
+        self.assertIn("--add-dir", found.resume)
+        self.assertFalse(found.usage_supported)
+
     def test_four_tiers_select_astra_sol_luna_terra_and_show_the_model(self):
         expected = {"1": "gpt-6-astra", "2": "gpt-6.1-sol",
                     "3": "gpt-6-luna", "4": "gpt-5.6-terra"}
@@ -436,7 +578,8 @@ class Codex(Base):
                     self.assertNotIn("--ignore-rules", argv)
                     self.assertNotIn("--ignore-user-config", argv)
                     self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
-                    self.assertEqual((launch.cwd, launch.env, launch.interactive), (self.work, {}, []))
+                    self.assertEqual((launch.cwd, launch.env, launch.interactive),
+                                     (self.work, {"CODEX_HOME": os.path.realpath(os.path.expanduser("~/.codex"))}, []))
                     self.assertIn("--add-dir", argv)
                     self.assertEqual(drive.command(launch, "headless", clients.get("codex", CORE)), argv)
                     with self.assertRaisesRegex(compose.ConfigError, "has no tui command"):
@@ -573,6 +716,7 @@ class Codex(Base):
     def test_json_events_show_only_user_readable_text(self):
         client = clients.get("codex", CORE)
         lines = [
+            '{"type":"thread.started","thread_id":"11111111-2222-3333-4444-555555555555"}\n',
             '{"type":"thread.started","thread_id":"123"}\n',
             '{"type":"turn.started"}\n',
             '{"type":"item.completed","item":{"type":"agent_message","text":"Hello\\nworld"}}\n',
@@ -585,7 +729,8 @@ class Codex(Base):
             '[]\n',
         ]
         seen = list(client.events(lines))
-        self.assertEqual(seen, [clients.Event("text", "Codex session 123 started"),
+        self.assertEqual(seen, [clients.Event("session", session_id=SID),
+                                clients.Event("stderr", "codex: invalid thread.started ID"),
                                 clients.Event("text", "Hello"), clients.Event("text", "world"),
                                 clients.Event("stderr", "rate limit"),
                                 clients.Event("stderr", "nested problem"),
@@ -625,7 +770,7 @@ class Generic(Base):
 
     def test_access_fills_the_dirs_and_commands_report_then_gate_last(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
+        report = f"{compose.report_command('/s', self.params())} *"
         for name, cfg, repo, dirs, commands in (
                 ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, ["/t"], ["/s/x *", report, gate]),
                 ("no gate", {"commands": ["x"]}, None, ["/t"], ["x", report]),
@@ -2947,6 +3092,168 @@ class Main(Base):
                 code = drive.main(["--role", "dummy-tester", *argv], root=CORE)
             self.assertEqual(code, 2, argv)
             self.assertIn("client 'claude' needs --input, --out and --workdir", err.getvalue())
+
+
+class CodexRecoveryDriver(Base):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(unittest.mock.patch.object(run_session, "_implicit_writable_roots", return_value=[]))
+        self.private = hermetic.home(self)
+        self.client = clients.get("codex", CORE)
+        self.snapshot = {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.work)],
+                         "commands": ["report *"], "model": "gpt-6-luna", "effort": "low",
+                         "network": False,
+                         "codex_home": os.path.realpath(os.path.join(os.path.dirname(self.private), ".codex"))}
+        self.native = "11111111-2222-4333-8444-555555555555"
+
+    def events(self):
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def run_codex(self, native=None, *, resume=False, begun=None, sinks=(), popen=None):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        lines = stream({"type": "thread.started", "thread_id": native or self.native})
+        return drive.start(launch, run(), self.params(resume=resume), client=self.client,
+                           begun=begun, sinks=sinks, popen=popen or (lambda argv, **kw: FakeProc(lines)))
+
+    def test_snapshot_exists_before_spawn_and_native_mapping_before_later_events(self):
+        observed = []
+
+        def started():
+            state = run_session.load(self.work, SID)
+            observed.append((state.snapshot, state.client_id, [e["kind"] for e in self.events()]))
+
+        def popen(argv, **kw):
+            self.assertEqual(run_session.load(self.work, SID).client_id, None)
+            def lines():
+                yield from stream({"type": "thread.started", "thread_id": self.native})
+                yield from stream({"type": "item.completed", "item": {"type": "agent_message", "text": "later"}})
+            return FakeProc(lines())
+
+        seen = []
+        def sink(event):
+            if event.kind == "text":
+                seen.append((event.text, run_session.load(self.work, SID).client_id,
+                             [e["kind"] for e in self.events()]))
+        self.run_codex(begun=started, popen=popen, sinks=[sink])
+        self.assertEqual(observed[0][:2], (self.snapshot, None))
+        self.assertEqual(observed[0][2], ["input", "session"])
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [self.native])
+        self.assertEqual(seen[0][:2], ("later", self.native))
+        self.assertIn("client_session", seen[0][2])
+
+    def test_resume_keeps_original_state_and_progress_and_rejects_changed_id(self):
+        self.run_codex()
+        drive.note(self.params().channel, "progress", name="review", text="first turn")
+        self.run_codex(resume=True)
+        self.assertIn("first turn", [e["text"] for e in self.events() if e["kind"] == "progress"])
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [self.native, self.native])
+        with self.assertRaisesRegex(compose.ConfigError, "different client ID"):
+            self.run_codex("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", resume=True)
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+
+    def test_forged_run_record_cannot_change_trusted_mapping(self):
+        self.run_codex()
+        drive.note(self.params().channel, "client_session", sid=SID,
+                   client_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        drive.note(self.params().channel, "session", sid=SID, cwd="/", project=True)
+        self.assertEqual(run_session.load(self.work, SID).client_id, self.native)
+        self.assertEqual(self.client.resume_location(self.work, SID), (os.path.realpath(self.work), False))
+        self.run_codex(resume=True)
+        self.assertEqual(run_session.load(self.work, SID).snapshot["dirs"], [os.path.realpath(self.work)])
+
+    def test_driver_accepts_another_clients_opaque_payload(self):
+        class FutureClient(clients.Client):
+            def events(self, lines):
+                for _ in lines:
+                    yield clients.Event("session", session_id="future:session-1")
+                    yield clients.Event("text", "future output")
+        payload = {"cursor": {"offset": 3}}
+        launch = drive.Launch(["future"], cwd=self.work, session_state=payload,
+                              writable_roots=[self.repo])
+        seen = []
+        drive.start(launch, run(), self.params(), client=FutureClient({}), sinks=[seen.append],
+                    popen=lambda argv, **kw: FakeProc(["ready"]))
+        state = run_session.load(self.work, SID)
+        self.assertEqual(state.snapshot, payload)
+        self.assertIn(os.path.realpath(self.repo), state.writable_roots)
+        self.assertEqual(state.client_id, "future:session-1")
+        self.assertIn(clients.Event("text", "future output"), seen)
+
+    def test_driver_session_info_delegates_to_client(self):
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertTrue(info.resume_supported)
+        self.assertFalse(info.exists)
+
+    def test_no_native_id_does_not_count_as_a_recoverable_run(self):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        result = drive.start(launch, run(), self.params(), client=self.client, sinks=[],
+                             popen=lambda argv, **kw: FakeProc(stream({"type": "turn.completed"})))
+        self.assertIsNone(result.outcome)
+        self.assertIn("did not report a native session ID", result.error)
+        self.assertIsNone(run_session.load(self.work, SID).client_id)
+
+    def test_fsync_failure_stops_host_before_later_output_and_reports(self):
+        real_fsync = os.fsync
+        for target in ("state", "mirror"):
+            with self.subTest(target=target):
+                # Give each attempt its own recovery record.
+                sid = SID + target
+                params = self.params(sid=sid)
+                process = FakeProc(stream({"type": "thread.started", "thread_id": self.native},
+                                         {"type": "item.completed", "item": {"type": "agent_message", "text": "later"}}))
+                failed = []
+                def fsync(fd):
+                    # Read actual bytes at the durability boundary, after write/flush.
+                    info = os.fstat(fd)
+                    if stat.S_ISREG(info.st_mode):
+                        if target == "state":
+                            root = os.path.join(os.path.dirname(self.private), ".agent-pm", "core-sessions")
+                            paths = [os.path.join(root, name) for name in os.listdir(root) if name.startswith(".state-")]
+                        else:
+                            paths = [params.channel]
+                        for path in paths:
+                            if os.path.exists(path) and os.stat(path).st_ino == info.st_ino:
+                                with open(path) as f:
+                                    data = f.read()
+                                if (target == "state" and f'"client_id":"{self.native}"' in data
+                                        or target == "mirror" and '"kind": "client_session"' in data):
+                                    failed.append(data)
+                                    raise OSError(errno.ENOSPC, "cannot fsync mapping")
+                    return real_fsync(fd)
+                def popen(argv, **kw):
+                    drive.note(params.channel, "progress", name="start", text="queued report")
+                    return process
+                seen = []
+                launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                                      writable_roots=[self.work])
+                with unittest.mock.patch.object(os, "fsync", fsync):
+                    with self.assertRaisesRegex(OSError, "cannot fsync mapping"):
+                        drive.start(launch, run(), params, client=self.client, popen=popen, sinks=[seen.append])
+                self.assertTrue(failed, "must reach fsync after writing the native ID")
+                self.assertTrue(process.killed)
+                self.assertEqual(seen, [])
+                self.assertEqual(run_session.load(self.work, sid).client_id,
+                                 None if target == "state" else self.native)
+
+    def test_session_query_exposes_native_file_and_manual_resume_without_usage_guess(self):
+        self.run_codex()
+        path = os.path.join(self.snapshot["codex_home"], "sessions", "2026", "10", "10",
+                            f"rollout-2026-10-10-{self.native}.jsonl")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {"id": self.native,
+                                                                "cwd": self.snapshot["cwd"]}}) + "\n")
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertEqual((info.client_id, info.exists, info.transcript), (self.native, True, path))
+        self.assertIsInstance(info.last_activity, float)
+        self.assertIn(f"codex resume --approve-for-me", info.resume)
+        self.assertIn(self.native, info.resume)
+        self.assertFalse(info.usage_supported)
+        self.assertIsNone(info.usage)
 
 
 if __name__ == "__main__":
