@@ -26,6 +26,7 @@ jobs:
       - name: Check tmux shard inventory
         run: python3 .github/tmux_shards.py --check
       - name: Orchestrator tests
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         run: python3 -m unittest discover -s orchestrator/src/tests -p "*_test.py"
       - name: Core tests
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
