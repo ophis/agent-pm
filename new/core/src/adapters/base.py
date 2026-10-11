@@ -1,7 +1,7 @@
 """The Adapter interface. An Adapter is one runtime's abstract factory, built by src/driver/registry.py from the core
 config's [adapters.<name>] table minus `implementation`; headless_run() and tui_run() give the runtime's HeadlessRun or
 TuiRun, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
-the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, Exited. Stderr, a diagnostic, sits
+the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited. Stderr, a diagnostic, sits
 beside it. A spec type refuses a bad value with ConfigError when built. Nothing here starts a process or touches tmux;
 imports no other layer."""
 import json
@@ -124,12 +124,17 @@ class Blocked:
 
 
 @dataclass(frozen=True)
+class LimitHit:
+    resets_at: float | None = None
+
+
+@dataclass(frozen=True)
 class Exited:
     """The runtime's process ended; in headless mode only the Driver makes it."""
     returncode: int
 
 
-Event = SessionBound | Activity | Reply | TurnEnd | Blocked | Exited
+Event = SessionBound | Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
 
 
 @dataclass(frozen=True)
