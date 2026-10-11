@@ -1,0 +1,303 @@
+"""The Team: the roles, tasks and templates a run can name, from the team root and the team dirs; each role's task
+index; the checks that keep a team dir out of reach of the agent run."""
+import os
+import re
+import stat
+import tomllib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import repo
+from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, _text, _title, unfenced
+
+PROGRESS = "agent-pm-progress"   # the progress mark (the package docstring)
+START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)   # a task's start mark line
+KINDS = ("roles", "tasks", "templates")   # a team dir's subdirs, in scan order
+TEAM_NAME = re.compile(r"[a-z0-9-]+")   # a team dir file's stem
+INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)   # a role's task index
+INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)   # task, path (none → ""), description
+INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")   # in the index's opening sentence
+
+
+@dataclass(frozen=True)
+class Team:
+    """The roles, tasks and templates a run can name: the team root's (built-in) and the team dirs' (custom), found by
+    name. `files`: (kind, name) → its paths, built-in first, then the team dirs in order (two or more: a conflict);
+    `misnamed`: custom files whose stem fails TEAM_NAME."""
+    root: str
+    dirs: tuple[str, ...] = ()
+    files: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
+    misnamed: tuple[str, ...] = ()
+
+    def custom(self, path: str) -> bool:
+        return not Path(path).is_relative_to(self.root)
+
+    def label(self, kind: str, name: str, path: str) -> str:
+        return path if self.custom(path) else f"{kind}/{name}.md"
+
+    def source(self, path: str) -> str:
+        return path if self.custom(path) else "built-in"
+
+    def lookup(self, kind: str, name: str) -> str | None:
+        """The one path of that name, a custom one checked (check_file); None when none."""
+        paths = self.files.get((kind, name), ())
+        if len(paths) > 1:
+            raise ConfigError(f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add")
+        if paths and self.custom(paths[0]):
+            self.check_file(kind, paths[0])
+        return paths[0] if paths else None
+
+    def read(self, kind: str, name: str) -> tuple[str, str]:
+        if not (path := self.lookup(kind, name)):
+            raise self.misnamed_error(kind, name) or ConfigError(f"missing file {kind}/{name}.md")
+        return _text(path), self.label(kind, name, path)
+
+    def check_file(self, kind: str, path: str) -> None:
+        """Raises ConfigError on the first defect of custom file `path`, naming it."""
+        text = _text(path)
+        if text.split("\n", 1)[0].strip() == "---":
+            raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
+                              f"{repo.LOCAL}")
+        if m := PLACEHOLDER.search(text):
+            raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
+        for m in METHOD.findall(text):
+            if not os.path.isfile(os.path.join(self.root, "methods", f"{m}.md")):
+                raise ConfigError(f"{path}: names <methods>/{m}.md, which core has no file for")
+        if kind == "roles":
+            _title(text, path)
+        elif kind == "tasks":
+            if not text.startswith("# "):
+                raise ConfigError(f"{path}: must start with a '# ' heading")
+            if (n := len(START.findall(text))) != 1:
+                raise ConfigError(f"{path}: has {n} [{PROGRESS}:start] lines, not 1")
+            if not any(line.rstrip() == "## Resume" for _, line in unfenced(text)):
+                raise ConfigError(f"{path}: has no ## Resume section")
+
+    def charter(self, role: str) -> tuple[str, str] | None:
+        """(the charter's text, its label); None without a charter."""
+        if not (path := self.lookup("roles", role)):
+            return None
+        return _text(path), self.label("roles", role, path)
+
+    def tasks_dir(self, role: str) -> str | None:
+        """Where `role`'s task files are: its team dir's tasks/ for a custom charter, None (the team root's tasks/) for
+        a built-in one or none."""
+        path = self.lookup("roles", role)
+        return os.path.join(os.path.dirname(os.path.dirname(path)), "tasks") if path and self.custom(path) else None
+
+    def used(self, role: str, templates: Sequence[str] = ()) -> list[str]:
+        """The custom paths a run of `role` with `templates` uses: charter, index tasks, templates."""
+        paths = [self.lookup("roles", role)]
+        paths += [self.lookup("tasks", t) for t in index(role, self)]
+        paths += [self.lookup("templates", name) for name in templates]
+        return list(dict.fromkeys(p for p in paths if p and self.custom(p)))
+
+    def misnamed_error(self, kind: str | None = None, name: str | None = None) -> ConfigError | None:
+        """The error for the first misnamed file (of `kind` and stem `name`, when given); None when none."""
+        for path in self.misnamed:
+            stem = os.path.basename(path).removesuffix(".md")
+            if kind is None or (os.path.basename(os.path.dirname(path)), stem) == (kind, name):
+                return ConfigError(f"{path}: name {stem!r}: want {TEAM_NAME.pattern}")
+        return None
+
+    def check_all(self, cfg: Mapping) -> None:
+        """Raises ConfigError on the first defect of any team dir file or `[roles.<role>]` without a charter."""
+        if e := self.misnamed_error():
+            raise e
+        for kind, name in self.files:
+            self.lookup(kind, name)
+        roles(self, cfg)
+
+
+def team_dirs(config: str = CONFIG) -> tuple[str, ...]:
+    """The real paths of the global `team_dirs` of `config` with repo.LOCAL on top, in order; () when unset.
+    ConfigError when `config` itself sets it, it is malformed or the config can't be read."""
+    try:
+        own, value = "team_dirs" in repo.read_config(config, os.devnull), repo.read_config(config).get("team_dirs")
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        raise ConfigError(f"config: {e}") from None
+    if own:
+        raise ConfigError(f"team_dirs: set it in {repo.LOCAL}, not {os.path.basename(config)}")
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError(f"team_dirs: want a list of absolute or ~ paths, got {value!r:.80}")
+    dirs = []
+    for p in value:
+        if not isinstance(p, str) or not p.startswith(("/", "~")) or not os.path.isabs(os.path.expanduser(p)):
+            raise ConfigError(f"team_dirs: {p!r:.80} is not an absolute or ~ path")
+        real = os.path.realpath(os.path.expanduser(p))
+        if not os.path.isdir(real):
+            raise ConfigError(f"team_dirs: {p} is not a directory")
+        if real in dirs:
+            raise ConfigError(f"team_dirs: {p} is listed twice")
+        dirs.append(real)
+    return tuple(dirs)
+
+
+def team(root: str = TEAM, dirs: Sequence[str] = ()) -> Team:
+    """The Team of team root `root` and `dirs` (real paths, in order): each <kind>/*.md regular file, symlinks
+    followed. A custom file whose stem fails TEAM_NAME is misnamed."""
+    files, misnamed = {}, []
+    for base in (root, *dirs):
+        for kind in KINDS:
+            sub = os.path.join(base, kind)
+            try:
+                names = sorted(os.listdir(sub)) if os.path.isdir(sub) else []
+            except OSError as e:
+                raise ConfigError(f"{sub}: {e.strerror}") from None
+            for name in names:
+                path, stem = os.path.join(sub, name), name.removesuffix(".md")
+                if not name.endswith(".md") or not os.path.isfile(path):
+                    continue
+                if base != root and not TEAM_NAME.fullmatch(stem):
+                    misnamed.append(path)
+                else:
+                    files.setdefault((kind, stem), []).append(path)
+    return Team(root=root, dirs=tuple(dirs), files={k: tuple(v) for k, v in files.items()},
+                misnamed=tuple(misnamed))
+
+
+def tasks_path(role: str, team: Team) -> str:
+    """<tasks>'s value for `role`: its Team.tasks_dir, else the team root's tasks/."""
+    return team.tasks_dir(role) or os.path.join(team.root, "tasks")
+
+
+def roles(team: Team, cfg: Mapping) -> list[str]:
+    """Every role: the team root's charters in config order, then its others sorted, then each team dir's, sorted.
+    ConfigError for a `[roles.<role>]` without a charter."""
+    for role in cfg.get("roles", {}):
+        if not team.lookup("roles", role):
+            raise _no_charter(role)
+    charters = {name: paths for (kind, name), paths in team.files.items() if kind == "roles"}
+    core = [name for name, paths in charters.items() if not team.custom(paths[0])]
+    out = [r for r in cfg.get("roles", {}) if r in core] + sorted(r for r in core if r not in cfg.get("roles", {}))
+    for d in team.dirs:
+        out += sorted(name for name, paths in charters.items()
+                      if name not in out and any(os.path.dirname(os.path.dirname(p)) == d for p in paths))
+    return out
+
+
+def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str, str]:
+    """{task: its description} of the role's task index, in order; ConfigError on a defect (the formats: the package
+    docstring). `team` None: the team root alone; `config` names an unknown role apart from a charterless one."""
+    team = _team(team)
+    if not (charter := team.charter(role)):
+        raise _no_charter(role, repo.read_config(config), team)
+    text, rel = charter
+    m = INDEX.search(text)
+    section = m.group(1).strip() if m else ""
+    if not (lines := INDEX_LINE.findall(section)):
+        raise ConfigError(f"{rel}: no task index (a ## Tasks section of - `<task>` (`<tasks>/<task>.md`): … lines)")
+    tasks = {t: what for t, _, what in lines}
+    if not (default := INDEX_DEFAULT.search(section.split("\n", 1)[0])):
+        raise ConfigError(f"{rel}: ## Tasks opens without its default (unsure → `<task>` (`<tasks>/<task>.md`))")
+    if default.group(1) not in tasks:
+        raise ConfigError(f"{rel}: the default {default.group(1)!r} is not a listed task")
+    for t, path in [default.groups(), *((t, path) for t, path, _ in lines)]:
+        if path != f"<tasks>/{t}.md":
+            raise ConfigError(f"{rel}: {t!r} has path {path!r}, not '<tasks>/{t}.md'")
+    own = tasks_path(role, team)
+    for t in tasks:
+        if not (path := team.lookup("tasks", t)):
+            raise team.misnamed_error("tasks", t) or ConfigError(f"{rel}: lists {t!r} without tasks/{t}.md")
+        if os.path.dirname(path) != own:
+            raise ConfigError(f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
+                              f"{team.tasks_dir(role) or 'core team/tasks'}: a role runs only its own tasks")
+    return tasks
+
+
+def catalog(team: Team | None = None, config: str = CONFIG) -> dict[str, dict[str, str]]:
+    """Every role (roles(), so configured ones in config order first) and its task index; `team` as index's."""
+    team = _team(team)
+    _roles(config)
+    return {role: index(role, team, config) for role in roles(team, repo.read_config(config))}
+
+
+def _roles(config: str) -> Mapping:
+    """The merged base role tables, checked before the catalog or a resolution uses them."""
+    if not os.path.isfile(config):
+        raise ConfigError(f"no core config {config}")
+    roles = repo.read_config(config).get("roles")
+    if not isinstance(roles, Mapping):
+        raise ConfigError(f"malformed [roles] table in {config}")
+    for role, table in roles.items():
+        if not isinstance(role, str) or not isinstance(table, Mapping):
+            raise ConfigError(f"malformed [roles.{role}] table in {config}")
+    return roles
+
+
+def _team(given: Team | None) -> Team:
+    """`given`, else the team root alone."""
+    return given if given is not None else team()
+
+
+def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
+    """The error for a role without a charter: a misnamed roles/<role>.md in `team` → its; else `[roles.<role>]` set
+    (or `cfg` None) → no charter; else unknown."""
+    if team is not None and (e := team.misnamed_error("roles", role)):
+        return e
+    if cfg is not None and role not in cfg.get("roles", {}):
+        return ConfigError(f"unknown role {role!r}")
+    return ConfigError(f"roles.{role}: no charter roles/{role}.md in core or team_dirs")
+
+
+def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
+                    temp: Sequence[str] | None = None) -> None:
+    """Raises ConfigError when a team dir, one of its KINDS subdirs or a *.md file directly in one, each by its real
+    path (symlinks followed, as team() does), lies in a temp dir (`temp`, None: repo.temp_dirs()), overlaps a dir of
+    `writes` ([(what, path)]: dirs the agent run can write) either way, is writable by group or others or is not the
+    current user's; or when a parent dir of a team dir is writable by group or others or owned by neither the user nor
+    root (who could move the team dir away and put another there; a sticky dir lets no one else)."""
+    if not dirs:
+        return
+    temps, me = repo.temp_dirs() if temp is None else temp, os.getuid()
+    for d in map(os.path.realpath, dirs):
+        for path in team_paths(d):
+            real = os.path.realpath(path)
+            shown = path if real == path else f"{path} ({real})"
+            if t := repo.under(real, temps):
+                raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
+            check_overlap(shown, real, writes)
+            try:
+                st = os.stat(path)
+            except OSError as e:
+                raise ConfigError(f"{path}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                raise ConfigError(f"team_dirs: {shown} is writable by group or others: chmod go-w it")
+            if st.st_uid != me:
+                raise ConfigError(f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it")
+        for parent in Path(d).parents:
+            try:
+                st = os.stat(parent)
+            except OSError as e:
+                raise ConfigError(f"{parent}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not st.st_mode & stat.S_ISVTX:
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could "
+                                  "replace the team dir")
+            if st.st_uid not in (me, 0):
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: "
+                                  "they could replace the team dir")
+
+
+def team_paths(d: str) -> list[str]:
+    """Team dir `d`, each of its KINDS subdirs and the *.md files directly in one; ConfigError when a subdir can't be
+    listed."""
+    paths = [d]
+    for kind in KINDS:
+        if os.path.isdir(sub := os.path.join(d, kind)):
+            try:
+                names = sorted(os.listdir(sub))
+            except OSError as e:
+                raise ConfigError(f"{sub}: {e.strerror}") from None
+            paths += [sub, *(os.path.join(sub, n) for n in names if n.endswith(".md"))]
+    return paths
+
+
+def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> None:
+    """Raises ConfigError when realpath `real` (`shown` in the message) and a dir of `writes` hold one another."""
+    for what, p in writes:
+        p = os.path.realpath(p)
+        if repo.under(real, [p]) or repo.under(p, [real]):
+            raise ConfigError(f"team_dirs: {shown} overlaps {what} {p}: the agent run can write there")
