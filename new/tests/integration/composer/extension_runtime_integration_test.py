@@ -18,6 +18,7 @@ class ExtensionRuntime(child.Case):
     def test_its_runtime_resolves_composes_and_the_catalog_lists_every_role(self):
         self.local(LOCAL)
         got = self.compose("dummy-tester", "echo")
+        self.assertFalse(got["repo_imported"])
         for path in got["files"]:
             self.assertTrue(path.startswith(SRC + os.sep), path)
         self.assertEqual((got["run"]["runtime"], got["run"]["tier"], got["run"]["effort"]), ("extension", 3, "low"))

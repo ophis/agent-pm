@@ -3,10 +3,9 @@ import os
 import re
 from collections.abc import Mapping
 
-import repo
-
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # <scripts>'s value
-CONFIG = repo.CONFIG
+CONFIG = os.path.join(os.path.dirname(SRC), "config.toml")
+LOCAL = "~/.agent-pm/core-new.local.toml"
 TEAM = os.path.join(os.path.dirname(SRC), "team")   # the built-in team root
 OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")

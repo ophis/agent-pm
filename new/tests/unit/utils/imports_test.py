@@ -20,6 +20,19 @@ class UtilsImportsTest(unittest.TestCase):
     def test_real_utils_have_only_standard_library_imports(self):
         self.assertEqual(guards.pure_utils(CORE), [])
 
+    def test_no_layer_or_outer_module_imports_repo(self):
+        files = {f"src/{layer}/x.py": "import repo\n" for layer in guards.LAYERS}
+        files["src/x.py"] = "from repo import read_config\n"
+        root = self.tree(files)
+        self.assertEqual(guards.layer_imports(root), ["src/adapters/x.py: adapters imports repo",
+                                                     "src/composer/x.py: composer imports repo",
+                                                     "src/delegate/x.py: delegate imports repo",
+                                                     "src/driver/x.py: driver imports repo",
+                                                     "src/x.py: outside the layers imports repo.read_config"])
+
+    def test_production_tree_does_not_import_repo_as_a_library(self):
+        self.assertEqual(guards.layer_imports(CORE), [])
+
     def test_every_layer_may_import_utils(self):
         files = {"src/utils/config_file.py": "import os\nimport tomllib\n"}
         files.update({f"src/{layer}/x.py": "from utils.config_file import read_config\n"

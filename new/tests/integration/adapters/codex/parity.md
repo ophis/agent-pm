@@ -1,6 +1,6 @@
 # Codex integration parity
 
-Baseline: `origin/main` at `2a90a7a1df42761f700ed9f6d0248592edfb7cc9`. Sources were read from the TASK-318 `tmp/main-parity` snapshot, never imported or executed. Requirements: [TASK-318](https://linear.app/ophis-workgroup/issue/TASK-318/eng-rearch-core-3-codex-adapter-headless-one-session-store).
+Baseline: `origin/main` at `a0a2d1200413b6c1c3da0182dbcec955db346bd1`. Integration sources match the TASK-318 `tmp/main-parity` snapshot, read without importing or executing it. Requirements: [TASK-318](https://linear.app/ophis-workgroup/issue/TASK-318/eng-rearch-core-3-codex-adapter-headless-one-session-store).
 
 Aliases expand to exact test identities:
 
@@ -10,7 +10,7 @@ Aliases expand to exact test identities:
 | G | `new.tests.integration.driver.api_integration_test` |
 | U | `new.tests.unit.adapters.codex.common_test.CommonTest` |
 
-The 20 H tests use the public Driver application programming interface (API) and a new standard-library process fixture. The fixture explicitly trusts its cwd with `Access(project=True)`; it patches no filesystem guard. Untrusted project launch policy remains covered by `U.test_untrusted_project_configuration_and_cwd` and `H.test_untrusted_project_settings_are_rejected_before_spawn`. HOME is separate from the workdir, Codex config home, add-dir grants and standard-library TMPDIR.
+The 25 H tests use a new standard-library process fixture: 22 exercise the public Driver application programming interface (API), two run direct Adapter launches through fake subprocesses (`H.test_fresh_native_prompt_boundary_preserves_subcommands_and_options`, `H.test_resumed_native_prompt_boundary_preserves_options`), and one checks fixture isolation. The fixture explicitly trusts its cwd with `Access(project=True)`; it patches no filesystem guard. Untrusted project launch policy remains covered by `U.test_untrusted_project_configuration_and_cwd` and `H.test_untrusted_project_settings_are_rejected_before_spawn`. HOME is separate from the workdir, Codex config home, add-dir grants and standard-library TMPDIR.
 
 ## Codex headless
 
