@@ -378,6 +378,26 @@ class Claude(Base):
 
 
 class Codex(Base):
+    def test_plan_shows_selected_model_and_local_update_hint(self):
+        config = clients.load_config("codex", CORE)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            launch, resolved = drive.plan(
+                CORE, clients.get("codex", CORE), "researcher", "light-research",
+                params=self.params(), cwd=self.work)
+        self.assertEqual(notice.getvalue(),
+                         f"drive.py: Codex tier {resolved.tier} uses {config['tiers'][str(resolved.tier)]}; "
+                         "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change\n")
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
+
+    def test_missing_model_emits_no_selection_hint(self):
+        config = clients.get("codex", CORE).config
+        client = type(clients.get("codex", CORE))({**config, "tiers": {}})
+        notice = io.StringIO()
+        with redirect_stderr(notice), self.assertRaisesRegex(compose.ConfigError, "no model for tier"):
+            drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+        self.assertNotIn("Codex tier", notice.getvalue())
+
     def test_every_configured_role_and_task_has_a_headless_command(self):
         config = clients.load_config("codex", CORE)
         self.assertEqual(config["implementation"], "CodexClient")

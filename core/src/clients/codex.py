@@ -1,6 +1,7 @@
 """Codex CLI headless client. Reports are still carried only by report.py."""
 import json
 import os
+import sys
 from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams
@@ -44,6 +45,9 @@ class CodexClient(Client):
         real_cwd = os.path.realpath(cwd)
         if not access.project and os.path.commonpath((workdir, real_cwd)) != workdir:
             raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
+        print(f"drive.py: Codex tier {run.tier} uses {model}; "
+              "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change",
+              file=sys.stderr)
         argv = ["codex", "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
                 "-m", model, "-c", f"model_reasoning_effort={effort}"]
         if not access.project:
