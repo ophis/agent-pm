@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 Rule = namedtuple("Rule", "name pattern limit")
 SOURCE = Rule("source", re.compile(""), 10)
 TESTS = Rule("tests", re.compile(r"(^|/)tests/|_test\.py$"), 5)
+PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
+           "never by adding code to lower the ratio.")
 
 
 def chars(text):
@@ -73,6 +75,8 @@ def main(root=ROOT):
                         key=lambda entry: (-entry[1] / entry[2] if entry[2] else -math.inf, entry[0]))
         for path, kept, size in ranked[:10]:
             print(f"  {percent(kept, size)} {path}")
+    if failed:
+        print(PURPOSE)
     return 1 if failed else 0
 
 

@@ -15,6 +15,8 @@ spec.loader.exec_module(budget)
 
 CODE = "def f(x):\n    return [x * 2 for x in range(100) if x % 3]\n" * 20
 DOC = '"""' + "A long docstring that only explains what the code already says. " * 20 + '"""\n'
+PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
+           "never by adding code to lower the ratio.")
 
 
 def chars(text):
@@ -76,6 +78,7 @@ class Main(unittest.TestCase):
         code, lines, err = self.run_in({"core/a.py": CODE, "tests/a_test.py": CODE})
         self.assertEqual((code, err), (0, ""))
         self.assertEqual([line.split(":")[0] for line in lines], ["ok source", "ok tests"])
+        self.assertNotIn(PURPOSE, lines)
 
     def test_each_limit_is_inclusive(self):
         body = "a = 0\n" * 100
@@ -97,6 +100,14 @@ class Main(unittest.TestCase):
                 self.assertIn(fail, lines)
                 self.assertEqual(lines[lines.index(fail) + 1], f"  {n / chars(CODE):.2%} {path}")
                 self.assertTrue(any(line.startswith(f"ok {passing}:") for line in lines))
+                self.assertEqual((lines.count(PURPOSE), lines[-1]), (1, PURPOSE))
+
+    def test_both_rules_failing_state_the_purpose_once_after_the_rule_lines(self):
+        code, lines, _ = self.run_in({"core/scratch.py": DOC, "tests/scratch.py": DOC})
+        self.assertEqual(code, 1)
+        self.assertEqual([line.split(":")[0] for line in lines[:-1]],
+                         ["FAIL source", "  inf core/scratch.py", "FAIL tests", "  inf tests/scratch.py"])
+        self.assertEqual(lines[-1], PURPOSE)
 
     def test_untracked_files_are_ignored(self):
         self.assertEqual(self.run_in({"core/a.py": CODE}, {"core/scratch.py": DOC})[0], 0)
@@ -110,8 +121,9 @@ class Main(unittest.TestCase):
     def test_at_most_ten_files_are_listed(self):
         code, lines, _ = self.run_in({f"core/{name}.py": DOC for name in "abcdefghijkl"})
         self.assertEqual(code, 1)
-        self.assertEqual(lines[1:], [f"  inf core/{name}.py" for name in "abcdefghij"] + [lines[-1]])
-        self.assertTrue(lines[-1].startswith("ok tests:"))
+        self.assertEqual(lines[1:11], [f"  inf core/{name}.py" for name in "abcdefghij"])
+        self.assertTrue(lines[11].startswith("ok tests:"))
+        self.assertEqual(lines[12:], [PURPOSE])
 
     def test_a_syntax_error_exits_2_naming_the_file(self):
         code, lines, err = self.run_in({"core/a.py": CODE, "core/bad.py": "def f(:\n"})
