@@ -23,7 +23,7 @@ A dir listed in core config's `team_dirs`, outside the plugin, adding roles (eac
 _Avoid_: custom pack
 
 **Agent run**:
-One role run once, on a task given or picked from its index: a fresh agent runtime session (e.g. Claude Code's) run by the facade in a mode, or inline in the caller's session through a skill.
+One role run once, on a task given or picked from its index: a fresh agent runtime session (e.g. Claude Code's) run by the driver in a mode, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -31,21 +31,21 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the facade, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `core/src/drive.py`'s entry point (moved to `delegate.py` by TASK-310).
+The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the driver, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `core/src/drive.py`'s entry point (moved to `delegate.py` by TASK-310).
 
 **Composer**:
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
-**Facade**:
-The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `core/src/drive.py` (renamed by TASK-310).
-_Avoid_: driver, runtime, harness
+**Driver**:
+The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `core/src/drive.py` (`driver.py` after TASK-310).
+_Avoid_: facade, runtime, harness
 
 **Adapter**:
-The code that wraps one agent runtime (Claude Code, Codex) for the facade: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `core/src/clients/` (renamed by TASK-310).
+The code that wraps one agent runtime (Claude Code, Codex) for the driver: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `core/src/clients/` (renamed by TASK-310).
 _Avoid_: client, backend, vehicle
 
 **Mode**:
-How the facade hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits) or tui (its interactive command in a tmux session, ends when its caller stops it). In code: `--runner` (renamed by TASK-310).
+How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits) or tui (its interactive command in a tmux session, ends when its caller stops it). In code: `--runner` (renamed by TASK-310).
 _Avoid_: runner
 
 **Attended run**:
