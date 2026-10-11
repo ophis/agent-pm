@@ -15,11 +15,11 @@ spec.loader.exec_module(budget)
 
 CODE = "def f(x):\n    return [x * 2 for x in range(100) if x % 3]\n" * 20
 DOC = '"""' + "A long docstring that only explains what the code already says. " * 20 + '"""\n'
-INIT = '"""' + "d" * 294 + '"""\n'
+INIT = '"""' + "d" * 494 + '"""\n'
 PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
            "never by adding code to lower the ratio.")
-SOURCE_RULE = "source (15% of code + 300 characters per directory)"
-TESTS_RULE = "tests (10% of code + 300 characters per directory)"
+SOURCE_RULE = "source (15% of code + 500 characters per directory)"
+TESTS_RULE = "tests (10% of code + 500 characters per directory)"
 
 
 def chars(text):
@@ -27,7 +27,7 @@ def chars(text):
 
 
 def over(folder, n, code, limit):
-    allowed = limit * code // 100 + 300
+    allowed = limit * code // 100 + 500
     ratio = f"{n / code:.2%}" if code else "inf"
     return (f"  {folder}: {ratio} ({n} comment+docstring / {code} code characters; "
             f"{allowed} allowed, {n - allowed} over)")
@@ -93,14 +93,14 @@ class Main(unittest.TestCase):
     def test_each_limit_plus_the_allowance_is_inclusive(self):
         body = "a = 0\n" * 100 + "x\n"
         for path, limit in (("core/a.py", 15), ("tests/a.py", 10)):
-            allowed = limit * chars(body) // 100 + 300
+            allowed = limit * chars(body) // 100 + 500
             for extra, expected in ((0, 0), (1, 1)):
                 with self.subTest(path=path, extra=extra):
                     comment = "#" + "c" * (allowed - 1 + extra)
                     self.assertEqual(self.run_in({path: body + comment + "\n"})[0], expected)
 
     def test_a_docstring_only_init_passes_within_the_allowance(self):
-        self.assertEqual(chars(INIT), 300)
+        self.assertEqual(chars(INIT), 500)
         self.assertEqual(self.run_in({"core/__init__.py": INIT})[0], 0)
         self.assertEqual(self.run_in({"core/__init__.py": INIT.replace("d", "dd", 1)})[0], 1)
 
