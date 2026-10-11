@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` holds shared pure tools any layer may import; it imports no layer. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, an import of `utils/`, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -46,6 +46,7 @@ flowchart TB
       PP2["print_prompt/: one factory<br>PrintPromptAdapter<br>PrintPromptHeadlessRun (prints the prompt; no tui)"]
     end
   end
+  U["utils/<br>shared pure tools: config file, paths<br>(stdlib, imports no layer)"]
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
@@ -65,6 +66,8 @@ flowchart TB
   DR -->|"starts & hosts (pipe / tmux)"| RT
   CL -.->|"wraps (argv, output, hooks)"| P1
   CX -.->|wraps| P2
+  C -.->|imports| U
+  DR -.->|imports| U
   R ~~~ RU
   PP ~~~ CF
   C ~~~ DR
