@@ -21,8 +21,12 @@ class CodexIntegration(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = tmp.name
-        self.home, self.work, bin_dir = (os.path.join(self.root, d) for d in ("home", "work", "bin"))
-        for path in (self.home, self.work, bin_dir):
+        # Recovery authority cannot live in Codex's implicitly writable temporary directories.
+        home = tempfile.TemporaryDirectory(prefix=".fake-codex-home-", dir=os.path.dirname(CORE))
+        self.addCleanup(home.cleanup)
+        self.home = home.name
+        self.work, bin_dir = (os.path.join(self.root, d) for d in ("work", "bin"))
+        for path in (self.work, bin_dir):
             os.mkdir(path)
         self.out = os.path.join(self.work, "out.md")
         self.scenario = os.path.join(self.root, "scenario.json")
@@ -79,6 +83,26 @@ class CodexIntegration(unittest.TestCase):
                          ["first turn", "second turn"])
         self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
                          [CLIENT_ID, CLIENT_ID])
+
+    def test_interrupted_first_turn_resumes_same_run_and_keeps_progress(self):
+        first = self.drive([{"kind": "progress", "name": "start", "text": "before interruption"}])
+        self.assertEqual(first.returncode, 1, first.stderr)
+        self.assertIn("the agent run returned no outcome", first.stderr)
+        self.assertFalse(any(e["kind"] == "outcome" for e in self.events()))
+        self.assertFalse(os.path.exists(self.out))
+        second = self.drive([{"kind": "progress", "name": "review", "text": "recovered"},
+                             {"kind": "outcome", "outcome": DONE}], "--resume")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        with open(self.log) as f:
+            self.assertEqual(json.load(f)["resume_id"], CLIENT_ID)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [CLIENT_ID, CLIENT_ID])
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "progress"],
+                         ["before interruption", "recovered"])
+        outcomes = [e for e in self.events() if e["kind"] == "outcome"]
+        self.assertEqual(len(outcomes), 1)
+        with open(self.out) as f:
+            self.assertEqual(f.read(), DONE["deliverable"])
 
     def test_missing_native_file_fails_before_fake_spawn(self):
         first = self.drive([{"kind": "outcome", "outcome": DONE}])

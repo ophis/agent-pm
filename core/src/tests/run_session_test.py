@@ -16,6 +16,7 @@ from compose import ConfigError  # noqa: E402
 
 class Store(unittest.TestCase):
     def setUp(self):
+        self.implicit = self.enterContext(mock.patch.object(run_session, "_implicit_writable_roots", return_value=[]))
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = os.path.join(self.tmp.name, "home")
@@ -56,6 +57,31 @@ class Store(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "different|changed|bound"):
             run_session.bind(self.work, self.sid, "aaaaaaaa-2222-3333-4444-555555555555")
 
+    def test_client_payload_and_native_id_are_opaque(self):
+        payload = {"conversation": {"cursor": [7, None, True]}, "vendor": "future"}
+        state = run_session.create(self.work, self.sid, "future", payload, [self.extra])
+        self.assertEqual(run_session.load(self.work, self.sid), state)
+        self.assertEqual(state.snapshot, payload)
+        self.assertEqual(state.writable_roots, [os.path.realpath(self.work), os.path.realpath(self.extra)])
+        self.assertEqual(run_session.bind(self.work, self.sid, "native:opaque-id").client_id, "native:opaque-id")
+
+    def test_rejects_non_json_payload(self):
+        for payload in ({"x": float("nan")}, {"x": {1, 2}}, {1: "integer key"}, {"x": (1, 2)}):
+            with self.subTest(payload=payload), self.assertRaisesRegex(ConfigError, "snapshot"):
+                self.create(snapshot=payload)
+
+    def test_load_rechecks_saved_writable_roots(self):
+        self.create()
+        root = os.path.join(self.home, ".agent-pm", "core-sessions")
+        path = os.path.join(root, os.listdir(root)[0])
+        with open(path) as f:
+            data = json.load(f)
+        data["writable_roots"].append(os.path.realpath(self.home))
+        with open(path, "w") as f:
+            json.dump(data, f)
+        with self.assertRaisesRegex(ConfigError, "writable"):
+            run_session.load(self.work, self.sid)
+
     def test_duplicate_and_missing(self):
         self.assertIsNone(run_session.load(self.work, self.sid))
         with self.assertRaisesRegex(ConfigError, "missing|no.*state"):
@@ -69,9 +95,6 @@ class Store(unittest.TestCase):
         for writable in (self.home, root, os.path.dirname(root)):
             with self.subTest(writable=writable), self.assertRaisesRegex(ConfigError, "writable"):
                 self.create(writable_roots=[writable])
-        changed = dict(self.snapshot, cwd=self.home)
-        with self.assertRaisesRegex(ConfigError, "writable"):
-            self.create(snapshot=changed, writable_roots=[])
 
     def test_existing_owner_controlled_config_parent_can_be_0755(self):
         parent = os.path.join(self.home, ".agent-pm")
@@ -84,9 +107,6 @@ class Store(unittest.TestCase):
         os.chmod(parent, 0o775)
         with self.assertRaisesRegex(ConfigError, "mode|permission"):
             run_session.load(self.work, self.sid)
-        changed = dict(self.snapshot, codex_home=self.home)
-        with self.assertRaisesRegex(ConfigError, "writable"):
-            self.create(snapshot=changed, writable_roots=[])
 
     def test_rejects_symlink_and_unsafe_permissions(self):
         parent = os.path.join(self.home, ".agent-pm")
@@ -119,9 +139,9 @@ class Store(unittest.TestCase):
         self.create()
         store = os.path.join(self.home, ".agent-pm", "core-sessions")
         path = os.path.join(store, os.listdir(store)[0])
-        for bad in ({"version": 1}, {"version": 1, "workdir": self.work, "sid": self.sid,
+        for bad in ({"version": run_session.VERSION}, {"version": run_session.VERSION, "workdir": self.work, "sid": self.sid,
                                             "client": "codex", "snapshot": dict(self.snapshot, network="yes"),
-                                            "client_id": None}):
+                                            "client_id": None, "writable_roots": "bad"}):
             with self.subTest(bad=bad), open(path, "w") as handle:
                 json.dump(bad, handle)
             with self.assertRaisesRegex(ConfigError, "invalid|malformed"):
@@ -133,10 +153,10 @@ class Store(unittest.TestCase):
         path = os.path.join(store, os.listdir(store)[0])
         with open(path) as handle:
             data = json.load(handle)
-        data["snapshot"]["cwd"] = os.path.join(self.work, "..", "work", "project")
+        data["writable_roots"][0] = os.path.join(self.work, "..", "work")
         with open(path, "w") as handle:
             json.dump(data, handle)
-        with self.assertRaisesRegex(ConfigError, "snapshot path"):
+        with self.assertRaisesRegex(ConfigError, "writable root"):
             run_session.load(self.work, self.sid)
         forged_home = os.path.join(self.work, "fake-home")
         os.makedirs(os.path.join(forged_home, ".agent-pm", "core-sessions"), mode=0o700)
@@ -144,6 +164,30 @@ class Store(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": forged_home}):
             with self.assertRaisesRegex(ConfigError, "writable"):
                 run_session.create(self.work, "forged", "codex", self.snapshot, [])
+
+
+class ImplicitWritableRoots(unittest.TestCase):
+    def test_temporary_home_rejected_on_create_and_load_without_saved_roots(self):
+        # No helper patch: loading must reject the location before trusting any file content.
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home}):
+            work = os.path.realpath("/isolated-work")
+            root = os.path.join(home, ".agent-pm", "core-sessions")
+            os.makedirs(root, mode=0o700)
+            os.chmod(os.path.dirname(root), 0o700)
+            path = run_session._path(root, work, "sid")
+            with open(path, "w") as f:
+                json.dump({"version": run_session.VERSION, "workdir": work, "sid": "sid", "client": "codex",
+                           "snapshot": {}, "client_id": None, "writable_roots": []}, f)
+            os.chmod(path, 0o600)
+            with self.assertRaisesRegex(ConfigError, "writable"):
+                run_session.create(work, "new", "codex", {}, [])
+            with self.assertRaisesRegex(ConfigError, "writable"):
+                run_session.load(work, "sid")
+
+    def test_implicit_locations_include_tmpdir_and_system_temp_roots(self):
+        with mock.patch.dict(os.environ, {"TMPDIR": "/custom/agent-temp"}):
+            roots = set(map(os.path.realpath, run_session._implicit_writable_roots()))
+        self.assertLessEqual(set(map(os.path.realpath, ["/custom/agent-temp", "/tmp", "/private/tmp", "/var/tmp"])), roots)
 
 
 class Capabilities(unittest.TestCase):

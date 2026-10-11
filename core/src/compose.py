@@ -121,12 +121,12 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and Claude
-    session."""
+    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and agent-pm
+    run ID."""
     input: str
     out: str
     workdir: str
-    sid: str | None = None   # None → a new session id
+    sid: str | None = None   # None → a new agent-pm run ID
     resume: bool = False
     prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
 

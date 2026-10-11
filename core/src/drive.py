@@ -152,8 +152,9 @@ def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None,
           *, client: Client | None = None) -> tuple[str, bool]:
     """(the agent run's cwd, whether its client loads the cwd's project settings and instructions), as config.toml's
     `cwd` and `trusted_dirs` comments say. A new run's cwd is the `cwd` run key, else `cwd`, else the caller's current
-    directory; a resume reuses its session's record (none: the workdir, project off). ConfigError when the cwd is no
-    directory, or project would be on with the cwd in the workdir or no longer trusted."""
+    directory; a resume asks the client's recovery hook, falling back to its session record when unsupported
+    (no record: the workdir, project off). ConfigError when the cwd is no directory, or project would be on with the
+    cwd in the workdir or no longer trusted."""
     workdir, trusted = os.path.abspath(params.workdir), trusted_dirs(root)
     if params.resume:
         location = client.resume_location(workdir, params.sid) if client is not None else None
@@ -748,11 +749,13 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         if params.resume:
             state = run_session.load(workdir, params.sid)
             if (state is None or state.client != client_name
-                    or state.snapshot != launch.session_state):
+                    or state.snapshot != launch.session_state
+                    or state.writable_roots != list(dict.fromkeys([os.path.realpath(workdir),
+                                                                  *map(os.path.realpath, launch.writable_roots)]))):
                 raise ConfigError(f"missing or changed {client_name} recovery state for run ID {params.sid!r}")
         else:
             run_session.create(workdir, params.sid, client_name, launch.session_state,
-                               [workdir, launch.cwd, *launch.session_state["dirs"]])
+                               launch.writable_roots)
     sinks = [terminal()] if sinks is None else sinks
     out = Path(params.out).absolute()
     if not out.is_dir() and not params.resume:   # a resumed session keeps the draft it wrote there

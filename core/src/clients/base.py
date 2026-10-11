@@ -29,7 +29,8 @@ class Launch:
     status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
     per_column: int | None = None   # the config's workers_per_column, set by drive.plan, for the tui runner
     retile: str | None = None       # the config's grid_retile, set by drive.plan, for the tui runner
-    session_state: dict | None = None  # typed recovery options, persisted by the driver before launch
+    session_state: dict | None = None  # opaque JSON recovery payload; the client validates its own fields
+    writable_roots: list[str] = field(default_factory=list)  # effective writable locations, including client storage
 
 
 @dataclass(frozen=True)

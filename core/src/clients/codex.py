@@ -14,6 +14,37 @@ from compose import ConfigError, RunConfig, RunParams
 from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo
 
 
+def _absolute(path: str, label: str) -> str:
+    if not isinstance(path, str) or not path or not os.path.isabs(path) or "\x00" in path:
+        raise ConfigError(f"invalid Codex recovery {label}: expected an absolute path")
+    return os.path.realpath(path)
+
+
+def _snapshot(value: dict) -> dict:
+    if not isinstance(value, dict) or set(value) != {"cwd", "project", "dirs", "commands", "model", "effort",
+                                                   "network", "codex_home"}:
+        raise ConfigError("invalid Codex recovery snapshot fields")
+    paths = {key: _absolute(value[key], key) for key in ("cwd", "codex_home")}
+    for key in ("project", "network"):
+        if type(value[key]) is not bool:
+            raise ConfigError(f"invalid Codex recovery snapshot {key}")
+    for key in ("dirs", "commands"):
+        if not isinstance(value[key], list):
+            raise ConfigError(f"invalid Codex recovery snapshot {key}")
+    dirs = [_absolute(item, "dir") for item in value["dirs"]]
+    commands = value["commands"]
+    if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
+        raise ConfigError("invalid Codex recovery snapshot commands")
+    for key in ("model", "effort"):
+        if not isinstance(value[key], str) or not value[key] or not value[key].isprintable():
+            raise ConfigError(f"invalid Codex recovery snapshot {key}")
+    validated = {**paths, "project": value["project"], "dirs": dirs, "commands": commands.copy(),
+                 "model": value["model"], "effort": value["effort"], "network": value["network"]}
+    if validated != value:
+        raise ConfigError("invalid Codex recovery snapshot path")
+    return validated
+
+
 def _inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
 
@@ -72,6 +103,11 @@ def _no_symlink_ancestors(path: str) -> None:
 
 def _session_file(snapshot: dict, client_id: str) -> tuple[str, float] | None:
     """Find this exact native session, then verify the CLI's own first metadata event."""
+    try:
+        if str(uuid.UUID(client_id)) != client_id:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ConfigError("invalid Codex recovery client ID") from exc
     root = os.path.join(snapshot["codex_home"], "sessions")
     _no_symlink_ancestors(root)
     matches = glob.glob(os.path.join(root, "[0-9]" * 4, "[0-9]" * 2, "[0-9]" * 2,
@@ -151,7 +187,7 @@ class CodexClient(Client):
                 raise ConfigError(f"missing Codex recovery state for run ID {params.sid!r}")
             if state.client_id is None:
                 raise ConfigError(f"missing Codex client ID for run ID {params.sid!r}")
-            snapshot = state.snapshot
+            snapshot = _snapshot(state.snapshot)
             if not _session_file(snapshot, state.client_id):
                 raise ConfigError(f"missing Codex session file for client ID {state.client_id}")
             if not snapshot["project"]:
@@ -159,7 +195,7 @@ class CodexClient(Client):
             argv = ["codex", "exec", *_flags(snapshot, interactive=False),
                     "resume", state.client_id, prompt]
             return Launch(argv, env={"CODEX_HOME": snapshot["codex_home"]}, cwd=snapshot["cwd"],
-                          session_state=snapshot)
+                          session_state=snapshot, writable_roots=state.writable_roots)
         tiers, efforts = self.config["tiers"], self.config["efforts"]
         model, effort = tiers.get(str(run.tier)), efforts.get(run.effort)
         if model is None:
@@ -183,25 +219,27 @@ class CodexClient(Client):
                     "network": self.config["shell_network"], "codex_home": codex_home}
         argv = ["codex", "exec", *_flags({**snapshot, "dirs": access.dirs}, interactive=False)]
         argv.append(prompt)
-        return Launch(argv, env={"CODEX_HOME": codex_home}, cwd=cwd, session_state=snapshot)
+        return Launch(argv, env={"CODEX_HOME": codex_home}, cwd=cwd, session_state=_snapshot(snapshot),
+                      writable_roots=[os.path.realpath(workdir), snapshot["cwd"], codex_home, *snapshot["dirs"]])
 
     def resume_location(self, workdir: str, sid: str) -> tuple[str, bool]:
         state = run_session.load(workdir, sid)
         if state is None or state.client != "codex":
             raise ConfigError(f"missing Codex recovery state for run ID {sid!r}")
-        return state.snapshot["cwd"], state.snapshot["project"]
+        snapshot = _snapshot(state.snapshot)
+        return snapshot["cwd"], snapshot["project"]
 
     def session_info(self, workdir: str, sid: str) -> SessionInfo:
         state = run_session.load(workdir, sid)
         if state is None or state.client != "codex":
             return SessionInfo(resume_supported=True, inspection_supported=True)
+        snapshot = _snapshot(state.snapshot)
         if state.client_id is None:
             return SessionInfo(resume_supported=True, inspection_supported=True)
-        found = _session_file(state.snapshot, state.client_id)
+        found = _session_file(snapshot, state.client_id)
         if found is None:
             return SessionInfo(resume_supported=True, inspection_supported=True, client_id=state.client_id)
         path, activity = found
-        snapshot = state.snapshot
         command = ["codex", "resume", *_flags(snapshot, interactive=True), state.client_id]
         manual = f"cd {shlex.quote(snapshot['cwd'])} && CODEX_HOME={shlex.quote(snapshot['codex_home'])} " \
                  + shlex.join(command)
