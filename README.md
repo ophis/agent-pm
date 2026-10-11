@@ -64,6 +64,9 @@ flowchart TB
   DR -->|"starts & hosts (pipe / tmux)"| RT
   CL -.->|"wraps (argv, output, hooks)"| P1
   CX -.->|wraps| P2
+  R ~~~ RU
+  PP ~~~ CF
+  C ~~~ DR
 ```
 
 ## Install
