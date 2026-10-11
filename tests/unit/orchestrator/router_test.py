@@ -33,8 +33,8 @@ import router
 import target
 import compose
 import drive
-import manager
 import repo
+import roster
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
 AGENT, USER = "agent", "user"   # history actor ids: an agent account, a human_members user
@@ -2428,7 +2428,7 @@ class AttendedEntry(OuterBase):
         with mock.patch.object(drive, "detach", wraps=drive.detach) as detach:
             rc = self.main(argv)
         (call,) = detach.call_args_list
-        return rc, call.kwargs.get("roster")
+        return rc, call.kwargs.get("roster_entry")
 
     def pipeline(self, sid, d, opener, split):
         """drive.detach's roster for ID's run sid, split from dev: d and the pipeline entry's fields."""
@@ -2456,22 +2456,22 @@ class AttendedEntry(OuterBase):
                     self.owns = ["mgr", "mgr"]
                 else:
                     os.environ["ITERM_SESSION_ID"] = iterm
-                rc, roster = self.detached(argv)
+                rc, roster_entry = self.detached(argv)
                 self.assertEqual(rc, 0)
                 sid = self.started()
-                self.assertEqual(roster, self.pipeline(sid, d, opener, split))
+                self.assertEqual(roster_entry, self.pipeline(sid, d, opener, split))
                 tail = [*([f"--split={split}"] if split else []), "--split-from=dev", f"--opener={opener}",
                         f"--events={d}/events"]
                 self.assertEqual(self.handover(iterm="" if tmux else iterm),
                                  inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid), "--runner=tui", *tail))
-                with manager.roster(d, write=False) as r:
-                    self.assertEqual(r["entries"], {f"agent-pm-engineer-{ID}": {**roster[1], "pane": None,
+                with roster.locked(d, write=False) as r:
+                    self.assertEqual(r["entries"], {f"agent-pm-engineer-{ID}": {**roster_entry[1], "pane": None,
                                                                                 "state": "working", "started": mock.ANY}})
                 self.assertEqual((self.err.splitlines(), self.owns), (self.attach_lines(sid), []))
 
     def test_without_a_roster_directory_drive_detach_gets_no_roster(self):
         m1 = os.path.join(self.managers, "m1")
-        manager.ensure(m1)
+        roster.ensure(m1)
         cases = [["--issue", ID, "--tui", "--split-from", "dev", "--manager", "m1", "--events",
                   os.path.join(self.tmp, "events.log")],
                  ["--issue", ID, "--tui", "--split-from", "dev", "--events", os.path.join(m1, "events")],
@@ -2486,7 +2486,7 @@ class AttendedEntry(OuterBase):
 
     def test_an_entry_write_failure_is_one_line_and_the_run_goes_on(self):
         m1 = os.path.join(self.managers, "m1")
-        manager.ensure(m1)
+        roster.ensure(m1)
         path = os.path.join(m1, "roster.json")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
             f.write("{")
@@ -2495,10 +2495,10 @@ class AttendedEntry(OuterBase):
         except ValueError as e:
             why = f"{path}: invalid JSON: {e}"
         self.at_launch = []
-        rc, roster = self.detached(["--issue", ID, "--tui", "--manager", "m1", "--split-from", "dev"])
+        rc, roster_entry = self.detached(["--issue", ID, "--tui", "--manager", "m1", "--split-from", "dev"])
         self.assertEqual(rc, 0)
         sid = self.started()
-        self.assertEqual(roster, self.pipeline(sid, m1, None, None))
+        self.assertEqual(roster_entry, self.pipeline(sid, m1, None, None))
         self.assertEqual(self.err.splitlines(),
                          [*self.attach_lines(sid), f"manager: entry agent-pm-engineer-{ID} not written: {why}"])
         self.assertEqual(self.read(path), "{")

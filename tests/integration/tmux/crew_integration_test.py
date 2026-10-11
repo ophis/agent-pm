@@ -26,7 +26,7 @@ import crew
 from tests.integration.core import fake_claude
 from tests.integration.core import live_tmux
 tmux_host = crew.tmux_host
-manager = crew.manager
+roster = crew.roster
 
 CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 TUI = os.path.join(crew.CORE, "src", "tmux_host.py")
@@ -60,7 +60,7 @@ import sys
 
 sys.path.insert(0, {src!r})
 import drive  # noqa: E402
-import manager  # noqa: E402
+import roster  # noqa: E402
 import tmux_host  # noqa: E402
 
 ROLE, SID, DRIVE = {role!r}, {sid!r}, {drive!r}
@@ -73,7 +73,7 @@ opener = drive.caller_layout(None, None).opener
 argv = [sys.executable, DRIVE, f"--role={{ROLE}}", "--input=Hello.", "--out=out.md", "--workdir=.", f"--sid={{SID}}",
         "--runner=tui", f"--prefix={{prefix}}", f"--events={{events}}", f"--opener={{opener}}", f"--driver={{driver}}",
         *(["--resume"] if os.path.exists("run.jsonl") else [])]
-drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.directory(name), {{
+drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster_entry=(roster.directory(name), {{
     "kind": "pipeline", "sid": SID, "cwd": cwd, "note": issue, "tui": f"{{prefix}}-{{SID[:8]}}", "opener": opener,
     "resume": [sys.executable, os.path.abspath(__file__), *args]}}))
 '''
@@ -82,7 +82,7 @@ drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.di
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
     started and shown in a client, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
-    mgr's manager directory (core/src/manager.py), which mgr attaches to (`crew.py attach`) unless ATTACH is False.
+    mgr's manager directory (core/src/roster.py), which mgr attaches to (`crew.py attach`) unless ATTACH is False.
     Commands run as processes in mgr's pane unless `inside` names another session (None: no pane, Server.env()
     alone)."""
     ATTACH = True
@@ -758,9 +758,9 @@ class Roster(Live):
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
 
     def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:
-        """Entry `name`'s recovery argv (manager.recovery), no shell, in its cwd, as call() runs it in mgr's pane."""
+        """Entry `name`'s recovery argv (roster.recovery), no shell, in its cwd, as call() runs it in mgr's pane."""
         e = self.roster()["entries"][name]
-        return self.call(*manager.recovery(e), cwd=e["cwd"], **extra)
+        return self.call(*roster.recovery(e), cwd=e["cwd"], **extra)
 
     def after_w1(self, out: str, rest: str) -> None:
         """out is attach's table, w1's row (start's entry) only, then rest."""
@@ -905,7 +905,7 @@ class Roster(Live):
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
         self.assertEqual(res.stdout, f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
                                      f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
-                                     f"{shlex.join(manager.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
+                                     f"{shlex.join(roster.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
         self.assertIn("--input 'Continue the unfinished task.'", res.stdout)
         self.ok(self.recover(ROLE_DRIVER, **scenario))
         live_tmux.wait(lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back")
@@ -1062,7 +1062,7 @@ class Roster(Live):
         self.wait_event("w1", "done")
         kept = filler("k", 3)
         with open(self.events, "a") as f:
-            f.write("".join(f"{line}\n" for line in filler("f", manager.EVENTS_MAX // WIDTH + 1) + kept))
+            f.write("".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept))
         total = len(live_tmux.events(self.events))
         old, original, ino = f"{self.events}.1", raw(self.events), os.lstat(self.events).st_ino
         backlog = [f"{i} {line}" for i, line in enumerate(kept, 1)]

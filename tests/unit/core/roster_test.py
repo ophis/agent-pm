@@ -15,7 +15,7 @@ import unittest
 import unittest.mock
 
 from tests import hermetic
-import manager
+import roster
 
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3"}
 
@@ -73,19 +73,19 @@ class ManagerTest(unittest.TestCase):
         for label, name, env, want, calls in cases:
             with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
                 proc = tmux("own\n")
-                self.assertEqual(manager.directory(name, proc=proc), want)
+                self.assertEqual(roster.directory(name, proc=proc), want)
                 self.assertEqual(len(proc.calls), calls)
                 self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_relative_home_gives_an_absolute_path(self):
         os.environ["HOME"] = "rel/home"
         want = os.path.join(os.path.abspath("rel/home"), ".agent-pm", "managers", "m1")
-        self.assertEqual(manager.directory("m1"), want)
+        self.assertEqual(roster.directory("m1"), want)
 
     def test_bad_manager_names(self):
         for name in ("a/b", "..", "", "a b", "a;", "a\n"):
-            for call, resolve in (("directory", manager.directory), ("home", lambda n: manager.home(n, None))):
-                with self.subTest(name=name, call=call), self.assertRaises(manager.ManagerError) as cm:
+            for call, resolve in (("directory", roster.directory), ("home", lambda n: roster.home(n, None))):
+                with self.subTest(name=name, call=call), self.assertRaises(roster.RosterError) as cm:
                     resolve(name)
                 self.assertEqual(str(cm.exception), f"manager {name!r}: want [A-Za-z0-9_-]+")
 
@@ -97,8 +97,8 @@ class ManagerTest(unittest.TestCase):
             for call in ("directory", "home"):
                 with self.subTest(label, call=call), unittest.mock.patch.dict(os.environ, {**INSIDE, **env}):
                     proc = tmux(out)
-                    with self.assertRaisesRegex(manager.ManagerError, pattern):
-                        manager.directory(proc=proc) if call == "directory" else manager.home(None, None, proc=proc)
+                    with self.assertRaisesRegex(roster.RosterError, pattern):
+                        roster.directory(proc=proc) if call == "directory" else roster.home(None, None, proc=proc)
                     self.assertEqual(len(proc.calls), calls)
 
     def test_home_is_the_directory_whose_events_file_is_given(self):
@@ -106,14 +106,14 @@ class ManagerTest(unittest.TestCase):
         for label, name, d, env, calls in (("--manager", "m1", self.dir, {}, 0),
                                            ("the own tmux session", None, own, INSIDE, 1)):
             with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
-                manager.ensure(d)
+                roster.ensure(d)
                 proc = tmux("own\n")
-                self.assertEqual(manager.home(name, os.path.join(d, "events"), proc=proc), d)
+                self.assertEqual(roster.home(name, os.path.join(d, "events"), proc=proc), d)
                 self.assertEqual(len(proc.calls), calls)
                 self.assertEqual(os.listdir(d), [])
 
     def test_home_is_none_without_the_directory_or_its_events_file(self):
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         events = os.path.join(self.dir, "events")
         cases = {"events another file": ("m1", os.path.join(self.outside("x"), "events")),
                  "events a sibling file": ("m1", os.path.join(self.dir, "roster.json")),
@@ -122,22 +122,22 @@ class ManagerTest(unittest.TestCase):
                  "outside tmux, no name": (None, events)}
         for why, (name, given) in cases.items():
             with self.subTest(why):
-                self.assertIsNone(manager.home(name, given, proc=tmux()))
+                self.assertIsNone(roster.home(name, given, proc=tmux()))
         self.assertEqual(os.listdir(self.managers), ["m1"])
         self.assertEqual(os.listdir(self.dir), [])
 
     def test_home_compares_real_paths(self):
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         base = os.path.dirname(self.agent_pm)
         os.symlink(self.dir, os.path.join(base, "link"))
-        self.assertEqual(manager.home("m1", os.path.join(base, "link", "events")), self.dir)
+        self.assertEqual(roster.home("m1", os.path.join(base, "link", "events")), self.dir)
         os.symlink(base, os.path.join(base, "alias"))
         os.environ["HOME"] = os.path.join(base, "alias")
-        self.assertEqual(manager.home("m1", os.path.join(self.dir, "events")),
+        self.assertEqual(roster.home("m1", os.path.join(self.dir, "events")),
                          os.path.join(base, "alias", ".agent-pm", "managers", "m1"))
 
     def test_events_path_without_create_touches_nothing(self):
-        self.assertEqual(manager.events(self.dir, create=False), os.path.join(self.dir, "events"))
+        self.assertEqual(roster.events(self.dir, create=False), os.path.join(self.dir, "events"))
         self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_created_0700_with_a_0600_events_whatever_the_umask(self):
@@ -145,7 +145,7 @@ class ManagerTest(unittest.TestCase):
             with self.subTest(umask=oct(mask)):
                 shutil.rmtree(self.agent_pm)
                 self.umask(mask)
-                path = manager.events(self.dir)
+                path = roster.events(self.dir)
                 self.assertEqual(path, os.path.join(self.dir, "events"))
                 for made in (self.agent_pm, self.managers, self.dir):
                     self.assertEqual(mode(made), 0o700, made)
@@ -154,38 +154,38 @@ class ManagerTest(unittest.TestCase):
 
     def test_directories_are_0700_even_when_the_umask_strips_owner_bits(self):
         self.umask(0o277)
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         self.assertEqual([mode(self.managers), mode(self.dir)], [0o700, 0o700])
 
     def test_existing_managers_directory_keeps_its_mode(self):
         os.mkdir(self.managers)
         os.chmod(self.managers, 0o755)
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         self.assertEqual([mode(self.managers), mode(self.dir)], [0o755, 0o700])
 
     def test_existing_directory_is_kept(self):
-        manager.ensure(self.dir)
-        with open(manager.events(self.dir), "w") as f:
+        roster.ensure(self.dir)
+        with open(roster.events(self.dir), "w") as f:
             f.write("12:00:00 w1 done\n")
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         self.assertEqual(mode(self.dir), 0o700)
         with open(os.path.join(self.dir, "events")) as f:
             self.assertEqual(f.read(), "12:00:00 w1 done\n")
 
     def test_directory_open_to_group_or_other_refused_and_not_chmodded(self):
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         for bits in (0o750, 0o705, 0o770, 0o777, 0o701):
             os.chmod(self.dir, bits)
-            for call in (manager.ensure, manager.events):
+            for call in (roster.ensure, roster.events):
                 with self.subTest(bits=oct(bits), call=call.__name__), self.assertRaisesRegex(
-                        manager.ManagerError, f"^manager directory {self.dir}: .*group or other"):
+                        roster.RosterError, f"^manager directory {self.dir}: .*group or other"):
                     call(self.dir)
             self.assertEqual(mode(self.dir), bits)
             self.assertEqual(os.listdir(self.dir), [])
 
     def refused(self, path):
-        with self.assertRaises(manager.ManagerError) as cm:
-            manager.events(self.dir)
+        with self.assertRaises(roster.RosterError) as cm:
+            roster.events(self.dir)
         self.assertEqual(str(cm.exception), f"manager directory {path}: not a directory owned by you")
 
     def test_managers_symlink_refused_and_its_target_untouched(self):
@@ -214,43 +214,43 @@ class ManagerTest(unittest.TestCase):
     def test_agent_pm_a_file_refused(self):
         os.rmdir(self.agent_pm)
         open(self.agent_pm, "w").close()
-        with self.assertRaisesRegex(manager.ManagerError, f"^manager directory {self.agent_pm}: "):
-            manager.ensure(self.dir)
+        with self.assertRaisesRegex(roster.RosterError, f"^manager directory {self.agent_pm}: "):
+            roster.ensure(self.dir)
 
     def test_events_symlink_refused(self):
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         target = os.path.join(self.outside("target"), "file")
         open(target, "w").close()
         os.symlink(target, os.path.join(self.dir, "events"))
-        with self.assertRaisesRegex(manager.ManagerError, "events file .*events"):
-            manager.events(self.dir)
+        with self.assertRaisesRegex(roster.RosterError, "events file .*events"):
+            roster.events(self.dir)
         self.assertEqual(os.path.getsize(target), 0)
 
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
-SRC = os.path.dirname(os.path.abspath(manager.__file__))
+SRC = os.path.dirname(os.path.abspath(roster.__file__))
 CHILD = """
 import sys
 sys.path.insert(0, sys.argv[1])
-import manager
+import roster
 for i in range(15):
-    manager.put(sys.argv[2], sys.argv[3] + str(i), manager.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
+    roster.put(sys.argv[2], sys.argv[3] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
 """
 
 LEASE_CHILD = """
 import subprocess, sys
 sys.path.insert(0, sys.argv[1])
-import manager
+import roster
 d, own = sys.argv[2], sys.argv[3]
 def proc(argv, **kw):
     return subprocess.CompletedProcess(argv, 0, "", "")
 sys.stdin.readline()
 try:
-    with manager.roster(d) as r:
-        manager.take(r, d, own, proc=proc)
-except manager.Held as e:
+    with roster.locked(d) as r:
+        roster.take(r, d, own, proc=proc)
+except roster.Held as e:
     print(e)
     sys.exit(3)
 """
@@ -356,7 +356,7 @@ class RosterTest(unittest.TestCase):
         self.dir = os.path.join(self.managers, "m1")
         self.path = os.path.join(self.dir, "roster.json")
         self.lock = os.path.join(self.dir, "roster.lock")
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
 
     def doc(self, **top):
         return {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}, **top}
@@ -379,12 +379,12 @@ class RosterTest(unittest.TestCase):
     def load(self, **kw):
         """The roster as read (write=False unless given) and what it printed to stderr."""
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), manager.roster(self.dir, **{"write": False, **kw}) as r:
+        with contextlib.redirect_stderr(err), roster.locked(self.dir, **{"write": False, **kw}) as r:
             pass
         return r, err.getvalue()
 
     def refused(self, message, **kw):
-        with self.assertRaises(manager.ManagerError) as cm, manager.roster(self.dir, **kw):
+        with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir, **kw):
             pass
         self.assertEqual(str(cm.exception), message)
 
@@ -407,7 +407,7 @@ class RosterTest(unittest.TestCase):
 
     def test_fresh_roster_is_written_0600_with_the_lock(self):
         self.addCleanup(os.umask, os.umask(0))
-        with manager.roster(self.dir) as r:
+        with roster.locked(self.dir) as r:
             self.assertEqual(r, self.doc())
         with open(self.path) as f:
             self.assertEqual(f.read(), json.dumps(self.doc(), indent=2, sort_keys=True) + "\n")
@@ -417,7 +417,7 @@ class RosterTest(unittest.TestCase):
 
     def test_changes_are_written_and_read_back(self):
         holder = {"session": "s1", "since": WHEN}
-        with manager.roster(self.dir) as r:
+        with roster.locked(self.dir) as r:
             r.update(holder=holder, cursor=4, gen=2)
             r["entries"]["w1"] = good(note="n")
         r, err = self.load()
@@ -427,17 +427,17 @@ class RosterTest(unittest.TestCase):
 
     def test_unchanged_roster_is_not_rewritten(self):
         raw = self.store(json.dumps(self.doc(entries={"w1": good()}), separators=(",", ":")))
-        with manager.roster(self.dir):
+        with roster.locked(self.dir):
             pass
         self.assertEqual(self.bytes(), raw)
 
     def test_write_false_or_an_exception_in_the_block_writes_nothing_even_when_the_file_is_missing(self):
         def write_false():
-            with manager.roster(self.dir, write=False) as r:
+            with roster.locked(self.dir, write=False) as r:
                 r["cursor"] = 9
 
         def raising():
-            with self.assertRaises(RuntimeError), manager.roster(self.dir) as r:
+            with self.assertRaises(RuntimeError), roster.locked(self.dir) as r:
                 r["cursor"] = 9
                 raise RuntimeError
 
@@ -452,7 +452,7 @@ class RosterTest(unittest.TestCase):
                 self.assertEqual(self.bytes(), raw)
 
     def test_lock_is_released_after_the_block(self):
-        with self.assertRaises(RuntimeError), manager.roster(self.dir):
+        with self.assertRaises(RuntimeError), roster.locked(self.dir):
             raise RuntimeError
         fd = os.open(self.lock, os.O_RDWR)
         self.addCleanup(os.close, fd)
@@ -470,8 +470,8 @@ class RosterTest(unittest.TestCase):
             (lambda r: r["entries"].update(w2={}), "entry 'w2': keys: missing " + str(sorted(good()))),
         ]
         for change, why in bad:
-            with self.subTest(why=why), self.assertRaises(manager.ManagerError) as cm:
-                with manager.roster(self.dir) as r:
+            with self.subTest(why=why), self.assertRaises(roster.RosterError) as cm:
+                with roster.locked(self.dir) as r:
                     change(r)
             self.assertEqual(str(cm.exception), f"{self.path}: {why}")
             self.assertEqual(self.bytes(), raw)
@@ -480,7 +480,7 @@ class RosterTest(unittest.TestCase):
     def test_failed_write_removes_its_temp_file_and_keeps_the_old_file(self):
         raw = self.store(self.doc())
         with unittest.mock.patch("os.replace", side_effect=OSError(5, "Input/output error")):
-            with self.assertRaises(manager.ManagerError) as cm, manager.roster(self.dir) as r:
+            with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir) as r:
                 r["cursor"] = 1
         self.assertEqual(str(cm.exception), f"{self.path}: Input/output error")
         self.assertEqual(self.bytes(), raw)
@@ -527,7 +527,7 @@ class RosterTest(unittest.TestCase):
         self.store(self.doc(entries={"bad": good(sid="; rm -rf ~")}))
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            manager.put(self.dir, "w1", good())
+            roster.put(self.dir, "w1", good())
         self.assertEqual(list(self.entries()), ["w1"])
         self.assertEqual(err.getvalue().count("\n"), 1)
 
@@ -544,7 +544,7 @@ class RosterTest(unittest.TestCase):
                 top = data if isinstance(data, bytes) else {k: v for k, v in self.doc(**data).items() if v is not DROP}
                 raw = self.store(top)
                 for kw in ({}, {"write": False}):
-                    with self.assertRaises(manager.ManagerError) as cm, manager.roster(self.dir, **kw):
+                    with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir, **kw):
                         self.fail("entered")
                     self.assertTrue(str(cm.exception).startswith(f"{self.path}: {why}"), str(cm.exception))
                     self.assertEqual(self.bytes(), raw)
@@ -579,12 +579,12 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(self.bytes(), raw)
 
     def test_oversize_roster_json_refused_and_the_limit_itself_read(self):
-        raw = self.store(b"x" * (manager.ROSTER_MAX + 1))
-        self.refused(f"{self.path}: over {manager.ROSTER_MAX} bytes")
+        raw = self.store(b"x" * (roster.ROSTER_MAX + 1))
+        self.refused(f"{self.path}: over {roster.ROSTER_MAX} bytes")
         self.assertEqual(self.bytes(), raw)
         body = json.dumps(self.doc()).encode()
-        self.store(body + b" " * (manager.ROSTER_MAX - len(body)))
-        self.assertEqual(os.path.getsize(self.path), manager.ROSTER_MAX)
+        self.store(body + b" " * (roster.ROSTER_MAX - len(body)))
+        self.assertEqual(os.path.getsize(self.path), roster.ROSTER_MAX)
         self.assertEqual(self.load()[0], self.doc())
 
     def test_roster_lock_symlink_refused_and_its_target_untouched(self):
@@ -610,10 +610,10 @@ class RosterTest(unittest.TestCase):
             clock.now += seconds
 
         fake = types.SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep)
-        with unittest.mock.patch.object(manager, "time", fake):
+        with unittest.mock.patch.object(roster, "time", fake):
             self.refused(f"{self.lock}: busy")
         self.assertEqual(set(clock.slept), {0.1})
-        self.assertAlmostEqual(sum(clock.slept), manager.LOCK_TIMEOUT, delta=0.2)
+        self.assertAlmostEqual(sum(clock.slept), roster.LOCK_TIMEOUT, delta=0.2)
         self.assertFalse(os.path.exists(self.path))
 
     def test_two_processes_put_concurrently_and_both_entries_land(self):
@@ -636,8 +636,8 @@ class RosterTest(unittest.TestCase):
 
     def test_directory_open_to_group_or_other_refused_not_chmodded_and_nothing_created(self):
         os.chmod(self.dir, 0o750)
-        with self.assertRaisesRegex(manager.ManagerError, f"^manager directory {self.dir}: .*group or other"), \
-                manager.roster(self.dir):
+        with self.assertRaisesRegex(roster.RosterError, f"^manager directory {self.dir}: .*group or other"), \
+                roster.locked(self.dir):
             pass
         self.assertEqual(mode(self.dir), 0o750)
         self.assertEqual(os.listdir(self.dir), [])
@@ -673,44 +673,44 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(os.listdir(os.path.join(target, "m1")), [])
 
     def test_entry_defaults_and_validity(self):
-        e = manager.entry("worker", sid=SID, cwd="/w", resume=good()["resume"])
+        e = roster.entry("worker", sid=SID, cwd="/w", resume=good()["resume"])
         self.assertEqual(sorted(e), sorted(good()))
         self.assertEqual({**e, "started": WHEN}, good())
         self.assertEqual(e["state"], "working")
         self.assertIsNotNone(datetime.datetime.fromisoformat(e["started"]).tzinfo)
-        full = manager.entry("role", sid=None, cwd="/w", resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
+        full = roster.entry("role", sid=None, cwd="/w", resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
                              split="right", split_from="a", tui="t", state="done", started=WHEN)
         self.assertEqual(full, good(kind="role", sid=None, resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
                                     split="right", split_from="a", tui="t", state="done"))
-        with self.assertRaises(manager.ManagerError) as cm:
-            manager.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
+        with self.assertRaises(roster.RosterError) as cm:
+            roster.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
         self.assertEqual(str(cm.exception), "entry: " + KIND.format("boss"))
-        with self.assertRaisesRegex(manager.ManagerError, "^entry: cwd: 'rel': want"):
-            manager.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"])
+        with self.assertRaisesRegex(roster.RosterError, "^entry: cwd: 'rel': want"):
+            roster.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"])
 
     def test_set_entry_and_record_validate_replace_and_leave_the_dict_on_a_fault(self):
-        for setter in (manager.set_entry, manager.record):
+        for setter in (roster.set_entry, roster.record):
             with self.subTest(setter.__name__):
-                with manager.roster(self.dir) as r:
+                with roster.locked(self.dir) as r:
                     r["entries"] = {}
                     setter(r, "w1", good())
                     setter(r, "w1", good(note="n"))
-                    with self.assertRaises(manager.ManagerError) as cm:
+                    with self.assertRaises(roster.RosterError) as cm:
                         setter(r, "w2", good(sid="x"))
                     self.assertEqual(str(cm.exception), "entry 'w2': sid: 'x': want a session id or null")
-                    with self.assertRaisesRegex(manager.ManagerError, "^entry 'w1': sid: 'x': want"):
+                    with self.assertRaisesRegex(roster.RosterError, "^entry 'w1': sid: 'x': want"):
                         setter(r, "w1", good(sid="x"))
-                    with self.assertRaisesRegex(manager.ManagerError, "^entry 'a b': name: want"):
+                    with self.assertRaisesRegex(roster.RosterError, "^entry 'a b': name: want"):
                         setter(r, "a b", good())
                 self.assertEqual(self.entries(), {"w1": good(note="n")})
 
     def test_put_records_one_entry_under_the_lock(self):
-        manager.put(self.dir, "w1", good(note="n"))
-        manager.put(self.dir, "w2", good(state="done"))
-        manager.put(self.dir, "w1", good(state="done"))   # the same sid: record keeps the note
+        roster.put(self.dir, "w1", good(note="n"))
+        roster.put(self.dir, "w2", good(state="done"))
+        roster.put(self.dir, "w1", good(state="done"))   # the same sid: record keeps the note
         self.assertEqual(self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")})
-        with self.assertRaises(manager.ManagerError):
-            manager.put(self.dir, "w3", good(kind="boss"))
+        with self.assertRaises(roster.RosterError):
+            roster.put(self.dir, "w3", good(kind="boss"))
         self.assertEqual(sorted(self.entries()), ["w1", "w2"])
 
     def test_record_keeps_the_note_of_a_replaced_entry_of_the_same_sid(self):
@@ -722,26 +722,26 @@ class RosterTest(unittest.TestCase):
         for why, (old, value, want) in cases.items():
             with self.subTest(why):
                 given = dict(value)
-                with manager.roster(self.dir) as r:
+                with roster.locked(self.dir) as r:
                     r["entries"] = {} if old is None else {"w1": old}
-                    manager.record(r, "w1", value)
+                    roster.record(r, "w1", value)
                 self.assertEqual(self.entries(), {"w1": want})
                 self.assertEqual(value, given)
 
     def test_unwritten_prints_the_one_failure_line_to_stderr(self):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            manager.unwritten("w1", manager.ManagerError("/d/roster.lock: busy"))
+            roster.unwritten("w1", roster.RosterError("/d/roster.lock: busy"))
         self.assertEqual(out.getvalue(), "")
         self.assertEqual(err.getvalue(), "manager: entry w1 not written: /d/roster.lock: busy\n")
 
     def test_remove_returns_the_entry_or_refuses_a_missing_one(self):
-        with manager.roster(self.dir) as r:
-            manager.set_entry(r, "w1", good())
-        with manager.roster(self.dir) as r:
-            self.assertEqual(manager.remove(r, "w1"), good())
-            with self.assertRaises(manager.ManagerError) as cm:
-                manager.remove(r, "w1")
+        with roster.locked(self.dir) as r:
+            roster.set_entry(r, "w1", good())
+        with roster.locked(self.dir) as r:
+            self.assertEqual(roster.remove(r, "w1"), good())
+            with self.assertRaises(roster.RosterError) as cm:
+                roster.remove(r, "w1")
             self.assertEqual(str(cm.exception), "w1 not in roster")
         self.assertEqual(self.entries(), {})
 
@@ -753,21 +753,21 @@ class RosterTest(unittest.TestCase):
         for kind, sid, want in cases:
             with self.subTest(kind=kind, sid=sid):
                 e = good(kind=kind, sid=sid, resume=list(resume))
-                got = manager.recovery(e)
+                got = roster.recovery(e)
                 self.assertEqual(got, want)
                 if got is not None:
                     got.append("x")
                     self.assertEqual(e["resume"], resume)
 
     def test_recovery_runs_this_crew_py_for_a_legacy_workers_py_entry(self):
-        crew = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(manager.__file__))),
+        crew = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(roster.__file__))),
                             "skills", "tmux", "scripts", "crew.py")
         self.assertTrue(os.path.isfile(crew))
         resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
         for kind in ("worker", "pipeline", "role"):
             with self.subTest(kind=kind):
                 e = good(kind=kind, resume=list(resume))
-                got = manager.recovery(e)
+                got = roster.recovery(e)
                 self.assertEqual(got[:4], ["/usr/bin/python3", crew, "start", "w1"])
                 self.assertEqual(e["resume"], resume)
 
@@ -775,41 +775,41 @@ class RosterTest(unittest.TestCase):
         """Only a worker's resume with no --client before a bare `--` gets `--client claude` after its name."""
         head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
         rest = ["--manager", "m", "--resume", SID, "--cwd", "/w"]
-        legacy = [*head, "--client", manager.LEGACY_CLIENT, *rest]
+        legacy = [*head, "--client", roster.LEGACY_CLIENT, *rest]
         cases = [("worker", [*head, *rest], legacy),
                  ("worker", [*head, *rest, "--", "--client", "x"], [*legacy, "--", "--client", "x"]),
                  ("worker", [*head, "--client", "other", *rest], [*head, "--client", "other", *rest]),
                  ("pipeline", [*head, *rest], [*head, *rest]),
                  ("role", [*head, *rest], [*head, *rest, "--sid", SID, "--resume", "--input",
                                            "Continue the unfinished task."])]
-        self.assertEqual(manager.LEGACY_CLIENT, "claude")
+        self.assertEqual(roster.LEGACY_CLIENT, "claude")
         for kind, resume, want in cases:
             with self.subTest(kind=kind, resume=resume):
                 e = good(kind=kind, resume=list(resume))
-                self.assertEqual(manager.recovery(e), want)
+                self.assertEqual(roster.recovery(e), want)
                 self.assertEqual(e["resume"], resume)
 
     def test_printable(self):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):
             with self.subTest(text=text):
-                self.assertIs(manager.printable(text), True)
+                self.assertIs(roster.printable(text), True)
         for text in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x80", "\x85", "\x9f", " ", " ", "a\nb"):
             with self.subTest(text=text):
-                self.assertIs(manager.printable(text), False)
+                self.assertIs(roster.printable(text), False)
 
     def test_sid(self):
-        self.assertTrue(manager.SID.fullmatch(SID))
+        self.assertTrue(roster.SID.fullmatch(SID))
         for text in (SID.upper(), SID + "\n", SID[:-1], "", "; rm -rf ~", SID.replace("-", "")):
             with self.subTest(text=text):
-                self.assertIsNone(manager.SID.fullmatch(text))
+                self.assertIsNone(roster.SID.fullmatch(text))
 
     def test_constants(self):
-        self.assertEqual((manager.VERSION, manager.NOTE_MAX, manager.LOCK_TIMEOUT, manager.ROSTER_MAX,
-                          manager.EVENTS_MAX, manager.SETTLE), (1, 500, 30, 1 << 20, 1 << 20, 1))
-        self.assertEqual(manager.KINDS, ("worker", "role", "pipeline"))
-        self.assertEqual(manager.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished"))
-        for error in (manager.Held, manager.Stale):
-            self.assertTrue(issubclass(error, manager.ManagerError), error)
+        self.assertEqual((roster.VERSION, roster.NOTE_MAX, roster.LOCK_TIMEOUT, roster.ROSTER_MAX,
+                          roster.EVENTS_MAX, roster.SETTLE), (1, 500, 30, 1 << 20, 1 << 20, 1))
+        self.assertEqual(roster.KINDS, ("worker", "role", "pipeline"))
+        self.assertEqual(roster.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished"))
+        for error in (roster.Held, roster.Stale):
+            self.assertTrue(issubclass(error, roster.RosterError), error)
 
 
 NOW = "2026-02-02T02:02:02+00:00"
@@ -838,7 +838,7 @@ class LeaseTest(unittest.TestCase):
         self.agent_pm = hermetic.home(self)
         self.dir = os.path.join(self.agent_pm, "managers", "m1")
         self.path = os.path.join(self.dir, "roster.json")
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
 
     def doc(self, holder=None):
         return {"version": 1, "holder": holder, "cursor": 3, "gen": 1, "entries": {}}
@@ -850,7 +850,7 @@ class LeaseTest(unittest.TestCase):
         return (f"manager directory {self.dir}: held by tmux session {session} since {since}; "
                 "ask that manager to run crew.py release, or end that session")
 
-    def refused(self, call, r, message, kind=manager.ManagerError):
+    def refused(self, call, r, message, kind=roster.RosterError):
         before = json.dumps(r)
         with self.assertRaises(kind) as cm:
             call()
@@ -859,15 +859,15 @@ class LeaseTest(unittest.TestCase):
         self.assertEqual(json.dumps(r), before)
 
     def take(self, r, own, proc):
-        with unittest.mock.patch.object(manager, "now", return_value=NOW):
-            manager.take(r, self.dir, own, proc=proc)
+        with unittest.mock.patch.object(roster, "now", return_value=NOW):
+            roster.take(r, self.dir, own, proc=proc)
 
     def test_take_and_check_by_holder_own_and_live_sessions(self):
         """Each row: the holder, own, the live tmux sessions (None: no tmux); then take's and check's holder (KEPT: as
         it was) or their error, which changes nothing; the sessions asked (has-session), the same for both."""
         since = "2026-01-02T03:04:05+00:00"
         other, me, me_now = self.held("other", since), self.held("me"), self.held("me", NOW)
-        held, attach = (manager.Held, self.message("other", since)), (manager.ManagerError, ATTACH.format(self.dir))
+        held, attach = (roster.Held, self.message("other", since)), (roster.RosterError, ATTACH.format(self.dir))
         cases = [
             ("free", None, "me", (), me_now, attach, []),
             ("own the holder: since kept", me, "me", ("me",), KEPT, KEPT, []),
@@ -884,7 +884,7 @@ class LeaseTest(unittest.TestCase):
                 with self.subTest(label, call=call):
                     proc, r = no_tmux if live is None else sessions(*live), self.doc(holder)
                     run = ((lambda: self.take(r, own, proc)) if call == "take"
-                           else (lambda: manager.check(r, self.dir, own, proc=proc)))
+                           else (lambda: roster.check(r, self.dir, own, proc=proc)))
                     if isinstance(want, tuple):
                         self.refused(run, r, want[1], want[0])
                     else:
@@ -894,23 +894,23 @@ class LeaseTest(unittest.TestCase):
                         self.assertEqual(proc.calls, [["tmux", "has-session", "-t", f"={s}"] for s in asked])
 
     def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
-        with manager.roster(self.dir) as r:
-            manager.take(r, self.dir, "me", proc=sessions())
+        with roster.locked(self.dir) as r:
+            roster.take(r, self.dir, "me", proc=sessions())
         with open(self.path, "rb") as f:
             raw = f.read()
         holder = json.loads(raw)["holder"]
         self.assertEqual(holder["session"], "me")
         self.assertIsNotNone(datetime.datetime.fromisoformat(holder["since"]).utcoffset())
-        with self.assertRaises(manager.Held), manager.roster(self.dir) as r:
-            manager.take(r, self.dir, "you", proc=sessions("me"))
+        with self.assertRaises(roster.Held), roster.locked(self.dir) as r:
+            roster.take(r, self.dir, "you", proc=sessions("me"))
         with open(self.path, "rb") as f:
             self.assertEqual(f.read(), raw)
 
     def test_check_in_a_read_only_block_creates_no_roster_json(self):
-        with manager.roster(self.dir, write=False) as r:
-            manager.check(r, self.dir, None, proc=sessions())
-            with self.assertRaises(manager.ManagerError):
-                manager.check(r, self.dir, "me", proc=sessions())
+        with roster.locked(self.dir, write=False) as r:
+            roster.check(r, self.dir, None, proc=sessions())
+            with self.assertRaises(roster.RosterError):
+                roster.check(r, self.dir, "me", proc=sessions())
         self.assertFalse(os.path.exists(self.path))
 
     def test_two_processes_take_concurrently_and_exactly_one_holds(self):
@@ -952,37 +952,37 @@ def tmux_sessions(*live, stuck=()):
 
 
 def kills(*sessions):
-    """The tmux calls manager.stop makes for sessions, in order."""
+    """The tmux calls roster.stop makes for sessions, in order."""
     return [["tmux", cmd, "-t", f"={s}"] for s in sessions for cmd in ("kill-session", "has-session")]
 
 
 class StopTest(unittest.TestCase):
-    """manager.stop inside a roster() block of m1's directory; tmux is tmux_sessions."""
+    """roster.stop inside a locked() block of m1's directory; tmux is tmux_sessions."""
 
     def setUp(self):
         self.agent_pm = hermetic.home(self)
         self.dir = os.path.join(self.agent_pm, "managers", "m1")
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
         self.entries = {"w1": good(), "w2": good(sid=SID2), "d1": good(kind="role", tui="t1"),
                         "d2": good(kind="pipeline", tui="t2"), "d3": good(kind="role", tui=None)}
 
     def stop(self, name, proc):
-        """manager.stop's key for name, and the entries then written."""
-        with manager.roster(self.dir) as r:
+        """roster.stop's key for name, and the entries then written."""
+        with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
-        with manager.roster(self.dir) as r:
-            key = manager.stop(r, name, proc=proc)
-        with manager.roster(self.dir, write=False) as r:
+        with roster.locked(self.dir) as r:
+            key = roster.stop(r, name, proc=proc)
+        with roster.locked(self.dir, write=False) as r:
             return key, r["entries"]
 
     def refused(self, name, proc, message):
-        """manager.stop raises message inside the block; nothing written."""
-        with manager.roster(self.dir) as r:
+        """roster.stop raises message inside the block; nothing written."""
+        with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
-        with self.assertRaises(manager.ManagerError) as cm, manager.roster(self.dir) as r:
-            manager.stop(r, name, proc=proc)
+        with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir) as r:
+            roster.stop(r, name, proc=proc)
         self.assertEqual(str(cm.exception), message)
-        with manager.roster(self.dir, write=False) as r:
+        with roster.locked(self.dir, write=False) as r:
             self.assertEqual(r["entries"], self.entries)
 
     def test_kills_the_sessions_driver_first_then_removes_the_entry(self):
@@ -1022,7 +1022,7 @@ class StopTest(unittest.TestCase):
 
 
 WIDTH = 64
-SPAN = manager.EVENTS_MAX // WIDTH
+SPAN = roster.EVENTS_MAX // WIDTH
 WRITER = b"12:00:00 w9 done\n"
 NOT_REGULAR = "{}: not a regular file owned by you"
 
@@ -1040,7 +1040,7 @@ class CursorTest(unittest.TestCase):
         self.events = os.path.join(self.dir, "events")
         self.old = self.events + ".1"
         self.path = os.path.join(self.dir, "roster.json")
-        manager.ensure(self.dir)
+        roster.ensure(self.dir)
 
     def doc(self, cursor=0, gen=0):
         return {"version": 1, "holder": None, "cursor": cursor, "gen": gen, "entries": {}}
@@ -1061,7 +1061,7 @@ class CursorTest(unittest.TestCase):
         return SPAN
 
     def rotate(self, r, during=lambda: None):
-        """manager.rotate with a fake sleep running `during`: (its result, the seconds slept, stderr)."""
+        """roster.rotate with a fake sleep running `during`: (its result, the seconds slept, stderr)."""
         slept, err = [], io.StringIO()
 
         def sleep(seconds):
@@ -1069,7 +1069,7 @@ class CursorTest(unittest.TestCase):
             during()
 
         with contextlib.redirect_stderr(err):
-            result = manager.rotate(r, self.dir, sleep=sleep)
+            result = roster.rotate(r, self.dir, sleep=sleep)
         return result, slept, err.getvalue()
 
     def lstat_as(self, path, change):
@@ -1086,44 +1086,44 @@ class CursorTest(unittest.TestCase):
         for label, make in (("missing", lambda: None), ("empty", lambda: self.write(b""))):
             with self.subTest(label):
                 make()
-                self.assertEqual(manager.lines(self.events), 0)
-                self.assertEqual([manager.offset(self.events, n) for n in (0, 3)], [0, 0])
-                self.assertEqual([manager.following(self.events, n) for n in (0, 3)], [b"", b""])
+                self.assertEqual(roster.lines(self.events), 0)
+                self.assertEqual([roster.offset(self.events, n) for n in (0, 3)], [0, 0])
+                self.assertEqual([roster.following(self.events, n) for n in (0, 3)], [b"", b""])
 
     def test_a_trailing_fragment_is_not_a_line_and_follows_as_is(self):
         self.write(b"a\nbb\nccc")
-        self.assertEqual(manager.lines(self.events), 2)
-        self.assertEqual([manager.offset(self.events, n) for n in range(5)], [0, 2, 5, 8, 8])
-        self.assertEqual([manager.following(self.events, n) for n in range(4)], [b"a\nbb\nccc", b"bb\nccc", b"ccc", b""])
+        self.assertEqual(roster.lines(self.events), 2)
+        self.assertEqual([roster.offset(self.events, n) for n in range(5)], [0, 2, 5, 8, 8])
+        self.assertEqual([roster.following(self.events, n) for n in range(4)], [b"a\nbb\nccc", b"bb\nccc", b"ccc", b""])
 
     def test_lines_offset_and_following_across_blocks(self):
         data = self.write(numbered(3 * SPAN // 2))
-        self.assertEqual(manager.lines(self.events), 3 * SPAN // 2)
-        self.assertEqual(manager.offset(self.events, 12345), 12345 * WIDTH)
-        self.assertEqual(manager.following(self.events, 12345), data[12345 * WIDTH:])
-        self.assertEqual(manager.following(self.events, 3 * SPAN // 2 - 2), numbered(2, start=3 * SPAN // 2 - 1))
+        self.assertEqual(roster.lines(self.events), 3 * SPAN // 2)
+        self.assertEqual(roster.offset(self.events, 12345), 12345 * WIDTH)
+        self.assertEqual(roster.following(self.events, 12345), data[12345 * WIDTH:])
+        self.assertEqual(roster.following(self.events, 3 * SPAN // 2 - 2), numbered(2, start=3 * SPAN // 2 - 1))
 
     def test_symlink_and_fifo_refused_without_blocking(self):
         target = os.path.join(os.path.dirname(self.agent_pm), "target")
         with open(target, "wb") as f:
             f.write(b"a\nb\n")
-        reads = (manager.lines, lambda p: manager.offset(p, 1), lambda p: manager.following(p, 1))
+        reads = (roster.lines, lambda p: roster.offset(p, 1), lambda p: roster.following(p, 1))
         os.symlink(target, self.events)
         for kind in ("symlink", "fifo"):
             if kind == "fifo":
                 os.unlink(self.events)
                 os.mkfifo(self.events)
             for read in reads:
-                with self.subTest(kind), within(), self.assertRaises(manager.ManagerError) as cm:
+                with self.subTest(kind), within(), self.assertRaises(roster.RosterError) as cm:
                     read(self.events)
                 self.assertEqual(str(cm.exception), NOT_REGULAR.format(self.events))
         with open(target, "rb") as f:
             self.assertEqual(f.read(), b"a\nb\n")
 
     def test_due_boundaries(self):
-        half = manager.EVENTS_MAX // 2
+        half = roster.EVENTS_MAX // 2
         cases = [
-            ("exactly EVENTS_MAX, all handled", numbered(SPAN), SPAN, manager.EVENTS_MAX, False),
+            ("exactly EVENTS_MAX, all handled", numbered(SPAN), SPAN, roster.EVENTS_MAX, False),
             ("over, handled one byte short", numbered(SPAN + 1, first=WIDTH - 1), SPAN // 2, half - 1, False),
             ("over, handled exactly half", numbered(SPAN + 1), SPAN // 2, half, True),
             ("over, cursor 0", numbered(2 * SPAN), 0, 0, False),
@@ -1131,32 +1131,32 @@ class CursorTest(unittest.TestCase):
         for label, data, cursor, handled, want in cases:
             with self.subTest(label):
                 self.write(data)
-                self.assertEqual(manager.offset(self.events, cursor), handled)
+                self.assertEqual(roster.offset(self.events, cursor), handled)
                 r = self.doc(cursor)
-                self.assertIs(manager.due(r, self.dir), want)
+                self.assertIs(roster.due(r, self.dir), want)
                 self.assertEqual(r, self.doc(cursor))
         os.unlink(self.events)
-        self.assertIs(manager.due(self.doc(5), self.dir), False)
+        self.assertIs(roster.due(self.doc(5), self.dir), False)
 
     def test_advance_checks_the_gen_first(self):
         self.write(numbered(5))
         r = self.doc(2, 1)
         for after in (3, 9, None):
-            with self.subTest(after=after), self.assertRaises(manager.Stale) as cm:
-                manager.advance(r, self.dir, after, 0)
+            with self.subTest(after=after), self.assertRaises(roster.Stale) as cm:
+                roster.advance(r, self.dir, after, 0)
             self.assertEqual(str(cm.exception), "stale line numbers (gen 0, now 1): run crew.py attach")
         self.assertEqual(r, self.doc(2, 1))
 
     def test_advance_past_the_end_is_stale(self):
         self.write(numbered(5) + b"line 6")
         r = self.doc(2, 1)
-        with self.assertRaises(manager.Stale) as cm:
-            manager.advance(r, self.dir, 6, 1)
+        with self.assertRaises(roster.Stale) as cm:
+            roster.advance(r, self.dir, 6, 1)
         self.assertEqual(str(cm.exception), f"line 6 is past the end of {self.events} (5 lines): run crew.py attach")
         self.assertEqual(r, self.doc(2, 1))
         os.unlink(self.events)
-        with self.assertRaisesRegex(manager.Stale, r"^line 1 is past the end of .* \(0 lines\)"):
-            manager.advance(r, self.dir, 1, 1)
+        with self.assertRaisesRegex(roster.Stale, r"^line 1 is past the end of .* \(0 lines\)"):
+            roster.advance(r, self.dir, 1, 1)
 
     def test_advance_moves_the_cursor_forward_only_and_returns_the_line(self):
         self.write(numbered(5) + b"line 6")
@@ -1164,12 +1164,12 @@ class CursorTest(unittest.TestCase):
         for cursor, after, moved, resolved in cases:
             with self.subTest(cursor=cursor, after=after):
                 r = self.doc(cursor, 2)
-                self.assertEqual(manager.advance(r, self.dir, after, 2), resolved)
+                self.assertEqual(roster.advance(r, self.dir, after, 2), resolved)
                 self.assertEqual(r, self.doc(moved, 2))
 
     def test_advance_on_a_missing_events_file(self):
         r = self.doc()
-        self.assertEqual([manager.advance(r, self.dir, after, 0) for after in (0, None)], [0, 0])
+        self.assertEqual([roster.advance(r, self.dir, after, 0) for after in (0, None)], [0, 0])
         self.assertEqual(r, self.doc())
 
     def test_rotate_not_due_touches_nothing(self):
@@ -1201,7 +1201,7 @@ class CursorTest(unittest.TestCase):
                     self.write(b"old\n", self.old)
                 original, ino = self.read(), os.lstat(self.events).st_ino
                 r = self.doc(cursor, 2)
-                self.assertEqual(self.rotate(r), (True, [manager.SETTLE], ""))
+                self.assertEqual(self.rotate(r), (True, [roster.SETTLE], ""))
                 self.assertEqual(r, self.doc(0, 3))
                 self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, original))
                 self.assertEqual(self.read(), numbered(3, start=SPAN + 1) + ended)
@@ -1218,7 +1218,7 @@ class CursorTest(unittest.TestCase):
                 f.write(WRITER)
 
         r = self.doc(cursor)
-        self.assertEqual(self.rotate(r, append)[:2], (True, [manager.SETTLE]))
+        self.assertEqual(self.rotate(r, append)[:2], (True, [roster.SETTLE]))
         self.assertEqual(self.read(), WRITER + numbered(3, start=SPAN + 1))
 
     def test_rotate_makes_a_writers_0644_events_0600(self):
@@ -1242,7 +1242,7 @@ class CursorTest(unittest.TestCase):
     def test_rotate_failing_after_the_rename_still_resets_the_cursor_and_bumps_the_gen(self):
         cursor = self.due_file()
         original = self.read()
-        with manager.roster(self.dir) as r:
+        with roster.locked(self.dir) as r:
             r.update(cursor=cursor, gen=2)
         real = os.open
 
@@ -1252,11 +1252,11 @@ class CursorTest(unittest.TestCase):
             return real(path, flags, *args, **kw)
 
         err = io.StringIO()
-        with unittest.mock.patch("os.open", open_), contextlib.redirect_stderr(err), manager.roster(self.dir) as r:
-            self.assertIs(manager.rotate(r, self.dir, sleep=lambda seconds: None), True)
+        with unittest.mock.patch("os.open", open_), contextlib.redirect_stderr(err), roster.locked(self.dir) as r:
+            self.assertIs(roster.rotate(r, self.dir, sleep=lambda seconds: None), True)
         self.assertEqual(err.getvalue(), f"manager: rotate: {self.events}: Input/output error: lines after {cursor} of "
                                          f"{self.old} not copied\n")
-        with manager.roster(self.dir, write=False) as r:
+        with roster.locked(self.dir, write=False) as r:
             self.assertEqual((r["cursor"], r["gen"]), (0, 3))
         self.assertEqual((self.read(self.old), self.read()), (original, b""))
         self.assertEqual(mode(self.events), 0o600)
@@ -1266,7 +1266,7 @@ class CursorTest(unittest.TestCase):
         original = self.read()
         r = self.doc(cursor, 2)
         with unittest.mock.patch("os.replace", side_effect=OSError(errno.EIO, "Input/output error")), \
-                self.assertRaises(manager.ManagerError) as cm:
+                self.assertRaises(roster.RosterError) as cm:
             self.rotate(r)
         self.assertEqual(str(cm.exception), f"{self.events}: Input/output error")
         self.assertEqual(r, self.doc(cursor, 2))
@@ -1296,7 +1296,7 @@ class CursorTest(unittest.TestCase):
                 inodes = {name: os.lstat(os.path.join(self.dir, name)).st_ino for name in os.listdir(self.dir)}
                 r = self.doc(cursor, 2)
                 with self.lstat_as(path, change) if change else contextlib.nullcontext(), within(), \
-                        self.assertRaises(manager.ManagerError) as cm:
+                        self.assertRaises(roster.RosterError) as cm:
                     self.rotate(r)
                 self.assertEqual(str(cm.exception), NOT_REGULAR.format(path))
                 self.assertEqual(r, self.doc(cursor, 2))
@@ -1305,13 +1305,13 @@ class CursorTest(unittest.TestCase):
 
     def test_a_refusal_inside_roster_leaves_roster_json_unchanged(self):
         cursor = self.due_file()
-        with manager.roster(self.dir) as r:
+        with roster.locked(self.dir) as r:
             r.update(cursor=cursor, gen=2)
         with open(self.path, "rb") as f:
             raw = f.read()
         os.symlink(os.path.join(os.path.dirname(self.agent_pm), "target"), self.old)
-        with self.assertRaises(manager.ManagerError), manager.roster(self.dir) as r:
-            manager.rotate(r, self.dir, sleep=lambda seconds: None)
+        with self.assertRaises(roster.RosterError), roster.locked(self.dir) as r:
+            roster.rotate(r, self.dir, sleep=lambda seconds: None)
         with open(self.path, "rb") as f:
             self.assertEqual(f.read(), raw)
         self.assertTrue(os.path.islink(self.old))

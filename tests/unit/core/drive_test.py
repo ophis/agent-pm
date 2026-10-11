@@ -27,8 +27,8 @@ from clients.skill import SkillClient
 from clients import claude as claude_client
 import compose
 import drive
-import manager
 import report
+import roster
 import tmux_host
 from clients import codex
 
@@ -3272,7 +3272,7 @@ class Detach(Base):
     @staticmethod
     def entries(name):
         """Manager `name`'s roster entries, validated."""
-        with manager.roster(manager.directory(name), write=False) as r:
+        with roster.locked(roster.directory(name), write=False) as r:
             return r["entries"]
 
     def test_the_driver_session_never_matches_a_tui_session_or_the_reserved_name(self):
@@ -3481,7 +3481,7 @@ class Detach(Base):
 
     def test_a_tui_run_detached_from_an_attached_session_gets_its_role_entry_under_the_driver_name(self):
         hermetic.home(self)
-        manager.events(manager.directory("mgr"))   # as crew.py attach
+        roster.events(roster.directory("mgr"))   # as crew.py attach
         os.environ.update(INSIDE)
         code, err, _, handover = self.outer("--runner", "tui", "--task", "echo", "--repo", self.repo, "--client",
                                             "claude", "--split", "below", "--split-from", "s", "--prefix", "p",
@@ -3518,8 +3518,8 @@ class Detach(Base):
 
     def test_no_role_entry_for_another_events_file_a_dry_run_or_a_failed_start(self):
         hermetic.home(self)
-        d = manager.directory("m1")
-        manager.events(d)
+        d = roster.directory("m1")
+        roster.events(d)
         for extra, kw, want in ((("--manager", "m1"), {}, 0),   # --events self.events
                                 (("--manager", "m1", "--dry-run"), {"events": False}, 0),
                                 (("--manager", "m1"), {"events": False, "rc": 1}, 3)):
@@ -3529,8 +3529,8 @@ class Detach(Base):
 
     def test_detach_writes_the_entry_it_is_given_once_the_session_runs_never_when_it_fails_to_start(self):
         hermetic.home(self)
-        d = manager.directory("m1")
-        manager.ensure(d)
+        d = roster.directory("m1")
+        roster.ensure(d)
         path = os.path.join(d, "roster.json")
         fields = {"kind": "role", "sid": SID, "cwd": self.tmp.name,
                   "resume": [sys.executable, os.path.abspath(drive.__file__), "--detach"]}
@@ -3550,24 +3550,24 @@ class Detach(Base):
             with self.subTest(want=want):
                 with self.assertRaisesRegex(drive.RunnerError, want):
                     drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=proc,
-                                 sleep=lambda s: None, roster=(d, fields))
+                                 sleep=lambda s: None, roster_entry=(d, fields))
                 self.assertFalse(os.path.exists(path))
-        drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=taken, roster=(d, fields))
+        drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=taken, roster_entry=(d, fields))
         (name, e), = self.entries("m1").items()
-        self.assertEqual((name, e), ("d", manager.entry(**fields, started=e["started"])))
+        self.assertEqual((name, e), ("d", roster.entry(**fields, started=e["started"])))
         os.unlink(path)
         err = io.StringIO()
         with redirect_stderr(err):
             drive.detach("d", [sys.executable], cwd=self.tmp.name, env={}, iterm="", proc=taken,
-                         roster=(d, {**fields, "cwd": "rel"}))
+                         roster_entry=(d, {**fields, "cwd": "rel"}))
         self.assertEqual(err.getvalue(), "manager: entry d not written: entry: cwd: 'rel': want an absolute printable "
                                          "path\n")
         self.assertFalse(os.path.exists(path))
 
     def test_an_entry_write_failure_prints_one_line_and_the_run_goes_on(self):
         hermetic.home(self)
-        d = manager.directory("m1")
-        manager.ensure(d)
+        d = roster.directory("m1")
+        roster.ensure(d)
         with open(os.path.join(d, "roster.json"), "w") as f:
             f.write("{")
         code, err, _, _ = self.outer("--manager", "m1", events=False)

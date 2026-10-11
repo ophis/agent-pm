@@ -24,7 +24,7 @@ from clients.claude import ClaudeClient
 from clients.codex import CodexClient
 
 clients = crew.clients
-manager = crew.manager
+roster = crew.roster
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
 tmux_host = crew.tmux_host
@@ -211,7 +211,7 @@ class StartTest(unittest.TestCase):
         self.claude = os.path.join(self.bin, "claude")
         executable(self.claude, "#!/bin/sh\n")
         self.directory = os.path.join(self.dir, "m1")
-        manager.ensure(self.directory)
+        roster.ensure(self.directory)
         self.events = os.path.join(self.directory, "events")
         self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h",
                     "CLAUDE_JOB_DIR": "/j"}
@@ -467,7 +467,7 @@ class WorkerCase(unittest.TestCase):
         self.claude = os.path.join(self.bin, "claude")
         executable(self.claude, "#!/bin/sh\n")
         self.directory = os.path.join(self.dir, "it's m1")
-        manager.ensure(self.directory)
+        roster.ensure(self.directory)
         self.events = os.path.join(self.directory, "events")
         self.env = {"PATH": self.bin + ":/a b", "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "cfg")}
         no_sleep(self)
@@ -1385,7 +1385,7 @@ class NextEventTest(unittest.TestCase):
 
     def test_main_prints_line_and_event(self):
         attached("--manager", "m1")
-        path = manager.events(manager.directory("m1"), create=False)
+        path = roster.events(roster.directory("m1"), create=False)
         self.append(nl(self.A, self.B), path)
         with self.sleeping():
             self.assertEqual(self.run_main("--after", "1", "--gen", "0"), (0, f"2 {self.B}\n", ""))
@@ -1435,7 +1435,7 @@ class NextEventContentTest(WorkerCase):
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, SID + ".jsonl"), "w") as f:
                 f.write("".join(transcript))
-        with open(manager.events(manager.directory("m1"), create=False), "w") as f:
+        with open(roster.events(roster.directory("m1"), create=False), "w") as f:
             f.write(event + "\n")
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(crew.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
@@ -1504,7 +1504,7 @@ HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane\n"
 SHOWN = "1 /dev/ttys001\n"
 SHOW = tmux_host.show
 WIDTH = 64
-SPAN = manager.EVENTS_MAX // WIDTH
+SPAN = roster.EVENTS_MAX // WIDTH
 
 
 def numbered(count, start=1):
@@ -1628,7 +1628,7 @@ class RosterCase(WorkerCase):
 
     def seed(self, holder=None, cursor=0, gen=0, **entries):
         """roster.json holding these entries; returns its bytes."""
-        manager.ensure(self.mdir)
+        roster.ensure(self.mdir)
         with open(self.path, "w") as f:
             json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": gen, "entries": entries}, f)
         return self.bytes()
@@ -1694,7 +1694,7 @@ class AttachTest(RosterCase):
         return out
 
     def test_first_attach_makes_the_directory_and_files_and_takes_the_lease(self):
-        with mock.patch.object(manager, "now", return_value=WHEN):
+        with mock.patch.object(roster, "now", return_value=WHEN):
             self.assertEqual(self.synced(Server()), HEADER + tail(self.mdir))
         self.assertEqual(stat.S_IMODE(os.stat(self.mdir).st_mode), 0o700)
         for name in ("events", "roster.json", "roster.lock"):
@@ -1702,7 +1702,7 @@ class AttachTest(RosterCase):
         holder = {"session": "mgr", "since": WHEN}
         self.assertEqual(json.loads(self.bytes()),
                          {"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": {}})
-        with mock.patch.object(manager, "now", return_value="2026-10-10T00:00:00+00:00"):
+        with mock.patch.object(roster, "now", return_value="2026-10-10T00:00:00+00:00"):
             self.synced(Server())
         self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
@@ -1886,12 +1886,12 @@ class AttachTest(RosterCase):
                   w2=entry(), w3=entry(sid=SID2), r2=entry("role", sid=SID2, cwd=self.dir, tui="r2-tui"))
         server = Server(sessions={"w1": opts(SID), "r1-tui": opts(state="done"), "w2": opts(SID), "r2": opts()},
                         clients={"w2": SHOWN})
-        with mock.patch.object(manager, "roster", wraps=manager.roster) as roster:
+        with mock.patch.object(roster, "locked", wraps=roster.locked) as locked:
             out = self.synced(server)
         self.assertEqual(self.shows, [
             ("r1-tui", {"split": "right", "split_from": None, "per_column": 2, "retile": "all", "proc": server}, True),
             ("w1", {"split": "below", "split_from": "mgr", "per_column": 2, "retile": "all", "proc": server}, True)])
-        self.assertEqual(roster.call_count, 2)
+        self.assertEqual(locked.call_count, 2)
         self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
                          {"w1": ("%9", "mgr"), "r1": ("%9", "mgr"), "w2": (None, None), "w3": (None, None),
                           "r2": (None, None)})
@@ -1899,9 +1899,9 @@ class AttachTest(RosterCase):
 
     def test_no_reopen_no_second_roster_block(self):
         self.seed(w1=entry())
-        with mock.patch.object(manager, "roster", wraps=manager.roster) as roster:
+        with mock.patch.object(roster, "locked", wraps=roster.locked) as locked:
             self.synced(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
-        self.assertEqual((roster.call_count, self.shows), (1, []))
+        self.assertEqual((locked.call_count, self.shows), (1, []))
 
     def test_the_default_per_column_and_retile(self):
         self.seed(w1=entry())
@@ -1910,11 +1910,11 @@ class AttachTest(RosterCase):
 
     def test_placement_is_recorded_only_for_an_entry_still_the_same(self):
         def drop():
-            with manager.roster(self.mdir) as r:
-                manager.remove(r, "w1")
+            with roster.locked(self.mdir) as r:
+                roster.remove(r, "w1")
         cases = {"same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
-                 "sid changed": (lambda: manager.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
-                 "kind changed": (lambda: manager.put(self.mdir, "w1", entry("pipeline")), entry("pipeline")),
+                 "sid changed": (lambda: roster.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
+                 "kind changed": (lambda: roster.put(self.mdir, "w1", entry("pipeline")), entry("pipeline")),
                  "removed": (drop, None)}
         for why, (then, want) in cases.items():
             with self.subTest(why):
@@ -2040,7 +2040,7 @@ class AttachTest(RosterCase):
 
 
 class LeaseTest(RosterCase):
-    """start and next-event check the lease (manager.check) before any tmux call and make nothing but start's entry
+    """start and next-event check the lease (roster.check) before any tmux call and make nothing but start's entry
     (StartEntryTest) and next-event's cursor; start's session (spawned) and next_event are fakes."""
     CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
     FRESH = {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
@@ -2099,7 +2099,7 @@ class LeaseTest(RosterCase):
 
     def test_allowed_outside_tmux_without_a_live_holder(self):
         """start writes only its entry; next-event only the cursor it records; the holder left null."""
-        manager.events(self.mdir)   # as drive.py and router.py --tui still make it
+        roster.events(self.mdir)   # as drive.py and router.py --tui still make it
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
                 with contextlib.suppress(FileNotFoundError):
@@ -2114,7 +2114,7 @@ class LeaseTest(RosterCase):
 
 
 class StartEntryTest(RosterCase):
-    """start's roster entry (manager.record) in mgr's directory, which mgr holds; tmux is a Fake (has-session: every
+    """start's roster entry (roster.record) in mgr's directory, which mgr holds; tmux is a Fake (has-session: every
     session live)."""
 
     def setUp(self):
@@ -2146,7 +2146,7 @@ class StartEntryTest(RosterCase):
                  ({"split": "right", "split_from": "x"}, (), ["--split", "right", "--split-from", "x"]))
         for kw, flags, rest in cases:
             with self.subTest(**kw, flags=flags):
-                with mock.patch.object(manager, "now", return_value=WHEN):
+                with mock.patch.object(roster, "now", return_value=WHEN):
                     sid = self.start(flags=flags, note="check it", **kw)
                 self.assertEqual(self.entries(), {"w1": entry(sid=sid, cwd=self.dir, resume=self.resume(sid, *rest),
                                                               note="check it", **kw)})
@@ -2213,7 +2213,7 @@ class StartEntryTest(RosterCase):
 
     def test_a_take_over_before_the_write_writes_nothing_the_worker_runs(self):
         def take_over(argv):
-            with manager.roster(self.mdir) as r:
+            with roster.locked(self.mdir) as r:
                 r["holder"] = OTHER
             return ""
         fake = Fake(results={"list-sessions": take_over})
@@ -2424,8 +2424,8 @@ class StopAllTest(RosterCase):
         self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"), gone=entry(state="gone"),
                   **{"agent-pm-engineer-TASK-1": entry("pipeline")})
         w1 = os.path.join(self.agent_pm, "managers", "w1")
-        manager.ensure(w1)
-        manager.put(w1, "w3", entry())
+        roster.ensure(w1)
+        roster.put(w1, "w3", entry())
         server = Server(sessions=self.sessions())
         self.assertEqual(self.run_main(server, "stop-all"), (0, nl(
             "stopped w3", "stopped agent-pm-engineer-TASK-1; a scheduler may resume it", "stopped d1", "stopped t1",
@@ -2433,7 +2433,7 @@ class StopAllTest(RosterCase):
         self.assertEqual([c[3] for c in server.ran("kill-session")],
                          ["=w3", "=agent-pm-engineer-TASK-1", "=d1", "=t1", "=w1"])
         self.assertEqual((set(server.sessions), set(self.entries())), ({"mgr", "o1"}, {"gone"}))
-        with manager.roster(w1, write=False) as r:
+        with roster.locked(w1, write=False) as r:
             self.assertEqual(r["entries"], {})
 
     def test_unshown_sessions_of_its_roster_too_an_entry_kept_while_its_key_lives(self):
@@ -2493,7 +2493,7 @@ class ResumeTest(RosterCase):
         self.assertEqual(self.run_main(server, "attach", "--resume"),
                          (0, listed + nl("resumed B: exit 0: drive.py: session x", "resumed a: exit 0: a",
                                          f"resumed b: exit 0: b {SID}", "resumed p1: exit 0"), ""))
-        ran = {name: manager.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
+        ran = {name: roster.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
         self.assertEqual(server.recoveries, [(argv, {"cwd": entries[name]["cwd"], **self.RUN}, True)
                                              for name, argv in ran.items()])
         printed = dict(line.removeprefix("resume ").split(": ", 1) for line in listed.splitlines()
@@ -2683,7 +2683,7 @@ class CursorTest(RosterCase):
                 self.assertEqual(self.cursor(), (0, 1))
                 self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, data.encode()))
                 self.assertEqual(self.read(), "".join(data.splitlines(keepends=True)[-3:]).encode())
-                self.sleep.assert_called_once_with(manager.SETTLE)
+                self.sleep.assert_called_once_with(roster.SETTLE)
         before = self.bytes()
         self.assertEqual(self.attach("--after", "2", "--gen", "0"),
                          (1, "", "workers: stale line numbers (gen 0, now 1): run crew.py attach\n"))

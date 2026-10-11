@@ -11,7 +11,7 @@ import shutil
 from collections.abc import Iterable, Iterator
 from types import MappingProxyType
 
-import manager
+import roster
 import tmux_host
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
@@ -142,7 +142,7 @@ class ClaudeClient(Client):
     def worker_reply(self, sid: str) -> str:
         """The text blocks of session sid's last text-bearing assistant message, joined by newlines; its transcript
         read from its end back to that message's first record."""
-        if not manager.SID.fullmatch(sid):
+        if not roster.SID.fullmatch(sid):
             raise ConfigError(f"bad session id {sid!r}")
         found = glob.glob(os.path.join(glob.escape(config_dir()), "projects", "*", sid + ".jsonl"))
         if not found:

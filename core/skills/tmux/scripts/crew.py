@@ -18,14 +18,14 @@ from collections.abc import Iterator
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
-import manager  # noqa: E402
 import repo  # noqa: E402
+import roster  # noqa: E402
 import tmux_host  # noqa: E402
 from compose import ConfigError  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
-SESSION_ID = manager.SID
+SESSION_ID = roster.SID
 EARLY = 5
 POLL = 0.5
 REPORT_LINES = 20
@@ -114,10 +114,10 @@ def _get(name: str) -> clients.Client:
 
 def _client(name: str | None, env: dict, classes: dict) -> tuple[str, clients.Client]:
     """The worker's client, by name: `name` (--client), else the one of classes whose session marker env holds
-    (clients.caller), else manager.LEGACY_CLIENT."""
+    (clients.caller), else roster.LEGACY_CLIENT."""
     if name is None:
         try:
-            name = clients.caller(env, classes) or manager.LEGACY_CLIENT
+            name = clients.caller(env, classes) or roster.LEGACY_CLIENT
         except ConfigError as e:
             raise WorkersError(str(e)) from e
     return name, _get(name)
@@ -136,11 +136,11 @@ def _allowed(classes: dict) -> set[str]:
 
 
 def _override(item: str, allowed: set[str]) -> tuple[str, str]:
-    """An --env NAME=VALUE: NAME in allowed, VALUE printable (manager.printable)."""
+    """An --env NAME=VALUE: NAME in allowed, VALUE printable (roster.printable)."""
     key, eq, value = item.partition("=")
     if not eq or key not in allowed:
         raise WorkersError(f"--env {item}: want NAME=VALUE, NAME one of {', '.join(sorted(allowed))}")
-    if not manager.printable(value):
+    if not roster.printable(value):
         raise WorkersError(f"--env {key}: {value!r}: want printable text (no control character, U+2028 or U+2029)")
     return key, value
 
@@ -194,19 +194,19 @@ def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
 
 
 def _note_text(text: str) -> str | None:
-    """A note's text, checked (manager.NOTE_MAX, manager.printable); "" is None."""
-    if len(text) > manager.NOTE_MAX:
-        raise WorkersError(f"note: {len(text)} characters: want at most {manager.NOTE_MAX}")
-    if not manager.printable(text):
+    """A note's text, checked (roster.NOTE_MAX, roster.printable); "" is None."""
+    if len(text) > roster.NOTE_MAX:
+        raise WorkersError(f"note: {len(text)} characters: want at most {roster.NOTE_MAX}")
+    if not roster.printable(text):
         raise WorkersError(f"note: {text!r}: want printable text (no control character, U+2028 or U+2029)")
     return text or None
 
 
 def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, note: str | None, flags, client: str,
             overrides: dict, split: str | None, split_from: str | None, proc) -> None:
-    """Writes worker `name`'s roster entry (manager.record) in one lease-checked block: its recovery argv, start
+    """Writes worker `name`'s roster entry (roster.record) in one lease-checked block: its recovery argv, start
     --client <client> --resume <sid> with its --env items, and its session's placement (_placed). A failure only
-    prints its line (manager.unwritten)."""
+    prints its line (roster.unwritten)."""
     resume = [sys.executable, os.path.abspath(__file__), "start", name, "--manager", os.path.basename(directory),
               "--client", client, "--resume", sid, "--cwd", cwd,
               *(w for k, v in overrides.items() for w in ("--env", f"{k}={v}")),
@@ -218,11 +218,11 @@ def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, n
         row = None
     try:
         with _leased(directory, own, proc) as r:
-            value = manager.entry("worker", sid=sid, cwd=cwd, resume=resume, note=note, split=split,
+            value = roster.entry("worker", sid=sid, cwd=cwd, resume=resume, note=note, split=split,
                                   split_from=split_from)
-            manager.record(r, name, value if row is None else _placed(value, row))
+            roster.record(r, name, value if row is None else _placed(value, row))
     except WorkersError as e:
-        manager.unwritten(name, e)
+        roster.unwritten(name, e)
 
 
 def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str | None = None,
@@ -251,7 +251,7 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
     with _leased(directory, own, proc, write=False):
         pass
     try:
-        events = tmux_host.events_file(manager.events(directory, create=False))
+        events = tmux_host.events_file(roster.events(directory, create=False))
     except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     status_line, per_column, retile = _status_line(), _per_column(), _retile()
@@ -298,12 +298,12 @@ def _option(name: str, key: str, proc, *, required: bool = True) -> str | None:
 
 def _stored(name: str, allowed: set[str], proc) -> dict:
     """Worker `name`'s options: @sid @cwd @events @flags, and @client @exe @env (each item checked as --env is,
-    against allowed); a session started before @client: manager.LEGACY_CLIENT, @claude and no env. Missing or
+    against allowed); a session started before @client: roster.LEGACY_CLIENT, @claude and no env. Missing or
     malformed: NotAWorker."""
     opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "flags")}
     client = _option(name, "@client", proc, required=False)
     if client is None:
-        opt.update(client=manager.LEGACY_CLIENT, exe=_option(name, "@claude", proc), env="{}")
+        opt.update(client=roster.LEGACY_CLIENT, exe=_option(name, "@claude", proc), env="{}")
     else:
         opt.update(client=client, exe=_option(name, "@exe", proc), env=_option(name, "@env", proc))
     try:
@@ -357,14 +357,14 @@ def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
 
 
 def reply(name: str, *, proc=subprocess.run) -> str:
-    """Worker `name`'s last answer, "" when none yet: its client's (@client; unset: manager.LEGACY_CLIENT)
+    """Worker `name`'s last answer, "" when none yet: its client's (@client; unset: roster.LEGACY_CLIENT)
     Client.worker_reply."""
     _check(name)
     sid = _option(name, "@sid", proc)
     if not SESSION_ID.fullmatch(sid):
         raise WorkersError(f"{name}: bad session id {sid!r}")
     client = _option(name, "@client", proc, required=False)
-    worker = _get(manager.LEGACY_CLIENT if client is None else client)
+    worker = _get(roster.LEGACY_CLIENT if client is None else client)
     try:
         return worker.worker_reply(sid)
     except ConfigError as e:
@@ -479,10 +479,10 @@ def _status(cwd: str) -> str | None:
 
 
 def _placed(e: dict, options: dict) -> dict:
-    """Entry e with a live session's pane and opener, each only when valid (manager.entry)."""
+    """Entry e with a live session's pane and opener, each only when valid (roster.entry)."""
     for key in ("pane", "opener"):
-        with contextlib.suppress(manager.ManagerError):
-            e = manager.entry(**{**e, key: options[key]})
+        with contextlib.suppress(roster.RosterError):
+            e = roster.entry(**{**e, key: options[key]})
     return e
 
 
@@ -559,8 +559,8 @@ def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | No
 
 
 def _recovery(e: dict) -> str:
-    """The printed command that resumes gone entry e (manager.recovery)."""
-    argv = manager.recovery(e)
+    """The printed command that resumes gone entry e (roster.recovery)."""
+    argv = roster.recovery(e)
     if argv is None:
         return "none (no sid)"
     return f"cd {shlex.quote(e['cwd'])} && {shlex.join(argv)}" if e["kind"] == "role" else shlex.join(argv)
@@ -580,43 +580,43 @@ def _table(entries: dict, shown: dict) -> str:
 
 
 def _backlog(events: str, cursor: int) -> list[str]:
-    """The event lines (EVENT) of `events` after line `cursor` (manager.following), each `<line> <text>` as next-event
+    """The event lines (EVENT) of `events` after line `cursor` (roster.following), each `<line> <text>` as next-event
     prints it; a trailing fragment is not a line yet."""
-    texts = (raw.decode("utf-8", errors="replace") for raw in manager.following(events, cursor).split(b"\n")[:-1])
+    texts = (raw.decode("utf-8", errors="replace") for raw in roster.following(events, cursor).split(b"\n")[:-1])
     return [f"{n} {text}" for n, text in enumerate(texts, cursor + 1) if EVENT.fullmatch(text)]
 
 
 def attach(directory: str, own: str | None, *, after: int | None = None, gen: int | None = None,
            proc=subprocess.run) -> tuple[str, dict]:
     """Attaches the manager in tmux session `own` (None: outside tmux, no lease) to its directory, made with its events
-    file. In one roster() block: takes the lease (manager.take); with `after`, line `after` of generation `gen` (the
-    Monitor re-arm), records it (manager.advance; stale: refused, nothing written); rotates the events file when due
-    (manager.rotate); syncs the entries (_sync); reads the backlog (_backlog), cursor and gen. Then, the lock released,
+    file. In one locked() block: takes the lease (roster.take); with `after`, line `after` of generation `gen` (the
+    Monitor re-arm), records it (roster.advance; stale: refused, nothing written); rotates the events file when due
+    (roster.rotate); syncs the entries (_sync); reads the backlog (_backlog), cursor and gen. Then, the lock released,
     reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
     same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands; and the
     entries as the table shows them."""
     per_column, retile = _per_column(), _retile()
     try:
-        events = manager.events(directory)
-        with manager.roster(directory) as r:
-            manager.take(r, directory, own, proc=proc)
+        events = roster.events(directory)
+        with roster.locked(directory) as r:
+            roster.take(r, directory, own, proc=proc)
             if own is None:
                 print(f"workers: not in tmux: no lease on {directory}; another manager may attach", file=sys.stderr)
             if after is not None:
-                manager.advance(r, directory, after, gen)
+                roster.advance(r, directory, after, gen)
             live = _live(proc)   # before the rotation: a raise after its rename would drop the new cursor and gen
-            manager.rotate(r, directory)
+            roster.rotate(r, directory)
             panes = _sync(r, live)
             backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
         shown, opened = _reopen(panes, r["entries"], per_column, retile, proc)
         if opened:
             live = _live(proc)
-            with manager.roster(directory) as r:
+            with roster.locked(directory) as r:
                 for name, kind, sid, session in opened:
                     e = r["entries"].get(name)
                     if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
                         _place(r, name, live[session])
-    except manager.ManagerError as e:
+    except roster.RosterError as e:
         raise WorkersError(str(e)) from e
     me, name = shlex.quote(os.path.abspath(__file__)), shlex.quote(os.path.basename(os.path.dirname(events)))
     arm = [f"N={cursor} GEN={gen}", f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
@@ -626,7 +626,7 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
 
 
 def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]:
-    """Runs each gone entry's recovery argv (manager.recovery), by name, in the entry's cwd, never through a shell;
+    """Runs each gone entry's recovery argv (roster.recovery), by name, in the entry's cwd, never through a shell;
     yields (whether it ran and exited 0, its line) per entry as it ends: `resumed <name>: exit <code>[: <its last
     output line>]` (stdout and stderr together), or `resumed <name>: not run: <why>`. One failing, by any exception,
     stops none."""
@@ -634,7 +634,7 @@ def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]
         e = entries[name]
         if e["state"] != "gone":
             continue
-        argv = manager.recovery(e)
+        argv = roster.recovery(e)
         if argv is None:
             yield False, f"resumed {name}: not run: no sid"
             continue
@@ -653,12 +653,12 @@ def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]
 
 @contextlib.contextmanager
 def _leased(directory: str, own: str | None, proc, *, write: bool = True):
-    """directory's roster() block, its lease checked first (manager.check); a ManagerError as a WorkersError."""
+    """directory's locked() block, its lease checked first (roster.check); a RosterError as a WorkersError."""
     try:
-        with manager.roster(directory, write=write) as r:
-            manager.check(r, directory, own, proc=proc)
+        with roster.locked(directory, write=write) as r:
+            roster.check(r, directory, own, proc=proc)
             yield r
-    except manager.ManagerError as e:
+    except roster.RosterError as e:
         raise WorkersError(str(e)) from e
 
 
@@ -678,10 +678,10 @@ def note(directory: str, own: str | None, name: str, text: str, *, proc=subproce
 
 
 def stop(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
-    """Kills entry `name`'s sessions and removes it (manager.stop)."""
+    """Kills entry `name`'s sessions and removes it (roster.stop)."""
     _check(name)
     with _leased(directory, own, proc) as r:
-        manager.stop(r, name, proc=proc)
+        roster.stop(r, name, proc=proc)
 
 
 def opened(own: str, live: dict[str, dict], entries=lambda session: {}) -> list[str]:
@@ -704,9 +704,9 @@ def _entries(directory: str) -> dict:
     if not os.path.isdir(directory):
         return {}
     try:
-        with manager.roster(directory, write=False) as r:
+        with roster.locked(directory, write=False) as r:
             return r["entries"]
-    except manager.ManagerError as e:
+    except roster.RosterError as e:
         print(f"workers: stop-all: {e}", file=sys.stderr)
         return {}
 
@@ -719,7 +719,7 @@ def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> 
     kill). Outside tmux: WorkersError."""
     if own is None:
         raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
-    home = manager.directory(own, proc=proc)
+    home = roster.directory(own, proc=proc)
     if os.path.isdir(home):
         with _leased(home, own, proc, write=False):
             pass
@@ -727,7 +727,7 @@ def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> 
 
     def entries(session):
         if session not in read:
-            read[session] = _entries(manager.directory(session, proc=proc))
+            read[session] = _entries(roster.directory(session, proc=proc))
         return read[session]
 
     chosen = opened(own, _live(proc), entries)
@@ -742,12 +742,12 @@ def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> 
         left = [n for n in chosen if n in after]
         gone = set(chosen) - set(left)
         for session in [s for s, es in read.items() if es]:
-            d = manager.directory(session, proc=proc)
+            d = roster.directory(session, proc=proc)
             try:
-                with (_leased(d, own, proc) if session == own else manager.roster(d)) as r:
+                with (_leased(d, own, proc) if session == own else roster.locked(d)) as r:
                     for k in [k for k, e in r["entries"].items() if k in gone or e["tui"] in gone and k not in after]:
-                        manager.remove(r, k)
-            except (manager.ManagerError, WorkersError) as e:
+                        roster.remove(r, k)
+            except (roster.RosterError, WorkersError) as e:
                 print(f"workers: stop-all: {e}", file=sys.stderr)
     lines = [f"{verb} {n}" + ("; a scheduler may resume it" if n in pipelines else "")
              for n in chosen if n not in left]
@@ -758,17 +758,17 @@ def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -
     """Removes entry `name`; refused, nothing written, while a session keeps it live (_sessions)."""
     _check(name)
     with _leased(directory, own, proc) as r:
-        pane, driver = _sessions(name, manager.remove(r, name), _live(proc))
+        pane, driver = _sessions(name, roster.remove(r, name), _live(proc))
         if pane or driver:
             raise WorkersError(f"{name}: session {pane or driver} is live")
 
 
 def _directory(name: str | None) -> str:
     """Manager `name`'s directory, the filesystem untouched; `name` None: the caller's tmux session's
-    (manager.directory). Raises outside tmux without a name."""
+    (roster.directory). Raises outside tmux without a name."""
     try:
-        directory = manager.directory(name, proc=subprocess.run)
-    except manager.ManagerError as e:
+        directory = roster.directory(name, proc=subprocess.run)
+    except roster.RosterError as e:
         raise WorkersError(str(e)) from e
     if directory is None:
         raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
@@ -780,19 +780,19 @@ def _events(name: str | None) -> str:
     directory = _directory(name)
     with _leased(directory, _own(), subprocess.run, write=False):
         pass
-    return manager.events(directory, create=False)
+    return roster.events(directory, create=False)
 
 
 def _record(directory: str, own: str | None, after: int | None, gen: int, proc) -> tuple[str, int, bool]:
-    """next-event's step, in one roster() block, its lease checked first (_leased): records line `after` of generation
-    `gen` (None: the last complete line) as handled (manager.advance; stale: Refused, nothing written). Returns
+    """next-event's step, in one locked() block, its lease checked first (_leased): records line `after` of generation
+    `gen` (None: the last complete line) as handled (roster.advance; stale: Refused, nothing written). Returns
     (the events file, `after` resolved, whether a rotation is due)."""
     with _leased(directory, own, proc) as r:
         try:
-            after = manager.advance(r, directory, after, gen)
-        except manager.Stale as e:
+            after = roster.advance(r, directory, after, gen)
+        except roster.Stale as e:
             raise Refused(str(e)) from e
-        return manager.events(directory, create=False), after, manager.due(r, directory)
+        return roster.events(directory, create=False), after, roster.due(r, directory)
 
 
 def _own() -> str | None:
@@ -832,7 +832,7 @@ def main(argv=None) -> int:
     p.add_argument("--prompt")
     p.add_argument("--resume", metavar="SID", help="a session id")
     p.add_argument("--client", metavar="NAME",
-                   help=f"the worker's client (default: the one whose session runs this, else {manager.LEGACY_CLIENT})")
+                   help=f"the worker's client (default: the one whose session runs this, else {roster.LEGACY_CLIENT})")
     p.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                    help="sets a client-declared default in the worker's env; repeatable")
     p.add_argument("--note", help="its roster note, as crew.py note sets it")

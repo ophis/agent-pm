@@ -47,8 +47,8 @@ from urllib.parse import unquote, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
 import compose  # noqa: E402
-import manager  # noqa: E402
 import repo as repos  # noqa: E402
+import roster  # noqa: E402
 import tmux_host  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, fill,  # noqa: E402
@@ -778,14 +778,14 @@ def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.
 
 
 def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iterm: str, proc=subprocess.run,
-           sleep=time.sleep, roster: tuple[str, dict] | None = None, opener: str | None = None) -> None:
+           sleep=time.sleep, roster_entry: tuple[str, dict] | None = None, opener: str | None = None) -> None:
     """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
     its terminal keys (tmux_host.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
     and env reach it through a 0600 handover file (tmux_host.EXEC), never through tmux, with SIGNALS blocked until
     argv unblocks them (main). Raises RunnerError. With opener (the run's, tmux_host.OPENER), the session gets it as
     @opener, as its tui session does (`crew.py stop-all` finds it so), no @pane: a failure only prints its line.
-    With roster (a manager directory, manager.entry's keyword arguments), once the session runs it writes that entry as
-    `name` (manager.put, no lease check); an entry write failure only prints its line (manager.unwritten)."""
+    With roster_entry (a manager directory, roster.entry's keyword arguments), once the session runs it writes that
+    entry as `name` (roster.put, no lease check); an entry write failure only prints its line (roster.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken
         if "\0" in arg:
             raise RunnerError("an argv item holds a NUL character")
@@ -826,12 +826,12 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
         with contextlib.suppress(tmux_host.TuiError):
             tmux_host.kill(name, proc=proc)
         raise RunnerError(f"session {name} did not start")
-    if roster is not None:
-        directory, fields = roster
+    if roster_entry is not None:
+        directory, fields = roster_entry
         try:
-            manager.put(directory, name, manager.entry(**fields))
-        except manager.ManagerError as e:
-            manager.unwritten(name, e)
+            roster.put(directory, name, roster.entry(**fields))
+        except roster.RosterError as e:
+            roster.unwritten(name, e)
 
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
@@ -1095,10 +1095,10 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
                 raise ConfigError(f"driver session {driver!r}: want {tmux_host.NAME.pattern}")
             if a.driver is None and a.events is None and (a.runner == "tui" or a.detach):
                 try:
-                    directory = manager.directory(a.manager, proc=proc)
+                    directory = roster.directory(a.manager, proc=proc)
                     if directory is not None:
-                        a.events = manager.events(directory, create=not a.dry_run)
-                except manager.ManagerError as e:
+                        a.events = roster.events(directory, create=not a.dry_run)
+                except roster.RosterError as e:
                     raise ConfigError(str(e)) from e
             if a.detach and a.events is None:
                 raise ConfigError("--detach needs --events or --manager")
@@ -1139,7 +1139,7 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
 
 def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: str, proc) -> int:
     """--detach: this command, as the driver, in tmux session `driver`, its role entry written there when the events
-    file is a manager directory's (manager.home); 2 when the pane has no place or the events file is bad, 3 when the
+    file is a manager directory's (roster.home); 2 when the pane has no place or the events file is bad, 3 when the
     session fails to start."""
     try:
         layout = caller_layout(a.split, a.split_from, proc=proc) if a.runner == "tui" else None
@@ -1157,13 +1157,13 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
     # leaves it no pane, as the caller has none.
     iterm = os.environ.get("ITERM_SESSION_ID", "") if opener else ""
     try:
-        d = manager.home(a.manager, events, proc=proc)
-    except manager.ManagerError as e:
-        manager.unwritten(driver, e)
+        d = roster.home(a.manager, events, proc=proc)
+    except roster.RosterError as e:
+        roster.unwritten(driver, e)
         d = None
     cwd = os.getcwd()
     tui = tui_session(run.role, params.sid, params.prefix) if a.runner == "tui" else None
-    roster = None if d is None else (d, {
+    roster_entry = None if d is None else (d, {
         "kind": "role", "sid": params.sid, "cwd": cwd, "tui": tui, "opener": opener, "split": a.split,
         "split_from": a.split_from,
         "resume": [sys.executable, os.path.abspath(__file__),
@@ -1171,7 +1171,7 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
                                                    "split", "split-from", "prefix") if given[k] is not None),
                    "--detach", f"--manager={os.path.basename(d)}"]})
     try:
-        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster=roster, opener=opener)
+        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster_entry=roster_entry, opener=opener)
     except RunnerError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 3

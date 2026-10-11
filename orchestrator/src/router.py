@@ -11,7 +11,7 @@ assigned to role accounts, then starts it through the outer; each step: CLAUDE.m
 --tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]
                     With either: the agent run is attended (the tui runner); the TUI pane's place and the events file
                     are checked first (exit 2 when one fails). A tmux grid ignores --split and --split-from. Without
-                    --events the file is the manager directory's (core/src/manager.py; NAME, else this tmux session);
+                    --events the file is the manager directory's (core/src/roster.py; NAME, else this tmux session);
                     outside tmux with neither, there is none.
 --brake             Run the usage probe, print the usage, exit 0 if a deep-research round may start.
 
@@ -42,7 +42,7 @@ import writeback  # noqa: E402
 from linear import (CONFIG_ERRORS, ISSUE_ID, config_error, humans, linear_gql, log, one_line, parse_time,  # noqa: E402
                     role_ids, task_group, team)
 import drive  # noqa: E402
-import manager  # noqa: E402
+import roster  # noqa: E402
 import tmux_host  # noqa: E402
 
 STALE = timedelta(hours=2)
@@ -447,14 +447,14 @@ def setup(a, root):
 
 def pipeline(a, driver, tui, layout, rd, sh):
     """drive.detach's roster for a tui run of a.issue, rd its run dir: (d, the pipeline entry's fields), d its roster
-    directory (manager.home of a.manager and a.events); None without one. A ManagerError prints its line
-    (manager.unwritten)."""
+    directory (roster.home of a.manager and a.events); None without one. A RosterError prints its line
+    (roster.unwritten)."""
     if a.events is None:   # home would say None, after an own_session tmux call
         return None
     try:
-        d = manager.home(a.manager, a.events, proc=sh)
-    except manager.ManagerError as e:
-        manager.unwritten(driver, e)
+        d = roster.home(a.manager, a.events, proc=sh)
+    except roster.RosterError as e:
+        roster.unwritten(driver, e)
         return None
     if d is None:
         return None
@@ -532,20 +532,20 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     except Exception as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
-    attended_argv, iterm, roster = [], "", None
+    attended_argv, iterm, roster_entry = [], "", None
     if layout:
         iterm = os.environ.get("ITERM_SESSION_ID", "")  # tmux's own may be stale
         given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
         print(f"router.py: driver: {tmux_host.attach_command(session(name, a.issue))}", file=sys.stderr)
         print(f"router.py: tui: {tmux_host.attach_command(tui)}", file=sys.stderr)
-        roster = pipeline(a, session(name, a.issue), tui, layout, rd, sh)
+        roster_entry = pipeline(a, session(name, a.issue), tui, layout, rd, sh)
     try:  # the input goes through the handover file: tmux rejects a command over about 16 KB
         drive.detach(session(name, a.issue), [
             sys.executable, RUN, "--uuid", issue.id,
             *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
             *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
-            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster=roster, opener=layout and layout.opener)
+            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster_entry=roster_entry, opener=layout and layout.opener)
     except drive.RunnerError as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
@@ -728,12 +728,12 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
             attended.layout(opts["split"], opts["split_from"])
             if opts["events"] is not None:
                 tmux_host.events_file(opts["events"])
-            elif (directory := manager.directory(opts["manager"], proc=sh)) is not None:
-                opts["events"] = manager.events(directory, create=not opts["dry"])
+            elif (directory := roster.directory(opts["manager"], proc=sh)) is not None:
+                opts["events"] = roster.events(directory, create=not opts["dry"])
             else:
                 print("router.py: no manager directory (not in tmux): this run writes no events; "
                       "give --manager <name>", file=sys.stderr)
-        except (attended.Bad, tmux_host.TuiError, manager.ManagerError) as e:
+        except (attended.Bad, tmux_host.TuiError, roster.RosterError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
     now = now or datetime.now(timezone.utc)
