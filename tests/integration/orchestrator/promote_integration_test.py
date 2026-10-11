@@ -2,16 +2,14 @@
 Handoff issue becomes the pm's child issue, also after a failed move or a Linear outage; prune after Done."""
 import os
 import subprocess
-import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
-import hermetic  # noqa: E402,F401
-import fake_linear  # noqa: E402
-import promote  # noqa: E402
-from flow_fixtures import ACCOUNTS, ENGINEER, HARNESS_EMAIL, HUMAN, PROJECT, TIMEOUT, Flow  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator import fake_linear
+import promote
+from tests.integration.orchestrator.flow_fixtures import (ACCOUNTS, ENGINEER, HARNESS_EMAIL, HUMAN, PROJECT, TIMEOUT,
+                                                          Flow)
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."

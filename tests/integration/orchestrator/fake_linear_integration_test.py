@@ -1,7 +1,6 @@
 """fake_linear.py served over HTTP, reached through linear.linear_gql with AGENT_PM_LINEAR set in this process's env."""
 import functools
 import os
-import sys
 import time
 import unittest
 import urllib.error
@@ -10,18 +9,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
-import hermetic  # noqa: E402,F401
-from board_ids import STATES, TASK_GROUP, TEAM  # noqa: E402
-import linear  # noqa: E402
-import issues  # noqa: E402
-import promote  # noqa: E402
-import prune  # noqa: E402
-import router  # noqa: E402
-import sessions  # noqa: E402
-import writeback  # noqa: E402
-import fake_linear  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
+import linear
+import issues
+import promote
+import prune
+import router
+import sessions
+import writeback
+from tests.integration.orchestrator import fake_linear
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"

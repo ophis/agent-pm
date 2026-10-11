@@ -18,8 +18,7 @@ import unittest
 import unittest.mock
 from contextlib import contextmanager, redirect_stderr, redirect_stdout, suppress
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import tui_claude  # noqa: E402
+import tui_claude
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"

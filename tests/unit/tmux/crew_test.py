@@ -15,10 +15,8 @@ import unittest
 import uuid
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import crew  # noqa: E402
-sys.path.insert(0, os.path.join(crew.CORE, "src", "tests"))
-import hermetic  # noqa: E402
+from tests import ROOT, hermetic
+import crew
 
 manager = crew.manager
 
@@ -31,7 +29,7 @@ DEAD_LINE = "Pane is dead (status 1, Wed Oct  7 19:54:08 2026)"
 DEAD_TEXT = f"{ERROR}\n" + "\n" * 40 + f"{DEAD_LINE}\n" + "\n" * 10
 DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD_LINE}"
 REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
-CREW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py")
+CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
 
 

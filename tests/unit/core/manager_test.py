@@ -14,9 +14,8 @@ import types
 import unittest
 import unittest.mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402
-import manager  # noqa: E402
+from tests import hermetic
+import manager
 
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3"}
 

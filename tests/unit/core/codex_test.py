@@ -7,12 +7,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from clients import codex  # noqa: E402
-from clients.claude import ClaudeClient  # noqa: E402
-from clients.base import Client, SessionInfo  # noqa: E402
-from compose import ConfigError  # noqa: E402
+from tests import hermetic  # noqa: F401
+from clients import codex
+from clients.claude import ClaudeClient
+from clients.base import Client, SessionInfo
+from compose import ConfigError
 
 
 class Store(unittest.TestCase):

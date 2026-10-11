@@ -3,16 +3,14 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import unittest
 import unittest.mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402
-import repo  # noqa: E402
-import tui_claude  # noqa: E402
+from tests import hermetic
+import repo
+import tui_claude
 
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"

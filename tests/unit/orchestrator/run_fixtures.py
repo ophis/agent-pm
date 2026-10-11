@@ -3,21 +3,19 @@ a fake Linear (Gql) and a fake gh/git (Run); and orchestrator.jsonl's reader (lo
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from datetime import datetime
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-from board_ids import HEADER, STATES, role  # noqa: E402
-import config  # noqa: E402
-import inputs  # noqa: E402
-import issues  # noqa: E402
-import linear  # noqa: E402
-import sessions  # noqa: E402
-import writeback  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import HEADER, STATES, role
+import config
+import inputs
+import issues
+import linear
+import sessions
+import writeback
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

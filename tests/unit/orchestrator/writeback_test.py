@@ -1,15 +1,14 @@
-import hashlib, json, os, shutil, sys, tempfile, unittest
+import hashlib, json, os, shutil, tempfile, unittest
 from dataclasses import replace
 from unittest import mock
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-import board_ids  # noqa: E402
-import issues  # noqa: E402
-import config  # noqa: E402
-import linear  # noqa: E402
-import writeback  # noqa: E402
-import drive  # noqa: E402
-from run_fixtures import logged, show  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator import board_ids
+import issues
+import config
+import linear
+import writeback
+import drive
+from tests.unit.orchestrator.run_fixtures import logged, show
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

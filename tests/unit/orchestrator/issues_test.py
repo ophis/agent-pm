@@ -1,7 +1,6 @@
-import os, sys, unittest
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-import issues  # noqa: E402
+import unittest
+from tests import hermetic  # noqa: F401
+import issues
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 HUMANS = ("ann@example.com", "bob@example.com")

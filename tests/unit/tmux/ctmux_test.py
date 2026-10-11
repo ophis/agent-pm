@@ -6,7 +6,9 @@ import sys
 import tempfile
 import unittest
 
-CTMUX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ctmux")
+from tests import ROOT
+
+CTMUX = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "ctmux")
 FAKE = """#!{python}
 import json, os, sys
 with open(os.environ["CTMUX_LOG"], "a") as f:

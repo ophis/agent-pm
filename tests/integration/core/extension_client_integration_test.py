@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 
-CORE = Path(__file__).resolve().parents[3]
+CORE = Path(__file__).resolve().parents[3] / "core"
 
 
 class ExtensionClientIntegration(unittest.TestCase):

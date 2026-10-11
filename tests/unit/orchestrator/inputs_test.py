@@ -1,14 +1,13 @@
-import json, os, re, sys, unittest
+import json, os, re, unittest
 from types import SimpleNamespace
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-import inputs  # noqa: E402
-import issues  # noqa: E402
-import config  # noqa: E402
-import clients  # noqa: E402
-import compose  # noqa: E402
-import repo  # noqa: E402
-import target  # noqa: E402
+from tests import hermetic  # noqa: F401
+import inputs
+import issues
+import config
+import clients
+import compose
+import repo
+import target
 
 DOCS = config.Docs("ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"})
 BASE = "https://github.com/ophis/private_docs/blob/main/"

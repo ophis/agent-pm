@@ -15,26 +15,26 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM, role as role_table, team_node  # noqa: E402
-from run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEER, ID, INPUT, KEY, LISTING,  # noqa: E402
-                          LS_REMOTE, PM, PROJECT, RESEARCHER, SID, USER_NOTE, UUID, Base as RunBase, Gql,
-                          forwarded, logged, node, res, show)
-from attended_test import Tmux  # noqa: E402
-from linear_test import Stderr  # noqa: E402
-from outage import FAILURES, FIELDS, failing  # noqa: E402
-import config  # noqa: E402
-import attended  # noqa: E402
-import inputs  # noqa: E402
-import issues  # noqa: E402
-import linear  # noqa: E402
-import router  # noqa: E402
-import target  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
-import manager  # noqa: E402
-import repo  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import (ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM,
+                                               role as role_table, team_node)
+from tests.unit.orchestrator.run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEER, ID, INPUT,
+                                                  KEY, LISTING, LS_REMOTE, PM, PROJECT, RESEARCHER, SID, USER_NOTE,
+                                                  UUID, Base as RunBase, Gql, forwarded, logged, node, res, show)
+from tests.unit.orchestrator.attended_test import Tmux
+from tests.unit.orchestrator.linear_test import Stderr
+from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
+import config
+import attended
+import inputs
+import issues
+import linear
+import router
+import target
+import compose
+import drive
+import manager
+import repo
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
 AGENT, USER = "agent", "user"   # history actor ids: an agent account, a human_members user

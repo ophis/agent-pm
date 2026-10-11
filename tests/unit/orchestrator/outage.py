@@ -1,14 +1,12 @@
 """A Linear outage for the entry points' tests: the real linear.linear_gql, its transport failing."""
 import io
 import os
-import sys
 import urllib.error
 from types import SimpleNamespace
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-import linear  # noqa: E402
+from tests import hermetic  # noqa: F401
+import linear
 
 FAILURES = {  # factories: a fresh exception per use
     "5xx": lambda: urllib.error.HTTPError(linear.URL, 503, "Service Unavailable", {}, io.BytesIO()),

@@ -1,15 +1,11 @@
 """The researcher → pm segment as steps (segments.Segment): a Backlog research issue the router skips, the human's
 move to Todo, a claimed agent run, write-back, the human's handoff and promote's pm issue; and its branches."""
-import os
-import sys
 import unittest
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
-import hermetic  # noqa: E402,F401
-import router  # noqa: E402
-from flow_fixtures import HARNESS_EMAIL, HUMAN, LIGHT_RESEARCH, RESEARCH_DIR  # noqa: E402
-from segments import RESEARCH, Segment  # noqa: E402
+from tests import hermetic  # noqa: F401
+import router
+from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL, HUMAN, LIGHT_RESEARCH, RESEARCH_DIR
+from tests.integration.orchestrator.segments import RESEARCH, Segment
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."

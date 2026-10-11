@@ -6,10 +6,10 @@ import sys
 import tempfile
 import unittest
 
-import fake_codex
+from tests.integration.core import fake_codex
 
 
-CORE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+CORE = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "core"))
 DRIVE = os.path.join(CORE, "src", "drive.py")
 SID = "12345678-1234-1234-1234-123456789abc"
 CLIENT_ID = "11111111-2222-4333-8444-555555555555"

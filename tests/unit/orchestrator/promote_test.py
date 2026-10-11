@@ -8,15 +8,15 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-from board_ids import ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table, team_node  # noqa: E402
-import config  # noqa: E402
-import linear  # noqa: E402
-import promote  # noqa: E402
-import sessions  # noqa: E402
-from run_fixtures import logged, show  # noqa: E402
-from outage import FAILURES, FIELDS, failing  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import (ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table,
+                                               team_node)
+import config
+import linear
+import promote
+import sessions
+from tests.unit.orchestrator.run_fixtures import logged, show
+from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
@@ -544,7 +544,7 @@ class TestDryRun(Base):
 
 class TestConfigError(Base):
     def test_a_config_error_is_logged_once_a_day_printed_only_on_a_terminal(self):
-        from linear_test import Stderr
+        from tests.unit.orchestrator.linear_test import Stderr
         FakePruner.calls.clear()
         cases = (("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
                  (CONFIG + role_table("bogus"), "orchestrator/config.toml: role 'bogus' is not in core/config.toml"))

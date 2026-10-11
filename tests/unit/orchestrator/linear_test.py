@@ -12,12 +12,11 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-from board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node  # noqa: E402
-import config  # noqa: E402
-import linear  # noqa: E402
-from outage import FAILURES, failing  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
+import config
+import linear
+from tests.unit.orchestrator.outage import FAILURES, failing
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
@@ -277,7 +276,7 @@ class Unavailable(unittest.TestCase):
 
 
 class Outage(unittest.TestCase):
-    """tests/outage.py: the real linear_gql, its transport failing."""
+    """tests/unit/orchestrator/outage.py: the real linear_gql, its transport failing."""
     def test_each_failure_is_unavailable_and_recorded(self):
         want = {"5xx": (503, None), "timeout": (None, "TimeoutError: timed out"),
                 "URLError": (None, "ConnectionRefusedError: [Errno 61] Connection refused")}

@@ -7,7 +7,10 @@ import shlex
 import sys
 import uuid
 
-import fake_claude
+if __package__:
+    from tests.integration.core import fake_claude
+else:   # install()'s shim runs this file as a script
+    import fake_claude
 
 
 ENV = "FAKE_CODEX_SCENARIO"

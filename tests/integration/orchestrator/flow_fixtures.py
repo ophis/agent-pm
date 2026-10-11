@@ -12,17 +12,16 @@ import tomllib
 import unittest
 from urllib.parse import quote
 
-import hermetic  # first: config reads HOME at import
-import board_ids
+from tests import hermetic  # first: config reads HOME at import
+from tests.unit.orchestrator import board_ids
 import config
-sys.path.append(os.path.join(config.ROOT, "core", "src", "tests", "integration"))
-from clients import claude as claude_client  # noqa: E402
-import fake_claude  # noqa: E402
-import fake_gh  # noqa: E402
-import fake_linear  # noqa: E402
-import linear  # noqa: E402
-import live_tmux  # noqa: E402
-import run_fixtures  # noqa: E402
+from clients import claude as claude_client
+from tests.integration.core import fake_claude
+from tests.integration.orchestrator import fake_gh
+from tests.integration.orchestrator import fake_linear
+import linear
+from tests.integration.core import live_tmux
+from tests.unit.orchestrator import run_fixtures
 
 SRC = os.path.join(config.ROOT, "orchestrator", "src")
 ROUTER, PROMOTE = os.path.join(SRC, "router.py"), os.path.join(SRC, "promote.py")

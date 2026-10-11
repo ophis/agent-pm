@@ -20,19 +20,18 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402
-import clients  # noqa: E402
-from clients.claude import ClaudeClient  # noqa: E402
-from clients.skill import SkillClient  # noqa: E402
-from clients import claude as claude_client  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
-import manager  # noqa: E402
-import report  # noqa: E402
-from clients import codex  # noqa: E402
+from tests import ROOT, hermetic
+import clients
+from clients.claude import ClaudeClient
+from clients.skill import SkillClient
+from clients import claude as claude_client
+import compose
+import drive
+import manager
+import report
+from clients import codex
 
-CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CORE = os.path.join(ROOT, "core")
 SID = "11111111-2222-3333-4444-555555555555"
 NO_ACCESS = drive.Access(dirs=[], commands=[])
 PARAMS = compose.RunParams(input="x", out="o", workdir="w", sid=SID)

@@ -13,13 +13,12 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402
-import clients  # noqa: E402
-from clients.claude import ClaudeClient  # noqa: E402
-from clients.skill import SkillClient  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
+from tests import ROOT, hermetic
+import clients
+from clients.claude import ClaudeClient
+from clients.skill import SkillClient
+import compose
+import drive
 
 class Plain(clients.Client):
     """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
@@ -44,7 +43,7 @@ class Plain(clients.Client):
         return self._handover
 
 
-CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CORE = os.path.join(ROOT, "core")
 PARAMS = compose.RunParams(input="Research X.", out="/w/out.md", workdir="/w", sid="11111111-2222-3333-4444-555555555555")
 RUN = replace(PARAMS, out="/runs/W-1/out.md", workdir="/runs/W-1")   # a workdir no other prompt text holds
 

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-import fake_gh
+from tests.integration.orchestrator import fake_gh
 
 REPO = {"full_name": "acme/widgets", "default_branch": "main", "permissions": {"push": True}}
 RAW = "Accept: application/vnd.github.raw+json"

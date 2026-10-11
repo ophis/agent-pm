@@ -10,14 +10,13 @@ import tomllib
 import unittest
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402
-from board_ids import HEADER, STATES, TASK_GROUP, TEAM, role  # noqa: E402
-import config  # noqa: E402
-import clients  # noqa: E402
-from clients.claude import ClaudeClient  # noqa: E402
-from clients import claude as claude_client  # noqa: E402
-import repo  # noqa: E402
+from tests import ROOT, hermetic
+from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+import config
+import clients
+from clients.claude import ClaudeClient
+from clients import claude as claude_client
+import repo
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
 
@@ -51,9 +50,8 @@ class Config(ConfigFile, unittest.TestCase):
         self.assertIn(os.path.realpath(os.path.expanduser(config.LOCAL)), hermetic.HIDDEN)
 
     def test_tests_home_already_gone_at_exit_prints_nothing(self):
-        res = subprocess.run([sys.executable, "-c", "import shutil, hermetic; shutil.rmtree(hermetic.HOME)"],
-                             cwd=os.path.dirname(os.path.abspath(hermetic.__file__)), capture_output=True, text=True,
-                             stdin=subprocess.DEVNULL, timeout=60)
+        res = subprocess.run([sys.executable, "-c", "import shutil; from tests import hermetic; shutil.rmtree(hermetic.HOME)"],
+                             cwd=ROOT, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
         self.assertEqual((res.returncode, res.stderr), (0, ""))
 
     def test_stage_order(self):
@@ -692,11 +690,9 @@ class Paths(unittest.TestCase):
 class PathSeam(unittest.TestCase):
     """config.PATH is computed at import: each case reads it in a fresh process."""
     def read(self, **env):
-        tests = os.path.dirname(os.path.abspath(hermetic.__file__))
-        env = {**{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}, **env,
-               "PYTHONPATH": os.path.dirname(tests)}
-        res = subprocess.run([sys.executable, "-c", "import hermetic, config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))"],
-                             cwd=tests, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        env = {**{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}, **env, "PYTHONPATH": ROOT}
+        res = subprocess.run([sys.executable, "-c", "from tests import hermetic; import config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))"],
+                             cwd=ROOT, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         home, path = json.loads(res.stdout)
         return f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin", path

@@ -21,18 +21,14 @@ import sys
 import time
 import unittest
 
-SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, SCRIPTS)
-import crew  # noqa: E402
-TESTS = os.path.join(crew.CORE, "src", "tests")
-sys.path[:0] = [TESTS, os.path.join(TESTS, "integration")]
-import hermetic  # noqa: E402
-import fake_claude  # noqa: E402
-import live_tmux  # noqa: E402
+from tests import ROOT, hermetic
+import crew
+from tests.integration.core import fake_claude
+from tests.integration.core import live_tmux
 tui_claude = crew.tui_claude
 manager = crew.manager
 
-CREW = os.path.join(SCRIPTS, "crew.py")
+CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 TUI = os.path.join(crew.CORE, "src", "tui_claude.py")
 DRIVE = os.path.join(crew.CORE, "src", "drive.py")
 ROLE = "dummy-tester"
@@ -974,7 +970,7 @@ class Roster(Live):
     def test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker(self):
         """A worker, a role run and a pipeline run in the roster, a second worker stopped; the server killed and started
         again: attach --resume brings the three back, resumed, and not the stopped one. The pipeline run is STAND_IN's
-        (router.py needs Linear: orchestrator/src/tests/integration B8 recovers a real one by the same argv)."""
+        (router.py needs Linear: tests/integration/orchestrator B8 recovers a real one by the same argv)."""
         self.attach()
         sids = {name: self.started(name) for name in ("w1", "w2")}
         for name in sids:

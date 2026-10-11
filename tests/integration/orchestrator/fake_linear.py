@@ -33,8 +33,8 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import hermetic  # noqa: F401  (first: config reads HOME at import)
-from board_ids import STATES, TEAM
+from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests.unit.orchestrator.board_ids import STATES, TEAM
 import config
 import issues
 import linear

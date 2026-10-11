@@ -3,15 +3,12 @@ task, a draft left at --out. A failure names its scenario step."""
 import contextlib
 import os
 import signal
-import sys
 import unittest
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.dirname(TESTS), TESTS]
-import hermetic  # noqa: E402
-import compose  # noqa: E402
-from drive_integration_test import DONE, Integration, prompt  # noqa: E402
-from drive_test import SID, outcome, progress  # noqa: E402
+from tests import hermetic
+import compose
+from tests.integration.core.drive_integration_test import DONE, Integration, prompt
+from tests.unit.core.drive_test import SID, outcome, progress
 
 ASKING = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which greeting?"]}
 ANSWER = "Say hello."

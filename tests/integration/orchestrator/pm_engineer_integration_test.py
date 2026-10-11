@@ -6,13 +6,11 @@ import sys
 import unittest
 from urllib.parse import unquote
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
-import hermetic  # noqa: E402,F401
-import issues  # noqa: E402
-import promote  # noqa: E402
-from flow_fixtures import HARNESS_EMAIL, MANAGER, ROUTER, fake_linear  # noqa: E402
-from segments import BUILD, REPORT, Segment  # noqa: E402
+from tests import hermetic  # noqa: F401
+import issues
+import promote
+from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL, MANAGER, ROUTER, fake_linear
+from tests.integration.orchestrator.segments import BUILD, REPORT, Segment
 
 REWORK = "Add a section on stale sessions."
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."

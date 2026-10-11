@@ -5,26 +5,24 @@ import os
 import shlex
 import signal
 import subprocess
-import sys
 import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import hermetic  # noqa: E402,F401
-from board_ids import STATES  # noqa: E402
-from run_fixtures import (CONFIG, ENGINEER, ID, KEY, RESEARCHER, SID, UUID, Base as RunBase, Gql,  # noqa: E402
-                          forwarded, node)
-from attended_test import Tmux  # noqa: E402
-import config  # noqa: E402
-import attended  # noqa: E402
-import router  # noqa: E402
-import run  # noqa: E402
-import sessions  # noqa: E402
-import writeback  # noqa: E402
-from clients import claude as claude_client  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import STATES
+from tests.unit.orchestrator.run_fixtures import (CONFIG, ENGINEER, ID, KEY, RESEARCHER, SID, UUID, Base as RunBase,
+                                                  Gql, forwarded, node)
+from tests.unit.orchestrator.attended_test import Tmux
+import config
+import attended
+import router
+import run
+import sessions
+import writeback
+from clients import claude as claude_client
+import compose
+import drive
 
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
 DONE = {"status": "done", "title": "TASK-7: Session registry", "summary": "Opened the PR.", "url": PR}

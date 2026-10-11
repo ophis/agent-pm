@@ -9,7 +9,7 @@ import tempfile
 import time
 import unittest
 
-import fake_claude
+from tests.integration.core import fake_claude
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

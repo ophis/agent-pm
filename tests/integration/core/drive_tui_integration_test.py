@@ -9,16 +9,14 @@ import subprocess
 import sys
 import unittest
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.dirname(TESTS), TESTS]
-import hermetic  # noqa: E402
-from clients import claude as claude_client  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
-import fake_claude  # noqa: E402
-import live_tmux  # noqa: E402
-from drive_integration_test import DONE  # noqa: E402
-from drive_test import SID, outcome, progress  # noqa: E402
+from tests import hermetic
+from clients import claude as claude_client
+import compose
+import drive
+from tests.integration.core import fake_claude
+from tests.integration.core import live_tmux
+from tests.integration.core.drive_integration_test import DONE
+from tests.unit.core.drive_test import SID, outcome, progress
 
 DRIVE = os.path.join(hermetic.CORE, "src", "drive.py")
 MANAGER = "mgr"

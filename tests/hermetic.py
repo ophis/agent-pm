@@ -1,16 +1,23 @@
-"""Imported first by the tests that read core's own config (the root CLAUDE.md › Roles, tasks, rules): hides this
-machine's repo.LOCAL (os.path.isfile, which repo.read_config asks, says it is absent, through symlinks too) and merges
-core.local.fixture.toml over the committed core/config.toml in its place."""
+"""Imported first (`from tests import hermetic`) by every test module that reads the repo's config (root CLAUDE.md ›
+Roles, tasks, rules): points HOME at a temp dir of this process's own (removed at exit) before anything reads it, never
+this machine's ~/.agent-pm, which may hold this checkout; hides repo.LOCAL and ~/.agent-pm/orchestrator.local.toml
+(os.path.isfile, which repo.read_config asks, says they are absent, through symlinks too); merges
+core.local.fixture.toml over the committed core/config.toml in place of the local file."""
+import atexit
 import os
+import shutil
 import tempfile
 import tomllib
 from unittest import mock
 
-import repo
+HOME = tempfile.mkdtemp(prefix="agent-pm-tests-home-")
+atexit.register(shutil.rmtree, HOME, ignore_errors=True)
+os.environ["HOME"] = HOME
+import repo  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORE = os.path.realpath(os.path.join(HERE, "..", ".."))
-HIDDEN = {os.path.realpath(os.path.expanduser(repo.LOCAL))}
+CORE = os.path.realpath(os.path.join(HERE, "..", "core"))
+HIDDEN = {os.path.realpath(os.path.expanduser(p)) for p in (repo.LOCAL, "~/.agent-pm/orchestrator.local.toml")}
 FIXTURE = os.path.join(HERE, "core.local.fixture.toml")
 _isfile, _read = os.path.isfile, repo.read_config
 

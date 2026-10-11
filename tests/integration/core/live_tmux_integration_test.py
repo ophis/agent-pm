@@ -3,14 +3,11 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 import unittest
 from unittest import mock
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.dirname(TESTS), TESTS]
-import hermetic  # noqa: E402
-import live_tmux  # noqa: E402
+from tests import hermetic
+from tests.integration.core import live_tmux
 
 
 class Live(unittest.TestCase):

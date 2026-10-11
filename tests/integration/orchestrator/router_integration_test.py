@@ -3,13 +3,11 @@ Linear, gh and git (flow_fixtures.Flow); a Linear outage stopping router.py. Iss
 engineer account, in the mapped project."""
 import os
 import signal
-import sys
 import unittest
 
-TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [TESTS, os.path.dirname(TESTS)]
-import hermetic  # noqa: E402,F401
-from flow_fixtures import ENGINEER, HARNESS_EMAIL, HUMAN, PROJECT, TIMEOUT, Flow, live_tmux  # noqa: E402
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator.flow_fixtures import (ENGINEER, HARNESS_EMAIL, HUMAN, PROJECT, TIMEOUT, Flow,
+                                                          live_tmux)
 
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
 PR = "https://github.com/acme/widgets/pull/1"

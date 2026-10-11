@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
-import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
 import config
 import attended
 import drive
@@ -20,8 +20,8 @@ import linear
 import manager
 import router
 import sessions
-from flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT, RESEARCH_DIR, TIMEOUT, Flow,
-                           fake_linear, live_tmux)
+from tests.integration.orchestrator.flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT,
+                                                          RESEARCH_DIR, TIMEOUT, Flow, fake_linear, live_tmux)
 
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}
