@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Literal, Protocol, get_args
 
 import repo
-import tui_claude
+import tmux_host
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"
@@ -145,8 +145,8 @@ class RunParams:
     def __post_init__(self):
         if self.resume and not self.sid:
             raise ConfigError("--resume needs --sid")
-        if self.prefix is not None and not tui_claude.NAME.fullmatch(self.prefix):
-            raise ConfigError(f"prefix {self.prefix!r}: want {tui_claude.NAME.pattern}")
+        if self.prefix is not None and not tmux_host.NAME.fullmatch(self.prefix):
+            raise ConfigError(f"prefix {self.prefix!r}: want {tmux_host.NAME.pattern}")
         if not self.sid:
             object.__setattr__(self, "sid", str(uuid.uuid4()))
 

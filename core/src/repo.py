@@ -148,18 +148,18 @@ def status_line(cfg: dict) -> bool:
 
 
 def workers_per_column(cfg: dict) -> int | None:
-    """The global `workers_per_column`: worker panes per tmux grid column; unset → None (tui_claude's default)."""
+    """The global `workers_per_column`: worker panes per tmux grid column; unset → None (tmux_host's default)."""
     v = cfg.get("workers_per_column")
     if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 9999):
         raise ValueError("workers_per_column: want an integer from 1 to 9999")
     return v
 
 
-RETILES = ("all", "open-close", "off")   # tui_claude.RETILES, which repo.py must not import
+RETILES = ("all", "open-close", "off")   # tmux_host.RETILES, which repo.py must not import
 
 
 def grid_retile(cfg: dict) -> str | None:
-    """The global `grid_retile`: when a tmux grid re-tiles; unset → None (tui_claude's default)."""
+    """The global `grid_retile`: when a tmux grid re-tiles; unset → None (tmux_host's default)."""
     v = cfg.get("grid_retile")
     if v is not None and (not isinstance(v, str) or v not in RETILES):
         raise ValueError("grid_retile: want one of all, open-close, off")

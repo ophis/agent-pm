@@ -73,7 +73,7 @@ class WorkerSpec:
     cwd: str                    # absolute
     flags: tuple[str, ...]      # the client's own flags, verbatim
     prompt: str | None
-    events: str                 # absolute, checked by tui_claude.events_file
+    events: str                 # absolute, checked by tmux_host.events_file
     resume: bool
     env: Mapping[str, str]      # the worker's env after crew's environment policy
     exe: str | None = None      # restart: the stored executable; None: the client resolves its own on env["PATH"]

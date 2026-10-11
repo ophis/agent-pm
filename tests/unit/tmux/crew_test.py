@@ -27,7 +27,7 @@ clients = crew.clients
 manager = crew.manager
 
 KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
-tui_claude = crew.tui_claude
+tmux_host = crew.tmux_host
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 RUNNING_PANE, DEAD_PANE = "0  \n", "1 1 \n"
 ERROR = "Error: --session-id can only be used with --continue or --resume if --fork-session is also specified."
@@ -66,10 +66,10 @@ def no_sleep(case):
 
 @contextlib.contextmanager
 def spawned():
-    """tui_claude.start as a recorder, yielded, and every session running (tui_claude.status): the rest of
+    """tmux_host.start as a recorder, yielded, and every session running (tmux_host.status): the rest of
     crew.start runs, on a fake tmux, without a session."""
-    with mock.patch.object(tui_claude, "start") as start, \
-            mock.patch.object(tui_claude, "status", return_value=tui_claude.RUNNING):
+    with mock.patch.object(tmux_host, "start") as start, \
+            mock.patch.object(tmux_host, "status", return_value=tmux_host.RUNNING):
         yield start
 
 
@@ -86,9 +86,9 @@ def lock_free(path):
 
 
 def decorate_calls(events, status_line=False):
-    """The tmux calls tui_claude.decorate makes for worker w1."""
+    """The tmux calls tmux_host.decorate makes for worker w1."""
     fake = Fake()
-    tui_claude.decorate("w1", events, status_line=status_line, proc=fake)
+    tmux_host.decorate("w1", events, status_line=status_line, proc=fake)
     return fake.calls
 
 
@@ -134,7 +134,7 @@ def extra_clients():
 
 class Fake:
     """Records proc calls; `new_err` makes new-session fail; `results` maps a tmux command to a function of the argv
-    giving its stdout. On new-session or respawn-pane it reads the handover file tui_claude wrote and unlinks it as the
+    giving its stdout. On new-session or respawn-pane it reads the handover file tmux_host wrote and unlinks it as the
     pane's wrapper would. A session's pane status (display-message), in `panes`, is empty (no session) until
     new-session or respawn-pane makes it `spawned`: a running pane unless a test sets a dead one; capture-pane answers
     `history` (until a clear-history, which fails with `clear_err`) then `text`. Until a respawn-pane, every call first
@@ -217,7 +217,7 @@ class StartTest(unittest.TestCase):
                     "CLAUDE_JOB_DIR": "/j"}
         for k in ClaudeClient.command_env:
             self.env[k] = "x"
-        spy = mock.patch.object(tui_claude, "start", wraps=tui_claude.start)
+        spy = mock.patch.object(tmux_host, "start", wraps=tmux_host.start)
         self.tui = spy.start()
         self.addCleanup(spy.stop)
         no_sleep(self)
@@ -231,17 +231,17 @@ class StartTest(unittest.TestCase):
         kw = self.tui.call_args.kwargs
         return kw["split_from"], kw["split"]
 
-    def test_tui_claude_in_process(self):
-        self.assertEqual(os.path.realpath(tui_claude.__file__), os.path.join(os.path.realpath(crew.CORE), "src",
-                                                                             "tui_claude.py"))
+    def test_tmux_host_in_process(self):
+        self.assertEqual(os.path.realpath(tmux_host.__file__), os.path.join(os.path.realpath(crew.CORE), "src",
+                                                                             "tmux_host.py"))
         self.assertTrue(os.path.isfile(os.path.join(crew.CORE, ".claude-plugin", "plugin.json")))
 
-    def test_tui_claude_call(self):
+    def test_tmux_host_call(self):
         """The client's command, its hooks its own (claude_hooks=False)."""
         fake = Fake()
         sid = self.start(fake, prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
-        argv = tui_claude.with_hooks([self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"],
+        argv = tmux_host.with_hooks([self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"],
                                      self.events)
         env = {k: v for k, v in self.env.items() if k not in ClaudeClient.command_env}
         self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
@@ -253,9 +253,9 @@ class StartTest(unittest.TestCase):
         fake = Fake()
         sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
         self.assertEqual(sid, SID)
-        self.assertEqual(self.tui.call_args.args[1], tui_claude.with_hooks(
+        self.assertEqual(self.tui.call_args.args[1], tmux_host.with_hooks(
             [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"], self.events))
-        self.assertEqual(fake.handover["argv"][1:3], ["--settings", tui_claude.hooks(self.events)])
+        self.assertEqual(fake.handover["argv"][1:3], ["--settings", tmux_host.hooks(self.events)])
         self.assertEqual(fake.options()["@sid"], SID)
 
     def test_the_claude_argv_after_its_name(self):
@@ -269,7 +269,7 @@ class StartTest(unittest.TestCase):
             with self.subTest(**kw):
                 fake = Fake()
                 sid = self.start(fake, **kw)
-                self.assertEqual(self.tui.call_args.args[1], tui_claude.with_hooks(
+                self.assertEqual(self.tui.call_args.args[1], tmux_host.with_hooks(
                     [self.claude, "--session-id", sid, "--name", "w1", *tail], self.events))
                 self.assertEqual(json.loads(fake.options()["@flags"]), list(kw.get("flags", ())))
 
@@ -312,8 +312,8 @@ class StartTest(unittest.TestCase):
                                                                     if c[1] == "set-option"))
 
     def test_a_failed_tmux_call_kills_the_session_before_any_watch(self):
-        """A worker option failing: crew.py kills the session, a failing kill ignored; tui_claude's decoration
-        failing: tui_claude kills it, no worker option set. An OSError: a WorkersError. No early watch (_early)."""
+        """A worker option failing: crew.py kills the session, a failing kill ignored; tmux_host's decoration
+        failing: tmux_host kills it, no worker option set. An OSError: a WorkersError. No early watch (_early)."""
         def oserror(*words):
             return lambda argv: all(w in argv for w in words)
         undone, lost = "set boom; start undone", "^tmux: .*No such file"
@@ -410,7 +410,7 @@ class StartTest(unittest.TestCase):
                     self.assertIn(part, self.assert_fails(fake, **kw))
                 self.assertEqual(fake.new_sessions(), [])
 
-    def test_tui_claude_error_is_a_workers_error(self):
+    def test_tmux_host_error_is_a_workers_error(self):
         fake = Fake(new_err="no space for a new session\n")
         self.assertIn("no space for a new session", self.assert_fails(fake))
         self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
@@ -507,9 +507,9 @@ class ContainerTest(WorkerCase):
 
 
 def status_call():
-    """The tmux call tui_claude.status makes for worker w1."""
+    """The tmux call tmux_host.status makes for worker w1."""
     fake = Fake()
-    tui_claude.status("w1", proc=fake)
+    tmux_host.status("w1", proc=fake)
     return fake.calls[0]
 
 
@@ -627,10 +627,10 @@ class RestartTest(WorkerCase):
             cmd = crew.restart("w1", env=caller, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
         respawn = fake.calls[at][fake.calls[at].index("respawn-pane"):-1]
-        self.assertEqual(respawn, ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tui_claude.EXEC])
+        self.assertEqual(respawn, ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tmux_host.EXEC])
         self.assertEqual(fake.kwargs[at]["stdin"], subprocess.DEVNULL)
-        resumed = tui_claude.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
-        self.assertEqual(resumed[1:3], ["--settings", tui_claude.hooks(self.events)])
+        resumed = tmux_host.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
+        self.assertEqual(resumed[1:3], ["--settings", tmux_host.hooks(self.events)])
         self.assertEqual(fake.handover, {"argv": resumed, "cwd": self.dir,
                                          "env": {"PATH": self.bin, "FOO": "1", "PWD": self.dir}})
         self.assertEqual(shlex.split(cmd), resumed)
@@ -647,7 +647,7 @@ class RestartTest(WorkerCase):
         words = fake.handover["argv"]
         self.assertEqual(words.count("--settings"), 1)
         settings = json.loads(words[words.index("--settings") + 1])
-        ours = json.loads(tui_claude.hooks(self.events))["hooks"]
+        ours = json.loads(tmux_host.hooks(self.events))["hooks"]
         self.assertEqual(settings["model"], "x")
         self.assertEqual(settings["hooks"]["Stop"], [{"hooks": [own]}, *ours["Stop"]])
         self.assertEqual(settings["hooks"]["Notification"], ours["Notification"])
@@ -861,7 +861,7 @@ class ClientTest(WorkerCase):
             del fake.store[key]
         fake.store["@claude"] = self.claude
         crew.restart("w1", env={**self.env, "ALPHA_SESSION": "a", "NO_COLOR": "1"}, proc=fake)
-        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
+        self.assertEqual(fake.handover["argv"], tmux_host.with_hooks(
             [self.claude, "--resume", sid, "--name", "w1", "--model", "m"], self.events))
         self.assertNotIn("NO_COLOR", fake.handover["env"])
         d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "-p")
@@ -1123,7 +1123,7 @@ class MainTest(WorkerCase):
                                       "--", "--model", "m"], fake)
         self.assertEqual((rc, out), (0, f"w1 {SID}\n"), err)
         self.assertEqual(fake.store["@sid"], SID)
-        self.assertEqual(fake.handover["argv"], tui_claude.with_hooks(
+        self.assertEqual(fake.handover["argv"], tmux_host.with_hooks(
             [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.default))
 
     def test_an_early_death_exits_1(self):
@@ -1502,7 +1502,7 @@ PY = "/usr/bin/python3"
 SCRIPT = {"worker": "/x/crew.py", "role": "/x/drive.py", "pipeline": "/x/router.py"}
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane\n"
 SHOWN = "1 /dev/ttys001\n"
-SHOW = tui_claude.show
+SHOW = tmux_host.show
 WIDTH = 64
 SPAN = manager.EVENTS_MAX // WIDTH
 
@@ -1666,13 +1666,13 @@ class AttachTest(RosterCase):
     def setUp(self):
         super().setUp()
         self.shows, self.then = [], None
-        p = mock.patch.object(tui_claude, "show", self.show)
+        p = mock.patch.object(tmux_host, "show", self.show)
         p.start()
         self.addCleanup(p.stop)
 
     def show(self, session, **kw):
-        """tui_claude.show as a recorder: (session, its keywords, whether roster.lock was free) in self.shows; it
-        records @pane %9 and @opener mgr on the session as tui_claude's does, then runs self.then."""
+        """tmux_host.show as a recorder: (session, its keywords, whether roster.lock was free) in self.shows; it
+        records @pane %9 and @opener mgr on the session as tmux_host's does, then runs self.then."""
         self.shows.append((session, kw, lock_free(self.lock)))
         sessions = kw["proc"].sessions
         sessions[session] = (*sessions[session][:2], "%9", "mgr")
@@ -2030,13 +2030,13 @@ class AttachTest(RosterCase):
     def test_a_reopen_outside_tmux_prints_shows_messages_on_stderr(self):
         executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\n")
         self.seed(w1=entry())
-        with mock.patch.object(tui_claude, "show", SHOW):
+        with mock.patch.object(tmux_host, "show", SHOW):
             rc, out, err = self.attach(Server(None, sessions={"w1": opts(SID)}), "--manager", "mgr")
-        cmd = tui_claude.attach_command("w1")
+        cmd = tmux_host.attach_command("w1")
         self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n" + tail(self.mdir)))
         self.assertEqual(err, f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
                               f"tui: session w1: {cmd}\n"
-                              f"tui: show: {tui_claude.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
+                              f"tui: show: {tmux_host.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
 
 
 class LeaseTest(RosterCase):

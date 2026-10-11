@@ -36,7 +36,7 @@ import config  # noqa: E402
 from config import CLONES, RUNS_DIR  # noqa: E402
 import attended  # noqa: E402
 import repo  # noqa: E402
-import tui_claude  # noqa: E402
+import tmux_host  # noqa: E402
 from linear import HISTORY, ISSUE_ID, Unavailable, call, last_move, log, one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -166,7 +166,7 @@ class Pruner:
         if self.dry:
             try:
                 names = attended.sessions(ident, proc=self.proc)
-            except tui_claude.TuiError as e:
+            except tmux_host.TuiError as e:
                 self.error(ident, error=one_line(e))
                 return
             for name in names:
@@ -226,7 +226,7 @@ class Pruner:
             idents = []
         try:
             live = attended.issues(proc=self.proc)
-        except tui_claude.TuiError as e:
+        except tmux_host.TuiError as e:
             self.error(error=f"tui: {one_line(e)}")
             live = []
         idents = sorted(set(idents) | set(live))

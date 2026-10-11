@@ -1,5 +1,5 @@
 """Starts and directs workers of any configured client with the worker capability (src/clients/) in tmux panes through
-the plugin's src/tui_claude.py. Stdlib only."""
+the plugin's src/tmux_host.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
 import manager  # noqa: E402
 import repo  # noqa: E402
-import tui_claude  # noqa: E402
+import tmux_host  # noqa: E402
 from compose import ConfigError  # noqa: E402
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -164,31 +164,31 @@ def _early(name: str, exe: str, proc) -> None:
     try:
         for _ in range(round(EARLY / POLL)):
             time.sleep(POLL)
-            state = tui_claude.status(name, proc=proc)
+            state = tmux_host.status(name, proc=proc)
             if state is None:
                 raise WorkersError(f"{name}: session ended at once")
-            if state != tui_claude.RUNNING:
-                lines = [x for x in tui_claude.read(name, 2000, proc=proc).splitlines() if x.strip()]
+            if state != tmux_host.RUNNING:
+                lines = [x for x in tmux_host.read(name, 2000, proc=proc).splitlines() if x.strip()]
                 raise WorkersError(f"{name}: {os.path.basename(exe)} exited {state} at once; its pane's last lines:\n"
                                    + "\n".join(lines[-REPORT_LINES:]))
-    except tui_claude.TuiError as e:
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
 
 
 def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
     """After _early: worker `name`'s visible pane showing one of client.worker_dialogs, a dialog no hook reports (both
-    with whitespace collapsed: the client wraps its own lines), marks the pane blocked (tui_claude.mark) and says so on
+    with whitespace collapsed: the client wraps its own lines), marks the pane blocked (tmux_host.mark) and says so on
     stderr."""
     if not client.worker_dialogs:
         return
     try:
-        screen = " ".join(tui_claude.read(name, proc=proc).split())
+        screen = " ".join(tmux_host.read(name, proc=proc).split())
         text = next((t for t in client.worker_dialogs if " ".join(t.split()) in screen), None)
         if text is None:
             return
         pane = _query(["tmux", "display-message", "-p", "-t", f"={name}:", "#{pane_id}"], proc).strip()
-        tui_claude.mark("blocked", events, pane=pane, proc=proc)
-    except tui_claude.TuiError as e:
+        tmux_host.mark("blocked", events, pane=pane, proc=proc)
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     print(f"workers: {name}: waits on a dialog: {text}", file=sys.stderr)
 
@@ -234,7 +234,7 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
     `client` (--client) names the worker's client (default: _client); its command (Client.worker) comes last before the
     session. The worker's env: env through _environment, the client's, then `overrides` (--env NAME=VALUE items,
     _override). `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the
-    entry's. `split_from` or `split` replaces tui_claude's automatic placement outside a tmux grid, which ignores them;
+    entry's. `split_from` or `split` replaces tmux_host's automatic placement outside a tmux grid, which ignores them;
     it defaults the other. Its status line, grid column size and grid re-tiling: core config's status_line,
     workers_per_column and grid_retile. A command that exits within EARLY seconds raises, the session and the entry
     kept (see _early); then a dialog on the pane is reported (_dialog)."""
@@ -251,8 +251,8 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
     with _leased(directory, own, proc, write=False):
         pass
     try:
-        events = tui_claude.events_file(manager.events(directory, create=False))
-    except tui_claude.TuiError as e:
+        events = tmux_host.events_file(manager.events(directory, create=False))
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     status_line, per_column, retile = _status_line(), _per_column(), _retile()
     cwd = os.path.abspath(cwd)
@@ -263,10 +263,10 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
                                               events=events, resume=resume is not None,
                                               env=_environment(env, classes, {}, {})))
     try:
-        tui_claude.start(name, cmd.argv, cwd=cwd, env=_environment(env, classes, cmd.env, overrides), events=events,
+        tmux_host.start(name, cmd.argv, cwd=cwd, env=_environment(env, classes, cmd.env, overrides), events=events,
                          split=split, split_from=split_from, per_column=per_column, retile=retile,
                          status_line=status_line, claude_hooks=False, proc=proc)
-    except tui_claude.TuiError as e:
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     options = {"@sid": sid, "@cwd": cwd, "@client": client, "@exe": cmd.argv[0], "@flags": json.dumps(list(flags)),
                "@env": json.dumps(overrides)}
@@ -324,7 +324,7 @@ def _stored(name: str, allowed: set[str], proc) -> dict:
 
 def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
     """Respawn worker `name`'s pane, its history cleared, resuming its session with its client's command
-    (Client.worker, from its stored options: _stored) through tui_claude.respawn, its env as start makes it from env
+    (Client.worker, from its stored options: _stored) through tmux_host.respawn, its env as start makes it from env
     and @env, its status line as core config's status_line says now; returns the command, shell-quoted. A command
     that exits within EARLY seconds raises (see _early); then a dialog on the pane is reported (_dialog)."""
     _check(name)
@@ -333,23 +333,23 @@ def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
     worker = _get(opt["client"])
     status_line = _status_line()
     try:
-        events = tui_claude.events_file(opt["events"])
-    except tui_claude.TuiError as e:
+        events = tmux_host.events_file(opt["events"])
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     command = _command(worker, clients.WorkerSpec(name=name, sid=opt["sid"], cwd=opt["cwd"], flags=tuple(opt["flags"]),
                                                   prompt=None, events=events, resume=True,
                                                   env=_environment(env, classes, {}, {}), exe=opt["exe"]))
     try:
-        tui_claude.decorate(name, events, status_line=status_line, proc=proc)
-    except tui_claude.TuiError as e:
+        tmux_host.decorate(name, events, status_line=status_line, proc=proc)
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     cmd = shlex.join(command.argv)
     _tmux(["tmux", "set-option", "-t", f"={name}:", "@state", ""], proc)
     print(cmd, file=sys.stderr)
     try:
-        tui_claude.respawn(name, command.argv, cwd=opt["cwd"],
+        tmux_host.respawn(name, command.argv, cwd=opt["cwd"],
                            env=_environment(env, classes, command.env, opt["env"]), proc=proc)
-    except tui_claude.TuiError as e:
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
     _early(name, command.argv[0], proc)
     _dialog(name, worker, events, proc)
@@ -418,8 +418,8 @@ def content(event: str, *, proc=subprocess.run) -> str:
         except NotAWorker:
             pass
     try:
-        return tui_claude.read(name, PANE_LINES, proc=proc)
-    except tui_claude.TuiError as e:
+        return tmux_host.read(name, PANE_LINES, proc=proc)
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
 
 
@@ -526,7 +526,7 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
 
 
 def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | None, proc) -> tuple[dict, list]:
-    """Reopens each pane session no client shows (tui_claude.show, beside the caller). Returns, by entry name, where
+    """Reopens each pane session no client shows (tmux_host.show, beside the caller). Returns, by entry name, where
     each other one is shown: the session of the tmux pane its most recently active client runs in, when a NAME, else
     (list-panes failing too) `a terminal`; and the reopened entries' (name, kind, sid, session). A session whose
     list-clients fails is skipped."""
@@ -540,9 +540,9 @@ def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | No
         clients = [line.partition(" ") for line in out.split("\n") if line]
         if not clients:
             try:
-                tui_claude.show(session, split=e["split"], split_from=e["split_from"], per_column=per_column,
+                tmux_host.show(session, split=e["split"], split_from=e["split_from"], per_column=per_column,
                                 retile=retile, proc=proc)
-            except tui_claude.TuiError as err:
+            except tmux_host.TuiError as err:
                 raise WorkersError(str(err)) from err
             opened.append((name, e["kind"], e["sid"], session))
             continue
@@ -736,8 +736,8 @@ def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> 
     if not dry_run:
         verb = "stopped"
         for name in chosen:
-            with contextlib.suppress(tui_claude.TuiError):
-                tui_claude.kill(name, proc=proc)
+            with contextlib.suppress(tmux_host.TuiError):
+                tmux_host.kill(name, proc=proc)
         after = _live(proc)
         left = [n for n in chosen if n in after]
         gone = set(chosen) - set(left)
@@ -796,10 +796,10 @@ def _record(directory: str, own: str | None, after: int | None, gen: int, proc) 
 
 
 def _own() -> str | None:
-    """The caller's tmux session (tui_claude.own_session); None outside tmux."""
+    """The caller's tmux session (tmux_host.own_session); None outside tmux."""
     try:
-        return tui_claude.own_session(proc=subprocess.run)
-    except tui_claude.TuiError as e:
+        return tmux_host.own_session(proc=subprocess.run)
+    except tmux_host.TuiError as e:
         raise WorkersError(str(e)) from e
 
 

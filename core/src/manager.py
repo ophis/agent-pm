@@ -3,8 +3,8 @@ next-event), drive.py (--runner tui, --detach) and router.py --tui use when give
 append to it), and of its roster, roster.json, written only under the flock on roster.lock (both 0600).
 
 <name> is [A-Za-z0-9_-]+, resolved (directory) as `--manager <name>`, else the caller's tmux session
-(tui_claude.own_session), else none. `crew.py attach` creates it (ensure) and `events` (0600, a regular file of the
-caller's: tui_claude.events_file); `drive.py` and `router.py --tui` still may. ~/.agent-pm is made when missing and not
+(tmux_host.own_session), else none. `crew.py attach` creates it (ensure) and `events` (0600, a regular file of the
+caller's: tmux_host.events_file); `drive.py` and `router.py --tui` still may. ~/.agent-pm is made when missing and not
 checked; managers/ and <name>/ are made one level at a time, 0700 whatever the umask. One that exists keeps its mode but
 must be a directory (not a symlink) owned by the caller, and <name>/ also with no group or other permission bits (every
 roster access checks), else ManagerError, so nothing is created through a bad managers/. Every failure is a
@@ -27,8 +27,8 @@ it):
   resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to crew.py, drive.py or
                     router.py (or LEGACY); a worker's names its client (--client)
   note              null, or printable with at most NOTE_MAX characters
-  opener            tui_claude.OPENER or null
-  pane              tui_claude.PANE or tui_claude.ITERM_ID, or null
+  opener            tmux_host.OPENER or null
+  pane              tmux_host.PANE or tmux_host.ITERM_ID, or null
   split             right | below | null
   split_from, tui   NAME or null
   state             working | done | blocked | dead | gone | waiting | finished
@@ -60,7 +60,7 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import datetime, timezone
 
-import tui_claude
+import tmux_host
 
 ROOT = "~/.agent-pm/managers"
 SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -102,13 +102,13 @@ def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
     """The absolute path of the manager's directory, the filesystem untouched; None outside tmux without `manager`."""
     if manager is None:
         try:
-            manager = tui_claude.own_session(proc=proc)
-        except tui_claude.TuiError as e:
+            manager = tmux_host.own_session(proc=proc)
+        except tmux_host.TuiError as e:
             raise ManagerError(f"{e}; give --manager <name>") from e
         if manager is None:
             return None
-    elif not tui_claude.NAME.fullmatch(manager):
-        raise ManagerError(f"manager {manager!r}: want {tui_claude.NAME.pattern}")
+    elif not tmux_host.NAME.fullmatch(manager):
+        raise ManagerError(f"manager {manager!r}: want {tmux_host.NAME.pattern}")
     return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
 
 
@@ -156,8 +156,8 @@ def events(directory: str, *, create: bool = True) -> str:
     if create:
         ensure(directory)
         try:
-            return tui_claude.events_file(path)
-        except tui_claude.TuiError as e:
+            return tmux_host.events_file(path)
+        except tmux_host.TuiError as e:
             raise ManagerError(str(e)) from e
     return path
 
@@ -215,16 +215,16 @@ def _keys(value: dict, want: tuple) -> str | None:
     return f"keys: {', '.join(parts)}" if parts else None
 
 
-_NAME_OR_NULL = (lambda v: v is None or _match(tui_claude.NAME, v), "a session name or null")
+_NAME_OR_NULL = (lambda v: v is None or _match(tmux_host.NAME, v), "a session name or null")
 _CHECKS = {
     "kind": (lambda v: v in KINDS, _or(KINDS)),
     "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
     "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
     "note": (lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
              f"null or a printable string of at most {NOTE_MAX} characters"),
-    "opener": (lambda v: v is None or _match(tui_claude.OPENER, v),
+    "opener": (lambda v: v is None or _match(tmux_host.OPENER, v),
                "a tmux session name or an iTerm2 pane id, or null"),
-    "pane": (lambda v: v is None or _match(tui_claude.PANE, v) or _match(tui_claude.ITERM_ID, v),
+    "pane": (lambda v: v is None or _match(tmux_host.PANE, v) or _match(tmux_host.ITERM_ID, v),
              "a tmux pane id or an iTerm2 session id, or null"),
     "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
     "split_from": _NAME_OR_NULL,
@@ -262,8 +262,8 @@ def _value_fault(value) -> str | None:
 
 
 def _fault(name, value) -> str | None:
-    if not _match(tui_claude.NAME, name):
-        return f"name: want {tui_claude.NAME.pattern}"
+    if not _match(tmux_host.NAME, name):
+        return f"name: want {tmux_host.NAME.pattern}"
     return _value_fault(value)
 
 
@@ -285,7 +285,7 @@ def _check(data, path: str, *, strict: bool) -> dict:
             fail("holder: want null or an object with session and since")
         if bad := _keys(holder, ("session", "since")):
             fail(f"holder: {bad}")
-        if not _match(tui_claude.NAME, holder["session"]):
+        if not _match(tmux_host.NAME, holder["session"]):
             fail(_want("holder.session", holder["session"], "a session name"))
         if not _time(holder["since"]):
             fail(_want("holder.since", holder["since"], _TIME))
@@ -511,8 +511,8 @@ def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
     for session in (key, entries[key]["tui"]):
         if session is None:
             continue
-        with contextlib.suppress(tui_claude.TuiError):
-            tui_claude.kill(session, proc=proc)
+        with contextlib.suppress(tmux_host.TuiError):
+            tmux_host.kill(session, proc=proc)
         if _live(session, proc):
             raise ManagerError(f"{key}: session {session} still live after tmux kill-session")
     remove(r, key)
@@ -630,8 +630,8 @@ def _writing(path: str, flags: int) -> Iterator[int]:
 def _refill(path: str, old: str, cursor: int, sleep) -> None:
     """rotate's steps after the rename; every failure is a ManagerError."""
     try:
-        tui_claude.events_file(path)
-    except tui_claude.TuiError as e:
+        tmux_host.events_file(path)
+    except tmux_host.TuiError as e:
         raise ManagerError(str(e)) from e
     with _writing(path, os.O_WRONLY | os.O_NONBLOCK) as fd:
         os.fchmod(fd, 0o600)   # a writer's `>>` may have made it in between, with its umask

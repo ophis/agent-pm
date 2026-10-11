@@ -43,7 +43,7 @@ from linear import (CONFIG_ERRORS, ISSUE_ID, config_error, humans, linear_gql, l
                     role_ids, task_group, team)
 import drive  # noqa: E402
 import manager  # noqa: E402
-import tui_claude  # noqa: E402
+import tmux_host  # noqa: E402
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -477,8 +477,8 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
     if a.runner == "tui":
         try:
             layout = attended.layout(a.split, a.split_from)
-            events = tui_claude.events_file(a.events) if a.events is not None else None
-        except (attended.Bad, tui_claude.TuiError) as e:
+            events = tmux_host.events_file(a.events) if a.events is not None else None
+        except (attended.Bad, tmux_host.TuiError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
     try:
@@ -537,8 +537,8 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         iterm = os.environ.get("ITERM_SESSION_ID", "")  # tmux's own may be stale
         given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
-        print(f"router.py: driver: {tui_claude.attach_command(session(name, a.issue))}", file=sys.stderr)
-        print(f"router.py: tui: {tui_claude.attach_command(tui)}", file=sys.stderr)
+        print(f"router.py: driver: {tmux_host.attach_command(session(name, a.issue))}", file=sys.stderr)
+        print(f"router.py: tui: {tmux_host.attach_command(tui)}", file=sys.stderr)
         roster = pipeline(a, session(name, a.issue), tui, layout, rd, sh)
     try:  # the input goes through the handover file: tmux rejects a command over about 16 KB
         drive.detach(session(name, a.issue), [
@@ -655,7 +655,7 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
             return stop
         live = live_sessions(runnable(cfg, root), sh)
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            print(f"router.py: {ident} has a live agent run: {tui_claude.attach_command(session(role, ident))}", file=sys.stderr)
+            print(f"router.py: {ident} has a live agent run: {tmux_host.attach_command(session(role, ident))}", file=sys.stderr)
             return stop
         board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
         if issue := next((i for i in board.issues("in_progress") if i["identifier"] == ident), None):
@@ -727,13 +727,13 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
         try:
             attended.layout(opts["split"], opts["split_from"])
             if opts["events"] is not None:
-                tui_claude.events_file(opts["events"])
+                tmux_host.events_file(opts["events"])
             elif (directory := manager.directory(opts["manager"], proc=sh)) is not None:
                 opts["events"] = manager.events(directory, create=not opts["dry"])
             else:
                 print("router.py: no manager directory (not in tmux): this run writes no events; "
                       "give --manager <name>", file=sys.stderr)
-        except (attended.Bad, tui_claude.TuiError, manager.ManagerError) as e:
+        except (attended.Bad, tmux_host.TuiError, manager.ManagerError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
     now = now or datetime.now(timezone.utc)

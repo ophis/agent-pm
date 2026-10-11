@@ -1904,7 +1904,7 @@ class OuterBase(RunBase):
         """The inner's argv from the last tmux call, drive.detach's: its handover file, cwd the run dir."""
         argv, kw = self.sh_calls[-1]
         self.assertEqual((argv, kw), (["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s",
-                                       f"agent-pm-{role}-TASK-7", sys.executable, "-I", "-c", drive.tui_claude.EXEC,
+                                       f"agent-pm-{role}-TASK-7", sys.executable, "-I", "-c", drive.tmux_host.EXEC,
                                        argv[-1]], {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}))
         h = self.handovers[argv[-1]]
         self.assertEqual((h["cwd"], h["env"]["PATH"]), (self.rd, config.PATH))

@@ -29,7 +29,7 @@ import compose
 import drive
 import manager
 import report
-import tui_claude
+import tmux_host
 from clients import codex
 
 CORE = os.path.join(ROOT, "core")
@@ -405,7 +405,7 @@ class Claude(Base):
                 open(os.path.join(CORE, "..", ".claude-plugin", "marketplace.json")) as g:
             plugin = f"{json.load(f)['name']}@{json.load(g)['name']}"
         launch = self.plan(client="claude")
-        tui = drive.tui_claude.with_hooks(launch.interactive, "/e")
+        tui = drive.tmux_host.with_hooks(launch.interactive, "/e")
         for argv in (launch.argv, launch.interactive, tui):
             self.assertEqual(argv.count("--settings"), 1)
             self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["enabledPlugins"], {plugin: False})
@@ -510,7 +510,7 @@ class ClaudeWorker(unittest.TestCase):
     def test_session_marker_and_context_variables(self):
         self.assertEqual(ClaudeClient.session_env, "CLAUDECODE")
         self.assertEqual(dict(ClaudeClient.command_env), dict.fromkeys((
-            *tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+            *tmux_host.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
             "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
             "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")))
         with self.assertRaises(TypeError):
@@ -518,7 +518,7 @@ class ClaudeWorker(unittest.TestCase):
 
     def test_the_start_and_restart_argv(self):
         """crew.py's start argv (a new session, with or without a prompt, or a resumed one: one `--` however the prompt
-        starts) and its restart argv (resumed, no prompt, the stored claude), tui_claude's hooks writing the events."""
+        starts) and its restart argv (resumed, no prompt, the stored claude), tmux_host's hooks writing the events."""
         flags = ("--model", "m c")
         head = [self.exe, "--session-id", SID, "--name", "w1", *flags]
         cases = (({}, head), ({"prompt": ""}, head), ({"prompt": "do it"}, [*head, "--", "do it"]),
@@ -529,7 +529,7 @@ class ClaudeWorker(unittest.TestCase):
         for kw, argv in cases:
             with self.subTest(**kw):
                 self.assertEqual(self.client.worker(self.spec(flags=flags, **kw)),
-                                 clients.WorkerCommand(tui_claude.with_hooks(argv, self.events)))
+                                 clients.WorkerCommand(tmux_host.with_hooks(argv, self.events)))
 
     def test_own_settings_merged_with_the_hooks(self):
         own = {"type": "command", "command": "mine"}
@@ -538,7 +538,7 @@ class ClaudeWorker(unittest.TestCase):
         self.assertEqual(argv.count("--settings"), 1)
         settings = json.loads(argv[argv.index("--settings") + 1])
         self.assertEqual(settings["hooks"]["Stop"],
-                         [{"hooks": [own]}, *json.loads(tui_claude.hooks(self.events))["hooks"]["Stop"]])
+                         [{"hooks": [own]}, *json.loads(tmux_host.hooks(self.events))["hooks"]["Stop"]])
         with self.assertRaisesRegex(compose.ConfigError, "^--settings"):
             self.client.worker(self.spec(flags=("--settings", "[]")))
 
@@ -1985,7 +1985,7 @@ class FakeTui:
         """tui's start, status, kill and send replaced by this fake's, or by `api`'s; time.monotonic by its clock."""
         stack = ExitStack()
         stack.enter_context(unittest.mock.patch.multiple(
-            drive.tui_claude, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
+            drive.tmux_host, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
         stack.enter_context(unittest.mock.patch.object(time, "monotonic", lambda: self.now))
         return stack
 
@@ -2002,7 +2002,7 @@ class FakeTui:
             return step
         for item in step:
             drive.append_line(self.channel, json.dumps(item) + "\n")
-        return drive.tui_claude.RUNNING
+        return drive.tmux_host.RUNNING
 
     def kill(self, name):
         self.calls.append(("kill", name))
@@ -2318,7 +2318,7 @@ class Start(Base):
 
     def test_headless_ignores_stops_and_they_reach_no_sink(self):
         seen = []
-        with unittest.mock.patch.object(drive.tui_claude, "send") as send:
+        with unittest.mock.patch.object(drive.tmux_host, "send") as send:
             r, _, _ = self.start([*[STOP] * (drive.STOP_LIMIT + 1), progress("start", "x"), STOP, said("still going"),
                                   outcome(DONE)], sinks=[lambda e: seen.append(e.kind)])
         self.assertEqual((r.returncode, r.outcome.status, send.called), (0, "done", False))
@@ -2903,7 +2903,7 @@ class TuiRunner(Base):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
     def launched(self, layout=None, status_line=False, prefix=None, per_column=None, retile=None, **kw):
-        """The keyword arguments of the one tui_claude.start call of drive.start with the tui runner, and its name."""
+        """The keyword arguments of the one tmux_host.start call of drive.start with the tui runner, and its name."""
         p = self.params(prefix=prefix)
         fake = FakeTui(p.channel, [[outcome(DONE)]])
         launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line,
@@ -3108,14 +3108,14 @@ class TuiRunner(Base):
         def sink(event):
             raise RuntimeError("sink")
 
-        kill = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("gone"))
+        kill = unittest.mock.Mock(side_effect=drive.tmux_host.TuiError("gone"))
         with self.assertRaises(RuntimeError):
             self.start([progress("round", "x")], sinks=[sink], api={"kill": kill})
         self.assertEqual(kill.call_args, unittest.mock.call(self.NAME))
         self.assertIn("drive.py: tui: gone\n", self.err.getvalue())
 
     def test_a_tui_error_on_start_is_the_result(self):
-        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no tmux"))})
+        r, calls, _, _ = self.start(api={"start": unittest.mock.Mock(side_effect=drive.tmux_host.TuiError("no tmux"))})
         self.assertEqual((r, calls), (drive.Result(1, None, "tui: no tmux"), []))
 
     def test_an_interrupted_start_kills_no_session_it_did_not_start(self):
@@ -3124,7 +3124,7 @@ class TuiRunner(Base):
         self.assertEqual(self.fake.calls, [])
 
     def test_a_tui_error_reading_the_session_kills_it_and_is_the_result(self):
-        status = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no server"))
+        status = unittest.mock.Mock(side_effect=drive.tmux_host.TuiError("no server"))
         r, calls, _, _ = self.start(api={"status": status})
         self.assertEqual((r, [c[0] for c in calls]), (drive.Result(1, None, "tui: no server"), ["start", "kill"]))
         code, calls, err = self.main(api={"status": status})
@@ -3197,14 +3197,14 @@ class TuiRunner(Base):
                 self.assertEqual((r.error, self.fake.steps), ("the agent run returned no outcome", []))
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
-        send = unittest.mock.Mock(side_effect=drive.tui_claude.TuiError("no pane"))
+        send = unittest.mock.Mock(side_effect=drive.tmux_host.TuiError("no pane"))
         r, _, _, err = self.start(*[[STOP]] * (1 + drive.STOP_LIMIT), api={"send": send})
         self.assertEqual((r.error, send.call_count), ("the agent run returned no outcome", 1))
         self.assertIn("drive.py: tui: no pane\n", err)
 
     def test_start_refuses_a_client_without_the_command_before_anything_starts(self):
         popen = unittest.mock.Mock()
-        with unittest.mock.patch.object(drive.tui_claude, "start") as start, self.assertRaises(compose.ConfigError):
+        with unittest.mock.patch.object(drive.tmux_host, "start") as start, self.assertRaises(compose.ConfigError):
             drive.start(drive.Launch(["fake"]), run(), self.params(), client=Recorder({}), runner="tui", popen=popen)
         self.assertEqual((popen.called, start.called, os.path.exists(self.work)), (False, False, False))
 
@@ -3281,7 +3281,7 @@ class Detach(Base):
         for prefix, want in ((None, f"r-{SID[:8]}-drive"), ("engineer-TASK-1", f"engineer-TASK-1-{SID[:8]}-drive")):
             name = drive.driver_session("r", SID, prefix)
             self.assertEqual(name, want)
-            self.assertTrue(drive.tui_claude.NAME.fullmatch(name))
+            self.assertTrue(drive.tmux_host.NAME.fullmatch(name))
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name))
             self.assertIsNone(reserved.fullmatch(name))
 
@@ -3330,7 +3330,7 @@ class Detach(Base):
         code, err, (argv, opener), handover = self.outer("--runner", "tui", "--prefix", "p")
         self.assertEqual(code, 0)
         self.assertEqual(argv, ["tmux", "new-session", "-d", "-e", "ITERM_SESSION_ID=w0t0p0:AB-12", "-s", driver,
-                                sys.executable, "-I", "-c", drive.tui_claude.EXEC, argv[-1]])
+                                sys.executable, "-I", "-c", drive.tmux_host.EXEC, argv[-1]])
         self.assertEqual(opener, ["tmux", "set-option", "-t", f"={driver}:", "@opener", "w0t0p0:AB-12"])
         self.assertFalse(os.path.exists(os.path.dirname(argv[-1])))
         self.assertEqual(handover["argv"], [
@@ -3584,7 +3584,7 @@ class Detach(Base):
         self.assertEqual(code, 0, err)
         self.assertEqual([line for line in err.splitlines() if line.startswith("manager: ")],
                          [f"manager: entry {self.DRIVER} not written: own tmux session 'a b': want "
-                          f"{drive.tui_claude.NAME.pattern}; give --manager <name>"])
+                          f"{drive.tmux_host.NAME.pattern}; give --manager <name>"])
 
     def test_the_driver_appends_one_outcome_line_when_it_ends(self):
         needs = {"status": "needs_input", "title": "T", "summary": "S", "questions": ["Which?"]}
@@ -3736,7 +3736,7 @@ class Detach(Base):
         def status(name):
             self.assertTrue(callable(signal.getsignal(signal.SIGHUP)), "no handler: SIGHUP would end the tests")
             os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session
-            return drive.tui_claude.RUNNING
+            return drive.tmux_host.RUNNING
 
         def kill(name):
             killed.append(name)

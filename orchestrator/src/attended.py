@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402,F401  (puts core/src on sys.path)
 import drive  # noqa: E402
 import linear  # noqa: E402
-import tui_claude  # noqa: E402
+import tmux_host  # noqa: E402
 from linear import one_line  # noqa: E402
 
 # the prefix of an issue's TUI session name (drive.TUI_SESSION): <role>-<ID>
@@ -25,25 +25,25 @@ class Bad(Exception):
 
 
 def layout(split, split_from, *, proc=subprocess.run):
-    """The drive.Layout for the TUI pane: split and split_from as given, and the caller's opener (tui_claude.opener). Bad
-    unless tui_claude.anchor finds a pane (split_from's, else the caller's), and, without split_from, the caller has an
+    """The drive.Layout for the TUI pane: split and split_from as given, and the caller's opener (tmux_host.opener). Bad
+    unless tmux_host.anchor finds a pane (split_from's, else the caller's), and, without split_from, the caller has an
     opener."""
-    if split is not None and split not in tui_claude.SPLITS:
-        raise Bad(f"split must be one of {', '.join(tui_claude.SPLITS)}")
+    if split is not None and split not in tmux_host.SPLITS:
+        raise Bad(f"split must be one of {', '.join(tmux_host.SPLITS)}")
     if split_from is not None:
-        if not tui_claude.NAME.fullmatch(split_from):
+        if not tmux_host.NAME.fullmatch(split_from):
             raise Bad("bad tmux session name")
-        if tui_claude.status(split_from, proc=proc) is None:
+        if tmux_host.status(split_from, proc=proc) is None:
             raise Bad(f"no tmux session {split_from}")
     try:
-        tui_claude.anchor(split_from, proc=proc)
+        tmux_host.anchor(split_from, proc=proc)
         try:
-            opener = tui_claude.opener(proc=proc)
-        except tui_claude.TuiError:
+            opener = tmux_host.opener(proc=proc)
+        except tmux_host.TuiError:
             if split_from is None:
                 raise
             opener = None
-    except tui_claude.TuiError as e:
+    except tmux_host.TuiError as e:
         hint = "" if split_from else ": run from tmux or iTerm2, or pass --split-from SESSION"
         raise Bad(f"no pane to show the TUI beside ({one_line(str(e))}){hint}") from e
     return drive.Layout(split, split_from, opener)
@@ -59,12 +59,12 @@ def prefix(role, ident):
 
 
 def sessions(ident, *, proc=subprocess.run):
-    """The names of issue ident's live TUI sessions, sorted; [] when no tmux server runs. Raises tui_claude.TuiError."""
+    """The names of issue ident's live TUI sessions, sorted; [] when no tmux server runs. Raises tmux_host.TuiError."""
     return sorted(name for name, i in _live(proc) if i == ident)
 
 
 def issues(*, proc=subprocess.run):
-    """The issue ids with a live TUI session, sorted; [] when no tmux server runs. Raises tui_claude.TuiError."""
+    """The issue ids with a live TUI session, sorted; [] when no tmux server runs. Raises tmux_host.TuiError."""
     return sorted({i for _, i in _live(proc)})
 
 
@@ -74,12 +74,12 @@ def _live(proc):
         res = proc(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True,
                    stdin=subprocess.DEVNULL)
     except OSError as e:
-        raise tui_claude.TuiError(f"tmux: {e}") from e
+        raise tmux_host.TuiError(f"tmux: {e}") from e
     if res.returncode:
         err = (res.stderr or "").strip()
         if NO_SERVER.fullmatch(err):
             return []
-        raise tui_claude.TuiError(f"tmux: {err}")
+        raise tmux_host.TuiError(f"tmux: {err}")
     found = []
     for name in res.stdout.splitlines():
         if (m := drive.TUI_SESSION.fullmatch(name)) and (issue := ISSUE_TUI.fullmatch(m["prefix"])):
@@ -98,13 +98,13 @@ def close(ident, *, proc=subprocess.run):
     """Kill issue ident's live TUI sessions (sessions). Returns the Closed results; never raises."""
     try:
         names = sessions(ident, proc=proc)
-    except tui_claude.TuiError as e:
+    except tmux_host.TuiError as e:
         return [Closed("error", msg=one_line(e))]
     out = []
     for name in names:
         try:
-            tui_claude.kill(name, proc=proc)
+            tmux_host.kill(name, proc=proc)
             out.append(Closed("closed", name))
-        except tui_claude.TuiError as e:
+        except tmux_host.TuiError as e:
             out.append(Closed("error", name, one_line(e)))
     return out

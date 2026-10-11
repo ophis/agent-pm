@@ -1,9 +1,9 @@
 """The command each hook of a crew.py Codex worker runs (clients/_codex_worker.py), outside Codex's sandbox:
 `_codex_hook.py <word> <events> <record> <tmux>`, <word> one of WORDS. Reads the hook's JSON payload on stdin to its
 end; binds the worker record to the payload's session; for done (Stop) saves its last_assistant_message as the worker's
-reply; then, whatever those did, marks the pane (tui_claude.mark). Never prints on stdout (Codex reads a SessionStart's
+reply; then, whatever those did, marks the pane (tmux_host.mark). Never prints on stdout (Codex reads a SessionStart's
 or UserPromptSubmit's stdout as model context) and always exits 0 (exit 2 denies or blocks); diagnostics go to stderr.
-No payload text reaches an event line or a tmux argument. Stdlib, and tui_claude from core's src/."""
+No payload text reaches an event line or a tmux argument. Stdlib, and tmux_host from core's src/."""
 import fcntl
 import json
 import os
@@ -76,10 +76,10 @@ def main(argv: list[str]) -> None:
     except (OSError, ValueError) as e:
         print(f"codex_hook: {record}: {e}", file=sys.stderr)
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    import tui_claude
+    import tmux_host
     try:
-        tui_claude.mark(WORDS[word], events, tmux=tmux)
-    except tui_claude.TuiError as e:
+        tmux_host.mark(WORDS[word], events, tmux=tmux)
+    except tmux_host.TuiError as e:
         print(f"codex_hook: {e}", file=sys.stderr)
 
 

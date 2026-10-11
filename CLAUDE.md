@@ -19,7 +19,7 @@ Tests: a unit test of module `<m>` is `tests/unit/<pkg>/<m>_test.py`, an integra
 
 Operating: README › Operating, README › Attended runs. Without `--dry-run`, router and promote change real issues and start real agent runs. Python 3.11+ (`tomllib`); macOS's own `python3` is 3.9.
 
-A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and `codex` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); a change to a client's worker capability (`worker()`, `worker_reply()`, `command_env`, `worker_dialogs`) or to `core/src/clients/_codex_hook.py` also needs a live worker of that client: `crew.py start --client <it> --prompt …`, its `done` and `reply`, a follow-up, `restart`. Say in the PR what ran and what it showed.
+A change to `tmux_host.py`, `drive.py`, `crew.py` or the tmux skill also needs a live `dummy-tester echo` run, tui and headless (the tests fake `claude` and `codex` and never drive iTerm2), its tmux isolated as core/CLAUDE.md › Rules says (a live check); a change to a client's worker capability (`worker()`, `worker_reply()`, `command_env`, `worker_dialogs`) or to `core/src/clients/_codex_hook.py` also needs a live worker of that client: `crew.py start --client <it> --prompt …`, its `done` and `reply`, a follow-up, `restart`. Say in the PR what ran and what it showed.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs 
 - `sessions.py`: one `Run <sid> · …` comment per session, posted with `harness_key` (`isMe` marks it); a resume edits it, a new claim adds one. A write is one try; a failure only logs `registry-error`. `issues.read_issue` and promote drop these comments. One stuck at `running` with no `agent-pm-<role>-<ID>` tmux session was killed: `tmux ls` is the truth.
 - `promote.py`: Handoff → the next role's Todo issue, its id hashed from source, role and handoff time (reruns are idempotent); then `prune.py` (its docstring). launchd's PATH lacks tmux and claude: subprocesses get `config.PATH`.
 - `config.WORK_DIR` is `<work_dir>` (`orchestrator/config.toml`'s `work_dir`). A `trusted_dirs` entry that is or contains it stops router, run and promote: git in a workdir must not see agent-pm, nor its `CLAUDE.md` and `.claude/` reach the run.
-- Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `manager`, `repo`, `report` or `tui_claude`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` first.
+- Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `manager`, `repo`, `report` or `tmux_host`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` first.
 - Identity: write-back and bounce act as the role's `account`, the rest as the harness account (README › Setup). Only Keychain service names travel in env, argv, logs and prompts, never keys. As the same macOS user, an agent run could read Keychain items: no enforced boundary.
 - No move changes an assignee; every move to In Review (write-back, bounce or harness) also subscribes each `human_members` email.
 - Logs: `linear.log` is the only writer of `<work_dir>/logs/orchestrator.jsonl` (README › Operating).
@@ -57,7 +57,7 @@ A change to `tui_claude.py`, `drive.py`, `crew.py` or the tmux skill also needs 
 - Skills and `core/config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:tmux`), never "the tmux skill" or `agent-pm:tmux`; `compose_test.py` fails on it.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
-- Tmux targets: `core/skills/tmux/SKILL.md` › Gotchas. The code targets only with `=<name>`: the router reads `list-sessions` and names via `new-session -s`; `attended.close` kills by exact target (`tui_claude.kill`).
+- Tmux targets: `core/skills/tmux/SKILL.md` › Gotchas. The code targets only with `=<name>`: the router reads `list-sessions` and names via `new-session -s`; `attended.close` kills by exact target (`tmux_host.kill`).
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating). The plists are installed as copies (README › Setup).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
