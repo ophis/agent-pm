@@ -61,8 +61,7 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
 
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
-    config_home = config_home or os.environ.get("CODEX_HOME") or default_home
-    config_home = os.path.abspath(os.path.join(cwd, config_home))
+    config_home = _codex_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
     if _inside(config_home, workdir) or _inside(real_config_home, real_workdir):
         raise ConfigError(f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
@@ -89,9 +88,9 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
             ancestor = parent
 
 
-def _codex_home(cwd: str) -> str:
-    return os.path.realpath(os.path.abspath(os.path.join(
-        cwd, os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex"))))
+def _codex_home(cwd: str, config_home: str | None = None) -> str:
+    return os.path.abspath(os.path.join(
+        cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")))
 
 
 def _no_symlink_ancestors(path: str) -> None:
@@ -211,7 +210,7 @@ class CodexClient(Client):
         cwd = os.path.abspath(access.cwd or params.workdir)
         if not access.project:
             _guard_untrusted_project(workdir, cwd)
-        codex_home = _codex_home(cwd)
+        codex_home = os.path.realpath(_codex_home(cwd))
         print(f"drive.py: Codex tier {run.tier} uses {model}; "
               "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change",
               file=sys.stderr)

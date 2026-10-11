@@ -832,6 +832,9 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client,
         raise
     rc = host.returncode()
     if launch.session_state is not None and not session_seen:
+        for event in pending:
+            if event.kind == "stderr":
+                hand(event)
         return Result(rc, None, "the client did not report a native session ID")
     for event in tail():
         hand(event)

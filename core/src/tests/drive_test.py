@@ -423,6 +423,17 @@ class Codex(Base):
                          "dirs": [os.path.realpath(self.repo)], "commands": ["make test"], "model": "gpt-6.1-sol",
                          "effort": "high", "network": False, "codex_home": os.path.realpath(config_home)})
 
+    def test_external_tilde_codex_home_matches_launch_and_recovery_settings(self):
+        config_home = os.path.join(os.path.realpath(self.tmp.name), "user-codex")
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": "~/user-codex"}), \
+                redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch(
+                "prompt", run(), params=self.params(),
+                access=drive.Access(dirs=[], commands=[], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], config_home)
+        self.assertEqual(launch.session_state["codex_home"], config_home)
+        self.assertIn(config_home, launch.writable_roots)
+
     def test_codex_validates_its_own_saved_payload_before_use(self):
         snapshot = self.saved_session(client_id=SID)
         root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
@@ -449,7 +460,7 @@ class Codex(Base):
         self.metadata(client_id, snapshot)
         changed = type(clients.get("codex", CORE))({**clients.get("codex", CORE).config,
                    "tiers": {"2": "changed-model"}, "shell_network": False})
-        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "changed-home")}), \
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.work, "changed-home")}), \
                 redirect_stderr(io.StringIO()):
             launch = changed.launch("next", run(), params=self.params(resume=True),
                                     access=drive.Access(dirs=[self.repo], commands=[], cwd=self.work))
@@ -675,6 +686,18 @@ class Codex(Base):
                     with self.assertRaisesRegex(compose.ConfigError, r"CODEX_HOME .*inside.*workdir"):
                         client.launch("p", run(), params=self.params(),
                                       access=drive.Access(dirs=[], commands=[], cwd=self.work))
+
+    def test_tilde_codex_home_keeps_literal_and_resolved_workdir_guards(self):
+        client = clients.get("codex", CORE)
+        os.makedirs(self.work)
+        os.symlink(self.repo, os.path.join(self.work, "config-link"))
+        os.symlink(self.work, os.path.join(self.tmp.name, "external-link"))
+        for config_home in ("~/work/config", "~/work/config-link", "~/external-link"):
+            with self.subTest(config_home=config_home), \
+                    unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": config_home}):
+                with self.assertRaisesRegex(compose.ConfigError, r"CODEX_HOME .*inside.*workdir"):
+                    client.launch("p", run(), params=self.params(),
+                                  access=drive.Access(dirs=[], commands=[], cwd=self.work))
 
     def test_genuine_codex_home_outside_workdir_is_not_a_project_setting(self):
         client = clients.get("codex", CORE)
@@ -3218,6 +3241,43 @@ class CodexRecoveryDriver(Base):
         self.assertIsNone(result.outcome)
         self.assertIn("did not report a native session ID", result.error)
         self.assertIsNone(codex._load_session(self.work, SID).client_id)
+
+    def test_startup_json_diagnostics_survive_without_accepting_unbound_reports(self):
+        cases = (({"type": "error", "message": "authentication required"}, "authentication required"),
+                 ({"type": "turn.failed", "error": {"message": "startup failed"}}, "startup failed"),
+                 ({"type": "thread.started", "thread_id": "invalid"}, "codex: invalid thread.started ID"))
+        for index, (event, diagnostic) in enumerate(cases):
+            with self.subTest(event=event):
+                params = self.params(sid=f"{SID}-{index}")
+                launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                                      writable_roots=[self.work])
+                seen = []
+                def popen(argv, **kw):
+                    items = [progress("start", "unbound progress"), outcome(DONE), *stream(event)]
+                    return FakeProc(feed(params.channel, items), rc=1)
+                result = drive.start(launch, run(), params, client=self.client, sinks=[seen.append], popen=popen)
+                self.assertEqual(seen, [clients.Event("stderr", diagnostic)])
+                self.assertEqual((result.returncode, result.outcome, result.error),
+                                 (1, None, "the client did not report a native session ID"))
+                self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"][-1], diagnostic)
+                self.assertIsNone(self.client.session_info(self.work, params.sid).client_id)
+                self.assertFalse(os.path.exists(params.out))
+
+    def test_startup_process_stderr_is_logged_without_accepting_unbound_output(self):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot, writable_roots=[self.work])
+        params, seen = self.params(), []
+        diagnostics = ["authentication failed", "please sign in"]
+        def popen(argv, **kw):
+            items = [progress("start", "unbound progress"), outcome(DONE),
+                     *stream({"type": "item.completed", "item": {"type": "agent_message", "text": "unbound text"}})]
+            return FakeProc(feed(params.channel, items), rc=7, stderr=[line + "\n" for line in diagnostics])
+        result = drive.start(launch, run(), params, client=self.client, sinks=[seen.append], popen=popen)
+        self.assertEqual(seen, [clients.Event("stderr", line) for line in diagnostics])
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"], diagnostics)
+        self.assertEqual((result.returncode, result.outcome, result.error),
+                         (7, None, "the client did not report a native session ID"))
+        self.assertIsNone(self.client.session_info(self.work, SID).client_id)
+        self.assertFalse(os.path.exists(params.out))
 
     def test_fsync_failure_stops_host_before_later_output_and_reports(self):
         real_fsync = os.fsync
