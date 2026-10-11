@@ -21,6 +21,7 @@ flowchart LR
 - `/agent-pm:manage`: your guidelines for the commander session, the one you talk to, e.g. `ctmux`'s; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `core/skills/manage/SKILL.md`.
 - `ctmux <session>` in iTerm2: opens tmux session `<session>` (made in the current dir if missing) attached with `tmux -CC`, so worker panes are native iTerm2 splits in the same window; you start `claude` or `codex` in it yourself. Install: run the plugin's copy with `--install` (e.g. `~/.claude/plugins/marketplaces/agent-pm/core/skills/tmux/scripts/ctmux --install`), which copies it to `~/.agent-pm/bin/ctmux`, then add `alias ctmux=~/.agent-pm/bin/ctmux` to `~/.zshrc` (or `~/.bashrc`); rerun `--install` after a plugin update.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `core/skills/act-as/SKILL.md`.
+- Your own roles, tasks and templates, outside the plugin: `core/config.toml`'s `team_dirs` comment; `core/src/drive.py --list` lists every role and task.
 
 ## Setup
 

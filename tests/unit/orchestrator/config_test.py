@@ -16,6 +16,7 @@ import config
 import clients
 from clients.claude import ClaudeClient
 from clients import claude as claude_client
+import drive
 import repo
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
@@ -310,7 +311,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_an_index_task_without_its_file_stops_the_caller(self):
         self.researcher_line("light-research", "- `ghost` (`<tasks>/ghost.md`): a task; when; light.\n")
-        self.fails("core: roles/researcher.md lists 'ghost' without tasks/ghost.md")
+        self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md")
 
     def test_overlay_fills_root(self):
         self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
@@ -349,6 +350,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
                  ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in [core]"),
                  ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in [core]"),
                  ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in [core]"),
+                 ('[core]\nteam_dirs = ["~/.agent-pm/team"]\n', unknown + "'team_dirs' in [core]"),
                  ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in [core]"),
                  ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in [core.roles.researcher]")]
         cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),
@@ -454,6 +456,57 @@ class Local(ConfigFile, unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             self.load(BASE)
         self.assertEqual(cm.exception.code, "orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'")
+
+
+STEPS = ("\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
+         "## Resume\n\nRedo step 2.\n")
+
+
+class TeamDirsIgnored(unittest.TestCase):
+    """The orchestrator never reads core's team_dirs (a drive.py-only key): its roles, tasks and prompts are core's."""
+    def setUp(self):
+        self.home = hermetic.home(self)
+        self.team = os.path.realpath(os.path.join(self.home, "team"))
+        writer = ("# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
+                  "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n")
+        for rel, text in (("tasks/one-pager.md", "# One-Pager\n" + STEPS), ("roles/writer.md", writer)):
+            path = os.path.join(self.team, rel)
+            for d in (self.team, os.path.dirname(path)):
+                os.makedirs(d, exist_ok=True)
+                os.chmod(d, 0o755)
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, 0o644)
+        self.work = os.path.join(os.path.dirname(self.home), "work")
+
+    def seen(self):
+        """role_tasks, run_config and drive.plan (as run.py calls it) for pm."""
+        params = config.compose.RunParams(input="x", out=os.path.join(self.work, "out.md"), workdir=self.work,
+                                          sid="11111111-2222-3333-4444-555555555555")
+        launch, run = drive.plan(config.CORE, clients.get("claude", config.CORE), "pm", params=params,
+                                 layers=config.layers(), cwd=self.work)
+        return config.role_tasks("pm"), config.run_config("pm"), launch, run
+
+    def test_team_dirs_change_no_orchestrator_run(self):
+        before = self.seen()
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n[roles.writer]\ntier = 3\n")
+        self.assertIn("writer", config.compose.catalog(config.CORE, config.compose.team(
+            config.CORE, config.compose.team_dirs(config.CORE))))
+        after = self.seen()
+        self.assertEqual(after, before)
+        self.assertNotIn("one-pager", after[2].argv[2])
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_a_client_table_for_a_team_dir_role_stops_no_orchestrator_run(self):
+        before = self.seen()
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n[clients.claude.roles.writer]\ntier = 3\n")
+        self.assertEqual(self.seen(), before)
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n[clients.claude.roles.nobody]\ntier = 3\n")
+        with self.assertRaisesRegex(config.compose.ConfigError, "unknown role 'nobody' in selected client"):
+            config.run_config("pm")
 
 
 class RealConfig(unittest.TestCase):

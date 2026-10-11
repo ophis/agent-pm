@@ -6,6 +6,7 @@ drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--re
          [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
          [--events FILE] [--manager NAME] [--detach] [--dry-run]
 drive.py --client skill --role ROLE [--task TASK]
+drive.py --list [--client NAME]
 --out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
 under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text,
 its client's stderr and its progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
@@ -17,6 +18,8 @@ Prints the session id on stderr. --dry-run prints {"argv" (the runner's command)
 "driver", the driver session's name; with an events file also "events") and changes nothing.
 Exits 0 when the run returns a valid outcome (or the prompt is printed, or --detach's session runs), 1 when it doesn't,
 2 on a config error, 3 when the client or its tmux session fails.
+--list prints each role, its destination type and source, then each of its tasks with its description and source (the
+selected client's config, default claude; listing()); exits 0 when listed, 2 on a config error.
 """
 import argparse
 import contextlib
@@ -43,11 +46,12 @@ from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
+import compose  # noqa: E402
 import manager  # noqa: E402
 import repo as repos  # noqa: E402
 import tui_claude  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, fill,  # noqa: E402
+from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, fill,  # noqa: E402
                      outcome_schema, render, report_command, resolve, tui_session)
 
 Status = Literal["done", "needs_input", "failed"]
@@ -61,6 +65,9 @@ NUDGE = ("Finish your task, then report its outcome with the report command your
          "If you are waiting for background work, wait for it first.")
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)   # end a detached driver (tmux kill-session: SIGHUP)
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
+# render's params for --list: no file is touched.
+LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work",
+                        sid="00000000-0000-0000-0000-000000000000")
 
 
 class InvalidOutcome(Exception):
@@ -177,28 +184,134 @@ def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None,
     return here, project
 
 
+def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
+                    temp: Sequence[str] | None = None) -> None:
+    """Raises ConfigError when a team dir, one of its compose.KINDS subdirs or a *.md file directly in one, each by its
+    real path (symlinks followed, as compose.team does), lies in a temp dir (`temp`, None: repo.temp_dirs()), overlaps
+    a dir of `writes` ([(what, path)]: dirs the agent run can write) either way, is writable by group or others or is
+    not the current user's; or when a parent dir of a team dir is writable by group or others or owned by neither the
+    user nor root (who could move the team dir away and put another there; a sticky dir lets no one else)."""
+    if not dirs:
+        return
+    temps, me = repos.temp_dirs() if temp is None else temp, os.getuid()
+    for d in map(os.path.realpath, dirs):
+        for path in team_paths(d):
+            real = os.path.realpath(path)
+            shown = path if real == path else f"{path} ({real})"
+            if t := repos.under(real, temps):
+                raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
+            check_overlap(shown, real, writes)
+            try:
+                st = os.stat(path)
+            except OSError as e:
+                raise ConfigError(f"{path}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                raise ConfigError(f"team_dirs: {shown} is writable by group or others: chmod go-w it")
+            if st.st_uid != me:
+                raise ConfigError(f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it")
+        for parent in Path(d).parents:
+            try:
+                st = os.stat(parent)
+            except OSError as e:
+                raise ConfigError(f"{parent}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not st.st_mode & stat.S_ISVTX:
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could "
+                                  "replace the team dir")
+            if st.st_uid not in (me, 0):
+                raise ConfigError(f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: "
+                                  "they could replace the team dir")
+
+
+def team_paths(d: str) -> list[str]:
+    """Team dir `d`, each of its compose.KINDS subdirs and the *.md files directly in one; ConfigError when a subdir
+    can't be listed."""
+    paths = [d]
+    for kind in compose.KINDS:
+        if os.path.isdir(sub := os.path.join(d, kind)):
+            try:
+                names = sorted(os.listdir(sub))
+            except OSError as e:
+                raise ConfigError(f"{sub}: {e.strerror}") from None
+            paths += [sub, *(os.path.join(sub, n) for n in names if n.endswith(".md"))]
+    return paths
+
+
+def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> None:
+    """Raises ConfigError when realpath `real` (`shown` in the message) and a dir of `writes` hold one another."""
+    for what, p in writes:
+        p = os.path.realpath(p)
+        if repos.under(real, [p]) or repos.under(p, [real]):
+            raise ConfigError(f"team_dirs: {shown} overlaps {what} {p}: the agent run can write there")
+
+
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
-         repo: str | None = None, layers: Sequence[Mapping] = (), cwd: str | None = None) -> tuple[Launch, RunConfig]:
-    """The Launch for one agent run, with its config; raises ConfigError. `layers` (config.toml's layout) apply after
-    the client's config; `cwd` is the cwd when the run key is unset (place())."""
+         repo: str | None = None, layers: Sequence[Mapping] = (), cwd: str | None = None, team: Team | None = None,
+         temp: Sequence[str] | None = None) -> tuple[Launch, RunConfig]:
+    """The Launch for one agent run, with its config; raises ConfigError and writes nothing. `layers` (config.toml's
+    layout) apply after the client's config; `cwd` is the cwd when the run key is unset (place()); `team` finds the
+    role's files, its dirs checked (check_team_dirs, `temp`). None: core's team/ alone (the orchestrator's runs), and
+    only the overlap of compose.team_dirs (when valid; team_paths, by real path) with the workdir, the cwd, the write
+    dirs, the client's added dirs (Access.dirs) and Launch.writable_roots refused. A custom role's <tasks> is its team
+    dir's tasks/ (Team.tasks_dir): an added dir, the only one exempt from that overlap check."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
-    run = resolve(root, client, role, task, overlays=layers, trusted=True)
+    guarded: tuple[str, ...] = ()
+    if team is None:
+        team = compose.team(root)
+        try:
+            guarded = compose.team_dirs(root)
+        except (ConfigError, OSError, ValueError):
+            pass
+    run = resolve(root, client, role, task, overlays=layers, trusted=True, team=team)
     here, project = place(root, run, params, cwd, client=client)
-    prompt = render(root, run, params, client=client)
-    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=client.methods_path(root),
-                 tasks=client.tasks_path(root), cwd=here, project=project, interpreter=client.report_interpreter())
+    workdir, methods = os.path.abspath(params.workdir), client.methods_path(root)
+    own = team.tasks_dir(role)
+    tasks = own or client.tasks_path(root)
+    prompt = render(root, run, params, client=client, team=team, tasks=tasks)
+    acc = access(run, params, repo=repo, scripts=client.scripts_path(root), methods=methods, tasks=tasks, cwd=here,
+                 project=project, interpreter=client.report_interpreter())
     launch = client.launch(prompt, run, params=params, access=acc)
+    if team.dirs or guarded:
+        writes = [("the workdir", workdir), ("the cwd", here)]
+        writes += [(f"write dir {e}", p) for e in run.write if (p := bind(fill(e, {"methods": methods}, "write"), repo))]
+        name = type(client).__name__
+        added = [(f"a dir {name} adds", p) for p in acc.dirs] + [(f"a dir {name} can write", p)
+                                                                  for p in launch.writable_roots]
+        # All but the role's own tasks dir, which the client adds for the run to read.
+        writes += [(what, p) for what, p in added if not own or os.path.realpath(p) != os.path.realpath(own)]
+        check_team_dirs(team.dirs, writes=writes, temp=temp)
+        for path in (p for d in guarded for p in team_paths(d)):
+            real = os.path.realpath(path)
+            check_overlap(path if real == path else f"{path} ({real})", real, writes)
     return replace(launch, project=project, status_line=status_line(root), per_column=workers_per_column(root),
                    retile=grid_retile(root)), run
 
 
-def inline(root: str, client: Client, role: str, task: str | None = None) -> str:
-    """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError."""
+def inline(root: str, client: Client, role: str, task: str | None = None, *, team: Team | None = None,
+           temp: Sequence[str] | None = None) -> str:
+    """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError. `team` as
+    plan's, its dirs checked for temp dirs, modes and owners only (`temp` as plan's)."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
-    run = resolve(root, client, role, task)
-    return client.inline(render(root, run, client=client))
+    team = team if team is not None else compose.team(root)
+    check_team_dirs(team.dirs, writes=[], temp=temp)
+    return client.inline(render(root, resolve(root, client, role, task, team=team), client=client, team=team))
+
+
+def listing(root: str, client: Client, team: Team, temp: Sequence[str] | None = None) -> str:
+    """--list's text for `client`: each role of compose.catalog, its destination type for `client` and its source
+    (Team.source), then each task of its index with its description and source. Every team dir file is checked
+    (Team.check_all) and every role's prompt rendered for `client`, as its run (or printed prompt) would be; ConfigError
+    on the first defect. Writes nothing."""
+    check_team_dirs(team.dirs, writes=[], temp=temp)
+    team.check_all(repos.read_config(os.path.join(root, CONFIG)))
+    params, lines = LIST_PARAMS if client.runs else None, []
+    for role, tasks in compose.catalog(root, team).items():
+        run = resolve(root, client, role, team=team)
+        render(root, run, params, client=client, team=team)
+        lines.append(f"{role}  {run.output['type']}  {team.source(team.lookup('roles', role))}\n")
+        lines += [f"  {t}: {what}  [{team.source(team.lookup('tasks', t))}]\n" for t, what in tasks.items()]
+    return "".join(lines)
 
 
 # The agent run controls its workdir, where the driver writes too: writes replace a symlink planted at the path, never
@@ -860,9 +973,13 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client,
     return Result(rc, outcome, diagnostic)
 
 
-def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subprocess.run) -> int:
+def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subprocess.run,
+         temp: Sequence[str] | None = None) -> int:
+    """`temp`: the temp dirs no team dir may lie in (None: repo.temp_dirs())."""
     ap = argparse.ArgumentParser(prog="drive.py")
-    ap.add_argument("--role", required=True)
+    ap.add_argument("--list", action="store_true",
+                    help="list each role, its destination type and tasks, with their sources")
+    ap.add_argument("--role")
     ap.add_argument("--task")
     ap.add_argument("--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's")
     ap.add_argument("--out")
@@ -892,13 +1009,17 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--driver", help=argparse.SUPPRESS)   # --detach's: this is the driver in tmux session DRIVER
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
+    if a.list and (extra := _list_extra(argv)):
+        ap.error(f"--list takes only --client, not {extra}")
+    if not a.list and a.role is None:
+        ap.error("the following arguments are required: --role")
     a.running_client = False   # the selected client's capability, retained for detached-driver cleanup
     a.selected_client = None
     a.client_error = None
     if a.input == "-" and a.driver is None:   # the driver's is the caller's stdin text, even a "-"
         a.input = sys.stdin.read()
     if a.driver is None:
-        return _main(a, root, popen, proc)[0]
+        return _main(a, root, popen, proc, temp)[0]
     status = None
     try:
         signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -912,7 +1033,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
             a.client_error = e
         try:
             signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)   # blocked by detach until now
-            code, status = _main(a, root, popen, proc)
+            code, status = _main(a, root, popen, proc, temp)
             return code
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -926,12 +1047,26 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
                 print(f"drive.py: {e}", file=sys.stderr)
 
 
+def _list_extra(argv: Sequence[str]) -> str | None:
+    """The first arg in a --list argv that is neither --list nor --client with its value (each as argparse took it:
+    abbreviated, --client=NAME too); None when none."""
+    args = iter(argv)
+    for arg in args:
+        name = arg.split("=", 1)[0]
+        if len(name) >= 3 and "--client".startswith(name):
+            if "=" not in arg:
+                next(args, None)
+        elif not (len(arg) >= 3 and "--list".startswith(arg)):
+            return arg
+    return None
+
+
 def _stop(signum, frame):
     signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)   # one exit: the outcome line is written once
     raise SystemExit(128 + signum)
 
 
-def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | None]:
+def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int, Status | None]:
     """main's exit code, and the status of the outcome when a run returned a valid one."""
     params = run = None
     layout = (Layout(a.split, a.split_from, a.opener) if a.split or a.split_from is not None or a.opener is not None
@@ -944,11 +1079,15 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         if a.client_error is not None:
             raise a.client_error
         client = a.selected_client if a.selected_client is not None else clients.get(name, root)
+        team = compose.team(root, compose.team_dirs(root))
+        if a.list:
+            print(listing(root, client, team, temp), end="")
+            return 0, None
         if client.runs:
             if a.input is None or a.out is None or a.workdir is None:
                 raise ConfigError(f"client {name!r} needs --input, --out and --workdir")
             params = RunParams(input=a.input, out=a.out, workdir=a.workdir, sid=a.sid, resume=a.resume, prefix=a.prefix)
-            launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo)
+            launch, run = plan(root, client, a.role, a.task, params=params, repo=a.repo, team=team, temp=temp)
             cmd = command(launch, a.runner, client)
             check_layout(a.runner, layout)
             driver = driver_session(run.role, params.sid, params.prefix)
@@ -970,7 +1109,7 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
                 raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no layout")
             if a.detach or a.driver is not None:
                 raise ConfigError(f"{type(client).__name__} prints a prompt; it takes no --detach")
-            prompt = inline(root, client, a.role, a.task)
+            prompt = inline(root, client, a.role, a.task, team=team, temp=temp)
     except ConfigError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2, None

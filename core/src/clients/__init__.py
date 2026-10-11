@@ -55,7 +55,7 @@ def definition(name: str, root: str, *, module: ModuleType | None = None) -> tup
     return cls, table
 
 
-def catalog(name: str, root: str) -> dict[str, dict[str, str]]:
-    """The roles and tasks available to a selected, configured client."""
+def catalog(name: str, root: str, team=None) -> dict[str, dict[str, str]]:
+    """The roles and tasks available to a selected, configured client; `team` as compose.catalog's."""
     get(name, root)
-    return role_catalog(root)
+    return role_catalog(root, team)
