@@ -252,6 +252,22 @@ class PublicResolution(Fake):
         with self.assertRaises(compose.ConfigError):
             compose.resolve(self.root, clients.Client({}), "writer", overlays=({1: "bad", "typo": "bad"},), trusted=True)
 
+    def test_overlay_errors_name_the_label_source_and_table(self):
+        bad = (({"foo": 1}, "unknown key 'foo' in [{t}]"),
+               ({"roles": {"stranger": {"tier": 3}}}, "unknown role 'stranger' in [{t}.roles]"),
+               ({"roles": {"writer": {"foo": 1}}}, "unknown key 'foo' in [{t}.roles.writer]"),
+               ({"roles": {"writer": {"output": {"type": "local", "typo": 1}}}},
+                "unknown key 'typo' in [{t}.roles.writer.output]"),
+               ({"output": {"type": "local", "typo": 1}}, "unknown key 'typo' in [{t}.output]"),
+               ({"roles": {"writer": {"tasks": {}}}}, "[{t}.roles.writer] has 'tasks': task-level config and "
+                "default_task are gone; set run keys in [{t}.roles.writer] (a run without a task picks one)"))
+        labels = (({}, "run overlay", "overlay"), ({"label": ("my.toml", "core")}, "my.toml", "core"))
+        for (overlay, message), (kwargs, source, table) in ((b, l) for b in bad for l in labels):
+            with self.subTest(overlay=overlay, table=table):
+                with self.assertRaises(compose.ConfigError) as cm:
+                    compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True, **kwargs)
+                self.assertEqual(str(cm.exception), f"{source}: {message.format(t=table)}")
+
     def test_catalog_lists_configured_roles_and_markdown_tasks_in_order(self):
         self.config(CONFIG + '\n[clients.skill]\nimplementation = "SkillClient"\n')
         expected = {"writer": {"short-note": "a note; most times; light.",
