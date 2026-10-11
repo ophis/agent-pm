@@ -423,7 +423,8 @@ class Codex(Base):
                     launch, resolved = drive.plan(
                         CORE, clients.get("codex", CORE), role, task, params=self.params(), cwd=self.work)
                     argv = launch.argv
-                    self.assertEqual(argv[:5], ["codex", "exec", "--json", "--sandbox", "workspace-write"])
+                    self.assertEqual(argv[:3], ["codex", "exec", "--json"])
+                    self.assertNotIn("--sandbox", argv)
                     self.assertIn("--skip-git-repo-check", argv)
                     self.assertIn("--approve-for-me", argv)
                     self.assertIn("sandbox_workspace_write.network_access=false", argv)

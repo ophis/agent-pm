@@ -85,7 +85,7 @@ class CodexClient(Client):
         if access.commands:
             print("drive.py: configured commands are subject to Codex approval; they are not preapproved",
                   file=sys.stderr)
-        argv = ["codex", "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check",
+        argv = ["codex", "exec", "--json", "--skip-git-repo-check",
                 "--approve-for-me", "-m", model, "-c", f"model_reasoning_effort={effort}",
                 "-c", f"sandbox_workspace_write.network_access={str(self.config['shell_network']).lower()}"]
         if not access.project:
