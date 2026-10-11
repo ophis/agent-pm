@@ -62,9 +62,9 @@ FILES = {
     "team/tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
     "team/tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
     "team/templates/note.md": "# Note: [Title]\n",
-    "output/output.md": "# Output\n\nWrite `Output:`.\n",
-    "output/destinations/local.md": "## Destination\n\nKeep it local.\n",
-    "output/destinations/github.md": "## Destination\n\nPush to `<out-repo>` on `<out-branch>`.\n",
+    "team/output/output.md": "# Output\n\nWrite `Output:`.\n",
+    "team/output/destinations/local.md": "## Destination\n\nKeep it local.\n",
+    "team/output/destinations/github.md": "## Destination\n\nPush to `<out-repo>` on `<out-branch>`.\n",
 }
 
 CONFIG = """
@@ -903,7 +903,7 @@ class Anchors(Fake):
             self.assertNotIn("<a id", self.compose(task=task)[0], task)
 
     def test_a_repeated_heading_gets_its_top_level_titles_id(self):
-        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        self.write({"team/output/output.md": "# Output\n\n## Style\n\nShort.\n"})
         prompt, _ = self.compose()
         self.assertEqual(prompt.count("<a id"), 1)
         self.assertIn('\n## Style\n\n- `draft`: not a task.\n', prompt)
@@ -913,8 +913,8 @@ class Anchors(Fake):
         self.assertIn("output-style", anchors)
 
     def test_a_third_repeat_gets_a_suffix_on_the_qualified_id(self):
-        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n",
-                    "output/destinations/local.md": "## Style\n\nKeep it local.\n"})
+        self.write({"team/output/output.md": "# Output\n\n## Style\n\nShort.\n",
+                    "team/output/destinations/local.md": "## Style\n\nKeep it local.\n"})
         prompt, _ = self.compose()
         self.assertIn('<a id="output-style"></a>\n## Style\n\nShort.\n', prompt)
         self.assertIn('<a id="output-style-2"></a>\n## Style\n\nKeep it local.\n', prompt)
@@ -922,7 +922,7 @@ class Anchors(Fake):
         self.assertEqual(len(anchors), len(set(anchors)))
 
     def test_a_link_to_a_repeated_heading_resolves_by_its_qualified_id(self):
-        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        self.write({"team/output/output.md": "# Output\n\n## Style\n\nShort.\n"})
         own = own_text(self.compose()[0])
         for text, want in (("[Output › Style](#output-style)", True), ("[Writer › Style](#style)", True),
                            ("[Output › Style](#style)", False), ("[Writer › Style](#output-style)", False)):
@@ -948,7 +948,7 @@ class Anchors(Fake):
         self.assertNotIn("<a id", prompt)
 
     def test_without_an_input_section_the_whole_prompt_is_walked(self):
-        self.write({"output/output.md": "# Output\n\n## Style\n\nShort.\n"})
+        self.write({"team/output/output.md": "# Output\n\n## Style\n\nShort.\n"})
         run = compose.load_run(self.root, "writer")
         prompt = compose.render(self.root, run, None, client=Plain())
         self.assertNotIn("# Input", prompt)
@@ -962,7 +962,7 @@ class Anchors(Fake):
 
 
 class Parameters(Fake):
-    GITHUB = FILES["output/destinations/github.md"]
+    GITHUB = FILES["team/output/destinations/github.md"]
 
     def test_the_rule_opens_the_section_and_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
         prompt = self.compose()[0]
@@ -1028,13 +1028,13 @@ class Parameters(Fake):
         self.assertEqual(list(names.items())[3:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")])
 
     def test_an_unset_host_is_github_com(self):
-        self.write({"output/destinations/github.md": self.GITHUB + "Clone `<out-host>/<out-repo>`.\n"})
+        self.write({"team/output/destinations/github.md": self.GITHUB + "Clone `<out-host>/<out-repo>`.\n"})
         self.assertEqual(parameters(self.compose("editor")[0])["<out-host>"], "`github.com`")
         layer = {"roles": {"editor": {"output": {"type": "github", "repo": "o/d", "branch": "b", "host": "ghe.x"}}}}
         self.assertEqual(parameters(self.compose("editor", layers=[layer])[0])["<out-host>"], "`ghe.x`")
 
     def test_another_used_output_key_unset(self):
-        self.write({"output/destinations/github.md": self.GITHUB + "Into `<out-dir>`.\n"})
+        self.write({"team/output/destinations/github.md": self.GITHUB + "Into `<out-dir>`.\n"})
         self.fails("output.dir is not set", "editor")
 
     def test_a_value_holding_backticks_is_inline_code(self):
@@ -1045,7 +1045,7 @@ class Parameters(Fake):
 
 
 class Deliverable(Fake):
-    DEST = {"output/destinations/local.md": "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"}
+    DEST = {"team/output/destinations/local.md": "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"}
 
     def test_it_is_out_under_the_real_workdir_else_tmp_deliverable(self):
         wd, elsewhere = (os.path.join(os.path.realpath(self.root), d) for d in ("wd", "elsewhere"))
@@ -1080,7 +1080,7 @@ class Deliverable(Fake):
         self.assertTrue(prompt.rstrip().endswith("Keep it local."))
 
     def test_an_unfilled_placeholder_in_another_destination_line_still_fails(self):
-        self.write({"output/destinations/local.md": "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"})
+        self.write({"team/output/destinations/local.md": "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"})
         run = compose.load_run(self.root, "writer")
         with self.assertRaises(compose.ConfigError) as cm:
             compose.render(self.root, run, client=Plain())
@@ -1210,10 +1210,10 @@ TICKET_EXAMPLES = {"team/principles.md": ["(e.g. `TASK-142`)"],
 
 
 def tickets(root):
-    """{core path: its ticket ids beyond TICKET_EXAMPLES} of root's shipped text: team/, output/, skills/ (tests aside)
+    """{core path: its ticket ids beyond TICKET_EXAMPLES} of root's shipped text: team/, skills/ (tests aside)
     and config.toml."""
     paths = [os.path.join(root, compose.CONFIG)]
-    for d in (compose.TEXT, compose.OUTPUT, "skills"):
+    for d in (compose.TEXT, "skills"):
         for top, dirs, files in os.walk(os.path.join(root, d)):
             dirs[:] = [x for x in dirs if x != "__pycache__"]
             paths += [os.path.join(top, f) for f in files if not f.endswith("_test.py")]
@@ -1353,7 +1353,7 @@ class Tickets(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             for rel, text in {"team/roles/x.md": "when asked, e.g. a wording tweak like TASK-300; light.",
                               "team/principles.md": "the id (e.g. `TASK-142`); twice (e.g. `TASK-142`)",
-                              "output/output.md": "the id (e.g. `TASK-142`)",
+                              "team/output/output.md": "the id (e.g. `TASK-142`)",
                               "skills/tmux/SKILL.md": "(`pm-TASK-9-…` before `pm-TASK-10-…`)",
                               "skills/tmux/scripts/x_test.py": "TASK-1", "skills/tmux/scripts/x.py": "# TASK-2",
                               "config.toml": "# like TASK-7"}.items():
@@ -1361,7 +1361,7 @@ class Tickets(unittest.TestCase):
                 with open(os.path.join(root, rel), "w") as f:
                     f.write(text)
             self.assertEqual(tickets(root), {"team/roles/x.md": ["TASK-300"], "team/principles.md": ["TASK-142"],
-                                             "output/output.md": ["TASK-142"], "skills/tmux/scripts/x.py": ["TASK-2"],
+                                             "team/output/output.md": ["TASK-142"], "skills/tmux/scripts/x.py": ["TASK-2"],
                                              "config.toml": ["TASK-7"]})
 
 
@@ -1379,7 +1379,7 @@ class RealCore(unittest.TestCase):
         with tempfile.TemporaryDirectory() as parent:
             root = os.path.join(parent, "installed", "core")
             os.makedirs(root)
-            for name in ("src", "team", "output"):
+            for name in ("src", "team"):
                 shutil.copytree(os.path.join(CORE, name), os.path.join(root, name))
             shutil.copy2(os.path.join(CORE, compose.CONFIG), os.path.join(root, compose.CONFIG))
 
@@ -1468,7 +1468,7 @@ class RealCore(unittest.TestCase):
 
     def test_no_language_no_language_rule(self):
         with tempfile.TemporaryDirectory() as root:
-            for d in ("team", "output", "src"):
+            for d in ("team", "src"):
                 os.symlink(os.path.join(CORE, d), os.path.join(root, d))
             with open(os.path.join(CORE, compose.CONFIG)) as f:
                 cfg = f.read()
@@ -1485,8 +1485,7 @@ class RealCore(unittest.TestCase):
 
     def test_a_local_users_trusted_dirs_workers_per_column_and_grid_retile_are_accepted(self):
         with tempfile.TemporaryDirectory() as root:
-            for d in ("team", "output"):
-                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+            os.symlink(os.path.join(CORE, "team"), os.path.join(root, "team"))
             shutil.copy(os.path.join(CORE, compose.CONFIG), root)
             with open(os.path.join(hermetic.home(self), "core.local.toml"), "w") as f:
                 f.write('users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\nworkers_per_column = 2\n'
@@ -1681,10 +1680,9 @@ class RealCore(unittest.TestCase):
 
     def test_text_holds_only_the_placeholders_compose_fills_and_no_client_the_report_one(self):
         inline = {"role", "role_anchor", "task", "language", "deliverable"}
-        for d in ("team", "output"):
-            for path in glob.glob(os.path.join(CORE, d, "**", "*.md"), recursive=True):
-                with open(path) as f:
-                    self.assertLessEqual(set(re.findall(r"\{\{(\w+)", f.read())), inline, path)
+        for path in glob.glob(os.path.join(CORE, "team", "**", "*.md"), recursive=True):
+            with open(path) as f:
+                self.assertLessEqual(set(re.findall(r"\{\{(\w+)", f.read())), inline, path)
         for path in glob.glob(os.path.join(CORE, "src", "clients", "*.py")):
             with open(path) as f:
                 self.assertNotIn("{{report}}", f.read(), path)

@@ -25,7 +25,7 @@ import tmux_host
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = "team"
-OUTPUT = "output"
+OUTPUT = os.path.join(TEXT, "output")
 CONFIG = "config.toml"
 SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 

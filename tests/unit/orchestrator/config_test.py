@@ -244,7 +244,7 @@ class Runnable(ConfigFile, unittest.TestCase):
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
-        with open(os.path.join(config.CORE, "output", "destinations", "github.md")) as f:
+        with open(os.path.join(config.CORE, "team", "output", "destinations", "github.md")) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(config.CORE, os.path.join(config.ROOT, "core"))
 
@@ -275,8 +275,7 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.dir = os.path.join(self.root, "orchestrator")
         os.makedirs(self.dir)
         os.makedirs(os.path.join(self.root, "core", "config"))
-        for rel in ("team", "output"):
-            os.symlink(os.path.join(config.CORE, rel), os.path.join(self.root, "core", rel))
+        os.symlink(os.path.join(config.CORE, "team"), os.path.join(self.root, "core", "team"))
         self.core(CORE_TOML)
 
     def core(self, text):

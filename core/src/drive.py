@@ -369,7 +369,7 @@ def printable(text: str) -> str:
 
 def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
     """The outcome an agent run returned, once it holds; raises InvalidOutcome. Checks the schema
-    (output/outcome.schema.json) and what it can't. Its text stays untrusted."""
+    (team/output/outcome.schema.json) and what it can't. Its text stays untrusted."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
@@ -393,7 +393,7 @@ def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
 
 
 def _conform(value, schema: Mapping, where: str) -> None:
-    """`value` against the subset of JSON Schema output/outcome.schema.json uses."""
+    """`value` against the subset of JSON Schema team/output/outcome.schema.json uses."""
     kind = schema.get("type")
     if kind == "object":
         if not isinstance(value, dict):

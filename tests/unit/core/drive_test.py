@@ -1287,9 +1287,8 @@ class Cwd(Base):
         """A core root: the committed config.toml, and the local file listing `trusted` as trusted_dirs."""
         root = os.path.join(self.tmp.name, "core")
         os.makedirs(root, exist_ok=True)
-        for d in ("team", "output"):
-            if not os.path.lexists(os.path.join(root, d)):
-                os.symlink(os.path.join(CORE, d), os.path.join(root, d))
+        if not os.path.lexists(os.path.join(root, "team")):
+            os.symlink(os.path.join(CORE, "team"), os.path.join(root, "team"))
         shutil.copy(os.path.join(CORE, compose.CONFIG), root)
         with open(self.local, "w") as f:
             f.write(f"trusted_dirs = {json.dumps(list(trusted))}\n")
