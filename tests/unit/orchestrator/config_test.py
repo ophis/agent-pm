@@ -468,7 +468,10 @@ class TeamDirsIgnored(unittest.TestCase):
     def setUp(self):
         self.home = hermetic.home(self)
         self.team = os.path.realpath(os.path.join(self.home, "team"))
-        for rel, text in (("roles/pm.md", PM_EXT), ("tasks/one-pager.md", "# One-Pager\n" + STEPS)):
+        writer = ("# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
+                  "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n")
+        for rel, text in (("roles/pm.md", PM_EXT), ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
+                          ("roles/writer.md", writer)):
             path = os.path.join(self.team, rel)
             for d in (self.team, os.path.dirname(path)):
                 os.makedirs(d, exist_ok=True)
@@ -498,6 +501,16 @@ class TeamDirsIgnored(unittest.TestCase):
         self.assertIsNone(after[2].view)
         self.assertNotIn("one-pager", after[2].argv[2])
         self.assertFalse(os.path.exists(self.work))
+
+    def test_a_client_table_for_a_team_dir_role_stops_no_orchestrator_run(self):
+        before = self.seen()
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n[clients.claude.roles.writer]\ntier = 3\n")
+        self.assertEqual(self.seen(), before)
+        with open(os.path.join(self.home, "core.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n[clients.claude.roles.nobody]\ntier = 3\n")
+        with self.assertRaisesRegex(config.compose.ConfigError, "unknown role 'nobody' in selected client"):
+            config.run_config("pm")
 
 
 class RealConfig(unittest.TestCase):

@@ -197,15 +197,7 @@ def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
         return
     temps, me = repos.temp_dirs() if temp is None else temp, os.getuid()
     for d in map(os.path.realpath, dirs):
-        paths = [d]
-        for kind in compose.KINDS:
-            if os.path.isdir(sub := os.path.join(d, kind)):
-                try:
-                    names = sorted(os.listdir(sub))
-                except OSError as e:
-                    raise ConfigError(f"{sub}: {e.strerror}") from None
-                paths += [sub, *(os.path.join(sub, n) for n in names if n.endswith(".md"))]
-        for path in paths:
+        for path in team_paths(d):
             real = os.path.realpath(path)
             shown = path if real == path else f"{path} ({real})"
             if t := repos.under(real, temps):
@@ -219,6 +211,20 @@ def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
                 raise ConfigError(f"team_dirs: {shown} is writable by group or others: chmod go-w it")
             if st.st_uid != me:
                 raise ConfigError(f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it")
+
+
+def team_paths(d: str) -> list[str]:
+    """Team dir `d`, each of its compose.KINDS subdirs and the *.md files directly in one; ConfigError when a subdir
+    can't be listed."""
+    paths = [d]
+    for kind in compose.KINDS:
+        if os.path.isdir(sub := os.path.join(d, kind)):
+            try:
+                names = sorted(os.listdir(sub))
+            except OSError as e:
+                raise ConfigError(f"{sub}: {e.strerror}") from None
+            paths += [sub, *(os.path.join(sub, n) for n in names if n.endswith(".md"))]
+    return paths
 
 
 def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> None:
@@ -235,9 +241,9 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
     """The Launch for one agent run, with its config; raises ConfigError and writes nothing. `layers` (config.toml's
     layout) apply after the client's config; `cwd` is the cwd when the run key is unset (place()); `team` finds the
     role's files, its dirs checked (check_team_dirs, `temp`). None: core's team/ alone (the orchestrator's runs), and
-    only the overlap of compose.team_dirs (when valid) with the workdir, the cwd and the write dirs refused. A role
-    with a team dir charter or task reads its tasks from the task view <workdir>/tasks: Launch.view, which a caller
-    starting the run builds first (write_view)."""
+    only the overlap of compose.team_dirs (when valid; team_paths, by real path) with the workdir, the cwd, the write
+    dirs and Launch.writable_roots refused. A role with a team dir charter or task reads its tasks from the task view
+    <workdir>/tasks: Launch.view, which a caller starting the run builds first (write_view)."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
     guarded: tuple[str, ...] = ()
@@ -261,8 +267,9 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
         writes += [(f"write dir {e}", p) for e in run.write if (p := bind(fill(e, {"methods": methods}, "write"), repo))]
         writes += [(f"a dir {type(client).__name__} can write", p) for p in launch.writable_roots]
         check_team_dirs(team.dirs, writes=writes, temp=temp)
-        for d in guarded:
-            check_overlap(d, d, writes)
+        for path in (p for d in guarded for p in team_paths(d)):
+            real = os.path.realpath(path)
+            check_overlap(path if real == path else f"{path} ({real})", real, writes)
     return replace(launch, project=project, status_line=status_line(root), per_column=workers_per_column(root),
                    retile=grid_retile(root), view=View(tasks, files) if files else None), run
 

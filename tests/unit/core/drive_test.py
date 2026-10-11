@@ -688,6 +688,7 @@ class Codex(Base):
                     self.assertIn('approvals_reviewer="auto_review"', argv)
                     self.assertIn('approval_policy="on-request"', argv)
                     self.assertIn("sandbox_workspace_write.network_access=false", argv)
+                    self.assertIn("sandbox_workspace_write.writable_roots=[]", argv)
                     self.assertEqual(argv[argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
                     self.assertIn(f"model_reasoning_effort={config['efforts'][resolved.effort]}", argv)
                     self.assertIn("project_doc_max_bytes=0", argv)
@@ -1561,6 +1562,15 @@ class TeamRuns(Base):
             drive.plan(CORE, clients.get("fake", CORE), "pm", None, params=self.params(workdir=inside), cwd=self.work)
         self.assertEqual(str(cm.exception), f"team_dirs: {self.team} overlaps the workdir {inside}: the agent run can "
                                             "write there")
+        tasks, moved = self.path("tasks"), os.path.join(os.path.realpath(self.work), "team-tasks")
+        os.rename(tasks, moved)
+        os.symlink(moved, tasks)
+        with self.assertRaises(compose.ConfigError) as cm:
+            drive.plan(CORE, clients.get("fake", CORE), "pm", None, params=self.params(), cwd=self.work)
+        self.assertEqual(str(cm.exception), f"team_dirs: {tasks} ({moved}) overlaps the workdir "
+                                            f"{os.path.realpath(self.work)}: the agent run can write there")
+        os.unlink(tasks)
+        os.rename(moved, tasks)
         with open(os.path.join(self.home, "core.local.toml"), "w") as f:
             f.write('team_dirs = "x"\n')
         self.assertEqual(drive.plan(CORE, clients.get("fake", CORE), "pm", None, params=self.params(), cwd=self.work),

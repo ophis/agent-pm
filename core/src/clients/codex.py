@@ -149,7 +149,10 @@ def _flags(snapshot: dict, *, interactive: bool) -> list[str]:
     flags = ["-s", "workspace-write", "-c", 'approval_policy="on-request"',
              "-c", 'approvals_reviewer="auto_review"', "-m", snapshot["model"],
              "-c", f"model_reasoning_effort={snapshot['effort']}",
-             "-c", f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}"]
+             "-c", f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
+             # No writable root from Codex's own config: Launch.writable_roots is every root the run gets (drive.plan's
+             # team dir guard relies on it), and the agent run can write $CODEX_HOME/config.toml.
+             "-c", "sandbox_workspace_write.writable_roots=[]"]
     if not snapshot["project"]:
         flags.extend(("-c", "project_doc_max_bytes=0"))
     for directory in snapshot["dirs"]:

@@ -7,6 +7,7 @@ text) and {{language}} (unset → each line holding it is dropped); a destinatio
 path in the workdir> (no params → each line holding it is dropped). Every other run value is a PARAMETERS name, its
 value given once in # Parameters.
 """
+import contextlib
 import json
 import os
 import re
@@ -304,7 +305,7 @@ def team_dirs(root: str) -> tuple[str, ...]:
     path = os.path.join(root, CONFIG)
     try:
         own, value = "team_dirs" in repo.read_config(path, os.devnull), repo.read_config(path).get("team_dirs")
-    except (OSError, tomllib.TOMLDecodeError) as e:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
         raise ConfigError(f"team_dirs: set it in {repo.LOCAL}, not {CONFIG}")
@@ -451,8 +452,9 @@ def resolve(root: str, client: ConfigClient, role: str, task: str | None = None,
     client_roles = client.config.get("roles", {})
     if not isinstance(client_roles, Mapping):
         raise ConfigError("selected client roles must be a table")
+    named = roles | _team_dir_roles(root)
     for name, table in client_roles.items():
-        if name not in roles:
+        if name not in named:
             raise ConfigError(f"unknown role {name!r} in selected client")
         if not isinstance(table, Mapping):
             raise ConfigError(f"selected client roles.{name} must be a table")
@@ -490,6 +492,21 @@ def _roles(root: str) -> Mapping:
 def _known(root: str, team: Team) -> set[str]:
     """The role names a run, the selected client or an overlay may name: `[roles.<role>]` tables and charters."""
     return set(_roles(root)) | {name for kind, name in team.files if kind == "roles"}
+
+
+def _team_dir_roles(root: str) -> set[str]:
+    """The role names of the team dirs' roles/*.md, by file name only (no file read): a core-only resolve (the
+    orchestrator's) still takes the selected client's table for one, as drive.py's does. Empty when team_dirs is unset
+    or invalid."""
+    try:
+        dirs = team_dirs(root)
+    except ConfigError:
+        return set()
+    names = set()
+    for d in dirs:
+        with contextlib.suppress(OSError):
+            names |= {n.removesuffix(".md") for n in os.listdir(os.path.join(d, "roles")) if n.endswith(".md")}
+    return names
 
 
 def _check_overlay(overlay: Mapping, roles: Mapping, where: str) -> None:
