@@ -346,16 +346,17 @@ def _close(proc) -> None:
 
 
 def _trusted(result, cwd: str, commands: list[str]) -> str:
-    """hooks.state={"<key>"={trusted_hash="<hash>"},…} for the HOOKS rows' entries of hooks/list's result for cwd.
-    Fails unless that entry has no errors and hooks (none: hooks are off, and turning them on would run the user's
-    other hooks too); each row has exactly one sessionFlags entry, enabled, a command handler running its command,
-    with a string key and a sha256 hash, and there is no other sessionFlags entry; and no other entry is enabled,
-    unmanaged and untrusted or modified (its review dialog would invite a write to the user's Codex config)."""
+    """hooks.state={"<key>"={trusted_hash="<hash>"},…} for the HOOKS rows' entries of hooks/list's result, asked for
+    cwd alone: its one entry, whatever path that gives (Codex may normalize it). Fails unless that entry has no errors
+    and hooks (none: hooks are off, and turning them on would run the user's other hooks too); each row has exactly one
+    sessionFlags entry, enabled, a command handler running its command, with a string key and a sha256 hash, and there
+    is no other sessionFlags entry; and no other entry is enabled, unmanaged and untrusted or modified (its review
+    dialog would invite a write to the user's Codex config)."""
     data = result.get("data") if isinstance(result, dict) else None
-    found = [d for d in data if isinstance(d, dict) and d.get("cwd") == cwd] if isinstance(data, list) else []
-    if len(found) != 1:
-        raise ConfigError(f"codex hooks/list: no single answer for {cwd}")
-    entry = found[0]
+    data = data if isinstance(data, list) else []
+    if len(data) != 1:
+        raise ConfigError(f"codex hooks/list: want one answer for {cwd}, got {len(data)}")
+    entry = data[0] if isinstance(data[0], dict) else {}
     if entry.get("errors"):
         raise ConfigError(f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}")
     hooks = entry.get("hooks")

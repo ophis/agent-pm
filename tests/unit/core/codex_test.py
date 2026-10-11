@@ -257,7 +257,8 @@ UNBOUND = f"Codex worker {SID} has no native session: it never took a prompt; st
 # The worker's app-server: the repo's fake codex (fake_codex.py, its scenario in $FAKE_CODEX_SCENARIO), its catalog
 # broken as $FAKE_APP says: die (the first n runs exit 1 at once), drop (eventNames), change (eventName → fields of
 # our entry), extra (entries), error (every request after initialize answered with it), deaf (a child in its process
-# group; hooks/list never answered, stdin's end ignored). Runs and pids are appended to files beside $FAKE_APP.
+# group; hooks/list never answered, stdin's end ignored), cwds (hooks/list's data: one entry per cwd given, whatever
+# was asked). Runs and pids are appended to files beside $FAKE_APP.
 APP_SERVER = """import json, os, subprocess, sys, time
 fakes = sys.argv.pop(1)
 app_file = os.environ["FAKE_APP"]
@@ -286,6 +287,15 @@ if app.get("deaf") or "error" in app:
     sys.exit(0)
 sys.path.insert(0, fakes)
 import fake_codex
+if "cwds" in app:
+    config = fake_codex.configure(fake_codex.parser("codex app-server").parse_args(sys.argv[2:]).overrides)
+    hooks = fake_codex.catalog(config, fake_codex.codex_home(), None)
+    for line in sys.stdin:
+        msg = json.loads(line)
+        if "id" in msg:
+            result = {"data": [{"cwd": c, "hooks": hooks, "warnings": [], "errors": []} for c in app["cwds"]]}
+            print(json.dumps({"id": msg["id"], "result": {} if msg["method"] == "initialize" else result}), flush=True)
+    sys.exit(0)
 catalog = fake_codex.catalog
 
 
@@ -608,6 +618,18 @@ class Worker(unittest.TestCase):
         os.unlink(self.record)
         self.scenario(errors=["bad project config"])
         self.assertEqual(self.fails(), f'codex hooks/list: errors for {self.cwd}: ["bad project config"]')
+
+    def test_the_one_answer_is_used_whatever_its_cwd_says(self):
+        """One cwd asked: one entry wanted, its cwd as Codex writes it (here the other form of /private/...)."""
+        other = self.cwd.removeprefix("/private") if self.cwd.startswith("/private/") else "/private" + self.cwd
+        self.breaks(cwds=[other])
+        hooks = self.hooks()
+        self.assertEqual(self.client.worker(self.spec()).argv[-1], self.state(hooks))
+        for cwds in ([], [self.cwd, self.cwd], [self.cwd, other]):
+            with self.subTest(cwds=cwds):
+                self.breaks(cwds=cwds)
+                os.unlink(self.record)
+                self.assertEqual(self.fails(), f"codex hooks/list: want one answer for {self.cwd}, got {len(cwds)}")
 
     def test_the_users_own_untrusted_or_modified_hook_fails_closed(self):
         key = f"{self.codex_home}/hooks.json:stop:0:0"
