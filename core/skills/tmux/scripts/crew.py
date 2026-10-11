@@ -1,5 +1,3 @@
-"""Starts and directs workers of any configured client with the worker capability (src/clients/) in tmux panes through
-the plugin's src/tmux_host.py. Stdlib only."""
 from __future__ import annotations
 
 import argparse
@@ -52,7 +50,7 @@ class NotAWorker(WorkersError):
 
 
 class Refused(WorkersError):
-    """A refusal next-event prints on stdout: background readers watch only it."""
+    pass
 
 
 def _run(proc, argv, **kw):
@@ -68,7 +66,6 @@ def _check(name: str) -> None:
 
 
 def _status_line() -> bool:
-    """Core config's status_line (repo.read_config)."""
     try:
         return repo.status_line(repo.read_config(os.path.join(CORE, "config.toml")))
     except (OSError, ValueError) as e:
@@ -76,7 +73,6 @@ def _status_line() -> bool:
 
 
 def _per_column() -> int | None:
-    """Core config's workers_per_column (repo.read_config)."""
     try:
         return repo.workers_per_column(repo.read_config(os.path.join(CORE, "config.toml")))
     except (OSError, ValueError) as e:
@@ -84,7 +80,6 @@ def _per_column() -> int | None:
 
 
 def _retile() -> str | None:
-    """Core config's grid_retile (repo.read_config)."""
     try:
         return repo.grid_retile(repo.read_config(os.path.join(CORE, "config.toml")))
     except (OSError, ValueError) as e:
@@ -98,7 +93,6 @@ def _tmux(argv: list, proc) -> None:
 
 
 def _loaded() -> dict[str, type[clients.Client]]:
-    """The configured clients' classes (clients.loaded)."""
     try:
         return clients.loaded(CORE)
     except ConfigError as e:
@@ -113,8 +107,6 @@ def _get(name: str) -> clients.Client:
 
 
 def _client(name: str | None, env: dict, classes: dict) -> tuple[str, clients.Client]:
-    """The worker's client, by name: `name` (--client), else the one of classes whose session marker env holds
-    (clients.caller), else roster.LEGACY_CLIENT."""
     if name is None:
         try:
             name = clients.caller(env, classes) or roster.LEGACY_CLIENT
@@ -131,12 +123,10 @@ def _command(client: clients.Client, spec: clients.WorkerSpec) -> clients.Worker
 
 
 def _allowed(classes: dict) -> set[str]:
-    """The names --env may set: every loaded client's injected defaults."""
     return {k for cls in classes.values() for k, v in cls.command_env.items() if isinstance(v, str)}
 
 
 def _override(item: str, allowed: set[str]) -> tuple[str, str]:
-    """An --env NAME=VALUE: NAME in allowed, VALUE printable (roster.printable)."""
     key, eq, value = item.partition("=")
     if not eq or key not in allowed:
         raise WorkersError(f"--env {item}: want NAME=VALUE, NAME one of {', '.join(sorted(allowed))}")
@@ -146,9 +136,6 @@ def _override(item: str, allowed: set[str]) -> tuple[str, str]:
 
 
 def _environment(env: dict, classes: dict, client_env: dict, overrides: dict) -> dict[str, str]:
-    """A worker's env: env minus each loaded client's identity keys (its session marker among them) and minus each
-    injected default whose client's session marker env holds, when env has that value (the caller inherited it);
-    then client_env, then overrides."""
     drop = set()
     for cls in classes.values():
         inside = bool(cls.session_env) and cls.session_env in env
@@ -159,8 +146,6 @@ def _environment(env: dict, classes: dict, client_env: dict, overrides: dict) ->
 
 
 def _early(name: str, exe: str, proc) -> None:
-    """Watches worker `name`'s pane for EARLY seconds; raises if exe exits or the session ends, the exit with the
-    pane's last REPORT_LINES non-blank lines."""
     try:
         for _ in range(round(EARLY / POLL)):
             time.sleep(POLL)
@@ -176,9 +161,6 @@ def _early(name: str, exe: str, proc) -> None:
 
 
 def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
-    """After _early: worker `name`'s visible pane showing one of client.worker_dialogs, a dialog no hook reports (both
-    with whitespace collapsed: the client wraps its own lines), marks the pane blocked (tmux_host.mark) and says so on
-    stderr."""
     if not client.worker_dialogs:
         return
     try:
@@ -194,7 +176,6 @@ def _dialog(name: str, client: clients.Client, events: str, proc) -> None:
 
 
 def _note_text(text: str) -> str | None:
-    """A note's text, checked (roster.NOTE_MAX, roster.printable); "" is None."""
     if len(text) > roster.NOTE_MAX:
         raise WorkersError(f"note: {len(text)} characters: want at most {roster.NOTE_MAX}")
     if not roster.printable(text):
@@ -204,9 +185,6 @@ def _note_text(text: str) -> str | None:
 
 def _enroll(name: str, directory: str, own: str | None, *, sid: str, cwd: str, note: str | None, flags, client: str,
             overrides: dict, split: str | None, split_from: str | None, proc) -> None:
-    """Writes worker `name`'s roster entry (roster.record) in one lease-checked block: its recovery argv, start
-    --client <client> --resume <sid> with its --env items, and its session's placement (_placed). A failure only
-    prints its line (roster.unwritten)."""
     resume = [sys.executable, os.path.abspath(__file__), "start", name, "--manager", os.path.basename(directory),
               "--client", client, "--resume", sid, "--cwd", cwd,
               *(w for k, v in overrides.items() for w in ("--env", f"{k}={v}")),
@@ -229,15 +207,6 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
           note: str | None = None, flags=(), env: dict, client: str | None = None, overrides=(),
           resume: str | None = None, split_from: str | None = None, split: str | None = None,
           proc=subprocess.run) -> str:
-    """Start worker `name` for manager directory `directory`, its lease checked for `own` (_leased) and its events
-    file used; record its options on the tmux session, then its roster entry (_enroll); returns the session id.
-    `client` (--client) names the worker's client (default: _client); its command (Client.worker) comes last before the
-    session. The worker's env: env through _environment, the client's, then `overrides` (--env NAME=VALUE items,
-    _override). `resume` (a session id) resumes that session instead of starting a new one. `note` ("": none) is the
-    entry's. `split_from` or `split` replaces tmux_host's automatic placement outside a tmux grid, which ignores them;
-    it defaults the other. Its status line, grid column size and grid re-tiling: core config's status_line,
-    workers_per_column and grid_retile. A command that exits within EARLY seconds raises, the session and the entry
-    kept (see _early); then a dialog on the pane is reported (_dialog)."""
     _check(name)
     if split_from is not None:
         _check(split_from)
@@ -287,7 +256,6 @@ def start(name: str, directory: str, *, own: str | None, cwd: str, prompt: str |
 
 
 def _option(name: str, key: str, proc, *, required: bool = True) -> str | None:
-    """The session option `key` of tmux session `name`; failing: NotAWorker, None when not required."""
     res = _run(proc, ["tmux", "show-options", "-t", f"={name}:", "-v", key])
     if res.returncode != 0:
         if required:
@@ -297,9 +265,6 @@ def _option(name: str, key: str, proc, *, required: bool = True) -> str | None:
 
 
 def _stored(name: str, allowed: set[str], proc) -> dict:
-    """Worker `name`'s options: @sid @cwd @events @flags, and @client @exe @env (each item checked as --env is,
-    against allowed); a session started before @client: roster.LEGACY_CLIENT, @claude and no env. Missing or
-    malformed: NotAWorker."""
     opt = {k: _option(name, "@" + k, proc) for k in ("sid", "cwd", "events", "flags")}
     client = _option(name, "@client", proc, required=False)
     if client is None:
@@ -323,10 +288,6 @@ def _stored(name: str, allowed: set[str], proc) -> dict:
 
 
 def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
-    """Respawn worker `name`'s pane, its history cleared, resuming its session with its client's command
-    (Client.worker, from its stored options: _stored) through tmux_host.respawn, its env as start makes it from env
-    and @env, its status line as core config's status_line says now; returns the command, shell-quoted. A command
-    that exits within EARLY seconds raises (see _early); then a dialog on the pane is reported (_dialog)."""
     _check(name)
     classes = _loaded()
     opt = _stored(name, _allowed(classes), proc)
@@ -357,8 +318,6 @@ def restart(name: str, *, env: dict, proc=subprocess.run) -> str:
 
 
 def reply(name: str, *, proc=subprocess.run) -> str:
-    """Worker `name`'s last answer, "" when none yet: its client's (@client; unset: roster.LEGACY_CLIENT)
-    Client.worker_reply."""
     _check(name)
     sid = _option(name, "@sid", proc)
     if not SESSION_ID.fullmatch(sid):
@@ -372,8 +331,6 @@ def reply(name: str, *, proc=subprocess.run) -> str:
 
 
 def next_event(events: str, after: int | None) -> tuple[int, str]:
-    """Wait for the first event after line `after` of the events file (None: after the complete lines it holds now);
-    returns (its line number, its text). Stops with WorkersError if the file can't be read, shrinks or is replaced."""
     offset = lines = 0
     ident = None
     skip = after
@@ -407,8 +364,6 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
 
 
 def content(event: str, *, proc=subprocess.run) -> str:
-    """What next-event prints after the event: a worker's done → the first REPLY_LINES lines of its reply; blocked,
-    dead or a role run's done (not a worker) → the pane's last PANE_LINES lines, history included; else ""."""
     name, kind = event.split(" ")[1:3]
     if kind not in ("done", "blocked", "dead"):
         return ""
@@ -424,7 +379,6 @@ def content(event: str, *, proc=subprocess.run) -> str:
 
 
 def _query(argv: list, proc) -> str:
-    """A tmux command's stdout; WorkersError when it fails."""
     res = _run(proc, argv)
     if res.returncode != 0:
         raise WorkersError(f"tmux {argv[1]}: {(res.stderr or '').strip()}")
@@ -432,8 +386,6 @@ def _query(argv: list, proc) -> str:
 
 
 def _live(proc) -> dict[str, dict]:
-    """The live tmux sessions named by NAME, each to its LIVE options (sid, state, pane, opener); none when no tmux
-    server runs."""
     res = _run(proc, ["tmux", "list-sessions", "-F", LIVE])
     if res.returncode != 0:
         err = (res.stderr or "").strip()
@@ -446,9 +398,6 @@ def _live(proc) -> dict[str, dict]:
 
 
 def _status(cwd: str) -> str | None:
-    """The outcome status of the last `result` line in the last RUN_TAIL bytes of <cwd>/run.jsonl (a regular file,
-    never through a symlink); None when that line has no outcome with a string status, or there is none (an unreadable
-    file included)."""
     try:
         fd = os.open(os.path.join(cwd, "run.jsonl"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -479,7 +428,6 @@ def _status(cwd: str) -> str | None:
 
 
 def _placed(e: dict, options: dict) -> dict:
-    """Entry e with a live session's pane and opener, each only when valid (roster.entry)."""
     for key in ("pane", "opener"):
         with contextlib.suppress(roster.RosterError):
             e = roster.entry(**{**e, key: options[key]})
@@ -487,22 +435,15 @@ def _placed(e: dict, options: dict) -> dict:
 
 
 def _place(r: dict, name: str, options: dict) -> None:
-    """Entry `name`'s pane and opener from a live session's (_placed)."""
     r["entries"][name] = _placed(r["entries"][name], options)
 
 
 def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
-    """Entry `name`'s live sessions, None where not live: its pane session (a worker's own, a role's or pipeline's tui)
-    and a role's or pipeline's driver (the session of its name). Either live: the entry is."""
     pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
     return (pane if pane in live else None), (driver if driver in live else None)
 
 
 def _sync(r: dict, live: dict) -> dict[str, str]:
-    """Syncs roster r's entries with the live sessions; returns each live entry's pane session (_sessions) by entry
-    name. A worker whose session is gone takes the name of the one live session with its sid, when no entry has that
-    name. With no live session a worker is gone, a role or pipeline ENDED's state for its run's last outcome status
-    (_status), else gone."""
     entries = r["entries"]
     for name in sorted(entries):
         sid = entries[name]["sid"]
@@ -526,10 +467,6 @@ def _sync(r: dict, live: dict) -> dict[str, str]:
 
 
 def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | None, proc) -> tuple[dict, list]:
-    """Reopens each pane session no client shows (tmux_host.show, beside the caller). Returns, by entry name, where
-    each other one is shown: the session of the tmux pane its most recently active client runs in, when a NAME, else
-    (list-panes failing too) `a terminal`; and the reopened entries' (name, kind, sid, session). A session whose
-    list-clients fails is skipped."""
     shown, opened, hosts = {}, [], None
     for name in sorted(panes):
         session, e = panes[name], entries[name]
@@ -559,7 +496,6 @@ def _reopen(panes: dict, entries: dict, per_column: int | None, retile: str | No
 
 
 def _recovery(e: dict) -> str:
-    """The printed command that resumes gone entry e (roster.recovery)."""
     argv = roster.recovery(e)
     if argv is None:
         return "none (no sid)"
@@ -567,8 +503,6 @@ def _recovery(e: dict) -> str:
 
 
 def _table(entries: dict, shown: dict) -> str:
-    """HEADER, a row per entry by name (null: -), `shown in <where>` last where shown says, then a `resume` line per
-    gone entry."""
     lines = [HEADER]
     for name in sorted(entries):
         e = entries[name]
@@ -580,21 +514,12 @@ def _table(entries: dict, shown: dict) -> str:
 
 
 def _backlog(events: str, cursor: int) -> list[str]:
-    """The event lines (EVENT) of `events` after line `cursor` (roster.following), each `<line> <text>` as next-event
-    prints it; a trailing fragment is not a line yet."""
     texts = (raw.decode("utf-8", errors="replace") for raw in roster.following(events, cursor).split(b"\n")[:-1])
     return [f"{n} {text}" for n, text in enumerate(texts, cursor + 1) if EVENT.fullmatch(text)]
 
 
 def attach(directory: str, own: str | None, *, after: int | None = None, gen: int | None = None,
            proc=subprocess.run) -> tuple[str, dict]:
-    """Attaches the manager in tmux session `own` (None: outside tmux, no lease) to its directory, made with its events
-    file. In one locked() block: takes the lease (roster.take); with `after`, line `after` of generation `gen` (the
-    Monitor re-arm), records it (roster.advance; stale: refused, nothing written); rotates the events file when due
-    (roster.rotate); syncs the entries (_sync); reads the backlog (_backlog), cursor and gen. Then, the lock released,
-    reopens their unshown panes (_reopen) and records the new placement in a second block for each entry still of the
-    same kind and sid. Returns the table (_table), the backlog, `N=<cursor> GEN=<gen>` and the arm commands; and the
-    entries as the table shows them."""
     per_column, retile = _per_column(), _retile()
     try:
         events = roster.events(directory)
@@ -626,10 +551,6 @@ def attach(directory: str, own: str | None, *, after: int | None = None, gen: in
 
 
 def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]:
-    """Runs each gone entry's recovery argv (roster.recovery), by name, in the entry's cwd, never through a shell;
-    yields (whether it ran and exited 0, its line) per entry as it ends: `resumed <name>: exit <code>[: <its last
-    output line>]` (stdout and stderr together), or `resumed <name>: not run: <why>`. One failing, by any exception,
-    stops none."""
     for name in sorted(entries):
         e = entries[name]
         if e["state"] != "gone":
@@ -653,7 +574,6 @@ def recover(entries: dict, *, proc=subprocess.run) -> Iterator[tuple[bool, str]]
 
 @contextlib.contextmanager
 def _leased(directory: str, own: str | None, proc, *, write: bool = True):
-    """directory's locked() block, its lease checked first (roster.check); a RosterError as a WorkersError."""
     try:
         with roster.locked(directory, write=write) as r:
             roster.check(r, directory, own, proc=proc)
@@ -663,13 +583,11 @@ def _leased(directory: str, own: str | None, proc, *, write: bool = True):
 
 
 def release(directory: str, own: str | None, *, proc=subprocess.run) -> None:
-    """Gives up the lease on directory: no holder, the cursor kept."""
     with _leased(directory, own, proc) as r:
         r["holder"] = None
 
 
 def note(directory: str, own: str | None, name: str, text: str, *, proc=subprocess.run) -> None:
-    """Sets entry `name`'s note to text; "" clears it."""
     _check(name)
     with _leased(directory, own, proc) as r:
         if name not in r["entries"]:
@@ -678,16 +596,12 @@ def note(directory: str, own: str | None, name: str, text: str, *, proc=subproce
 
 
 def stop(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
-    """Kills entry `name`'s sessions and removes it (roster.stop)."""
     _check(name)
     with _leased(directory, own, proc) as r:
         roster.stop(r, name, proc=proc)
 
 
 def opened(own: str, live: dict[str, dict], entries=lambda session: {}) -> list[str]:
-    """The live sessions own opened, by @opener or as a session (key, tui) of an entry in entries(own) with no other
-    @opener (a gone entry's name reused by another manager's session stays), and, recursively, those they opened;
-    deepest first, then by name; own never."""
     depth, level, todo = {}, 0, {own}
     while todo:
         level += 1
@@ -700,7 +614,6 @@ def opened(own: str, live: dict[str, dict], entries=lambda session: {}) -> list[
 
 
 def _entries(directory: str) -> dict:
-    """directory's roster entries, read only; {} when it is missing or unreadable (printed)."""
     if not os.path.isdir(directory):
         return {}
     try:
@@ -712,11 +625,6 @@ def _entries(directory: str) -> dict:
 
 
 def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> tuple[list[str], list[str]]:
-    """Kills each session own opened (opened, by the roster in each one's manager directory too), by exact target, then
-    removes the entries keyed by one of them, or whose tui is one and whose key is not live, from those rosters, own's
-    lease checked first; dry_run kills and writes nothing. Returns (one line per session: `stopped <name>`, `would stop
-    <name>` with dry_run; a pipeline entry's adds that a scheduler may resume it; the sessions still live after their
-    kill). Outside tmux: WorkersError."""
     if own is None:
         raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
     home = roster.directory(own, proc=proc)
@@ -755,7 +663,6 @@ def stop_all(own: str | None, *, dry_run: bool = False, proc=subprocess.run) -> 
 
 
 def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -> None:
-    """Removes entry `name`; refused, nothing written, while a session keeps it live (_sessions)."""
     _check(name)
     with _leased(directory, own, proc) as r:
         pane, driver = _sessions(name, roster.remove(r, name), _live(proc))
@@ -764,8 +671,6 @@ def forget(directory: str, own: str | None, name: str, *, proc=subprocess.run) -
 
 
 def _directory(name: str | None) -> str:
-    """Manager `name`'s directory, the filesystem untouched; `name` None: the caller's tmux session's
-    (roster.directory). Raises outside tmux without a name."""
     try:
         directory = roster.directory(name, proc=subprocess.run)
     except roster.RosterError as e:
@@ -776,7 +681,6 @@ def _directory(name: str | None) -> str:
 
 
 def _events(name: str | None) -> str:
-    """The events file of _directory(name), once its lease check passes (_leased); makes nothing but roster.lock."""
     directory = _directory(name)
     with _leased(directory, _own(), subprocess.run, write=False):
         pass
@@ -784,9 +688,6 @@ def _events(name: str | None) -> str:
 
 
 def _record(directory: str, own: str | None, after: int | None, gen: int, proc) -> tuple[str, int, bool]:
-    """next-event's step, in one locked() block, its lease checked first (_leased): records line `after` of generation
-    `gen` (None: the last complete line) as handled (roster.advance; stale: Refused, nothing written). Returns
-    (the events file, `after` resolved, whether a rotation is due)."""
     with _leased(directory, own, proc) as r:
         try:
             after = roster.advance(r, directory, after, gen)
@@ -796,7 +697,6 @@ def _record(directory: str, own: str | None, after: int | None, gen: int, proc) 
 
 
 def _own() -> str | None:
-    """The caller's tmux session (tmux_host.own_session); None outside tmux."""
     try:
         return tmux_host.own_session(proc=subprocess.run)
     except tmux_host.TuiError as e:

@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""Driver: composes an agent run, has its client (src/clients/) build the command, starts it through a runner, tails the
-channel the run reports its progress and outcome to (report.py), then checks and saves the outcome.
-
-drive.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--repo DIR] [--client NAME]
-         [--sid UUID] [--resume] [--runner headless|tui] [--split right|below] [--split-from SESSION] [--prefix PREFIX]
-         [--events FILE] [--manager NAME] [--detach] [--dry-run]
-drive.py --client skill --role ROLE [--task TASK]
-drive.py --list [--client NAME]
---out is where the deliverable ends up (local and orchestrator destinations; the agent run writes it there when it is
-under the workdir, else the driver saves it); the run's cwd: place(). By default (start's sinks) a run shows its text,
-its client's stderr and its progress on stderr; every run appends to its record <workdir>/run.jsonl (start).
---runner, --split, --split-from, --prefix, --events, --manager and --detach: core/CLAUDE.md › Rules and
-core/CLAUDE.md › An agent run's command.
-The skill client starts nothing: it prints the role's prompt on stdout for the calling Claude Code conversation to
-follow (the act-as skill), its paths this core's.
-Prints the session id on stderr. --dry-run prints {"argv" (the runner's command), "cwd", "env"} (with --detach also
-"driver", the driver session's name; with an events file also "events") and changes nothing.
-Exits 0 when the run returns a valid outcome (or the prompt is printed, or --detach's session runs), 1 when it doesn't,
-2 on a config error, 3 when the client or its tmux session fails.
---list prints each role, its destination type and source, then each of its tasks with its description and source (the
-selected client's config, default claude; listing()); exits 0 when listed, 2 on a config error.
-"""
 import argparse
 import contextlib
 import errno
@@ -56,16 +34,15 @@ from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, T
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
-SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
+SAVES_DELIVERABLE = ("local", "orchestrator")
 NAME = re.compile(r"[\w-]+")
-POLL = 0.5   # seconds between reads of the channel while the host is quiet
-WAIT_LIMIT = 2 * 60 * 60   # seconds
+POLL = 0.5
+WAIT_LIMIT = 2 * 60 * 60
 STOP_LIMIT = 3
 NUDGE = ("Finish your task, then report its outcome with the report command your instructions name. "
          "If you are waiting for background work, wait for it first.")
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)   # end a detached driver (tmux kill-session: SIGHUP)
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
-# render's params for --list: no file is touched.
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work",
                         sid="00000000-0000-0000-0000-000000000000")
 
@@ -75,7 +52,7 @@ class InvalidOutcome(Exception):
 
 
 class RunnerError(Exception):
-    """A runner's host failed: the agent run ends with no outcome, rc 1."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -92,12 +69,11 @@ class Outcome:
 @dataclass(frozen=True)
 class Result:
     returncode: int
-    outcome: Outcome | None   # None: the agent run returned no valid outcome
-    error: str = ""          # client exit diagnostic may accompany a valid outcome
+    outcome: Outcome | None
+    error: str = ""
 
 
 def bind(entry: str, repo: str | None) -> str | None:
-    """A read/write entry as an absolute dir: `repo` is the --repo dir (None without one); else a path."""
     if entry == "repo":
         return os.path.abspath(repo) if repo else None
     return os.path.abspath(os.path.expanduser(entry))
@@ -105,10 +81,6 @@ def bind(entry: str, repo: str | None) -> str | None:
 
 def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str, methods: str, tasks: str,
            cwd: str | None = None, project: bool = False, interpreter: str = "python3") -> Access:
-    """The agent run's client-neutral access intent: the `tasks` dir, then combined read/write entries with
-    `{{methods}}` filled; commands with `{{scripts}}` and `{{workdir}}` filled, then the report command and gate verbatim.
-    The selected client determines effective grants and approvals. The workdir is the first extra dir when `cwd`
-    (default the workdir) is another."""
     workdir = os.path.abspath(params.workdir)
     cwd = cwd or workdir
     dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks]
@@ -123,7 +95,6 @@ def access(run: RunConfig, params: RunParams, *, repo: str | None, scripts: str,
 
 
 def trusted_dirs(root: str) -> frozenset[str]:
-    """Real paths of the global `trusted_dirs` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
     try:
         return repos.trusted_dirs(repos.read_config(os.path.join(root, CONFIG)))
     except ValueError as e:
@@ -131,7 +102,6 @@ def trusted_dirs(root: str) -> frozenset[str]:
 
 
 def status_line(root: str) -> bool:
-    """The global `status_line` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
     try:
         return repos.status_line(repos.read_config(os.path.join(root, CONFIG)))
     except ValueError as e:
@@ -139,7 +109,6 @@ def status_line(root: str) -> bool:
 
 
 def workers_per_column(root: str) -> int | None:
-    """The global `workers_per_column` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
     try:
         return repos.workers_per_column(repos.read_config(os.path.join(root, CONFIG)))
     except ValueError as e:
@@ -147,7 +116,6 @@ def workers_per_column(root: str) -> int | None:
 
 
 def grid_retile(root: str) -> str | None:
-    """The global `grid_retile` in <root>'s config (repo.read_config); ConfigError when it is malformed."""
     try:
         return repos.grid_retile(repos.read_config(os.path.join(root, CONFIG)))
     except ValueError as e:
@@ -156,11 +124,6 @@ def grid_retile(root: str) -> str | None:
 
 def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None,
           *, client: Client | None = None) -> tuple[str, bool]:
-    """(the agent run's cwd, whether its client loads the cwd's project settings and instructions), as config.toml's
-    `cwd` and `trusted_dirs` comments say. A new run's cwd is the `cwd` run key, else `cwd`, else the caller's current
-    directory; a resume asks the client's recovery hook, falling back to its session record when unsupported
-    (no record: the workdir, project off). ConfigError when the cwd is no directory, or project would be on with the
-    cwd in the workdir or no longer trusted."""
     workdir, trusted = os.path.abspath(params.workdir), trusted_dirs(root)
     if params.resume:
         location = client.resume_location(workdir, params.sid) if client is not None else None
@@ -186,11 +149,6 @@ def place(root: str, run: RunConfig, params: RunParams, cwd: str | None = None,
 
 def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
                     temp: Sequence[str] | None = None) -> None:
-    """Raises ConfigError when a team dir, one of its compose.KINDS subdirs or a *.md file directly in one, each by its
-    real path (symlinks followed, as compose.team does), lies in a temp dir (`temp`, None: repo.temp_dirs()), overlaps
-    a dir of `writes` ([(what, path)]: dirs the agent run can write) either way, is writable by group or others or is
-    not the current user's; or when a parent dir of a team dir is writable by group or others or owned by neither the
-    user nor root (who could move the team dir away and put another there; a sticky dir lets no one else)."""
     if not dirs:
         return
     temps, me = repos.temp_dirs() if temp is None else temp, os.getuid()
@@ -223,8 +181,6 @@ def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]],
 
 
 def team_paths(d: str) -> list[str]:
-    """Team dir `d`, each of its compose.KINDS subdirs and the *.md files directly in one; ConfigError when a subdir
-    can't be listed."""
     paths = [d]
     for kind in compose.KINDS:
         if os.path.isdir(sub := os.path.join(d, kind)):
@@ -237,7 +193,6 @@ def team_paths(d: str) -> list[str]:
 
 
 def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> None:
-    """Raises ConfigError when realpath `real` (`shown` in the message) and a dir of `writes` hold one another."""
     for what, p in writes:
         p = os.path.realpath(p)
         if repos.under(real, [p]) or repos.under(p, [real]):
@@ -247,12 +202,6 @@ def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> N
 def plan(root: str, client: Client, role: str, task: str | None = None, *, params: RunParams,
          repo: str | None = None, layers: Sequence[Mapping] = (), cwd: str | None = None, team: Team | None = None,
          temp: Sequence[str] | None = None) -> tuple[Launch, RunConfig]:
-    """The Launch for one agent run, with its config; raises ConfigError and writes nothing. `layers` (config.toml's
-    layout) apply after the client's config; `cwd` is the cwd when the run key is unset (place()); `team` finds the
-    role's files, its dirs checked (check_team_dirs, `temp`). None: core's team/ alone (the orchestrator's runs), and
-    only the overlap of compose.team_dirs (when valid; team_paths, by real path) with the workdir, the cwd, the write
-    dirs, the client's added dirs (Access.dirs) and Launch.writable_roots refused. A custom role's <tasks> is its team
-    dir's tasks/ (Team.tasks_dir): an added dir, the only one exempt from that overlap check."""
     if not client.runs:
         raise ConfigError(f"{type(client).__name__} prints a prompt; use inline()")
     guarded: tuple[str, ...] = ()
@@ -289,8 +238,6 @@ def plan(root: str, client: Client, role: str, task: str | None = None, *, param
 
 def inline(root: str, client: Client, role: str, task: str | None = None, *, team: Team | None = None,
            temp: Sequence[str] | None = None) -> str:
-    """The prompt an inline client (skill) gives for the role (and task, when named); raises ConfigError. `team` as
-    plan's, its dirs checked for temp dirs, modes and owners only (`temp` as plan's)."""
     if client.runs:
         raise ConfigError(f"{type(client).__name__} starts agent runs; use plan()")
     team = team if team is not None else compose.team(root)
@@ -299,10 +246,6 @@ def inline(root: str, client: Client, role: str, task: str | None = None, *, tea
 
 
 def listing(root: str, client: Client, team: Team, temp: Sequence[str] | None = None) -> str:
-    """--list's text for `client`: each role of compose.catalog, its destination type for `client` and its source
-    (Team.source), then each task of its index with its description and source. Every team dir file is checked
-    (Team.check_all) and every role's prompt rendered for `client`, as its run (or printed prompt) would be; ConfigError
-    on the first defect. Writes nothing."""
     check_team_dirs(team.dirs, writes=[], temp=temp)
     team.check_all(repos.read_config(os.path.join(root, CONFIG)))
     params, lines = LIST_PARAMS if client.runs else None, []
@@ -317,7 +260,6 @@ def listing(root: str, client: Client, team: Team, temp: Sequence[str] | None = 
 # The agent run controls its workdir, where the driver writes too: writes replace a symlink planted at the path, never
 # follow it.
 def save(path: str | Path, text: str) -> None:
-    """Writes `text` to `path` atomically, through a temp file renamed over it."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:
@@ -331,7 +273,6 @@ def save(path: str | Path, text: str) -> None:
 
 
 def holds(path: str | Path, text: str) -> bool:
-    """Whether the regular file at `path` holds exactly `text`; a symlink, a FIFO, a missing file or any error is no."""
     data = text.encode()
     try:
         with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
@@ -341,8 +282,6 @@ def holds(path: str | Path, text: str) -> bool:
 
 
 def append_line(path: str | Path, text: str, *, durable: bool = False) -> None:
-    """Appends `text` to `path` (created 0600) in one write, refusing a symlink or anything but a regular file (a FIFO
-    would block). A lone surrogate is written as `?`."""
     data = memoryview(text.encode(errors="replace"))
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
@@ -363,13 +302,10 @@ def append_line(path: str | Path, text: str, *, durable: bool = False) -> None:
 
 
 def printable(text: str) -> str:
-    """`text` without control characters but tabs, so an agent run's output can't steer the terminal."""
     return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
 def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
-    """The outcome an agent run returned, once it holds; raises InvalidOutcome. Checks the schema
-    (team/output/outcome.schema.json) and what it can't. Its text stays untrusted."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
@@ -393,7 +329,6 @@ def validate(data: dict, run: RunConfig, params: RunParams) -> Outcome:
 
 
 def _conform(value, schema: Mapping, where: str) -> None:
-    """`value` against the subset of JSON Schema team/output/outcome.schema.json uses."""
     kind = schema.get("type")
     if kind == "object":
         if not isinstance(value, dict):
@@ -427,7 +362,6 @@ def _conform(value, schema: Mapping, where: str) -> None:
 
 
 def _url(url: str, run: RunConfig) -> str:
-    """The url, once it is a plain https link the agent run's destination can produce."""
     out = run.output
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
@@ -445,7 +379,6 @@ def _url(url: str, run: RunConfig) -> str:
 
 
 def _file(path, workdir: str) -> str:
-    """A regular .md file under the workdir with one link, symlinks resolved; a relative path is the workdir's."""
     base = Path(workdir).resolve()
     real = (base / path).resolve() if isinstance(path, str) else None
     # A hard link is the same file under another name: it could carry, e.g., a key into the workdir.
@@ -458,7 +391,6 @@ Sink = Callable[[Event], None]
 
 
 def terminal(log=sys.stderr) -> Sink:
-    """Shows the agent run's text, the client's stderr lines and progress."""
     def sink(event: Event) -> None:
         if event.kind in ("text", "stderr"):
             print(printable(event.text), file=log, flush=True)
@@ -468,13 +400,10 @@ def terminal(log=sys.stderr) -> Sink:
 
 
 def stamp() -> str:
-    """Now, local, as ISO 8601 with offset, to the second."""
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def note(path: str, kind: str, *, best_effort: bool = False, durable: bool = False, **fields) -> None:
-    """Appends driver event `kind` to the run's record at `path` as one line {"ts", "kind", **fields}; with best_effort
-    an OSError is printed, never raised."""
     try:
         line = json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n"
         if durable:
@@ -488,9 +417,6 @@ def note(path: str, kind: str, *, best_effort: bool = False, durable: bool = Fal
 
 
 def session(workdir: str, sid: str) -> dict | None:
-    """The latest `session` event of `sid` in <workdir>/run.jsonl that names a printable absolute cwd and project as a
-    bool; else None. A symlink or anything but a regular file at the path is never read. The agent run can append to
-    the record: no other field is checked."""
     try:
         fd = os.open(os.path.join(workdir, CHANNEL), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -512,13 +438,10 @@ def session(workdir: str, sid: str) -> dict | None:
 
 
 def session_info(client: Client, workdir: str, sid: str):
-    """Query a client's native session capabilities without dispatching on its name."""
     return client.session_info(workdir, sid)
 
 
 def report_event(line: str) -> Event | None:
-    """A channel line as its Event; None unless it is an outcome object, a turn end or a progress report named by a
-    word with text, its lines joined into one."""
     try:
         data = json.loads(line)
     except ValueError:
@@ -538,7 +461,6 @@ def report_event(line: str) -> Event | None:
 
 
 class Tail:
-    """The reports appended to a channel since this was made; a symlink at the path is never read."""
     def __init__(self, path: str):
         self.path, self.rest = path, b""
         try:
@@ -558,7 +480,7 @@ class Tail:
             os.close(fd)
             return
         with os.fdopen(fd, "rb") as f:
-            if os.fstat(f.fileno()).st_size < self.pos:   # replaced or emptied: read it anew
+            if os.fstat(f.fileno()).st_size < self.pos:
                 self.pos, self.rest = 0, b""
             f.seek(self.pos)
             data = f.read()
@@ -573,38 +495,29 @@ TUI_SESSION = re.compile(r"(?P<prefix>[A-Za-z0-9_-]+)-[0-9a-f]{8}")
 
 
 def driver_session(role: str, sid: str, prefix: str | None = None) -> str:
-    """The name of a detached driver's tmux session (drive.py --detach): tui_session's, then `-drive`, so never a
-    TUI_SESSION."""
     return f"{tui_session(role, sid, prefix)}-drive"
 
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default show: the split's side (tmux_host.SPLITS), the tmux session whose pane it splits (both
-    ignored in a tmux grid), and the opener whose panes it is placed with (tmux_host.OPENER; None: the caller's own).
-    With split and split_from both None the pane goes by the grid or stacking rule (tmux_host.open_pane)."""
     split: str | None = None
     split_from: str | None = None
     opener: str | None = None
 
 
 class Runner(Protocol):
-    """How an agent run's command is hosted, and when the run counts as done; the driver loop is the same for every
-    runner."""
-    starts: str   # the Launch field holding the command it starts
+    starts: str
 
     # begin and poll raise RunnerError when the host fails.
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None: ...
-    def poll(self, timeout: float) -> tuple[list[Event], bool]: ...   # the host's own events; whether it ended
-    def seen(self, event: Event) -> None: ...   # each channel event, before the sinks get it
-    def done(self, outcome_arrived: bool) -> bool: ...   # finished while the host still runs
+    def poll(self, timeout: float) -> tuple[list[Event], bool]: ...
+    def seen(self, event: Event) -> None: ...
+    def done(self, outcome_arrived: bool) -> bool: ...
     def returncode(self) -> int: ...
     def stop(self) -> None: ...   # on a driver exception or a RunnerError, begin's too
 
 
 class Headless:
-    """The client's command on pipes, its stdout turned into events by the client and each stderr line one `stderr`
-    event; ended at both pipes' EOF."""
     starts = "argv"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
@@ -651,15 +564,12 @@ class Headless:
         return self.proc.wait()
 
     def stop(self) -> None:
-        if self.proc is not None:   # None: popen failed
+        if self.proc is not None:
             self.proc.kill()
             self.proc.wait()
 
 
 class Tui:
-    """The client's interactive command in a detached tmux session (tmux_host.py), never killed after the outcome. Done once
-    the outcome arrives, or once it gives up (core/CLAUDE.md › An agent run's command: tui give-up) and leaves the session
-    to a human."""
     starts = "interactive"
 
     def __init__(self, *, run: RunConfig, params: RunParams, client: Client, popen, layout: Layout | None,
@@ -688,7 +598,7 @@ class Tui:
             raise RunnerError(str(e)) from e
         if state == tmux_host.RUNNING:
             return [], False
-        self.rc = state or 0   # None: the session is gone
+        self.rc = state or 0
         return [], True
 
     def seen(self, event: Event) -> None:
@@ -735,7 +645,6 @@ RUNNERS: dict[str, type[Runner]] = {"headless": Headless, "tui": Tui}
 
 
 def command(launch: Launch, runner: str, client: Client) -> list[str]:
-    """The command `runner` starts; raises ConfigError for an unknown runner or a client without that command."""
     if runner not in RUNNERS:
         raise ConfigError(f"unknown runner {runner!r} (known: {', '.join(RUNNERS)})")
     if argv := getattr(launch, RUNNERS[runner].starts):
@@ -744,7 +653,6 @@ def command(launch: Launch, runner: str, client: Client) -> list[str]:
 
 
 def check_layout(runner: str, layout: Layout | None) -> None:
-    """Raises ConfigError for a layout the runner can't take."""
     if layout is None:
         return
     if runner == "headless":
@@ -758,7 +666,6 @@ def check_layout(runner: str, layout: Layout | None) -> None:
 
 
 def check_naming(runner: str, prefix: str | None, events: str | None) -> None:
-    """Raises ConfigError for a session prefix or an events file the runner can't take."""
     if runner == "headless":
         for what, value in (("prefix", prefix), ("events", events)):
             if value is not None:
@@ -766,8 +673,6 @@ def check_naming(runner: str, prefix: str | None, events: str | None) -> None:
 
 
 def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.run) -> Layout:
-    """The Layout a detached tui driver takes from its caller: split, split_from, which a terminal must show
-    (tmux_host.anchor; raises TuiError), and the caller's opener (tmux_host.opener; None when it has none)."""
     if split_from is not None:
         tmux_host.anchor(split_from, proc=proc)
     try:
@@ -779,13 +684,6 @@ def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.
 
 def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iterm: str, proc=subprocess.run,
            sleep=time.sleep, roster_entry: tuple[str, dict] | None = None, opener: str | None = None) -> None:
-    """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
-    its terminal keys (tmux_host.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
-    and env reach it through a 0600 handover file (tmux_host.EXEC), never through tmux, with SIGNALS blocked until
-    argv unblocks them (main). Raises RunnerError. With opener (the run's, tmux_host.OPENER), the session gets it as
-    @opener, as its tui session does (`crew.py stop-all` finds it so), no @pane: a failure only prints its line.
-    With roster_entry (a manager directory, roster.entry's keyword arguments), once the session runs it writes that
-    entry as `name` (roster.put, no lease check); an entry write failure only prints its line (roster.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken
         if "\0" in arg:
             raise RunnerError("an argv item holds a NUL character")
@@ -838,17 +736,6 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
           layout: Layout | None = None, events: str | None = None,
           sinks: Sequence[Sink] | None = None, begun: Callable[[], None] | None = None,
           popen=subprocess.Popen) -> Result:
-    """Starts the agent run through `runner` (RUNNERS) and waits, handing `sinks` (the terminal when None) its
-    host's text and stderr lines (recorded as `stderr` events) and the progress it reports to the channel as they
-    come; then checks the last outcome it reported, saves the deliverable to params.out where the destination says
-    so (unless the run wrote it there), and hands the outcome on too. Only reports made after this call began count.
-    The channel is the run's record: its `input` and `session` events come before `begun` is called and the host
-    starts; `result` (the outcome without its deliverable and any error) and `end` close it however the run ends,
-    an exception (raised on) as `stopped: <type>: <message>`. A done or failed new run that never reported `start`
-    gets a stderr line and a `missing` event first. The tui runner names its session tui_session(…, params.prefix)
-    and appends its state events to the `events` file. Raises ConfigError, before anything starts, when the client
-    lacks the runner's command or the layout, params.prefix or events is one the runner can't take (check_layout,
-    check_naming); a RunnerError stops the runner and is the Result, with rc 1 and `<runner>: <reason>`."""
     argv = command(launch, runner, client)
     check_layout(runner, layout)
     check_naming(runner, params.prefix, events)
@@ -890,7 +777,6 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
 
 def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, host: Runner, argv: list[str], runner: str,
            sinks: Sequence[Sink], out: Path) -> Result:
-    """start()'s loop, from the host's begin to the checked outcome."""
     workdir = os.path.abspath(params.workdir)
     tail, raw, seen, session_seen = Tail(params.channel), None, set(), False
     pending: list[Event] = []
@@ -975,7 +861,6 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client,
 
 def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subprocess.run,
          temp: Sequence[str] | None = None) -> int:
-    """`temp`: the temp dirs no team dir may lie in (None: repo.temp_dirs())."""
     ap = argparse.ArgumentParser(prog="drive.py")
     ap.add_argument("--list", action="store_true",
                     help="list each role, its destination type and tasks, with their sources")
@@ -1005,15 +890,15 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--detach", action="store_true",
                     help="run the driver in a new detached tmux session, print its name and exit (needs --events or "
                          "--manager)")
-    ap.add_argument("--opener", help=argparse.SUPPRESS)   # --detach's: the caller's
-    ap.add_argument("--driver", help=argparse.SUPPRESS)   # --detach's: this is the driver in tmux session DRIVER
+    ap.add_argument("--opener", help=argparse.SUPPRESS)
+    ap.add_argument("--driver", help=argparse.SUPPRESS)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.list and (extra := _list_extra(argv)):
         ap.error(f"--list takes only --client, not {extra}")
     if not a.list and a.role is None:
         ap.error("the following arguments are required: --role")
-    a.running_client = False   # the selected client's capability, retained for detached-driver cleanup
+    a.running_client = False
     a.selected_client = None
     a.client_error = None
     if a.input == "-" and a.driver is None:   # the driver's is the caller's stdin text, even a "-"
@@ -1048,8 +933,6 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
 
 
 def _list_extra(argv: Sequence[str]) -> str | None:
-    """The first arg in a --list argv that is neither --list nor --client with its value (each as argparse took it:
-    abbreviated, --client=NAME too); None when none."""
     args = iter(argv)
     for arg in args:
         name = arg.split("=", 1)[0]
@@ -1067,7 +950,6 @@ def _stop(signum, frame):
 
 
 def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int, Status | None]:
-    """main's exit code, and the status of the outcome when a run returned a valid one."""
     params = run = None
     layout = (Layout(a.split, a.split_from, a.opener) if a.split or a.split_from is not None or a.opener is not None
               else None)
@@ -1138,9 +1020,6 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
 
 
 def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: str, proc) -> int:
-    """--detach: this command, as the driver, in tmux session `driver`, its role entry written there when the events
-    file is a manager directory's (roster.home); 2 when the pane has no place or the events file is bad, 3 when the
-    session fails to start."""
     try:
         layout = caller_layout(a.split, a.split_from, proc=proc) if a.runner == "tui" else None
         events = tmux_host.events_file(a.events)
