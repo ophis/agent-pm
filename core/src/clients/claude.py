@@ -1,6 +1,6 @@
 """Claude Code: starts the agent run with `claude -p`, its data from [clients.claude] in config.toml. The run
 reports progress and its outcome with the driver's report command; its stream-json output gives only the text to show.
-A crew.py worker is an interactive `claude` whose tui_claude hooks write its events.
+A crew.py worker is an interactive `claude` whose tmux_host hooks write its events.
 """
 import glob
 import json
@@ -11,8 +11,8 @@ import shutil
 from collections.abc import Iterable, Iterator
 from types import MappingProxyType
 
-import manager
-import tui_claude
+import roster
+import tmux_host
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
 from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo, WorkerCommand, WorkerSpec, lines_back
@@ -49,7 +49,7 @@ class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
     session_env = "CLAUDECODE"
     command_env = MappingProxyType(dict.fromkeys((
-        *tui_claude.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
+        *tmux_host.PARENT_KEYS, "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID",
         "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
         "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")))
 
@@ -135,14 +135,14 @@ class ClaudeClient(Client):
         argv = [exe, "--resume" if spec.resume else "--session-id", spec.sid, "--name", spec.name, *spec.flags,
                 *(["--", spec.prompt] if spec.prompt else [])]
         try:
-            return WorkerCommand(tui_claude.with_hooks(argv, spec.events))
-        except tui_claude.TuiError as e:
+            return WorkerCommand(tmux_host.with_hooks(argv, spec.events))
+        except tmux_host.TuiError as e:
             raise ConfigError(str(e)) from e
 
     def worker_reply(self, sid: str) -> str:
         """The text blocks of session sid's last text-bearing assistant message, joined by newlines; its transcript
         read from its end back to that message's first record."""
-        if not manager.SID.fullmatch(sid):
+        if not roster.SID.fullmatch(sid):
             raise ConfigError(f"bad session id {sid!r}")
         found = glob.glob(os.path.join(glob.escape(config_dir()), "projects", "*", sid + ".jsonl"))
         if not found:

@@ -1,6 +1,6 @@
-"""Hosts Claude Code TUIs: runs claude in a detached tmux session another agent or a person can watch and drive.
+"""Hosts any client's TUI (Claude Code, Codex, …) in a detached tmux session an agent or a person can watch and drive.
 
-One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tui_claude.py --help.
+One file, tmux 3.3+ plus the Python stdlib (3.9+): copy it anywhere. CLI: python3 tmux_host.py --help.
 Session names are [A-Za-z0-9_-]+. Errors raise TuiError. Where a session's pane opens: open_pane; tile lays out a tmux
 grid window.
 """
@@ -1016,7 +1016,8 @@ def _swaps(have: list[str], want: list[str]) -> list[tuple[str, str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="tui_claude.py", description="Host claude in a detached tmux session: start it, "
+    ap = argparse.ArgumentParser(prog="tmux_host.py", description="Host a client's TUI (Claude Code, Codex, ...) in a "
+                                 "detached tmux session: start it, "
                                  "type into it, read it, show it. The show: --show T; else, opened from tmux, a grid "
                                  "in the manager's window (it stays left, the panes it opens fill columns of "
                                  "--per-column, top down, then right); else an iTerm2 split, else a tmux split. T may "

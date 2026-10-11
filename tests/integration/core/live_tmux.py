@@ -1,4 +1,4 @@
-"""A private tmux server per test, for integration tests that run crew.py, tui_claude.py and drive.py as processes
+"""A private tmux server per test, for integration tests that run crew.py, tmux_host.py and drive.py as processes
 against real tmux: Server (its socket and env, a control-mode client that shows a session, readers), events, wait and
 assert_grid. Stdlib only, importing no core module."""
 import os
@@ -74,7 +74,7 @@ class Server:
                        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
 
     def attach(self, session: str) -> None:
-        """Shows `session` in a control-mode client in a pty (a tty tui_claude counts, no iTerm2 path), sized as
+        """Shows `session` in a control-mode client in a pty (a tty tmux_host counts, no iTerm2 path), sized as
         start's window; returns once list-clients lists it and the window has that size."""
         master, slave = os.openpty()
         try:

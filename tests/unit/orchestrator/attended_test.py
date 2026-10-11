@@ -3,7 +3,7 @@ from unittest import mock
 from tests import hermetic  # noqa: F401
 import attended
 import drive
-import tui_claude
+import tmux_host
 
 ID = "TASK-12"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -152,7 +152,7 @@ class SessionsTest(unittest.TestCase):
                            (oserror, "tmux: [Errno 2] No such file or directory: 'tmux'")):
             with self.subTest(want=want):
                 for call in (lambda: attended.sessions(ID, proc=proc), lambda: attended.issues(proc=proc)):
-                    with self.assertRaises(tui_claude.TuiError) as cm:
+                    with self.assertRaises(tmux_host.TuiError) as cm:
                         call()
                     self.assertEqual(str(cm.exception), want)
                 self.assertEqual(attended.close(ID, proc=proc), [attended.Closed("error", None, f"TuiError: {want}")])

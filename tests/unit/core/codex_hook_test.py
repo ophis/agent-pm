@@ -105,7 +105,7 @@ class HookTest(unittest.TestCase):
             return []
 
     def marked(self, state):
-        """The tmux calls tui_claude.mark makes for state."""
+        """The tmux calls tmux_host.mark makes for state."""
         calls = [["set-option", "-t", PANE, "@state", state]]
         return calls + [["display-message", "-p", "-t", PANE, "#S"]] if state in ("done", "blocked") else calls
 

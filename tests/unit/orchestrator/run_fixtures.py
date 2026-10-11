@@ -182,7 +182,7 @@ class Base(unittest.TestCase):
 
     def sh(self, argv, **kw):
         """Fake tmux: list-sessions prints tmux_sessions; new-session (drive.detach's) fails with tmux_error, else takes
-        the handover file as tui_claude.EXEC does, keeping it in handovers by path; set-option goes to options as
+        the handover file as tmux_host.EXEC does, keeping it in handovers by path; set-option goes to options as
         (target, option, value), not sh_calls."""
         if argv[:2] == ["tmux", "set-option"]:
             self.options.append(tuple(argv[3:]))

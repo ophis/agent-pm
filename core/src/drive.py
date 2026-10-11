@@ -47,9 +47,9 @@ from urllib.parse import unquote, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clients  # noqa: E402
 import compose  # noqa: E402
-import manager  # noqa: E402
 import repo as repos  # noqa: E402
-import tui_claude  # noqa: E402
+import roster  # noqa: E402
+import tmux_host  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
 from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, fill,  # noqa: E402
                      outcome_schema, render, report_command, resolve, tui_session)
@@ -580,9 +580,9 @@ def driver_session(role: str, sid: str, prefix: str | None = None) -> str:
 
 @dataclass(frozen=True)
 class Layout:
-    """The tui runner's default show: the split's side (tui_claude.SPLITS), the tmux session whose pane it splits (both
-    ignored in a tmux grid), and the opener whose panes it is placed with (tui_claude.OPENER; None: the caller's own).
-    With split and split_from both None the pane goes by the grid or stacking rule (tui_claude.open_pane)."""
+    """The tui runner's default show: the split's side (tmux_host.SPLITS), the tmux session whose pane it splits (both
+    ignored in a tmux grid), and the opener whose panes it is placed with (tmux_host.OPENER; None: the caller's own).
+    With split and split_from both None the pane goes by the grid or stacking rule (tmux_host.open_pane)."""
     split: str | None = None
     split_from: str | None = None
     opener: str | None = None
@@ -657,7 +657,7 @@ class Headless:
 
 
 class Tui:
-    """The client's interactive command in a detached tmux session (tui_claude.py), never killed after the outcome. Done once
+    """The client's interactive command in a detached tmux session (tmux_host.py), never killed after the outcome. Done once
     the outcome arrives, or once it gives up (core/CLAUDE.md › An agent run's command: tui give-up) and leaves the session
     to a human."""
     starts = "interactive"
@@ -673,20 +673,20 @@ class Tui:
 
     def begin(self, argv: list[str], *, cwd: str, env: dict[str, str]) -> None:
         try:
-            tui_claude.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
+            tmux_host.start(self.name, argv, cwd=cwd, env=env, events=self.events, template=self.run.show,
                              split=self.layout.split, split_from=self.layout.split_from, opener=self.layout.opener,
                              per_column=self.per_column, retile=self.retile, status_line=self.status_line)
-        except tui_claude.TuiError as e:
+        except tmux_host.TuiError as e:
             raise RunnerError(str(e)) from e
         self.started, self.since = True, time.monotonic()
 
     def poll(self, timeout: float) -> tuple[list[Event], bool]:
         time.sleep(timeout)
         try:
-            state = tui_claude.status(self.name)
-        except tui_claude.TuiError as e:
+            state = tmux_host.status(self.name)
+        except tmux_host.TuiError as e:
             raise RunnerError(str(e)) from e
-        if state == tui_claude.RUNNING:
+        if state == tmux_host.RUNNING:
             return [], False
         self.rc = state or 0   # None: the session is gone
         return [], True
@@ -700,8 +700,8 @@ class Tui:
             if not self.nudged:
                 self.nudged = True
                 try:
-                    tui_claude.send(self.name, NUDGE)
-                except tui_claude.TuiError as e:
+                    tmux_host.send(self.name, NUDGE)
+                except tmux_host.TuiError as e:
                     print(f"drive.py: tui: {e}", file=sys.stderr)
                 return
             self.stops += 1
@@ -710,7 +710,7 @@ class Tui:
 
     def give_up(self, reason: str) -> None:
         self.gave_up = True
-        print(f"drive.py: {reason}; session {self.name} left open: {tui_claude.attach_command(self.name)}", file=sys.stderr)
+        print(f"drive.py: {reason}; session {self.name} left open: {tmux_host.attach_command(self.name)}", file=sys.stderr)
 
     def done(self, outcome_arrived: bool) -> bool:
         if outcome_arrived:
@@ -723,11 +723,11 @@ class Tui:
         return self.rc
 
     def stop(self) -> None:
-        if not self.started:   # tui_claude.start leaves no session when it raises; a live one of that name isn't this agent run's
+        if not self.started:   # tmux_host.start leaves no session when it raises; a live one of that name isn't this agent run's
             return
         try:
-            tui_claude.kill(self.name)
-        except tui_claude.TuiError as e:   # the driver's own exception is the one to raise
+            tmux_host.kill(self.name)
+        except tmux_host.TuiError as e:   # the driver's own exception is the one to raise
             print(f"drive.py: tui: {e}", file=sys.stderr)
 
 
@@ -749,11 +749,11 @@ def check_layout(runner: str, layout: Layout | None) -> None:
         return
     if runner == "headless":
         raise ConfigError("the headless runner takes no layout")
-    if layout.split is not None and layout.split not in tui_claude.SPLITS:
-        raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tui_claude.SPLITS)}")
-    if layout.split_from is not None and not tui_claude.NAME.fullmatch(layout.split_from):
-        raise ConfigError(f"layout split_from {layout.split_from!r}: want {tui_claude.NAME.pattern}")
-    if layout.opener is not None and not tui_claude.OPENER.fullmatch(layout.opener):
+    if layout.split is not None and layout.split not in tmux_host.SPLITS:
+        raise ConfigError(f"layout split {layout.split!r}: want one of {', '.join(tmux_host.SPLITS)}")
+    if layout.split_from is not None and not tmux_host.NAME.fullmatch(layout.split_from):
+        raise ConfigError(f"layout split_from {layout.split_from!r}: want {tmux_host.NAME.pattern}")
+    if layout.opener is not None and not tmux_host.OPENER.fullmatch(layout.opener):
         raise ConfigError(f"layout opener {layout.opener!r}: want a tmux session name or an iTerm2 session id")
 
 
@@ -767,25 +767,25 @@ def check_naming(runner: str, prefix: str | None, events: str | None) -> None:
 
 def caller_layout(split: str | None, split_from: str | None, *, proc=subprocess.run) -> Layout:
     """The Layout a detached tui driver takes from its caller: split, split_from, which a terminal must show
-    (tui_claude.anchor; raises TuiError), and the caller's opener (tui_claude.opener; None when it has none)."""
+    (tmux_host.anchor; raises TuiError), and the caller's opener (tmux_host.opener; None when it has none)."""
     if split_from is not None:
-        tui_claude.anchor(split_from, proc=proc)
+        tmux_host.anchor(split_from, proc=proc)
     try:
-        opener = tui_claude.opener(proc=proc)
-    except tui_claude.TuiError:
+        opener = tmux_host.opener(proc=proc)
+    except tmux_host.TuiError:
         opener = None
     return Layout(split, split_from, opener)
 
 
 def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iterm: str, proc=subprocess.run,
-           sleep=time.sleep, roster: tuple[str, dict] | None = None, opener: str | None = None) -> None:
+           sleep=time.sleep, roster_entry: tuple[str, dict] | None = None, opener: str | None = None) -> None:
     """Runs argv (argv[0] absolute) in a new detached tmux session `name` on the caller's tmux server, in cwd with env,
-    its terminal keys (tui_claude.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
-    and env reach it through a 0600 handover file (tui_claude.EXEC), never through tmux, with SIGNALS blocked until
-    argv unblocks them (main). Raises RunnerError. With opener (the run's, tui_claude.OPENER), the session gets it as
+    its terminal keys (tmux_host.TERMINAL_KEYS) the pane's, $ITERM_SESSION_ID `iterm`; returns once it runs. argv, cwd
+    and env reach it through a 0600 handover file (tmux_host.EXEC), never through tmux, with SIGNALS blocked until
+    argv unblocks them (main). Raises RunnerError. With opener (the run's, tmux_host.OPENER), the session gets it as
     @opener, as its tui session does (`crew.py stop-all` finds it so), no @pane: a failure only prints its line.
-    With roster (a manager directory, manager.entry's keyword arguments), once the session runs it writes that entry as
-    `name` (manager.put, no lease check); an entry write failure only prints its line (manager.unwritten)."""
+    With roster_entry (a manager directory, roster.entry's keyword arguments), once the session runs it writes that
+    entry as `name` (roster.put, no lease check); an entry write failure only prints its line (roster.unwritten)."""
     for arg in argv:   # execve would fail after the handover is taken
         if "\0" in arg:
             raise RunnerError("an argv item holds a NUL character")
@@ -802,9 +802,9 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
                 raise RunnerError(f"tmux would misread {arg!r}")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
             json.dump({"argv": argv, "cwd": cwd, "block": [int(s) for s in SIGNALS],
-                       "env": {k: v for k, v in env.items() if k not in tui_claude.TERMINAL_KEYS}}, f)
+                       "env": {k: v for k, v in env.items() if k not in tmux_host.TERMINAL_KEYS}}, f)
         res = proc(["tmux", "new-session", "-d", "-e", f"ITERM_SESSION_ID={iterm}", "-s", name, sys.executable, "-I",
-                    "-c", tui_claude.EXEC, path], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                    "-c", tmux_host.EXEC, path], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if res.returncode:
             raise RunnerError(f"tmux: {(res.stderr or '').strip()}")
         if opener is not None:
@@ -812,26 +812,26 @@ def detach(name: str, argv: list[str], *, cwd: str, env: Mapping[str, str], iter
                        stdin=subprocess.DEVNULL)
             if res.returncode:
                 print(f"drive.py: driver session {name}: @opener: {(res.stderr or '').strip()}", file=sys.stderr)
-        for _ in range(round(tui_claude.HANDOVER_TIMEOUT / tui_claude.POLL)):
+        for _ in range(round(tmux_host.HANDOVER_TIMEOUT / tmux_host.POLL)):
             if not os.path.exists(path):
                 started = True
                 break
-            sleep(tui_claude.POLL)
+            sleep(tmux_host.POLL)
     except OSError as e:
         raise RunnerError(f"driver session: {e}") from e
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late start finds no file to run
     if not started:
-        with contextlib.suppress(tui_claude.TuiError):
-            tui_claude.kill(name, proc=proc)
+        with contextlib.suppress(tmux_host.TuiError):
+            tmux_host.kill(name, proc=proc)
         raise RunnerError(f"session {name} did not start")
-    if roster is not None:
-        directory, fields = roster
+    if roster_entry is not None:
+        directory, fields = roster_entry
         try:
-            manager.put(directory, name, manager.entry(**fields))
-        except manager.ManagerError as e:
-            manager.unwritten(name, e)
+            roster.put(directory, name, roster.entry(**fields))
+        except roster.RosterError as e:
+            roster.unwritten(name, e)
 
 
 def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, runner: str = "headless",
@@ -916,7 +916,7 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, client: Client,
         for sink in sinks:
             sink(event)
 
-    env = {k: v for k, v in os.environ.items() if k not in tui_claude.PARENT_KEYS}
+    env = {k: v for k, v in os.environ.items() if k not in tmux_host.PARENT_KEYS}
     cwd = launch.cwd or workdir
     try:
         host.begin(argv, cwd=cwd, env={**env, **launch.env, "PWD": cwd})   # Linux claude takes its cwd from $PWD
@@ -991,7 +991,7 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--runner", choices=RUNNERS, default="headless")
-    ap.add_argument("--split", choices=tui_claude.SPLITS,
+    ap.add_argument("--split", choices=tmux_host.SPLITS,
                     help="the tui runner's split, ignored in a tmux grid (default: stacked with the panes of the same "
                          "opener)")
     ap.add_argument("--split-from", metavar="SESSION",
@@ -1041,9 +1041,9 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
         # Known inline clients never gain event-write authority, even when constructor validation fails.
         if a.running_client and a.events is not None:
             try:
-                append_line(tui_claude.events_file(a.events),
+                append_line(tmux_host.events_file(a.events),
                             f"{time.strftime('%H:%M:%S')} {a.driver} outcome {status or 'error'}\n")
-            except (OSError, tui_claude.TuiError) as e:
+            except (OSError, tmux_host.TuiError) as e:
                 print(f"drive.py: {e}", file=sys.stderr)
 
 
@@ -1091,14 +1091,14 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
             cmd = command(launch, a.runner, client)
             check_layout(a.runner, layout)
             driver = driver_session(run.role, params.sid, params.prefix)
-            if a.detach and not tui_claude.NAME.fullmatch(driver):
-                raise ConfigError(f"driver session {driver!r}: want {tui_claude.NAME.pattern}")
+            if a.detach and not tmux_host.NAME.fullmatch(driver):
+                raise ConfigError(f"driver session {driver!r}: want {tmux_host.NAME.pattern}")
             if a.driver is None and a.events is None and (a.runner == "tui" or a.detach):
                 try:
-                    directory = manager.directory(a.manager, proc=proc)
+                    directory = roster.directory(a.manager, proc=proc)
                     if directory is not None:
-                        a.events = manager.events(directory, create=not a.dry_run)
-                except manager.ManagerError as e:
+                        a.events = roster.events(directory, create=not a.dry_run)
+                except roster.RosterError as e:
                     raise ConfigError(str(e)) from e
             if a.detach and a.events is None:
                 raise ConfigError("--detach needs --events or --manager")
@@ -1139,12 +1139,12 @@ def _main(a: argparse.Namespace, root: str, popen, proc, temp=None) -> tuple[int
 
 def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: str, proc) -> int:
     """--detach: this command, as the driver, in tmux session `driver`, its role entry written there when the events
-    file is a manager directory's (manager.home); 2 when the pane has no place or the events file is bad, 3 when the
+    file is a manager directory's (roster.home); 2 when the pane has no place or the events file is bad, 3 when the
     session fails to start."""
     try:
         layout = caller_layout(a.split, a.split_from, proc=proc) if a.runner == "tui" else None
-        events = tui_claude.events_file(a.events)
-    except tui_claude.TuiError as e:
+        events = tmux_host.events_file(a.events)
+    except tmux_host.TuiError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 2
     opener = layout and layout.opener
@@ -1157,13 +1157,13 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
     # leaves it no pane, as the caller has none.
     iterm = os.environ.get("ITERM_SESSION_ID", "") if opener else ""
     try:
-        d = manager.home(a.manager, events, proc=proc)
-    except manager.ManagerError as e:
-        manager.unwritten(driver, e)
+        d = roster.home(a.manager, events, proc=proc)
+    except roster.RosterError as e:
+        roster.unwritten(driver, e)
         d = None
     cwd = os.getcwd()
     tui = tui_session(run.role, params.sid, params.prefix) if a.runner == "tui" else None
-    roster = None if d is None else (d, {
+    roster_entry = None if d is None else (d, {
         "kind": "role", "sid": params.sid, "cwd": cwd, "tui": tui, "opener": opener, "split": a.split,
         "split_from": a.split_from,
         "resume": [sys.executable, os.path.abspath(__file__),
@@ -1171,13 +1171,13 @@ def _detach(a: argparse.Namespace, run: RunConfig, params: RunParams, driver: st
                                                    "split", "split-from", "prefix") if given[k] is not None),
                    "--detach", f"--manager={os.path.basename(d)}"]})
     try:
-        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster=roster, opener=opener)
+        detach(driver, argv, cwd=cwd, env=os.environ, iterm=iterm, proc=proc, roster_entry=roster_entry, opener=opener)
     except RunnerError as e:
         print(f"drive.py: {e}", file=sys.stderr)
         return 3
-    print(f"drive.py: driver session {driver}: {tui_claude.attach_command(driver)}", file=sys.stderr)
+    print(f"drive.py: driver session {driver}: {tmux_host.attach_command(driver)}", file=sys.stderr)
     if tui is not None:
-        print(f"drive.py: tui session {tui}: {tui_claude.attach_command(tui)}", file=sys.stderr)
+        print(f"drive.py: tui session {tui}: {tmux_host.attach_command(tui)}", file=sys.stderr)
     return 0
 
 

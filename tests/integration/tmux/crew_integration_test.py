@@ -1,4 +1,4 @@
-"""crew.py and tui_claude.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
+"""crew.py and tmux_host.py run as processes against a private tmux server, fake_claude.py as `claude`: start,
 state, events, blocked, dead, restart, early death; the manager directory the events file defaults to; the grid
 (columns, re-tile, name order, sub-workers, a state needing two passes settling, concurrent tiles, the mute, the
 breaker), its grid_retile modes (open-close: a drag, a window resize and a restart hold, an open and a stop re-tile;
@@ -25,11 +25,11 @@ from tests import ROOT, hermetic
 import crew
 from tests.integration.core import fake_claude
 from tests.integration.core import live_tmux
-tui_claude = crew.tui_claude
-manager = crew.manager
+tmux_host = crew.tmux_host
+roster = crew.roster
 
 CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
-TUI = os.path.join(crew.CORE, "src", "tui_claude.py")
+TUI = os.path.join(crew.CORE, "src", "tmux_host.py")
 DRIVE = os.path.join(crew.CORE, "src", "drive.py")
 ROLE = "dummy-tester"
 ROLE_SID = "26700000-0000-4000-8000-000000000005"
@@ -60,20 +60,20 @@ import sys
 
 sys.path.insert(0, {src!r})
 import drive  # noqa: E402
-import manager  # noqa: E402
-import tui_claude  # noqa: E402
+import roster  # noqa: E402
+import tmux_host  # noqa: E402
 
 ROLE, SID, DRIVE = {role!r}, {sid!r}, {drive!r}
 args = sys.argv[1:]
 issue, events, name = (args[args.index(flag) + 1] for flag in ("--issue", "--events", "--manager"))
 driver, prefix, cwd = f"agent-pm-{{ROLE}}-{{issue}}", f"{{ROLE}}-{{issue}}", os.getcwd()
 if subprocess.run(["tmux", "has-session", "-t", f"={{driver}}"], capture_output=True).returncode == 0:
-    sys.exit(f"router.py: {{issue}} has a live agent run: {{tui_claude.attach_command(driver)}}")
+    sys.exit(f"router.py: {{issue}} has a live agent run: {{tmux_host.attach_command(driver)}}")
 opener = drive.caller_layout(None, None).opener
 argv = [sys.executable, DRIVE, f"--role={{ROLE}}", "--input=Hello.", "--out=out.md", "--workdir=.", f"--sid={{SID}}",
         "--runner=tui", f"--prefix={{prefix}}", f"--events={{events}}", f"--opener={{opener}}", f"--driver={{driver}}",
         *(["--resume"] if os.path.exists("run.jsonl") else [])]
-drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.directory(name), {{
+drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster_entry=(roster.directory(name), {{
     "kind": "pipeline", "sid": SID, "cwd": cwd, "note": issue, "tui": f"{{prefix}}-{{SID[:8]}}", "opener": opener,
     "resume": [sys.executable, os.path.abspath(__file__), *args]}}))
 '''
@@ -82,7 +82,7 @@ drive.detach(driver, argv, cwd=cwd, env=os.environ, iterm="", roster=(manager.di
 class Live(unittest.TestCase):
     """HOME of the test's own (its ~/.agent-pm: self.agent_pm), a private tmux server with manager session mgr
     started and shown in a client, one fake log for all workers, the workers' cwd. self.events is mgr's events file, in
-    mgr's manager directory (core/src/manager.py), which mgr attaches to (`crew.py attach`) unless ATTACH is False.
+    mgr's manager directory (core/src/roster.py), which mgr attaches to (`crew.py attach`) unless ATTACH is False.
     Commands run as processes in mgr's pane unless `inside` names another session (None: no pane, Server.env()
     alone)."""
     ATTACH = True
@@ -239,15 +239,15 @@ class Live(unittest.TestCase):
         return self.display(name, "#{window_id}")
 
     def hooks(self, name: str) -> list[str]:
-        """The tui_claude.GRID_HOOKS set on `name`'s window (show-hooks -w)."""
+        """The tmux_host.GRID_HOOKS set on `name`'s window (show-hooks -w)."""
         out = self.ok(self.server.tmux("show-hooks", "-w", "-t", self.window_of(name))).stdout
-        return [h for h in tui_claude.GRID_HOOKS if re.search(rf"^{h}\b", out, re.M)]
+        return [h for h in tmux_host.GRID_HOOKS if re.search(rf"^{h}\b", out, re.M)]
 
     def open_close_hooks(self, name: str) -> None:
         """Fails unless `name`'s window has exactly open-close's hooks, each a tile only on a new pane set."""
-        self.assertEqual(self.hooks(name), list(tui_claude.RETILE_HOOKS["open-close"]))
+        self.assertEqual(self.hooks(name), list(tmux_host.RETILE_HOOKS["open-close"]))
         out = self.ok(self.server.tmux("show-hooks", "-w", "-t", self.window_of(name))).stdout
-        for h in tui_claude.RETILE_HOOKS["open-close"]:
+        for h in tmux_host.RETILE_HOOKS["open-close"]:
             line = next(line for line in out.splitlines() if re.match(rf"{h}\b", line))
             self.assertIn(" tile --no-wait --if-panes-changed @", line)
 
@@ -306,7 +306,7 @@ class Lifecycle(Live):
         (call,) = self.calls("w1")
         argv = call["argv"]
         self.assertEqual(argv[:1] + argv[2:], ["--settings", "--session-id", sid, "--name", "w1", "--", "hi"])
-        self.assertEqual(json.loads(argv[1]), json.loads(crew.tui_claude.hooks(self.events)))
+        self.assertEqual(json.loads(argv[1]), json.loads(crew.tmux_host.hooks(self.events)))
         (done,) = self.wait_event("w1", "done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
         self.assertEqual(self.next_event(0), (1, done, "Hi from w1."))
@@ -440,7 +440,7 @@ class Settle(Live):
         self.tmux("swap-pane", "-d", "-s", self.manager, "-t", w2)
         self.assertEqual(self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
                          [w2, w1, self.manager])
-        old = tui_claude._render_layout(tui_claude._parse_layout(
+        old = tmux_host._render_layout(tmux_host._parse_layout(
             f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"))
         self.tmux("select-layout", "-t", self.window, old)
         self.assertEqual(self.layout(), old)
@@ -454,8 +454,8 @@ class Settle(Live):
     def grid_up(self) -> None:
         """_grid_up on the window at per-column 1, retile all, in a process in mgr's pane: how the incident installed
         the grid."""
-        code = (f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tui_claude; "
-                f"sys.exit(tui_claude._grid_up({self.window!r}, {self.manager!r}, 1, 'all', subprocess.run))")
+        code = (f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tmux_host; "
+                f"sys.exit(tmux_host._grid_up({self.window!r}, {self.manager!r}, 1, 'all', subprocess.run))")
         self.ok(self.call(sys.executable, "-I", "-c", code))
 
     def settled(self) -> str:
@@ -473,7 +473,7 @@ class Settle(Live):
         longer `tiles`, @grid-busy clear), the grid is down or RETILE_WAIT s pass: one hand layout per re-tile."""
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         end = time.monotonic() + RETILE_WAIT
-        state = f"#{{{tui_claude.GRID_MANAGER}}}\t#{{{tui_claude.GRID_BUSY}}}\t#{{{tui_claude.GRID_TILES}}}"
+        state = f"#{{{tmux_host.GRID_MANAGER}}}\t#{{{tmux_host.GRID_BUSY}}}\t#{{{tmux_host.GRID_TILES}}}"
         while True:
             manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split("\t")
             if not manager or now != tiles and not busy or time.monotonic() > end:
@@ -485,8 +485,8 @@ class Settle(Live):
         self.settled()
 
     def test_concurrent_tiles_settle(self):
-        self.tmux("set-option", "-w", "-t", self.window, tui_claude.GRID_MANAGER, self.manager, ";",
-                  "set-option", "-w", "-t", self.window, tui_claude.GRID_PER_COLUMN, "1")
+        self.tmux("set-option", "-w", "-t", self.window, tmux_host.GRID_MANAGER, self.manager, ";",
+                  "set-option", "-w", "-t", self.window, tmux_host.GRID_PER_COLUMN, "1")
         env = self.server.env(**self.server.inside(MANAGER))
         tiles = [subprocess.Popen([sys.executable, TUI, "tile", *flag, self.window], env=env, cwd=self.cwd,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -502,10 +502,10 @@ class Settle(Live):
     def test_busy_mutes_the_hooks(self):
         self.grid_up()
         grid = self.settled()
-        self.tmux("set-option", "-w", "-t", self.window, tui_claude.GRID_BUSY, self.window)
+        self.tmux("set-option", "-w", "-t", self.window, tmux_host.GRID_BUSY, self.window)
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.assertNotEqual(self.steady(self.layout()), grid)
-        self.tmux("set-option", "-u", "-w", "-t", self.window, tui_claude.GRID_BUSY)
+        self.tmux("set-option", "-u", "-w", "-t", self.window, tmux_host.GRID_BUSY)
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.settled()
 
@@ -513,7 +513,7 @@ class Settle(Live):
         self.grid_up()
         self.settled()
         start, seen, most = time.monotonic(), 0, 0
-        tiles = self.window_option(MANAGER, tui_claude.GRID_TILES)
+        tiles = self.window_option(MANAGER, tmux_host.GRID_TILES)
         while True:
             manager, now = self.hand_layout(tiles)
             if not manager:
@@ -522,14 +522,14 @@ class Settle(Live):
             elapsed = time.monotonic() - start
             self.assertLess(elapsed, BREAKER_TIMEOUT,
                             f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
-                            f"trips past {tui_claude.TILE_LIMIT} in {tui_claude.TILE_WINDOW} s")
+                            f"trips past {tmux_host.TILE_LIMIT} in {tmux_host.TILE_WINDOW} s")
         # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
-        self.assertGreaterEqual(most, tui_claude.TILE_LIMIT - 1)
-        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN, tui_claude.GRID_TILES, tui_claude.GRID_BUSY,
-                   tui_claude.GRID_PANES_SET)
+        self.assertGreaterEqual(most, tmux_host.TILE_LIMIT - 1)
+        options = (tmux_host.GRID_MANAGER, tmux_host.GRID_PER_COLUMN, tmux_host.GRID_TILES, tmux_host.GRID_BUSY,
+                   tmux_host.GRID_PANES_SET)
         self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
         hooks = self.tmux("show-hooks", "-w", "-t", self.window)
-        self.assertEqual([h for h in tui_claude.GRID_HOOKS if h in hooks], [], hooks)
+        self.assertEqual([h for h in tmux_host.GRID_HOOKS if h in hooks], [], hooks)
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.steady(self.layout())
         self.started("w3")
@@ -551,7 +551,7 @@ class Retile(Live):
         return self.display(MANAGER, "#{window_layout}")
 
     def tiles(self) -> str:
-        return self.window_option(MANAGER, tui_claude.GRID_TILES)
+        return self.window_option(MANAGER, tmux_host.GRID_TILES)
 
     def drag(self, name: str, rows: int) -> str:
         """The border below `name`'s pane moved `rows` down (up when negative), as a mouse drag: resize-pane. The
@@ -583,7 +583,7 @@ class Retile(Live):
         self.started("w2")
         self.grid([["w1", "w2"]], width)
         self.open_close_hooks(MANAGER)
-        self.assertEqual(self.window_option(MANAGER, tui_claude.GRID_PANES_SET), self.pane_set(MANAGER))
+        self.assertEqual(self.window_option(MANAGER, tmux_host.GRID_PANES_SET), self.pane_set(MANAGER))
         dragged = self.drag("w1", 5)
         self.holds(self.layout, dragged, "the layout after a drag")
         tiles = self.tiles()
@@ -613,7 +613,7 @@ class Retile(Live):
         self.open_close_hooks(MANAGER)
         self.assertEqual(self.ok(self.workers("stop", "w3")).stdout, "")
         self.grid([["w1"]], width)   # tmux's own close leaves the grid: the hook's tile only records the pane set
-        live_tmux.wait(lambda: self.window_option(MANAGER, tui_claude.GRID_PANES_SET) == self.pane_set(MANAGER),
+        live_tmux.wait(lambda: self.window_option(MANAGER, tmux_host.GRID_PANES_SET) == self.pane_set(MANAGER),
                        what="@grid-panes the window's pane set")
 
     def test_off_places_only_till_tile(self):
@@ -634,8 +634,8 @@ class Retile(Live):
         self.split_of(before, "z1", largest, "below")
         self.holds(self.panes, self.panes(), "the panes as placed")
         self.assertEqual(self.hooks(MANAGER), [])
-        options = (tui_claude.GRID_MANAGER, tui_claude.GRID_PER_COLUMN)
-        self.assertEqual([self.window_option(MANAGER, k) for k in options], [self.manager, str(tui_claude.PER_COLUMN)])
+        options = (tmux_host.GRID_MANAGER, tmux_host.GRID_PER_COLUMN)
+        self.assertEqual([self.window_option(MANAGER, k) for k in options], [self.manager, str(tmux_host.PER_COLUMN)])
         self.ok(self.tui("tile", self.window_of(MANAGER)))
         self.grid([[("w1", ["z1"]), "w2"]], self.server.size[0] // 2)
 
@@ -643,7 +643,7 @@ class Retile(Live):
         self.retile("all")
         self.started("w1")
         self.grid([["w1"]])
-        self.assertEqual(self.hooks(MANAGER), list(tui_claude.GRID_HOOKS))
+        self.assertEqual(self.hooks(MANAGER), list(tmux_host.GRID_HOOKS))
         self.retile("open-close")
         self.started("w2")
         self.grid([["w1", "w2"]])
@@ -758,9 +758,9 @@ class Roster(Live):
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
 
     def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:
-        """Entry `name`'s recovery argv (manager.recovery), no shell, in its cwd, as call() runs it in mgr's pane."""
+        """Entry `name`'s recovery argv (roster.recovery), no shell, in its cwd, as call() runs it in mgr's pane."""
         e = self.roster()["entries"][name]
-        return self.call(*manager.recovery(e), cwd=e["cwd"], **extra)
+        return self.call(*roster.recovery(e), cwd=e["cwd"], **extra)
 
     def after_w1(self, out: str, rest: str) -> None:
         """out is attach's table, w1's row (start's entry) only, then rest."""
@@ -905,7 +905,7 @@ class Roster(Live):
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
         self.assertEqual(res.stdout, f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
                                      f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
-                                     f"{shlex.join(manager.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
+                                     f"{shlex.join(roster.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
         self.assertIn("--input 'Continue the unfinished task.'", res.stdout)
         self.ok(self.recover(ROLE_DRIVER, **scenario))
         live_tmux.wait(lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back")
@@ -1062,7 +1062,7 @@ class Roster(Live):
         self.wait_event("w1", "done")
         kept = filler("k", 3)
         with open(self.events, "a") as f:
-            f.write("".join(f"{line}\n" for line in filler("f", manager.EVENTS_MAX // WIDTH + 1) + kept))
+            f.write("".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept))
         total = len(live_tmux.events(self.events))
         old, original, ino = f"{self.events}.1", raw(self.events), os.lstat(self.events).st_ino
         backlog = [f"{i} {line}" for i, line in enumerate(kept, 1)]

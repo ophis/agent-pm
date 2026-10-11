@@ -3,12 +3,12 @@ next-event), drive.py (--runner tui, --detach) and router.py --tui use when give
 append to it), and of its roster, roster.json, written only under the flock on roster.lock (both 0600).
 
 <name> is [A-Za-z0-9_-]+, resolved (directory) as `--manager <name>`, else the caller's tmux session
-(tui_claude.own_session), else none. `crew.py attach` creates it (ensure) and `events` (0600, a regular file of the
-caller's: tui_claude.events_file); `drive.py` and `router.py --tui` still may. ~/.agent-pm is made when missing and not
+(tmux_host.own_session), else none. `crew.py attach` creates it (ensure) and `events` (0600, a regular file of the
+caller's: tmux_host.events_file); `drive.py` and `router.py --tui` still may. ~/.agent-pm is made when missing and not
 checked; managers/ and <name>/ are made one level at a time, 0700 whatever the umask. One that exists keeps its mode but
 must be a directory (not a symlink) owned by the caller, and <name>/ also with no group or other permission bits (every
-roster access checks), else ManagerError, so nothing is created through a bad managers/. Every failure is a
-ManagerError.
+roster access checks), else RosterError, so nothing is created through a bad managers/. Every failure is a
+RosterError.
 
 roster.json: a regular file of the caller's, at most ROSTER_MAX bytes (a symlink, a FIFO or a foreign file is refused),
 JSON (indent 2, sorted keys), written through a temp file and os.replace. Missing: version 1, holder null, cursor 0,
@@ -18,7 +18,7 @@ router.py --tui (a pipeline), keyed by the driver session. `crew.py stop` remove
 `crew.py forget` one whose sessions are gone.
   {"version": 1, "holder": null | {"session": NAME, "since": time}, "cursor": int >= 0, "gen": int >= 0,
    "entries": {NAME: entry}}
-Exactly these keys (holder's: session, since), else ManagerError and the file untouched. An entry has exactly these
+Exactly these keys (holder's: session, since), else RosterError and the file untouched. An entry has exactly these
 keys, else it is skipped with one stderr line `manager: roster.json: entry <name>: <field>: <why>` (a later write drops
 it):
   kind              worker | role | pipeline
@@ -27,8 +27,8 @@ it):
   resume            a list of 2 or more printable strings; [0] an absolute path, [1] one to crew.py, drive.py or
                     router.py (or LEGACY); a worker's names its client (--client)
   note              null, or printable with at most NOTE_MAX characters
-  opener            tui_claude.OPENER or null
-  pane              tui_claude.PANE or tui_claude.ITERM_ID, or null
+  opener            tmux_host.OPENER or null
+  pane              tmux_host.PANE or tmux_host.ITERM_ID, or null
   split             right | below | null
   split_from, tui   NAME or null
   state             working | done | blocked | dead | gone | waiting | finished
@@ -60,7 +60,7 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import datetime, timezone
 
-import tui_claude
+import tmux_host
 
 ROOT = "~/.agent-pm/managers"
 SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -86,15 +86,15 @@ POLL = 0.1
 CONTINUE = "Continue the unfinished task."
 
 
-class ManagerError(Exception):
+class RosterError(Exception):
     pass
 
 
-class Held(ManagerError):
+class Held(RosterError):
     """Another live tmux session holds the directory."""
 
 
-class Stale(ManagerError):
+class Stale(RosterError):
     """Line numbers not of `events` now."""
 
 
@@ -102,18 +102,18 @@ def directory(manager: str | None = None, *, proc=subprocess.run) -> str | None:
     """The absolute path of the manager's directory, the filesystem untouched; None outside tmux without `manager`."""
     if manager is None:
         try:
-            manager = tui_claude.own_session(proc=proc)
-        except tui_claude.TuiError as e:
-            raise ManagerError(f"{e}; give --manager <name>") from e
+            manager = tmux_host.own_session(proc=proc)
+        except tmux_host.TuiError as e:
+            raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
             return None
-    elif not tui_claude.NAME.fullmatch(manager):
-        raise ManagerError(f"manager {manager!r}: want {tui_claude.NAME.pattern}")
+    elif not tmux_host.NAME.fullmatch(manager):
+        raise RosterError(f"manager {manager!r}: want {tmux_host.NAME.pattern}")
     return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
 
 
-def _not_attached(directory: str) -> ManagerError:
-    return ManagerError(f"manager directory {directory} not attached: run crew.py attach first")
+def _not_attached(directory: str) -> RosterError:
+    return RosterError(f"manager directory {directory} not attached: run crew.py attach first")
 
 
 def _checked(path: str, *, private: bool = False) -> None:
@@ -121,12 +121,12 @@ def _checked(path: str, *, private: bool = False) -> None:
     try:
         st = os.lstat(path)
     except OSError as e:
-        raise ManagerError(f"manager directory {path}: {e.strerror}") from e
+        raise RosterError(f"manager directory {path}: {e.strerror}") from e
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-        raise ManagerError(f"manager directory {path}: not a directory owned by you")
+        raise RosterError(f"manager directory {path}: not a directory owned by you")
     if private and st.st_mode & 0o077:
         mode = stat.S_IMODE(st.st_mode)
-        raise ManagerError(f"manager directory {path}: group or other permission bits set (mode {mode:04o})")
+        raise RosterError(f"manager directory {path}: group or other permission bits set (mode {mode:04o})")
 
 
 def ensure(directory: str) -> None:
@@ -136,7 +136,7 @@ def ensure(directory: str) -> None:
     try:
         os.makedirs(home, mode=0o700, exist_ok=True)
     except OSError as e:
-        raise ManagerError(f"manager directory {home}: {e.strerror}") from e
+        raise RosterError(f"manager directory {home}: {e.strerror}") from e
     for path in (managers, directory):
         try:
             try:
@@ -145,7 +145,7 @@ def ensure(directory: str) -> None:
             except FileExistsError:
                 pass
         except OSError as e:
-            raise ManagerError(f"manager directory {path}: {e.strerror}") from e
+            raise RosterError(f"manager directory {path}: {e.strerror}") from e
         _checked(path, private=path == directory)
 
 
@@ -156,15 +156,15 @@ def events(directory: str, *, create: bool = True) -> str:
     if create:
         ensure(directory)
         try:
-            return tui_claude.events_file(path)
-        except tui_claude.TuiError as e:
-            raise ManagerError(str(e)) from e
+            return tmux_host.events_file(path)
+        except tmux_host.TuiError as e:
+            raise RosterError(str(e)) from e
     return path
 
 
 def home(name: str | None, events: str | None, *, proc=subprocess.run) -> str | None:
     """The roster directory of a run given `events`: directory(name) when it exists and events is its `events` file
-    (real paths compared); else None. Touches nothing; a bad name or a failing own_session: ManagerError."""
+    (real paths compared); else None. Touches nothing; a bad name or a failing own_session: RosterError."""
     d = directory(name, proc=proc)
     if d is None or not os.path.isdir(d) or events is None:
         return None
@@ -215,16 +215,16 @@ def _keys(value: dict, want: tuple) -> str | None:
     return f"keys: {', '.join(parts)}" if parts else None
 
 
-_NAME_OR_NULL = (lambda v: v is None or _match(tui_claude.NAME, v), "a session name or null")
+_NAME_OR_NULL = (lambda v: v is None or _match(tmux_host.NAME, v), "a session name or null")
 _CHECKS = {
     "kind": (lambda v: v in KINDS, _or(KINDS)),
     "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
     "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
     "note": (lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
              f"null or a printable string of at most {NOTE_MAX} characters"),
-    "opener": (lambda v: v is None or _match(tui_claude.OPENER, v),
+    "opener": (lambda v: v is None or _match(tmux_host.OPENER, v),
                "a tmux session name or an iTerm2 pane id, or null"),
-    "pane": (lambda v: v is None or _match(tui_claude.PANE, v) or _match(tui_claude.ITERM_ID, v),
+    "pane": (lambda v: v is None or _match(tmux_host.PANE, v) or _match(tmux_host.ITERM_ID, v),
              "a tmux pane id or an iTerm2 session id, or null"),
     "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
     "split_from": _NAME_OR_NULL,
@@ -262,16 +262,16 @@ def _value_fault(value) -> str | None:
 
 
 def _fault(name, value) -> str | None:
-    if not _match(tui_claude.NAME, name):
-        return f"name: want {tui_claude.NAME.pattern}"
+    if not _match(tmux_host.NAME, name):
+        return f"name: want {tmux_host.NAME.pattern}"
     return _value_fault(value)
 
 
 def _check(data, path: str, *, strict: bool) -> dict:
-    """data as a roster: a top-level fault is a ManagerError. An invalid entry is skipped with a stderr line (strict: a
-    ManagerError). Returns the roster with the valid entries only."""
+    """data as a roster: a top-level fault is a RosterError. An invalid entry is skipped with a stderr line (strict: a
+    RosterError). Returns the roster with the valid entries only."""
     def fail(why: str):
-        raise ManagerError(f"{path}: {why}")
+        raise RosterError(f"{path}: {why}")
 
     if not isinstance(data, dict):
         fail("want a JSON object")
@@ -285,7 +285,7 @@ def _check(data, path: str, *, strict: bool) -> dict:
             fail("holder: want null or an object with session and since")
         if bad := _keys(holder, ("session", "since")):
             fail(f"holder: {bad}")
-        if not _match(tui_claude.NAME, holder["session"]):
+        if not _match(tmux_host.NAME, holder["session"]):
             fail(_want("holder.session", holder["session"], "a session name"))
         if not _time(holder["since"]):
             fail(_want("holder.since", holder["since"], _TIME))
@@ -309,20 +309,20 @@ _NOT_REGULAR = "not a regular file owned by you"
 
 
 def _open(path: str, flags: int) -> int | None:
-    """An fd of path, a regular file of the caller's, never through a symlink; else ManagerError. None when missing and
+    """An fd of path, a regular file of the caller's, never through a symlink; else RosterError. None when missing and
     not O_CREAT."""
     try:
         fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
     except FileNotFoundError as e:
         if flags & os.O_CREAT:
-            raise ManagerError(f"{path}: {e.strerror}") from e
+            raise RosterError(f"{path}: {e.strerror}") from e
         return None
     except OSError as e:
-        raise ManagerError(f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}") from e
+        raise RosterError(f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}") from e
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise ManagerError(f"{path}: {_NOT_REGULAR}")
+            raise RosterError(f"{path}: {_NOT_REGULAR}")
     except BaseException:
         os.close(fd)
         raise
@@ -341,10 +341,10 @@ def _locked(path: str) -> Iterator[None]:
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise ManagerError(f"{path}: busy") from None
+                    raise RosterError(f"{path}: busy") from None
                 time.sleep(POLL)
             except OSError as e:
-                raise ManagerError(f"{path}: {e.strerror}") from e
+                raise RosterError(f"{path}: {e.strerror}") from e
         yield
     finally:
         os.close(fd)
@@ -358,13 +358,13 @@ def _read(path: str):
     with os.fdopen(fd, "rb") as f:
         raw = f.read(ROSTER_MAX + 1)
     if len(raw) > ROSTER_MAX:
-        raise ManagerError(f"{path}: over {ROSTER_MAX} bytes")
+        raise RosterError(f"{path}: over {ROSTER_MAX} bytes")
     try:
         return json.loads(raw)
     except RecursionError:
-        raise ManagerError(f"{path}: invalid JSON: nested too deep") from None
+        raise RosterError(f"{path}: invalid JSON: nested too deep") from None
     except ValueError as e:
-        raise ManagerError(f"{path}: invalid JSON: {e}") from e
+        raise RosterError(f"{path}: invalid JSON: {e}") from e
 
 
 def _dump(data: dict) -> str:
@@ -375,7 +375,7 @@ def _write(directory: str, path: str, text: str) -> None:
     try:
         fd, tmp = tempfile.mkstemp(dir=directory, prefix="roster.json.")
     except OSError as e:
-        raise ManagerError(f"{path}: {e.strerror}") from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -385,15 +385,15 @@ def _write(directory: str, path: str, text: str) -> None:
     except OSError as e:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
-        raise ManagerError(f"{path}: {e.strerror}") from e
+        raise RosterError(f"{path}: {e.strerror}") from e
 
 
 @contextlib.contextmanager
-def roster(directory: str, *, write: bool = True) -> Iterator[dict]:
+def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
     """Under roster.lock, yields directory's roster (a fresh one when roster.json is missing). Never creates directory:
-    missing is a ManagerError. With write, a normal exit validates the whole dict (a fault: ManagerError, nothing written)
+    missing is a RosterError. With write, a normal exit validates the whole dict (a fault: RosterError, nothing written)
     and writes it when it changed or roster.json was missing; an exception in the block, or write=False, writes
-    nothing. Not reentrant: never call roster() or put() inside a block (a second flock waits for the first)."""
+    nothing. Not reentrant: never call locked() or put() inside a block (a second flock waits for the first)."""
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
         raise _not_attached(directory)
@@ -438,7 +438,7 @@ def _holds(r: dict, directory: str, own: str | None, proc) -> bool:
 
 
 def take(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> None:
-    """attach's lease, inside a roster() block. Free: no holder, own, or a holder whose tmux session is gone; then own
+    """attach's lease, inside a locked() block. Free: no holder, own, or a holder whose tmux session is gone; then own
     becomes the holder (`since` kept when it already was). Held by another live session: Held. own None (outside tmux)
     never changes the holder."""
     if not _holds(r, directory, own, proc) and own is not None:
@@ -446,7 +446,7 @@ def take(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> No
 
 
 def check(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> None:
-    """Every other command's lease, inside a roster() block: Held by another live session; not attached when own (not
+    """Every other command's lease, inside a locked() block: Held by another live session; not attached when own (not
     None) is not the holder; own None passes. It holds only for that block: a take-over can follow, so a later write
     must not assume it."""
     if not _holds(r, directory, own, proc) and own is not None:
@@ -456,19 +456,19 @@ def check(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> N
 def entry(kind: str, *, sid: str | None, cwd: str, resume: list[str], note: str | None = None,
           opener: str | None = None, pane: str | None = None, split: str | None = None, split_from: str | None = None,
           tui: str | None = None, state: str = "working", started: str | None = None) -> dict:
-    """A valid roster entry (`started` defaults to now); ManagerError when it is not."""
+    """A valid roster entry (`started` defaults to now); RosterError when it is not."""
     value = {"kind": kind, "sid": sid, "cwd": cwd, "resume": resume, "note": note, "opener": opener, "pane": pane,
              "split": split, "split_from": split_from, "tui": tui, "state": state,
              "started": now() if started is None else started}
     if bad := _value_fault(value):
-        raise ManagerError(f"entry: {bad}")
+        raise RosterError(f"entry: {bad}")
     return value
 
 
 def set_entry(r: dict, name: str, value: dict) -> None:
-    """Validates value and sets (replacing) entries[name], inside a roster() block."""
+    """Validates value and sets (replacing) entries[name], inside a locked() block."""
     if bad := _fault(name, value):
-        raise ManagerError(f"entry {name!r}: {bad}")
+        raise RosterError(f"entry {name!r}: {bad}")
     r["entries"][name] = value
 
 
@@ -482,8 +482,8 @@ def record(r: dict, name: str, value: dict) -> None:
 
 
 def put(directory: str, name: str, value: dict) -> None:
-    """roster() + record, for a caller in no roster() block."""
-    with roster(directory) as r:
+    """locked() + record, for a caller in no locked() block."""
+    with locked(directory) as r:
         record(r, name, value)
 
 
@@ -493,28 +493,28 @@ def unwritten(name: str, error: Exception) -> None:
 
 
 def remove(r: dict, name: str) -> dict:
-    """Deletes and returns entries[name], inside a roster() block."""
+    """Deletes and returns entries[name], inside a locked() block."""
     try:
         return r["entries"].pop(name)
     except KeyError:
-        raise ManagerError(f"{name} not in roster") from None
+        raise RosterError(f"{name} not in roster") from None
 
 
 def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
-    """Stops entry `name` (its key, else the entry whose tui it is), inside a roster() block: kills its sessions (its
+    """Stops entry `name` (its key, else the entry whose tui it is), inside a locked() block: kills its sessions (its
     key's, then its tui's), gone already or not, then removes it (remove); returns its key. Not in the roster:
-    ManagerError, nothing killed. A session still live after its kill: ManagerError, the entry kept."""
+    RosterError, nothing killed. A session still live after its kill: RosterError, the entry kept."""
     entries = r["entries"]
     key = name if name in entries else next((k for k in sorted(entries) if entries[k]["tui"] == name), None)
     if key is None:
-        raise ManagerError(f"{name} not in roster")
+        raise RosterError(f"{name} not in roster")
     for session in (key, entries[key]["tui"]):
         if session is None:
             continue
-        with contextlib.suppress(tui_claude.TuiError):
-            tui_claude.kill(session, proc=proc)
+        with contextlib.suppress(tmux_host.TuiError):
+            tmux_host.kill(session, proc=proc)
         if _live(session, proc):
-            raise ManagerError(f"{key}: session {session} still live after tmux kill-session")
+            raise RosterError(f"{key}: session {session} still live after tmux kill-session")
     remove(r, key)
     return key
 
@@ -539,7 +539,7 @@ def recovery(entry: dict) -> list[str] | None:
 @contextlib.contextmanager
 def _reading(path: str) -> Iterator:
     """path open for binary reads through _open (O_NONBLOCK: a FIFO never blocks), None when missing; a read error is a
-    ManagerError."""
+    RosterError."""
     fd = _open(path, os.O_RDONLY | os.O_NONBLOCK)
     if fd is None:
         yield None
@@ -548,7 +548,7 @@ def _reading(path: str) -> Iterator:
         try:
             yield f
         except OSError as e:
-            raise ManagerError(f"{path}: {e.strerror}") from e
+            raise RosterError(f"{path}: {e.strerror}") from e
 
 
 def _offset(f, n: int) -> int:
@@ -584,7 +584,7 @@ def following(path: str, n: int) -> bytes:
 
 
 def due(r: dict, directory: str) -> bool:
-    """Whether a rotation is due, inside a roster() block: `events` is over EVENTS_MAX bytes (os.lstat) and at least
+    """Whether a rotation is due, inside a locked() block: `events` is over EVENTS_MAX bytes (os.lstat) and at least
     EVENTS_MAX // 2 of them are handled (offset to the cursor). A rotation then drops at least that much: unhandled lines
     alone past EVENTS_MAX never make one due, nor does each handled event after."""
     path = events(directory, create=False)
@@ -593,12 +593,12 @@ def due(r: dict, directory: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError as e:
-        raise ManagerError(f"{path}: {e.strerror}") from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     return size > EVENTS_MAX and offset(path, r["cursor"]) >= EVENTS_MAX // 2
 
 
 def advance(r: dict, directory: str, after: int | None, gen: int) -> int:
-    """Records line `after` of `events` (None: its last complete line now) as handled, inside a roster() block: the cursor
+    """Records line `after` of `events` (None: its last complete line now) as handled, inside a locked() block: the cursor
     becomes the larger; returns `after` resolved. Stale when gen is not the roster's (checked first) or `after` is past
     the end."""
     if gen != r["gen"]:
@@ -615,24 +615,24 @@ def advance(r: dict, directory: str, after: int | None, gen: int) -> int:
 
 @contextlib.contextmanager
 def _writing(path: str, flags: int) -> Iterator[int]:
-    """An fd of path through _open; missing, or an OSError in the block: ManagerError."""
+    """An fd of path through _open; missing, or an OSError in the block: RosterError."""
     fd = _open(path, flags)
     if fd is None:
-        raise ManagerError(f"{path}: {os.strerror(errno.ENOENT)}")
+        raise RosterError(f"{path}: {os.strerror(errno.ENOENT)}")
     try:
         yield fd
     except OSError as e:
-        raise ManagerError(f"{path}: {e.strerror}") from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     finally:
         os.close(fd)
 
 
 def _refill(path: str, old: str, cursor: int, sleep) -> None:
-    """rotate's steps after the rename; every failure is a ManagerError."""
+    """rotate's steps after the rename; every failure is a RosterError."""
     try:
-        tui_claude.events_file(path)
-    except tui_claude.TuiError as e:
-        raise ManagerError(str(e)) from e
+        tmux_host.events_file(path)
+    except tmux_host.TuiError as e:
+        raise RosterError(str(e)) from e
     with _writing(path, os.O_WRONLY | os.O_NONBLOCK) as fd:
         os.fchmod(fd, 0o600)   # a writer's `>>` may have made it in between, with its umask
     sleep(SETTLE)
@@ -646,8 +646,8 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
 
 
 def rotate(r: dict, directory: str, *, sleep=None) -> bool:
-    """Rotates `events`, inside a roster() block; False, nothing touched, unless due. `events` or a present `events.1`
-    not a regular file of the caller's (os.lstat): ManagerError, nothing renamed. Then: `events` to `events.1`; a fresh
+    """Rotates `events`, inside a locked() block; False, nothing touched, unless due. `events` or a present `events.1`
+    not a regular file of the caller's (os.lstat): RosterError, nothing renamed. Then: `events` to `events.1`; a fresh
     `events`, 0600; sleep(SETTLE) for in-flight appends (None: time.sleep, looked up at the call); the lines of `events.1`
     after the cursor appended (a final fragment gets its newline); cursor 0, gen + 1. After the rename it never raises: a
     failure prints one stderr line, leaves those lines in `events.1` and still sets cursor and gen, so the roster never
@@ -662,17 +662,17 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         except FileNotFoundError:
             continue
         except OSError as e:
-            raise ManagerError(f"{p}: {e.strerror}") from e
+            raise RosterError(f"{p}: {e.strerror}") from e
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise ManagerError(f"{p}: {_NOT_REGULAR}")
+            raise RosterError(f"{p}: {_NOT_REGULAR}")
     try:
         os.replace(path, old)
     except OSError as e:
-        raise ManagerError(f"{path}: {e.strerror}") from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     cursor = r["cursor"]
     try:
         _refill(path, old, cursor, sleep or time.sleep)
-    except ManagerError as e:
+    except RosterError as e:
         print(f"manager: rotate: {e}: lines after {cursor} of {old} not copied", file=sys.stderr)
     r["cursor"], r["gen"] = 0, r["gen"] + 1
     return True

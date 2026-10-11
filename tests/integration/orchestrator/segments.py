@@ -17,7 +17,7 @@ import config
 import attended
 import drive
 import linear
-import manager
+import roster
 import router
 import sessions
 from tests.integration.orchestrator.flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT,
@@ -284,16 +284,16 @@ class Segment(Flow):
             self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
 
     def roster(self):
-        """MANAGER's roster.json entries (core/src/manager.py), each without its `started`."""
+        """MANAGER's roster.json entries (core/src/roster.py), each without its `started`."""
         with open(os.path.join(self.apm, "managers", MANAGER, "roster.json")) as f:
             entries = json.load(f)["entries"]
         return {n: {k: v for k, v in e.items() if k != "started"} for n, e in entries.items()}
 
     def run_recovery(self, name):
-        """Roster entry `name`'s recovery command (manager.recovery), no shell, in its cwd, as its manager runs it: from
+        """Roster entry `name`'s recovery command (roster.recovery), no shell, in its cwd, as its manager runs it: from
         MANAGER's pane (env() plus that pane's TMUX and TMUX_PANE)."""
         e = self.roster()[name]
-        return subprocess.run(manager.recovery(e), cwd=e["cwd"], env={**self.env(), **self.server.inside(MANAGER)},
+        return subprocess.run(roster.recovery(e), cwd=e["cwd"], env={**self.env(), **self.server.inside(MANAGER)},
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
 
     # Step helpers

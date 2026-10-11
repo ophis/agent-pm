@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-import manager
+import roster
 from compose import ConfigError
 
 from . import _codex_hook, codex   # codex imports this module: use its names at call time
@@ -54,7 +54,7 @@ class _Exited(Exception):
 def worker(spec: WorkerSpec) -> WorkerCommand:
     """CodexClient.worker. New: a worker record, unbound, made first and left on a later failure. Resume: the record's
     native session, cwd and CODEX_HOME."""
-    if not manager.SID.fullmatch(spec.sid):
+    if not roster.SID.fullmatch(spec.sid):
         raise ConfigError(f"bad session id {spec.sid!r}")
     _refuse(spec.flags)
     exe = spec.exe or _which("codex", spec.env)
@@ -176,7 +176,7 @@ def _create(path: str, record: dict) -> None:
 
 def _record(sid: str) -> tuple[str, dict]:
     """sid's worker record, bound: its path and fields."""
-    if not manager.SID.fullmatch(sid):
+    if not roster.SID.fullmatch(sid):
         raise ConfigError(f"bad session id {sid!r}")
     workers = _workers(create=False)
     path = os.path.join(workers, f"{sid}.json") if workers else None

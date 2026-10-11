@@ -19,7 +19,7 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-import tui_claude
+import tmux_host
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
@@ -56,7 +56,7 @@ MAIN_VERTICAL = "7f31,160x48,0,0{80x48,0,0,0,79x48,81,0[79x24,81,0,1,79x23,81,25
 TILED_SPLIT = ("9a18,160x48,0,0[160x15,0,0{79x15,0,0,0,40x15,80,0,1,39x15,121,0,5},"
                "160x15,0,16{79x15,0,16,2,80x15,80,16,3},160x16,0,32,4]")
 GRID_PANES = "#{window_id}\t#{@grid-manager}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{socket_path}"
-PY, SCRIPT = "/usr/bin/python3", "/opt/a_b.c@1+2-3/tui_claude.py"   # sys.executable and the module's path, patched
+PY, SCRIPT = "/usr/bin/python3", "/opt/a_b.c@1+2-3/tmux_host.py"   # sys.executable and the module's path, patched
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
 MODE_HOOKS = {"all": GRID_HOOKS, "open-close": ("pane-exited", "window-layout-changed"), "off": ()}   # each mode's
 RETILE_ERROR = "^retile must be one of all, open-close, off, not {}$"
@@ -152,7 +152,7 @@ def which(tmux=TMUX):
 
 
 def osa(split, kind, session, *anchors):
-    return ["osascript", "-e", tui_claude.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+    return ["osascript", "-e", tmux_host.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
 def decorations(session, events=None, status="off"):
@@ -239,14 +239,14 @@ class Start(unittest.TestCase):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, template="", **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            tui_claude.start(session, list(argv), cwd=self.cwd, env=env, template=template, proc=fake, sleep=self.sleep, **kw)
+            tmux_host.start(session, list(argv), cwd=self.cwd, env=env, template=template, proc=fake, sleep=self.sleep, **kw)
 
     def test_new_session_runs_the_wrapper_keeps_a_dead_pane_then_decorates(self):
         fake = Tmux()
         self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
         self.assertEqual(fake.calls[1], ["tmux", "new-session", "-d", "-s", "s", "-x", "120", "-y", "40",
-                                         sys.executable, "-I", "-c", tui_claude.EXEC, fake.path,
+                                         sys.executable, "-I", "-c", tmux_host.EXEC, fake.path,
                                          ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on"])
         self.assertNotIn("-c", fake.calls[1][:fake.calls[1].index(sys.executable)])
         self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
@@ -257,10 +257,10 @@ class Start(unittest.TestCase):
     def test_handover_file(self):
         # PWD the cwd, given another (as here) or none (test_hooks_events_and_decorations' env)
         env = {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_JOB_DIR": "/j",
-               "PWD": "/elsewhere", **{k: "x" for k in tui_claude.TERMINAL_KEYS}}
+               "PWD": "/elsewhere", **{k: "x" for k in tmux_host.TERMINAL_KEYS}}
         fake = Tmux()
         self.start(fake, env=env)
-        self.assertEqual(fake.handover, {"argv": [self.tool, "--settings", tui_claude.hooks(), "-x", "a b"],
+        self.assertEqual(fake.handover, {"argv": [self.tool, "--settings", tmux_host.hooks(), "-x", "a b"],
                                          "env": {"PATH": self.bin, "HOME": "/h", "CLAUDECODE": "1", "PWD": self.cwd},
                                          "cwd": self.cwd})
         self.assertEqual(fake.mode, 0o600)
@@ -269,7 +269,7 @@ class Start(unittest.TestCase):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_terminal_keys(self):
-        self.assertEqual(set(tui_claude.TERMINAL_KEYS), {
+        self.assertEqual(set(tmux_host.TERMINAL_KEYS), {
             "TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
             "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES"})
 
@@ -291,7 +291,7 @@ class Start(unittest.TestCase):
                           ({"argv": ("tool", "--settings", "s.json")}, "")):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaisesRegex(tui_claude.TuiError, error):
+                with self.assertRaisesRegex(tmux_host.TuiError, error):
                     self.start(fake, **kw)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
@@ -299,7 +299,7 @@ class Start(unittest.TestCase):
     def test_handover_file_unwritable(self):
         fake = Tmux()
         with unittest.mock.patch.object(tempfile, "tempdir", os.path.join(self.root, "missing")), \
-                self.assertRaisesRegex(tui_claude.TuiError, "^handover: "):
+                self.assertRaisesRegex(tmux_host.TuiError, "^handover: "):
             self.start(fake)
         real = os.open
 
@@ -307,7 +307,7 @@ class Start(unittest.TestCase):
             if str(path).endswith("handover.json"):
                 raise PermissionError(13, "Permission denied", path)
             return real(path, *args, **kw)
-        with unittest.mock.patch("os.open", side_effect=refuse), self.assertRaisesRegex(tui_claude.TuiError, "^handover: "):
+        with unittest.mock.patch("os.open", side_effect=refuse), self.assertRaisesRegex(tmux_host.TuiError, "^handover: "):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
         self.assertEqual(os.listdir(self.temp), [])
@@ -319,13 +319,13 @@ class Start(unittest.TestCase):
         for argv0, path in (("bin/tool", "/nonexistent"), ("tool", "bin")):
             fake = Tmux()
             self.start(fake, argv=(argv0,), env={"PATH": path})
-            self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks()])
+            self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tmux_host.hooks()])
 
     def test_live_session_is_refused(self):
         for env, prefix in PREFIXES:
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
                 fake = Tmux(pane="0  ")
-                with self.assertRaisesRegex(tui_claude.TuiError,
+                with self.assertRaisesRegex(tmux_host.TuiError,
                                             "^" + re.escape(f"session s is running; {prefix}tmux attach -t '=s'") + "$"):
                     self.start(fake)
                 self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
@@ -339,7 +339,7 @@ class Start(unittest.TestCase):
 
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
         fake = Tmux(fail={"new-session"})   # e.g. the chained set-option failed after new-session made the session
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
@@ -348,7 +348,7 @@ class Start(unittest.TestCase):
 
     def test_a_duplicate_session_is_not_killed(self):
         fake = Tmux(results={"new-session": (1, "", "duplicate session: s\n")})   # another start took the name
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: duplicate session: s$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: duplicate session: s$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(os.listdir(self.temp), [])
@@ -360,7 +360,7 @@ class Start(unittest.TestCase):
             with self.subTest(where=where):
                 fake = Tmux(hand_over=where == "show")
                 self.sleep = interrupt
-                with unittest.mock.patch.object(tui_claude, "show", side_effect=interrupt), \
+                with unittest.mock.patch.object(tmux_host, "show", side_effect=interrupt), \
                         self.assertRaises(KeyboardInterrupt):
                     self.start(fake)
                 self.assertEqual(fake.commands(), ["display-message", "new-session",
@@ -371,7 +371,7 @@ class Start(unittest.TestCase):
     def test_tmux_missing(self):
         def missing(argv, **kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: "):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: "):
             self.start(missing)
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -380,12 +380,12 @@ class Start(unittest.TestCase):
             with self.subTest(fail=fail):
                 self.sleep.reset_mock()
                 fake = Tmux(fail=fail, hand_over=False)
-                with self.assertRaisesRegex(tui_claude.TuiError, r"^the session did not start$"):
+                with self.assertRaisesRegex(tmux_host.TuiError, r"^the session did not start$"):
                     self.start(fake)
                 self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
                 self.assertIs(fake.dir_at_kill, False)
-                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui_claude.HANDOVER_TIMEOUT)
+                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT)
                 self.assertEqual(os.listdir(self.temp), [])
                 self.assertEqual(self.stderr.getvalue(), "")
 
@@ -407,13 +407,13 @@ class Start(unittest.TestCase):
         for exe in ("/opt/py#3/bin/python3", "/opt/bin/python3;"):
             with self.subTest(exe=exe), unittest.mock.patch.object(sys, "executable", exe):
                 fake = Tmux()
-                with self.assertRaises(tui_claude.TuiError):
+                with self.assertRaises(tmux_host.TuiError):
                     self.start(fake)
                 self.assertNotIn("new-session", fake.commands())
         hashed = os.path.join(self.root, "t#mp")
         os.makedirs(hashed)
         fake = Tmux()
-        with unittest.mock.patch.object(tempfile, "tempdir", hashed), self.assertRaises(tui_claude.TuiError):
+        with unittest.mock.patch.object(tempfile, "tempdir", hashed), self.assertRaises(tmux_host.TuiError):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
         self.assertEqual(os.listdir(hashed), [])
@@ -423,11 +423,11 @@ class Start(unittest.TestCase):
         for name in ("", "a b", "a.b", "a:b", "=a", "#{x}", "a;", "a\n", "é"):
             with self.subTest(name=name):
                 fake = Tmux()
-                for call in (lambda: self.start(fake, session=name), lambda: tui_claude.status(name, proc=fake),
-                             lambda: tui_claude.decorate(name, proc=fake),
-                             lambda: tui_claude.kill(name, proc=fake), lambda: tui_claude.send(name, "x", proc=fake, sleep=self.sleep),
-                             lambda: tui_claude.read(name, proc=fake)):
-                    with self.assertRaises(tui_claude.TuiError):
+                for call in (lambda: self.start(fake, session=name), lambda: tmux_host.status(name, proc=fake),
+                             lambda: tmux_host.decorate(name, proc=fake),
+                             lambda: tmux_host.kill(name, proc=fake), lambda: tmux_host.send(name, "x", proc=fake, sleep=self.sleep),
+                             lambda: tmux_host.read(name, proc=fake)):
+                    with self.assertRaises(tmux_host.TuiError):
                         call()
                 self.assertEqual(fake.calls, [])
 
@@ -437,7 +437,7 @@ class Start(unittest.TestCase):
 
         def show(*args, **kw):
             seen.append((args, kw, os.path.exists(fake.path), fake.commands()))
-        with unittest.mock.patch.object(tui_claude, "show", side_effect=show):
+        with unittest.mock.patch.object(tmux_host, "show", side_effect=show):
             self.start(fake, template="tmpl", split="below", split_from="b", opener="o", per_column=2, retile="off")
         self.assertEqual(seen, [(("s", "tmpl"), {"split": "below", "split_from": "b", "opener": "o", "per_column": 2,
                                                  "retile": "off", "proc": fake}, False,
@@ -466,7 +466,7 @@ class Start(unittest.TestCase):
             for kw in ({"split": "up"}, {"split_from": "a b"}, {"opener": "a:b:c"}):
                 with self.subTest(**kw):
                     fake = Tmux()
-                    with self.assertRaises(tui_claude.TuiError):
+                    with self.assertRaises(tmux_host.TuiError):
                         self.start(fake, template=None, **kw)
                     self.assertEqual(fake.calls, [])
             fake = Tmux()
@@ -477,7 +477,7 @@ class Start(unittest.TestCase):
         for bad in (0, 10000, True, "3"):
             with self.subTest(per_column=bad):
                 fake = Tmux()
-                with self.assertRaisesRegex(tui_claude.TuiError, "^per_column must be an int from 1 to 9999"):
+                with self.assertRaisesRegex(tmux_host.TuiError, "^per_column must be an int from 1 to 9999"):
                     self.start(fake, template=None, per_column=bad)
                 self.assertEqual(fake.calls, [])
         fake = Tmux()
@@ -488,7 +488,7 @@ class Start(unittest.TestCase):
         for bad in ("x", True, 1, ""):
             with self.subTest(retile=bad):
                 fake = Tmux()
-                with self.assertRaisesRegex(tui_claude.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
+                with self.assertRaisesRegex(tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
                     self.start(fake, template=None, retile=bad)
                 self.assertEqual(fake.calls, [])
         fake = Tmux()
@@ -506,7 +506,7 @@ class Start(unittest.TestCase):
             with self.subTest(events=given, status_line=status_line):
                 fake = Tmux()
                 self.start(fake, env={"PATH": self.bin}, events=given, status_line=status_line)
-                self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tui_claude.hooks(path), "-x", "a b"])
+                self.assertEqual(fake.handover["argv"], [self.tool, "--settings", tmux_host.hooks(path), "-x", "a b"])
                 self.assertEqual(fake.handover["env"], {"PATH": self.bin, "PWD": self.cwd})
                 self.assertEqual(fake.calls[2:], decorations("s", path, status))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
@@ -521,13 +521,13 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.handover["argv"], [self.tool, *argv[1:]])
                 self.assertEqual(fake.calls[2:], decorations("s", events))
         fake = Tmux()
-        with self.assertRaisesRegex(tui_claude.TuiError, "^events file "):
+        with self.assertRaisesRegex(tmux_host.TuiError, "^events file "):
             self.start(fake, events=self.cwd, claude_hooks=False)
         self.assertEqual(fake.calls, [])
 
     def test_a_failed_decoration_kills_the_session(self):
         fake = Tmux(fail={"set-hook"})
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "set-hook", "kill-session"])
         self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=s"])
@@ -540,19 +540,19 @@ class Respawn(unittest.TestCase):
 
     def respawn(self, fake, session="s", argv=("tool", "-x", "a b"), env=None):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
-        tui_claude.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
+        tmux_host.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
 
     def test_reads_the_old_pid_then_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_command(self):
         fake = Tmux(pane=OLD_PID)
         self.respawn(fake)
         self.assertEqual(fake.calls, [PANE_PID, ["tmux", "clear-history", "-t", "=s:", ";", "respawn-pane", "-k", "-t",
-                                                 "=s:", sys.executable, "-I", "-c", tui_claude.EXEC, fake.path]])
+                                                 "=s:", sys.executable, "-I", "-c", tmux_host.EXEC, fake.path]])
         self.assertEqual(fake.kwargs, [TMUX_KW] * 2)
         self.sleep.assert_not_called()
 
     def test_handover_file_as_start_writes_it_with_the_old_pid_as_after(self):
         env = {"PATH": self.bin, "HOME": "/h", "PWD": "/stale",
-               **{k: "x" for k in (*tui_claude.PARENT_KEYS, *tui_claude.TERMINAL_KEYS)}}
+               **{k: "x" for k in (*tmux_host.PARENT_KEYS, *tmux_host.TERMINAL_KEYS)}}
         fake = Tmux(pane=OLD_PID)
         self.respawn(fake, env=env)
         self.assertEqual(fake.handover, {"argv": [self.tool, "-x", "a b"], "cwd": self.cwd,
@@ -571,7 +571,7 @@ class Respawn(unittest.TestCase):
 
     def test_a_failed_pid_read(self):
         fake = Tmux()
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: no server running$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: no server running$"):
             self.respawn(fake)
         self.assertEqual(fake.calls, [PANE_PID])
         self.assertEqual(os.listdir(self.temp), [])
@@ -588,27 +588,27 @@ class Respawn(unittest.TestCase):
         for kw in ({"session": "a b"}, {"argv": ()}, {"argv": ("no-such-tool",)}):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaises(tui_claude.TuiError):
+                with self.assertRaises(tmux_host.TuiError):
                     self.respawn(fake, **kw)
                 self.assertEqual(fake.calls, [])
         with unittest.mock.patch.object(sys, "executable", "/opt/py#3/bin/python3"), \
-                self.assertRaisesRegex(tui_claude.TuiError, "tmux would misread"):
+                self.assertRaisesRegex(tmux_host.TuiError, "tmux would misread"):
             self.respawn(fake)
         self.assertEqual(fake.calls, [])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_a_failed_respawn(self):
         fake = Tmux(pane=OLD_PID, fail={"clear-history"})
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
             self.respawn(fake)
         self.assertEqual(fake.commands(), ["display-message", "clear-history"])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_wrapper_never_reads(self):
         fake = Tmux(pane=OLD_PID, hand_over=False)
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^the pane did not respawn$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^the pane did not respawn$"):
             self.respawn(fake)
-        self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tui_claude.HANDOVER_TIMEOUT)
+        self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT)
         self.assertEqual(os.listdir(self.temp), [])
 
 
@@ -629,7 +629,7 @@ class Hooks(unittest.TestCase):
 
     def run_hook(self, events, event, pane="%1"):
         """The hook's sh result and the fake tmux's calls."""
-        cmd = json.loads(tui_claude.hooks(events))["hooks"][event][0]["hooks"][0]["command"]
+        cmd = json.loads(tmux_host.hooks(events))["hooks"][event][0]["hooks"][0]["command"]
         env = {"PATH": self.path, **({"TMUX_PANE": pane} if pane else {})}
         res = subprocess.run(["/bin/sh", "-c", cmd], env=env, cwd=self.root, capture_output=True, text=True,
                              stdin=subprocess.DEVNULL, timeout=30)
@@ -643,7 +643,7 @@ class Hooks(unittest.TestCase):
     def test_shape(self):
         for events in (None, "/e"):
             with self.subTest(events=events):
-                hooks = json.loads(tui_claude.hooks(events))
+                hooks = json.loads(tmux_host.hooks(events))
                 self.assertEqual(list(hooks), ["hooks"])
                 self.assertEqual({k: [set(e) for e in v] for k, v in hooks["hooks"].items()},
                                  {"Stop": [{"hooks"}], "PermissionRequest": [{"hooks"}],
@@ -654,8 +654,8 @@ class Hooks(unittest.TestCase):
 
     def test_notification_matcher_is_every_type_but_idle_prompt(self):
         """MATCHER is on Claude Code's regex path, where re.search agrees with JavaScript's RegExp.prototype.test."""
-        self.assertIsNone(re.fullmatch(r"[A-Za-z0-9_|, -]*", tui_claude.MATCHER))
-        self.assertEqual([t for t in (*NOTIFICATIONS, "idle_prompt_x", "") if not re.search(tui_claude.MATCHER, t)],
+        self.assertIsNone(re.fullmatch(r"[A-Za-z0-9_|, -]*", tmux_host.MATCHER))
+        self.assertEqual([t for t in (*NOTIFICATIONS, "idle_prompt_x", "") if not re.search(tmux_host.MATCHER, t)],
                          ["idle_prompt"])
 
     def test_state_without_events(self):
@@ -699,12 +699,12 @@ class WithHooks(unittest.TestCase):
             with self.subTest(events=events):
                 rest = ["-p", "x", "--", "--settings", "{}"]
                 argv = ["claude", *rest]
-                want = ["claude", "--settings", tui_claude.hooks(events), *rest]
-                self.assertEqual(tui_claude.with_hooks(argv, events), want)
+                want = ["claude", "--settings", tmux_host.hooks(events), *rest]
+                self.assertEqual(tmux_host.with_hooks(argv, events), want)
                 self.assertEqual(argv, ["claude", *rest])
 
     def test_merged_into_settings(self):
-        ours = json.loads(tui_claude.hooks("/e"))["hooks"]
+        ours = json.loads(tmux_host.hooks("/e"))["hooks"]
         pre = [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}]
         for settings, want in (({"model": "m", "hooks": {"Stop": [self.STOP], "PreToolUse": pre}},
                                 {"model": "m", "hooks": {"Stop": [self.STOP, *ours["Stop"]], "PreToolUse": pre,
@@ -717,7 +717,7 @@ class WithHooks(unittest.TestCase):
                 with self.subTest(settings=settings, inline=inline):
                     flag = [f"--settings={value}"] if inline else ["--settings", value]
                     argv = ["claude", "hi", "--allowedTools", "Bash(x)", *flag, "--settings", "second"]
-                    got = tui_claude.with_hooks(argv, "/e")
+                    got = tmux_host.with_hooks(argv, "/e")
                     i, prefix = (4, "--settings=") if inline else (5, "")
                     self.assertEqual(got[:i] + got[i + 1:], argv[:i] + argv[i + 1:])
                     self.assertTrue(got[i].startswith(prefix))
@@ -728,10 +728,10 @@ class WithHooks(unittest.TestCase):
         for argv in (["claude", "--settings", "s.json"], ["claude", "x", "--settings=[]"],
                      ["claude", "--settings", "{"], ["claude", "--settings"], ["claude", "--settings", '{"hooks": []}'],
                      ["claude", "--settings", '{"hooks": {"Stop": {}}}']):
-            with self.subTest(argv=argv), self.assertRaisesRegex(tui_claude.TuiError, "--settings"):
-                tui_claude.with_hooks(argv)
-        with self.assertRaisesRegex(tui_claude.TuiError, "no command"):
-            tui_claude.with_hooks([])
+            with self.subTest(argv=argv), self.assertRaisesRegex(tmux_host.TuiError, "--settings"):
+                tmux_host.with_hooks(argv)
+        with self.assertRaisesRegex(tmux_host.TuiError, "no command"):
+            tmux_host.with_hooks([])
 
 
 MARK_KW = {**TMUX_KW, "timeout": 5}
@@ -754,7 +754,7 @@ class Mark(unittest.TestCase):
 
     def test_working_sets_the_state_only(self):
         fake = Tmux(pane="w1")
-        tui_claude.mark("working", self.events, proc=fake)
+        tmux_host.mark("working", self.events, proc=fake)
         self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", "working"]])
         self.assertEqual(fake.kwargs, [MARK_KW])
         self.assertEqual(self.text(), "old\n")
@@ -763,7 +763,7 @@ class Mark(unittest.TestCase):
         for word in ("done", "blocked"):
             with self.subTest(word):
                 fake = Tmux(pane="w1")
-                tui_claude.mark(word, self.events, pane="%2", tmux=TMUX, proc=fake)
+                tmux_host.mark(word, self.events, pane="%2", tmux=TMUX, proc=fake)
                 self.assertEqual(fake.calls, [[TMUX, "set-option", "-t", "%2", "@state", word],
                                               [TMUX, "display-message", "-p", "-t", "%2", "#S"]])
                 self.assertEqual(fake.kwargs, [MARK_KW] * 2)
@@ -771,12 +771,12 @@ class Mark(unittest.TestCase):
 
     def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
         fake = Tmux(pane="w1")
-        tui_claude.mark("done", self.events, proc=fake)
+        tmux_host.mark("done", self.events, proc=fake)
         self.assertEqual([c[c.index("-t") + 1] for c in fake.calls], ["%1", "%1"])
         for env in ({}, {"TMUX_PANE": ""}):
             with self.subTest(env=env), environ(**env):
                 fake = Tmux(pane="w1")
-                tui_claude.mark("done", self.events, proc=fake)
+                tmux_host.mark("done", self.events, proc=fake)
                 self.assertEqual(fake.calls, [])
         self.assertEqual(len(self.text().splitlines()), 2)
 
@@ -789,10 +789,10 @@ class Mark(unittest.TestCase):
                                      (self.events, ("os.getuid", os.getuid() + 1), "owned by you"),
                                      (self.events, ("os.fstat", fifo), "owned by you")):
             with self.subTest(path=path, error=error), ExitStack() as stack, \
-                    self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: .*{error}"):
+                    self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: .*{error}"):
                 if patches:
                     stack.enter_context(unittest.mock.patch(patches[0], return_value=patches[1]))
-                tui_claude.mark("done", path, proc=Tmux(pane="w1"))
+                tmux_host.mark("done", path, proc=Tmux(pane="w1"))
         self.assertEqual(self.text(), "old\n")
         self.assertFalse(os.path.exists(os.path.join(self.root, "missing")))
 
@@ -805,8 +805,8 @@ class Mark(unittest.TestCase):
                  (Tmux(pane="a b"), {}, "^tmux session 'a b'"),
                  (Tmux(pane="w1"), {"pane": "w1:0"}, "^bad tmux pane 'w1:0'$"))
         for fake, kw, error in cases:
-            with self.subTest(error=error), self.assertRaisesRegex(tui_claude.TuiError, error):
-                tui_claude.mark("done", self.events, proc=fake, **kw)
+            with self.subTest(error=error), self.assertRaisesRegex(tmux_host.TuiError, error):
+                tmux_host.mark("done", self.events, proc=fake, **kw)
         self.assertEqual(self.text(), "old\n")
 
 
@@ -821,11 +821,11 @@ class EventsFile(unittest.TestCase):
         os.chdir(self.root)
         self.addCleanup(os.chdir, here)
         path = os.path.join(self.root, "e")
-        self.assertEqual(tui_claude.events_file("e"), path)
+        self.assertEqual(tmux_host.events_file("e"), path)
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         with open(path, "a") as f:
             f.write("x\n")
-        self.assertEqual(tui_claude.events_file(path), path)
+        self.assertEqual(tmux_host.events_file(path), path)
         with open(path) as f:
             self.assertEqual(f.read(), "x\n")
 
@@ -835,20 +835,20 @@ class EventsFile(unittest.TestCase):
         link = os.path.join(self.root, "link")
         os.symlink(target, link)
         for path in (link, self.root, os.path.join(self.root, "missing", "e")):
-            with self.subTest(path=path), self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: "):
-                tui_claude.events_file(path)
+            with self.subTest(path=path), self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: "):
+                tmux_host.events_file(path)
         fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
         for patch in (unittest.mock.patch("os.getuid", return_value=os.getuid() + 1),
                       unittest.mock.patch("os.fstat", return_value=fifo)):
-            with self.subTest(patch=patch), patch, self.assertRaisesRegex(tui_claude.TuiError, "owned by you"):
-                tui_claude.events_file(target)
+            with self.subTest(patch=patch), patch, self.assertRaisesRegex(tmux_host.TuiError, "owned by you"):
+                tmux_host.events_file(target)
 
     def test_refuses_a_path_tmux_would_misread(self):
         for name in ("a#b", "e;"):
             path = os.path.join(self.root, name)
             with self.subTest(name=name), \
-                    self.assertRaisesRegex(tui_claude.TuiError, f"^events file {re.escape(path)}: tmux would misread"):
-                tui_claude.events_file(path)
+                    self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: tmux would misread"):
+                tmux_host.events_file(path)
             self.assertFalse(os.path.exists(path))
 
 
@@ -857,29 +857,29 @@ class Decorate(unittest.TestCase):
         for events in (None, "/a b/e"):
             with self.subTest(events=events):
                 fake = Tmux()
-                tui_claude.decorate("s", events, proc=fake)
+                tmux_host.decorate("s", events, proc=fake)
                 self.assertEqual(fake.calls, decorations("s", events))
                 self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
         fake = Tmux()
-        tui_claude.decorate("s", status_line=True, proc=fake)
+        tmux_host.decorate("s", status_line=True, proc=fake)
         self.assertEqual(fake.calls, decorations("s", status="on"))
 
     def test_failure(self):
         for events, step in ((None, "set-hook"), ("/e", "set-option")):
             with self.subTest(events=events):
                 fake = Tmux(fail={step})
-                with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
-                    tui_claude.decorate("s", events, proc=fake)
+                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+                    tmux_host.decorate("s", events, proc=fake)
                 self.assertEqual(len(fake.calls), 1)
 
 
 class Status(unittest.TestCase):
     def test_states(self):
-        for pane, want in (("0  ", tui_claude.RUNNING), ("1 3 ", 3), ("1 0 ", 0), ("1  kill", 137), ("1  9", 137),
-                           ("1  ", tui_claude.RUNNING), ("  ", None), (None, None)):
+        for pane, want in (("0  ", tmux_host.RUNNING), ("1 3 ", 3), ("1 0 ", 0), ("1  kill", 137), ("1  9", 137),
+                           ("1  ", tmux_host.RUNNING), ("  ", None), (None, None)):
             with self.subTest(pane=pane):
                 fake = Tmux(pane=pane)
-                self.assertEqual(tui_claude.status("s", proc=fake), want)
+                self.assertEqual(tmux_host.status("s", proc=fake), want)
                 self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]])
                 self.assertEqual(fake.kwargs, [TMUX_KW])
 
@@ -887,18 +887,18 @@ class Status(unittest.TestCase):
 class Kill(unittest.TestCase):
     def test_kill(self):
         fake = Tmux()
-        tui_claude.kill("s", proc=fake)
+        tmux_host.kill("s", proc=fake)
         self.assertEqual(fake.calls, [["tmux", "kill-session", "-t", "=s"]])
         self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
-            tui_claude.kill("s", proc=Tmux(fail={"kill-session"}))
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+            tmux_host.kill("s", proc=Tmux(fail={"kill-session"}))
 
 
 class Send(unittest.TestCase):
     def send(self, fake, text):
-        tui_claude.send("s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
+        tmux_host.send("s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds)))
         buffer = fake.calls[0][3]
         self.assertRegex(buffer, r"^tui-s-[0-9a-f]{32}$")
         return buffer
@@ -930,8 +930,8 @@ class Send(unittest.TestCase):
         for step, calls in (("load-buffer", 1), ("paste-buffer", 2)):
             with self.subTest(step=step):
                 fake, sleep = Tmux(fail={step}), unittest.mock.Mock()
-                with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
-                    tui_claude.send("s", "hi", proc=fake, sleep=sleep)
+                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+                    tmux_host.send("s", "hi", proc=fake, sleep=sleep)
                 self.assertEqual(len(fake.calls), calls)
                 sleep.assert_not_called()
 
@@ -942,27 +942,27 @@ class Read(unittest.TestCase):
                                             (3, "1\n2\n\n3\n4\n\n\n", "\n3\n4", ["-S", "-3"])):
             with self.subTest(lines=lines):
                 fake = Tmux(results={"capture-pane": (0, printed)})
-                self.assertEqual(tui_claude.read("s", lines, proc=fake), want)
+                self.assertEqual(tmux_host.read("s", lines, proc=fake), want)
                 self.assertEqual(fake.calls, [["tmux", "capture-pane", "-p", "-J", "-t", "=s:", *extra]])
                 self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_lines_must_be_a_positive_int(self):
         fake = Tmux()
         for lines in (0, -1, True, 1.5, "3"):
-            with self.subTest(lines=lines), self.assertRaises(tui_claude.TuiError):
-                tui_claude.read("s", lines, proc=fake)
+            with self.subTest(lines=lines), self.assertRaises(tmux_host.TuiError):
+                tmux_host.read("s", lines, proc=fake)
         self.assertEqual(fake.calls, [])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tui_claude.TuiError, r"^tmux: boom$"):
-            tui_claude.read("s", proc=Tmux(fail={"capture-pane"}))
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+            tmux_host.read("s", proc=Tmux(fail={"capture-pane"}))
 
 
 class Show(unittest.TestCase):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return tui_claude.show(session, template, proc=fake, **kw)
+            return tmux_host.show(session, template, proc=fake, **kw)
 
     def test_attach_line_then_the_template(self):
         fake = Tmux()
@@ -1000,7 +1000,7 @@ class Pane(unittest.TestCase):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return tui_claude.show("s", proc=fake, **kw)
+            return tmux_host.show("s", proc=fake, **kw)
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
@@ -1017,7 +1017,7 @@ class Pane(unittest.TestCase):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = Tmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(tui_claude.open_pane("s", split="below", proc=fake))
+            self.assertIsNone(tmux_host.open_pane("s", split="below", proc=fake))
         self.assertEqual((fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], ""))
 
     def test_iterm2_pane_showing_own_session(self):
@@ -1054,24 +1054,24 @@ class Pane(unittest.TestCase):
         control = self.clients((5, "/dev/ttys004", "%9", "1"))
         mixed = self.clients((5, "/dev/ttys004", "%9"), (3, "/dev/ttys006", "%8", "1"))
         nested = panes(("0", "/dev/ttys001", "%1"), ("0", "/dev/ttys004", "%5"))
-        cases = [(ITERM, {}, None, tui_claude.Anchor(("id", ["ABC"]))),
+        cases = [(ITERM, {}, None, tmux_host.Anchor(("id", ["ABC"]))),
                  (INSIDE, {**own, "list-clients": shown}, None,
-                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%3", SOCK, "own")),
+                  tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%3", SOCK, "own")),
                  (INSIDE, {**own, "list-clients": shown, "list-panes": nested}, None,
-                  tui_claude.Anchor(None, "%5", SOCK, "own")),
-                 (INSIDE, own, None, tui_claude.Anchor(("id", ["ABC"]))),
-                 ({}, {"list-clients": shown}, "b", tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
-                 ({}, {"list-clients": shown, "list-panes": nested}, "b", tui_claude.Anchor(None, "%5", SOCK, "b")),
+                  tmux_host.Anchor(None, "%5", SOCK, "own")),
+                 (INSIDE, own, None, tmux_host.Anchor(("id", ["ABC"]))),
+                 ({}, {"list-clients": shown}, "b", tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
+                 ({}, {"list-clients": shown, "list-panes": nested}, "b", tmux_host.Anchor(None, "%5", SOCK, "b")),
                  ({}, {"list-clients": (0, "5 /dev/ttys004\n7 /dev/ttys005 junk 0 /s\n7 /dev/ttys005 %7 /s\n"
                                            "7 /dev/ttys005 %7 2 /s\n" + shown[1])}, "b",
-                  tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
+                  tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
                  (INSIDE, {**own, "list-clients": control, "list-panes": nested}, None,
-                  tui_claude.Anchor(None, "%3", SOCK, "own")),
-                 ({}, {"list-clients": control, "list-panes": nested}, "b", tui_claude.Anchor(None, "%9", SOCK, "b")),
-                 ({}, {"list-clients": mixed}, "b", tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))]
+                  tmux_host.Anchor(None, "%3", SOCK, "own")),
+                 ({}, {"list-clients": control, "list-panes": nested}, "b", tmux_host.Anchor(None, "%9", SOCK, "b")),
+                 ({}, {"list-clients": mixed}, "b", tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))]
         for env, results, split_from, want in cases:
             with self.subTest(env=env, results=results, split_from=split_from), environ(**env):
-                self.assertEqual(tui_claude.anchor(split_from, proc=Tmux(results=results)), want)
+                self.assertEqual(tmux_host.anchor(split_from, proc=Tmux(results=results)), want)
         no_iterm = {k: v for k, v in INSIDE.items() if k != "ITERM_SESSION_ID"}
         cases = [({}, {}, None, "no anchor pane: not in tmux"),
                  ({"ITERM_SESSION_ID": "w0t0p0"}, {}, None, "no anchor pane"),
@@ -1080,30 +1080,30 @@ class Pane(unittest.TestCase):
                  (no_iterm, own, None, "no anchor pane: no terminal shows tmux session own"),
                  (INSIDE, {"list-clients": (0, "")}, "b", "^no terminal shows tmux session b$")]
         for env, results, split_from, msg in cases:
-            with self.subTest(env=env, split_from=split_from), environ(**env), self.assertRaisesRegex(tui_claude.TuiError, msg):
-                tui_claude.anchor(split_from, proc=Tmux(results=results))
+            with self.subTest(env=env, split_from=split_from), environ(**env), self.assertRaisesRegex(tmux_host.TuiError, msg):
+                tmux_host.anchor(split_from, proc=Tmux(results=results))
 
     def test_a_dead_pane_sharing_the_clients_tty_is_skipped(self):
         # a dead worker pane keeps its tty, which a later terminal may get
         shown = self.clients((5, "/dev/ttys004", "%9"))
         live, dead = ("0", "/dev/ttys004", "%5"), ("1", "/dev/ttys004", "%6")
-        for rows, want in (([live, dead], tui_claude.Anchor(None, "%5", SOCK, "b")),
-                           ([dead], tui_claude.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))):
+        for rows, want in (([live, dead], tmux_host.Anchor(None, "%5", SOCK, "b")),
+                           ([dead], tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"))):
             with self.subTest(rows=rows), environ():
                 fake = Tmux(results={"list-clients": shown, "list-panes": panes(*rows)})
-                self.assertEqual(tui_claude.anchor("b", proc=fake), want)
+                self.assertEqual(tmux_host.anchor("b", proc=fake), want)
 
     def test_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n")})
         with environ(**INSIDE):
-            self.assertEqual(tui_claude.own_session(proc=fake), "own")
+            self.assertEqual(tmux_host.own_session(proc=fake), "own")
         self.assertEqual(fake.calls, [OWN])
         fake = Tmux()
         with environ():
-            self.assertIsNone(tui_claude.own_session(proc=fake))
+            self.assertIsNone(tmux_host.own_session(proc=fake))
         self.assertEqual(fake.calls, [])
-        with environ(**{**INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tui_claude.TuiError, "TMUX_PANE"):
-            tui_claude.own_session(proc=fake)
+        with environ(**{**INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tmux_host.TuiError, "TMUX_PANE"):
+            tmux_host.own_session(proc=fake)
 
     def test_bad_tmux_pane(self):
         for env in ({**INSIDE, "TMUX_PANE": pane} for pane in ("", "3", "%3;", "%x", "%3 ", "#{x}")):
@@ -1187,7 +1187,7 @@ class Pane(unittest.TestCase):
                    {"opener": "a b"}, {"opener": "a:b:c"}):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaises(tui_claude.TuiError):
+                with self.assertRaises(tmux_host.TuiError):
                     self.show(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
@@ -1245,7 +1245,7 @@ class Pane(unittest.TestCase):
                 self.assertNotIn("set-option", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = tui_claude.APPLESCRIPT
+        script = tmux_host.APPLESCRIPT
         self.assertNotIn(TMUX, script)
         for part in ("on run argv", 'if application "iTerm2" is running', 'tell application "iTerm2"',
                      "quoted form of tmuxPath", 'quoted form of ("=" & sessionName)',
@@ -1282,7 +1282,7 @@ class Stack(unittest.TestCase):
     def show(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tui_claude.show("s", proc=fake, **kw)
+            return tmux_host.show("s", proc=fake, **kw)
 
     def row(self, number, name, pane, opener="cmd"):
         return f"${number}", name, opener, pane, SOCK
@@ -1447,7 +1447,7 @@ class Stack(unittest.TestCase):
         for opener in ("", "a b", "w0t0p0:", ":ABC", "a:b:c", "a;b", "w0t0p0:A_B", "=a", "%3", "a\n", "a:b\n"):
             with self.subTest(opener=opener):
                 fake = self.fake()
-                with self.assertRaisesRegex(tui_claude.TuiError, "opener"):
+                with self.assertRaisesRegex(tmux_host.TuiError, "opener"):
                     self.show(fake, opener=opener)
                 self.assertEqual(fake.calls, [])
 
@@ -1476,7 +1476,7 @@ class Container(unittest.TestCase):
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tui_claude.show("s", proc=fake)
+            return tmux_host.show("s", proc=fake)
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])
@@ -1521,9 +1521,9 @@ class GridOpen(unittest.TestCase):
     def setUp(self):
         self.tile = unittest.mock.Mock(side_effect=lambda window, *, per_column, proc:
                                        proc.calls.append(["tile", window, per_column]))
-        for p in (unittest.mock.patch.object(tui_claude, "tile", self.tile),
+        for p in (unittest.mock.patch.object(tmux_host, "tile", self.tile),
                   unittest.mock.patch.object(sys, "executable", PY),
-                  unittest.mock.patch.object(tui_claude, "__file__", SCRIPT)):
+                  unittest.mock.patch.object(tmux_host, "__file__", SCRIPT)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -1543,7 +1543,7 @@ class GridOpen(unittest.TestCase):
         """show s; retile all unless given, the mode whose hooks opened() asserts by default."""
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tui_claude.show("s", proc=fake, retile=retile, **kw)
+            return tmux_host.show("s", proc=fake, retile=retile, **kw)
 
     def opened(self, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
         """What follows a grid split: the records, the grid's options and hooks, then tile (none under off)."""
@@ -1662,8 +1662,8 @@ class GridOpen(unittest.TestCase):
         for target, name, bad in ((sys, "executable", "/a b/python3"), (sys, "executable", "/a#b/python3"),
                                   (sys, "executable", "/a/python3;"), (sys, "executable", "/a/pythön"),
                                   (sys, "executable", ""), (sys, "executable", None),
-                                  (tui_claude, "__file__", "/a'b/tui_claude.py"),
-                                  (tui_claude, "__file__", "/a$(x)/tui_claude.py")):
+                                  (tmux_host, "__file__", "/a'b/tmux_host.py"),
+                                  (tmux_host, "__file__", "/a$(x)/tmux_host.py")):
             with self.subTest(name=name, bad=bad), unittest.mock.patch.object(target, name, bad):
                 fake = self.fake({"%3": self.NEW})
                 self.assertIsNone(self.show(fake))
@@ -1698,8 +1698,8 @@ class GridOpen(unittest.TestCase):
             with self.subTest(retile=bad):
                 fake = self.fake({"%3": self.NEW})
                 for call in (lambda: self.show(fake, retile=bad),
-                             lambda: tui_claude.open_pane("s", retile=bad, proc=fake)):
-                    with self.assertRaisesRegex(tui_claude.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
+                             lambda: tmux_host.open_pane("s", retile=bad, proc=fake)):
+                    with self.assertRaisesRegex(tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
                         call()
                 self.assertEqual(fake.calls, [])
 
@@ -1707,7 +1707,7 @@ class GridOpen(unittest.TestCase):
         fake = self.fake({"%3": self.NEW}, **{"set-option": lambda argv: (1, "", "boom\n") if "-w" in argv else (0,)})
         self.assertEqual(self.show(fake), "tmux: boom")
         self.assertEqual(fake.calls[-3:], [*record("mgr", "%20"), grid_set("@1", "%3")])
-        self.tile.side_effect = tui_claude.TuiError("tmux: boom")
+        self.tile.side_effect = tmux_host.TuiError("tmux: boom")
         fake = self.fake({"%3": self.NEW})
         self.assertEqual(self.show(fake), "tmux: boom")
         self.assertEqual(fake.calls[-3:], [*record("mgr", "%20"), grid_set("@1", "%3")])
@@ -1722,39 +1722,39 @@ class GridOpen(unittest.TestCase):
             with self.subTest(per_column=bad):
                 fake = self.fake({"%3": self.NEW})
                 for call in (lambda: self.show(fake, per_column=bad),
-                             lambda: tui_claude.open_pane("s", per_column=bad, proc=fake)):
-                    with self.assertRaisesRegex(tui_claude.TuiError, "^per_column must be an int from 1 to 9999"):
+                             lambda: tmux_host.open_pane("s", per_column=bad, proc=fake)):
+                    with self.assertRaisesRegex(tmux_host.TuiError, "^per_column must be an int from 1 to 9999"):
                         call()
                 self.assertEqual(fake.calls, [])
 
 
 class Retile(unittest.TestCase):
     def test_modes(self):
-        self.assertEqual(tui_claude.RETILES, ("all", "open-close", "off"))
-        self.assertEqual(tui_claude.RETILE, "open-close")
-        self.assertEqual(tui_claude.RETILE_HOOKS, MODE_HOOKS)
-        self.assertEqual(tui_claude.GRID_PANES_SET, "@grid-panes")
-        for retile in (None, *tui_claude.RETILES):
+        self.assertEqual(tmux_host.RETILES, ("all", "open-close", "off"))
+        self.assertEqual(tmux_host.RETILE, "open-close")
+        self.assertEqual(tmux_host.RETILE_HOOKS, MODE_HOOKS)
+        self.assertEqual(tmux_host.GRID_PANES_SET, "@grid-panes")
+        for retile in (None, *tmux_host.RETILES):
             with self.subTest(retile=retile):
-                self.assertIsNone(tui_claude._retile(retile))
+                self.assertIsNone(tmux_host._retile(retile))
         for bad in ("x", True, 1, "", "ALL"):
             with self.subTest(retile=bad), \
-                    self.assertRaisesRegex(tui_claude.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
-                tui_claude._retile(bad)
+                    self.assertRaisesRegex(tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))):
+                tmux_host._retile(bad)
 
 
 class Opener(unittest.TestCase):
     def test_in_tmux_its_session(self):
         fake = Tmux(results={"display-message": (0, "cmd\n")})
         with environ(**INSIDE, TERM_PROGRAM="iTerm.app"):
-            self.assertEqual(tui_claude.opener(proc=fake), "cmd")
+            self.assertEqual(tmux_host.opener(proc=fake), "cmd")
         self.assertEqual(fake.calls, [OWN])
 
     def test_in_iterm2_the_full_iterm_session_id(self):
         for value in ("w0t0p0:ABC", "w0t1p0:6D7E8F90-1A2B-4C3D-9E8F-0A1B2C3D4E5F"):
             fake = Tmux()
             with self.subTest(value=value), environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"):
-                self.assertEqual(tui_claude.opener(proc=fake), value)
+                self.assertEqual(tmux_host.opener(proc=fake), value)
             self.assertEqual(fake.calls, [])
 
     def test_neither(self):
@@ -1762,48 +1762,48 @@ class Opener(unittest.TestCase):
                     {"TERM_PROGRAM": "iTerm.app"}, {"TERM_PROGRAM": "iTerm.app", "ITERM_SESSION_ID": ""}):
             fake = Tmux()
             with self.subTest(env=env), environ(**env), self.assertRaisesRegex(
-                    tui_claude.TuiError, r"^no anchor pane: not in tmux, no iTerm2 pane \(\$ITERM_SESSION_ID\)$"):
-                tui_claude.opener(proc=fake)
+                    tmux_host.TuiError, r"^no anchor pane: not in tmux, no iTerm2 pane \(\$ITERM_SESSION_ID\)$"):
+                tmux_host.opener(proc=fake)
             self.assertEqual(fake.calls, [])
 
     def test_a_bad_iterm_session_id(self):
         for value in ("w0t0p0", "w0t0p0:", ":ABC", "w0t0p0:a;b", "w0:t0:x", "a b:c", "w0t0p0:#{x}", "w0_t0:x"):
             with self.subTest(value=value), environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"), \
-                    self.assertRaisesRegex(tui_claude.TuiError, r"^bad \$ITERM_SESSION_ID"):
-                tui_claude.opener(proc=Tmux())
+                    self.assertRaisesRegex(tmux_host.TuiError, r"^bad \$ITERM_SESSION_ID"):
+                tmux_host.opener(proc=Tmux())
 
     def test_bad_tmux_pane(self):
-        with environ(**{**INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tui_claude.TuiError, "TMUX_PANE"):
-            tui_claude.opener(proc=Tmux())
+        with environ(**{**INSIDE, "TMUX_PANE": "%3;"}), self.assertRaisesRegex(tmux_host.TuiError, "TMUX_PANE"):
+            tmux_host.opener(proc=Tmux())
 
     def test_patterns(self):
         for value in ("cmd", "a_b-1", "w0t0p0:ABC", "w0t1p0:6D7E-8F"):
-            self.assertTrue(tui_claude.OPENER.fullmatch(value), value)
+            self.assertTrue(tmux_host.OPENER.fullmatch(value), value)
         for value in ("", "a b", "a:", ":b", "a:b:c", "a_b:c", "a:b_c", "a;", "%1", "a\n"):
-            self.assertFalse(tui_claude.OPENER.fullmatch(value), value)
-        self.assertTrue(tui_claude.ITERM_ID.fullmatch("6D7E-8F"))
+            self.assertFalse(tmux_host.OPENER.fullmatch(value), value)
+        self.assertTrue(tmux_host.ITERM_ID.fullmatch("6D7E-8F"))
         for value in ("", "a_b", "a:b", "%1", "a b"):
-            self.assertFalse(tui_claude.ITERM_ID.fullmatch(value), value)
+            self.assertFalse(tmux_host.ITERM_ID.fullmatch(value), value)
 
 
 def slot(pane, *children):
-    return tui_claude.Slot(pane, children)
+    return tmux_host.Slot(pane, children)
 
 
 def body(cell):
-    return tui_claude._render_layout(cell).split(",", 1)[1]
+    return tmux_host._render_layout(cell).split(",", 1)[1]
 
 
 def dump(text):
     """A layout body as #{window_layout} prints it, with its checksum."""
-    return f"{tui_claude._checksum(text)},{text}"
+    return f"{tmux_host._checksum(text)},{text}"
 
 
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
         cells = [slot(f"%{i}") for i in range(1, cells + 1)]
-    return tui_claude._grid_layout(cells, width=width, height=height, manager="%0", manager_width=manager_width,
+    return tmux_host._grid_layout(cells, width=width, height=height, manager="%0", manager_width=manager_width,
                                    per_column=per_column)
 
 
@@ -1812,10 +1812,10 @@ class GridLayout(unittest.TestCase):
 
     def tiles(self, cell):
         """Each container's children tile it exactly, one-cell borders between them."""
-        if cell.kind == tui_claude.LEAF:
+        if cell.kind == tmux_host.LEAF:
             return
         self.assertGreaterEqual(len(cell.children), 2)
-        across = cell.kind == tui_claude.LEFT_RIGHT
+        across = cell.kind == tmux_host.LEFT_RIGHT
         at = cell.x if across else cell.y
         for child in cell.children:
             if across:
@@ -1829,17 +1829,17 @@ class GridLayout(unittest.TestCase):
     def check(self, root, n, per_column, width=160, height=48):
         """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights, each +-1."""
         self.tiles(root)
-        self.assertEqual((root.kind, root.w, root.h, root.x, root.y), (tui_claude.LEFT_RIGHT, width, height, 0, 0))
+        self.assertEqual((root.kind, root.w, root.h, root.x, root.y), (tmux_host.LEFT_RIGHT, width, height, 0, 0))
         manager, area = root.children
         self.assertEqual((manager.pane, manager.h), ("%0", height))
         c = -(-n // per_column)
         if c > 1:
-            self.assertEqual(area.kind, tui_claude.LEFT_RIGHT)
+            self.assertEqual(area.kind, tmux_host.LEFT_RIGHT)
         columns = list(area.children) if c > 1 else [area]
         self.assertEqual(len(columns), c)
         self.assertLessEqual(max(col.w for col in columns) - min(col.w for col in columns), 1)
         for j, column in enumerate(columns):
-            cells = list(column.children) if column.kind == tui_claude.TOP_BOTTOM else [column]
+            cells = list(column.children) if column.kind == tmux_host.TOP_BOTTOM else [column]
             self.assertEqual([cell.pane for cell in cells],
                              [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))])
             self.assertLessEqual(max(cell.h for cell in cells) - min(cell.h for cell in cells), 1)
@@ -1869,7 +1869,7 @@ class GridLayout(unittest.TestCase):
         for width in (1, 30, 100):
             with self.subTest(width=width):
                 root = grid(4, manager_width=width)
-                self.assertEqual(root.children[0], tui_claude.Cell(width, 48, 0, 0, "%0"))
+                self.assertEqual(root.children[0], tmux_host.Cell(width, 48, 0, 0, "%0"))
                 self.check(root, 4, 3)
 
     def test_compress_when_too_wide(self):
@@ -1921,7 +1921,7 @@ class GridLayout(unittest.TestCase):
 
     def test_leaves_depth_first(self):
         root = grid([slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")])
-        self.assertEqual([leaf.pane for leaf in tui_claude._leaves(root)],
+        self.assertEqual([leaf.pane for leaf in tmux_host._leaves(root)],
                          ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"])
 
 
@@ -1933,8 +1933,8 @@ class GridTree(unittest.TestCase):
         if layout is None:
             layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
         else:
-            layout = tui_claude._parse_layout(layout)
-        return tui_claude._grid_tree("%0", panes, [self.MGR, *rows], layout)
+            layout = tmux_host._parse_layout(layout)
+        return tmux_host._grid_tree("%0", panes, [self.MGR, *rows], layout)
 
     def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = ["pm-TASK-10-a", "engineer-TASK-227-b", "researcher-TASK-3-c", "engineer-TASK-23-d", "pm-TASK-9-e",
@@ -2032,7 +2032,7 @@ class GridTree(unittest.TestCase):
         # P (%2; c1 %3, c2 %4) killed. N=1: main [a, P, b]; N=2: main [a, x, P, b], x and P killed together
         rows = [(2, "a", "mgr", "%1"), (4, "c1", "P", "%3"), (5, "c2", "P", "%4"), (6, "b", "mgr", "%5")]
         orphans = slot(None, slot("%3"), slot("%4"))
-        for layout in (tui_claude._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+        for layout in (tmux_host._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
                        "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
                        "39x11,121,13,4],39x23,121,25,5]}}"):
             with self.subTest(layout=layout):
@@ -2042,7 +2042,7 @@ class GridTree(unittest.TestCase):
     def test_two_orphan_groups_beside_a_one_pane_first_column_stay_main(self):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
-        layout = tui_claude._render_layout(grid([slot("%1"), *groups], 1))
+        layout = tmux_host._render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [(2, "a", "mgr", "%1"), (4, "c1", p1, "%3"), (5, "c2", p1, "%4"), (7, "d1", p2, "%6"),
@@ -2056,7 +2056,7 @@ class GridTree(unittest.TestCase):
             with self.subTest(panes=panes, per_column=per_column):
                 layout = grid([slot(p) for p in panes[1:]], per_column)
                 rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
-                self.assertEqual(self.tree(rows, panes, tui_claude._render_layout(layout)),
+                self.assertEqual(self.tree(rows, panes, tmux_host._render_layout(layout)),
                                  [slot(p) for p in panes[1:]])
 
 
@@ -2065,7 +2065,7 @@ class Swaps(unittest.TestCase):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
             with self.subTest(want=want):
-                swaps = tui_claude._swaps(have, list(want))
+                swaps = tmux_host._swaps(have, list(want))
                 order = list(have)
                 for source, target in swaps:
                     i, j = order.index(source), order.index(target)
@@ -2084,19 +2084,19 @@ class LayoutString(unittest.TestCase):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
-            self.assertEqual(tui_claude._checksum(text), csum)
+            self.assertEqual(tmux_host._checksum(text), csum)
 
     def test_parse(self):
-        Cell, lr, tb = tui_claude.Cell, tui_claude.LEFT_RIGHT, tui_claude.TOP_BOTTOM
+        Cell, lr, tb = tmux_host.Cell, tmux_host.LEFT_RIGHT, tmux_host.TOP_BOTTOM
         want = Cell(160, 48, 0, 0, kind=lr, children=(
             Cell(80, 48, 0, 0, "%0"),
             Cell(79, 48, 81, 0, kind=tb, children=(Cell(79, 24, 81, 0, "%1"), Cell(79, 23, 81, 25, "%2")))))
-        self.assertEqual(tui_claude._parse_layout(MAIN_VERTICAL), want)
-        self.assertEqual(tui_claude._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
 
     def test_round_trip(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            self.assertEqual(tui_claude._render_layout(tui_claude._parse_layout(sample)), sample)
+            self.assertEqual(tmux_host._render_layout(tmux_host._parse_layout(sample)), sample)
 
     def test_malformed(self):
         text = MAIN_VERTICAL.split(",", 1)[1]
@@ -2104,7 +2104,7 @@ class LayoutString(unittest.TestCase):
                     text.replace("]", "}"), "160x48,0,0", "160x48,0,0{}", "160x48,0,0,%0",
                     "160x48,0,0[1x1,0,0,1x1,0,2,2]", "160x48,0,0,1\n"):
             with self.subTest(bad=bad):
-                self.assertIsNone(tui_claude._parse_layout(bad))
+                self.assertIsNone(tmux_host._parse_layout(bad))
 
 
 class Tile(unittest.TestCase):
@@ -2159,7 +2159,7 @@ class Tile(unittest.TestCase):
     def tile(self, *args, per_column=None, wait=True, if_panes_changed=False, **kw):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(*args, **kw)
-        tui_claude.tile("@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake)
+        tmux_host.tile("@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake)
         return fake
 
     def applied(self, send, times="1000000"):
@@ -2201,34 +2201,34 @@ class Tile(unittest.TestCase):
                 release()
 
         slept = clock(self, poll)
-        tui_claude.tile("@3", proc=fake)
-        self.assertEqual(slept, [tui_claude.TILE_POLL] * 3)
+        tmux_host.tile("@3", proc=fake)
+        self.assertEqual(slept, [tmux_host.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS,
                                       *self.applied(self.WIDE_SENT, str(int(time.monotonic() * 1000)))])
 
     def test_an_explicit_tile_gives_up_after_tile_wait(self):
-        self.assertEqual((tui_claude.TILE_POLL, tui_claude.TILE_WAIT), (0.05, 5))
+        self.assertEqual((tmux_host.TILE_POLL, tmux_host.TILE_WAIT), (0.05, 5))
         hold(self, self.lock)
         slept = clock(self)
         fake = self.fake(*self.WIDE)
-        with self.assertRaisesRegex(tui_claude.TuiError, "^grid @3: busy$"):
-            tui_claude.tile("@3", proc=fake)
+        with self.assertRaisesRegex(tmux_host.TuiError, "^grid @3: busy$"):
+            tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
-        self.assertEqual(set(slept), {tui_claude.TILE_POLL})
+        self.assertEqual(set(slept), {tmux_host.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)   # float steps: one poll more
 
     def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
         os.symlink(self.sock + "-target", self.lock)
         want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.ELOOP)}$"
         fake = self.fake(*self.WIDE)
-        with self.assertRaisesRegex(tui_claude.TuiError, want):
-            tui_claude.tile("@3", proc=fake)
+        with self.assertRaisesRegex(tmux_host.TuiError, want):
+            tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
         fake = self.fake(*self.WIDE)
         with unittest.mock.patch.object(sys, "executable", PY), \
-                unittest.mock.patch.object(tui_claude, "__file__", SCRIPT):
-            self.assertRegex(tui_claude._grid_up("@3", "%0", 3, "all", fake), want)
+                unittest.mock.patch.object(tmux_host, "__file__", SCRIPT):
+            self.assertRegex(tmux_host._grid_up("@3", "%0", 3, "all", fake), want)
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
         self.assertFalse(os.path.lexists(self.sock + "-target"))
 
@@ -2241,15 +2241,15 @@ class Tile(unittest.TestCase):
         for sock in ("", "default"):
             with self.subTest(sock=sock):
                 fake = self.fake(*self.WIDE, sock=sock)
-                with self.assertRaisesRegex(tui_claude.TuiError,
+                with self.assertRaisesRegex(tmux_host.TuiError,
                                             f"^grid @3: socket path {re.escape(repr(sock))}: want an absolute path$"):
-                    tui_claude.tile("@3", proc=fake)
+                    tmux_host.tile("@3", proc=fake)
                 self.assertEqual(fake.calls, [self.SOCKET])
                 self.assertEqual(os.listdir(cwd.name), [])
 
     def test_a_fifo_at_the_lock_path_does_not_hang(self):
         os.mkfifo(self.lock, 0o600)
-        with deadline(), suppress(tui_claude.TuiError):   # flock on a FIFO: ENOTSUP on macOS
+        with deadline(), suppress(tmux_host.TuiError):   # flock on a FIFO: ENOTSUP on macOS
             self.tile(*self.WIDE)
 
     def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
@@ -2263,7 +2263,7 @@ class Tile(unittest.TestCase):
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
-        self.assertEqual((tui_claude.TILE_LIMIT, tui_claude.TILE_WINDOW), (50, 10))
+        self.assertEqual((tmux_host.TILE_LIMIT, tmux_host.TILE_WINDOW), (50, 10))
         line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
         recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
@@ -2284,9 +2284,9 @@ class Tile(unittest.TestCase):
         self.assertEqual(fake.calls[4], self.TEARDOWN)
         del fake.calls[:]
         with unittest.mock.patch.object(sys, "executable", PY), \
-                unittest.mock.patch.object(tui_claude, "__file__", SCRIPT), \
-                unittest.mock.patch.object(tui_claude, "tile") as tile:
-            self.assertIsNone(tui_claude._grid_up("@3", "%0", 3, "off", fake))
+                unittest.mock.patch.object(tmux_host, "__file__", SCRIPT), \
+                unittest.mock.patch.object(tmux_host, "tile") as tile:
+            self.assertIsNone(tmux_host._grid_up("@3", "%0", 3, "off", fake))
         self.assertEqual(fake.calls, [grid_set("@3", "%0", retile="off")])
         tile.assert_not_called()
 
@@ -2294,7 +2294,7 @@ class Tile(unittest.TestCase):
         # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
         fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
-        want = tui_claude._render_layout(grid([slot("%2"), slot("%1")]))
+        want = tmux_host._render_layout(grid([slot("%2"), slot("%1")]))
         self.assertEqual(fake.calls[4:], self.applied(["tmux", "swap-pane", "-d", "-s", "%2", "-t", "%1", ";",
                                                        "select-layout", "-t", "@3", want]))
         self.assertEqual(want.split(",", 1)[1], "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,2,80x23,80,25,1]}")
@@ -2312,7 +2312,7 @@ class Tile(unittest.TestCase):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
         # --if-panes-changed tile skips a drag
         panes = ["%0", "%9", "%10"]
-        layout = tui_claude._render_layout(grid([slot("%9"), slot("%10")]))
+        layout = tmux_host._render_layout(grid([slot("%9"), slot("%10")]))
         record = ["tmux", "set-option", "-w", "-t", "@3", "@grid-panes", "%0 %9 %10"]
         for recorded in ("", "%0 %9", "%0 %10 %9", "%0 %9 %10;", " %0 %9 %10", "%0  %9 %10", "%0,%9,%10"):
             for flag in (False, True):
@@ -2321,7 +2321,7 @@ class Tile(unittest.TestCase):
                     self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, record])
         fake = self.tile(layout, panes)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
-        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             self.tile(layout, panes, recorded="", fail=("set-option",))
 
     def test_if_panes_changed_skips_while_the_pane_set_is_the_recorded_one(self):
@@ -2370,7 +2370,7 @@ class Tile(unittest.TestCase):
                 fake = self.tile(dump(layout), panes, rows, n=n, size=(200, 50))
                 self.assertEqual(fake.calls[4:], self.applied(["tmux", "swap-pane", "-d", "-s", swap[0], "-t", swap[1],
                                                                ";", "select-layout", "-t", "@3", dump(want)]))
-                after = [leaf.pane for leaf in tui_claude._leaves(tui_claude._parse_layout(want))]
+                after = [leaf.pane for leaf in tmux_host._leaves(tmux_host._parse_layout(want))]
                 fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
@@ -2378,14 +2378,14 @@ class Tile(unittest.TestCase):
         split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
         for layout, panes, zoomed, want, reads in (
                 (split, ["%0", "%1", "%4", "%2", "%3"], "0",
-                 ([("%2", "%4"), ("%3", "%4")], tui_claude._parse_layout(tui_claude._render_layout(grid(4))), "1 x 2",
+                 ([("%2", "%4"), ("%3", "%4")], tmux_host._parse_layout(tmux_host._render_layout(grid(4))), "1 x 2",
                   "%0 %1 %2 %3 %4"),
                  [self.READ, self.PANES, SESSIONS]),
                 (self.THREE, ["%0", "%1", "%2", "%3"], "0", None, [self.READ, self.PANES, SESSIONS]),
                 (self.THREE, ["%0", "%1", "%2", "%3"], "1", None, [self.READ])):
             with self.subTest(layout=layout, zoomed=zoomed):
                 fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
-                self.assertEqual(tui_claude._grid_pass("@3", None, False, fake), want)
+                self.assertEqual(tmux_host._grid_pass("@3", None, False, fake), want)
                 self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
@@ -2393,7 +2393,7 @@ class Tile(unittest.TestCase):
         layout = dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x32,80,0,2,80x15,80,33,3]}")
         fake = self.tile(layout, ["%0", "%2", "%3"], self.W3[1:])
         self.assertEqual(fake.calls[4:], self.applied(["tmux", "select-layout", "-t", "@3",
-                                                       tui_claude._render_layout(grid([slot("%2"), slot("%3")]))]))
+                                                       tmux_host._render_layout(grid([slot("%2"), slot("%3")]))]))
         self.assertNotIn("pane_dead", repr(fake.calls))
 
     def test_zoomed_or_no_grid_window_only_reads_it(self):
@@ -2451,9 +2451,9 @@ class Tile(unittest.TestCase):
         rows = [("$2", "w1", "mgr", "%1"), ("2", "w2", "mgr", "%2"), ("$4", "w 4", "mgr", "%4"),
                 ("$5", "w5", "w1", "%3"), ("$6", "w6", "%1", "%5")]
         panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
-        fake = self.tile(tui_claude._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6")
+        fake = self.tile(tmux_host._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6")
         cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
-        self.assertEqual(fake.calls[4][-1], tui_claude._render_layout(grid(cells, 6)))
+        self.assertEqual(fake.calls[4][-1], tmux_host._render_layout(grid(cells, 6)))
 
     def test_per_column_argument_else_the_window_option_else_the_default(self):
         panes = ["%0", "%1", "%2", "%3", "%4"]
@@ -2462,8 +2462,8 @@ class Tile(unittest.TestCase):
                                   ("2", {"per_column": 3}, None), ("", {}, None), ("0", {}, None), ("02", {}, None),
                                   ("10000", {}, None), ("2 ", {}, None), ("x", {}, None)):
             with self.subTest(n=n, **kw):
-                fake = self.tile(tui_claude._render_layout(grid(4)), panes, rows, n=n, **kw)
-                want = tui_claude._render_layout(grid(4, per_column)) if per_column else None
+                fake = self.tile(tmux_host._render_layout(grid(4)), panes, rows, n=n, **kw)
+                want = tmux_host._render_layout(grid(4, per_column)) if per_column else None
                 self.assertEqual(fake.calls[4:],
                                  self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [])
 
@@ -2475,23 +2475,23 @@ class Tile(unittest.TestCase):
         for window, kw, error in cases:
             with self.subTest(window=window, **kw):
                 fake = Tmux()
-                with self.assertRaisesRegex(tui_claude.TuiError, "^" + re.escape(error)):
-                    tui_claude.tile(window, proc=fake, **kw)
+                with self.assertRaisesRegex(tmux_host.TuiError, "^" + re.escape(error)):
+                    tmux_host.tile(window, proc=fake, **kw)
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
         # a failed re-tile: @grid-busy unset all the same, its failure not masking the re-tile's; the lock freed
         fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
         fake = self.fake(*self.WIDE, **fail)
-        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
-            tui_claude.tile("@3", proc=fake)
+        with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
+            tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with tui_claude._grid_lock(self.sock, "@3", False) as held:
+        with tmux_host._grid_lock(self.sock, "@3", False) as held:
             self.assertTrue(held)
-        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
+        with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
-        with self.assertRaisesRegex(tui_claude.TuiError, "^tmux: boom$"):
-            tui_claude.tile("@3", proc=Tmux(fail=("display-message",)))
+        with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
+            tmux_host.tile("@3", proc=Tmux(fail=("display-message",)))
 
 
 class Cli(unittest.TestCase):
@@ -2499,13 +2499,13 @@ class Cli(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                rc = tui_claude.main(list(argv))
+                rc = tmux_host.main(list(argv))
             except SystemExit as e:
                 rc = e.code
         return rc, out.getvalue(), err.getvalue()
 
     def patch(self, name, **kw):
-        p = unittest.mock.patch.object(tui_claude, name, **kw)
+        p = unittest.mock.patch.object(tmux_host, name, **kw)
         self.addCleanup(p.stop)
         return p.start()
 
@@ -2556,7 +2556,7 @@ class Cli(unittest.TestCase):
 
     def test_subcommands(self):
         send, read, show, status = (self.patch(n) for n in ("send", "read", "show", "status"))
-        read.return_value, show.return_value, status.return_value = "pane\ntext", None, tui_claude.RUNNING
+        read.return_value, show.return_value, status.return_value = "pane\ntext", None, tmux_host.RUNNING
         self.assertEqual(self.main("send", "s", "hi there"), (0, "", ""))
         send.assert_called_once_with("s", "hi there")
         self.assertEqual(self.main("send", "s", "--", "-x")[0], 0)
@@ -2574,7 +2574,7 @@ class Cli(unittest.TestCase):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_per_column(self):
         start, show = self.patch("start"), self.patch("show", return_value=None)
-        self.patch("status", return_value=tui_claude.RUNNING)
+        self.patch("status", return_value=tmux_host.RUNNING)
         for value, n in (("1", 1), ("2", 2), ("9999", 9999), ("0003", 3)):
             with self.subTest(value=value):
                 self.assertEqual(self.main("start", "--per-column", value, "a", "--", "cmd")[0], 0)
@@ -2597,7 +2597,7 @@ class Cli(unittest.TestCase):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_grid_retile(self):
         start, show = self.patch("start"), self.patch("show", return_value=None)
-        self.patch("status", return_value=tui_claude.RUNNING)
+        self.patch("status", return_value=tmux_host.RUNNING)
         for mode in ("all", "open-close", "off"):
             with self.subTest(mode=mode):
                 self.assertEqual(self.main("start", "--grid-retile", mode, "a", "--", "cmd")[0], 0)
@@ -2618,7 +2618,7 @@ class Cli(unittest.TestCase):
             self.assertIn("--grid-retile M", " ".join(self.main(cmd, "-h")[1].split()))
 
     def test_tile(self):
-        real, fake = tui_claude.tile, Tmux()
+        real, fake = tmux_host.tile, Tmux()
         tile = self.patch("tile", return_value=None)
         self.assertEqual(self.main("tile", "@3"), (0, "", ""))
         self.assertEqual(self.main("tile", "--no-wait", "@3"), (0, "", ""))
@@ -2636,14 +2636,14 @@ class Cli(unittest.TestCase):
 
     def test_exit_1(self):
         for name in ("start", "send", "read", "tile"):
-            self.patch(name, side_effect=tui_claude.TuiError("tmux: boom"))
+            self.patch(name, side_effect=tmux_host.TuiError("tmux: boom"))
         for argv in ("start a -- cmd", "send s hi", "read s", "tile @3"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split()), (1, "", "tui: tmux: boom\n"))
         status, show = self.patch("status", return_value=None), self.patch("show", return_value="boom")
         self.assertEqual(self.main("show", "s"), (1, "", "tui: no session s\n"))
         show.assert_not_called()
-        status.return_value = tui_claude.RUNNING
+        status.return_value = tmux_host.RUNNING
         self.assertEqual(self.main("show", "s")[0], 1)
 
     def test_exit_2(self):
@@ -2659,7 +2659,7 @@ class Cli(unittest.TestCase):
 
 class SingleFile(unittest.TestCase):
     def setUp(self):
-        with open(tui_claude.__file__) as f:
+        with open(tmux_host.__file__) as f:
             self.source = f.read()
 
     def test_imports_only_the_stdlib(self):
@@ -2676,7 +2676,7 @@ class SingleFile(unittest.TestCase):
 
     def test_runs_alone(self):
         with tempfile.TemporaryDirectory() as d:
-            copy = shutil.copy(tui_claude.__file__, d)
+            copy = shutil.copy(tmux_host.__file__, d)
             res = subprocess.run([sys.executable, "-I", copy, "--help"], cwd=d, capture_output=True, text=True,
                                  stdin=subprocess.DEVNULL, timeout=30)
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -2708,8 +2708,8 @@ builtins.open = fake_open
 
 class Exec(unittest.TestCase):
     def test_safe_for_tmux(self):
-        self.assertNotIn("#", tui_claude.EXEC)
-        self.assertFalse(tui_claude.EXEC.rstrip().endswith(";"))
+        self.assertNotIn("#", tmux_host.EXEC)
+        self.assertFalse(tmux_host.EXEC.rstrip().endswith(";"))
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2721,7 +2721,7 @@ class Exec(unittest.TestCase):
         """The wrapper as tmux runs it, given a handover file naming argv; `prelude` runs before it."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
-        return subprocess.run([sys.executable, "-I", "-c", prelude + tui_claude.EXEC, self.path], env=pane,
+        return subprocess.run([sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path], env=pane,
                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
 
     def child(self, seconds):
@@ -2764,7 +2764,7 @@ class Exec(unittest.TestCase):
         with open(self.path, "w") as f:
             json.dump({"argv": [sys.executable, "-c", ALIVE, str(old.pid)], "env": {}, "cwd": self.root,
                        "after": old.pid}, f)
-        wrapper = subprocess.Popen([sys.executable, "-I", "-c", tui_claude.EXEC, self.path], stdout=subprocess.PIPE,
+        wrapper = subprocess.Popen([sys.executable, "-I", "-c", tmux_host.EXEC, self.path], stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
         self.addCleanup(lambda: wrapper.returncode is None and wrapper.kill())
         deadline = time.monotonic() + 5
@@ -2783,14 +2783,14 @@ class Exec(unittest.TestCase):
         old, _ = self.child(60)
         gone, reaper = self.child(0)
         reaper.join(timeout=10)
-        for extra, naps, state in (({"after": old.pid}, tui_claude.RESPAWN_WAIT, "alive"), ({}, 0, "gone"),
+        for extra, naps, state in (({"after": old.pid}, tmux_host.RESPAWN_WAIT, "alive"), ({}, 0, "gone"),
                                    ({"after": gone.pid}, 0, "gone")):
             with self.subTest(**extra):
                 pid = extra.get("after", gone.pid)
                 res = self.run_exec([sys.executable, "-c", ALIVE, str(pid)], {}, self.root, {}, prelude=FAKE_CLOCK,
                                     **extra)
                 self.assertEqual((res.returncode, res.stdout), (0, f"{state}\n"), res.stderr)
-                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
+                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tmux_host.POLL / 2)
         self.assertIsNone(old.returncode)
 
     def test_a_zombie_ends_the_wait(self):
@@ -2798,13 +2798,13 @@ class Exec(unittest.TestCase):
         released its locks, only not yet reaped."""
         old, _ = self.child(60)
         for stat_line, naps in ((b"%d (python3) Z 1 1 1" % old.pid, 0),
-                                 (b"%d (a) Z (b) S 1 1 1" % old.pid, tui_claude.RESPAWN_WAIT)):
+                                 (b"%d (a) Z (b) S 1 1 1" % old.pid, tmux_host.RESPAWN_WAIT)):
             with self.subTest(stat=stat_line):
                 prelude = f"PROC_PATH, PROC_STAT = {f'/proc/{old.pid}/stat'!r}, {stat_line!r}\n{FAKE_PROC}{FAKE_CLOCK}"
                 res = self.run_exec([sys.executable, "-c", ALIVE, str(old.pid)], {}, self.root, {}, prelude=prelude,
                                     after=old.pid)
                 self.assertEqual((res.returncode, res.stdout), (0, "alive\n"), res.stderr)
-                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
+                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tmux_host.POLL / 2)
 
     def test_default_signal_dispositions(self):
         for sig in (signal.SIGPIPE, signal.SIGXFSZ):

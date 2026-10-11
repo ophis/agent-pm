@@ -29,7 +29,7 @@
 #                   status line; unset → false
 #   workers_per_column local, global only: worker panes per grid column (tmux grid), 1..9999; unset → 3
 #   grid_retile     local, global only: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all"
-#                   (also a drag or a window resize), "off" (never by itself: core/src/tui_claude.py tile @N);
+#                   (also a drag or a window resize), "off" (never by itself: core/src/tmux_host.py tile @N);
 #                   unset → "open-close"
 #   team_dirs       local, global only: dirs of your own roles, tasks and templates (absolute or ~ path, matched by
 #                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold

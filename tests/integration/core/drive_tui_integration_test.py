@@ -108,7 +108,7 @@ class TuiRun(unittest.TestCase):
         res = self.drive("--detach", inside=MANAGER)
         early = live_tmux.events(self.events)
         self.assertEqual(res.returncode, 0, res.stderr)
-        # at once: the driver sleeps drive.POLL and tui_claude.PAUSE at least before its outcome line
+        # at once: the driver sleeps drive.POLL and tmux_host.PAUSE at least before its outcome line
         self.assertFalse([line for line in early if OUTCOME.fullmatch(line)], early)
         self.assertIn(f"drive.py: driver session {DRIVER}: tmux attach -t '={DRIVER}'", res.stderr)
         lines = self.until(lambda lines: any(OUTCOME.fullmatch(line) for line in lines), f"`{DRIVER} outcome done`",

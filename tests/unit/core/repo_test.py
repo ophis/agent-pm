@@ -10,7 +10,7 @@ import unittest.mock
 
 from tests import hermetic
 import repo
-import tui_claude
+import tmux_host
 
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
@@ -235,8 +235,8 @@ class GridRetile(unittest.TestCase):
             with self.subTest(v=v), self.assertRaisesRegex(ValueError, "^grid_retile: want one of all, open-close, off$"):
                 repo.grid_retile({"grid_retile": v})
 
-    def test_the_modes_are_tui_claudes(self):
-        self.assertEqual(repo.RETILES, tui_claude.RETILES)
+    def test_the_modes_are_tmux_hosts(self):
+        self.assertEqual(repo.RETILES, tmux_host.RETILES)
 
 
 class Worktree(Base):
