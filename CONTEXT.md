@@ -23,7 +23,7 @@ A dir listed in core config's `team_dirs`, outside the plugin, adding roles (eac
 _Avoid_: custom pack
 
 **Agent run**:
-One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) hosted by a runner, or inline in the caller's session through a skill.
+One role run once, on a task given or picked from its index: a fresh agent runtime session (e.g. Claude Code's) run by the facade in a mode, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -31,24 +31,25 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, an optional task and free-text input into an agent run: a composer plus a driver.
+The component that turns a role, an optional task and free-text input into an agent run: a composer plus a facade. As the facade's caller, it reads the agent run's replies (progress, outcome) and decides nudges and give-ups.
 
 **Composer**:
 The part of the delegate that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
-**Driver**:
-The part of the delegate that starts an agent run through a client and checks its output; the same for every client.
-_Avoid_: runtime, harness
+**Facade**:
+The part of the delegate that runs a prompt on the agent runtime and mode its caller names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `core/src/drive.py` (renamed by TASK-310).
+_Avoid_: driver, runtime, harness
 
-**Client**:
-A way to execute a composed agent run (Claude Code, a skill); it turns the agent run into its own launch (a command per runner, or a prompt to print) and enforces what hard constraints it can. Elsewhere: a coding runtime; its code here, an adapter.
-_Avoid_: runtime, backend, vehicle
+**Adapter**:
+The code that wraps one agent runtime (Claude Code, Codex) for the facade: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `core/src/clients/` (renamed by TASK-310).
+_Avoid_: client, backend, vehicle
 
-**Runner**:
-How the driver hosts a client's command and when the agent run counts as done: headless (e.g. `claude -p`, on a pipe, done when it exits) or tui (the client's interactive command in a tmux session, done once the outcome arrives or it gives up). Elsewhere: headless and interactive modes.
+**Mode**:
+How the facade hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits) or tui (its interactive command in a tmux session, ends when its caller stops it). In code: `--runner` (renamed by TASK-310).
+_Avoid_: runner
 
 **Attended run**:
-An agent run started by hand with the tui runner so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
+An agent run started by hand in tui mode so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
 
 **Destination**:
 Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.
