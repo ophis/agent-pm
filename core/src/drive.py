@@ -583,7 +583,7 @@ class Tui:
         return self.gave_up
 
     def returncode(self) -> int:
-        return 0 if self.outcome else self.rc
+        return self.rc
 
     def stop(self) -> None:
         if not self.started:   # tui_claude.start leaves no session when it raises; a live one of that name isn't this agent run's

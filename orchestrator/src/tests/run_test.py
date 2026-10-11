@@ -153,15 +153,29 @@ class Inner(Base):
                                             "run no-outcome TASK-7 error=the agent run returned no outcome"])
         self.assertEqual(self.gql.calls, self.harness(0))
 
-    def test_nonzero_exit(self):
+    def test_nonzero_exit_keeps_a_valid_reported_outcome(self):
         def lines():
             reported(self.rd, outcome(DONE))
             yield from ()
         self.lines, self.rc = lines(), 1
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.said()[-2:], [f"run end TASK-7 sid={SID} exit=1", "run no-outcome TASK-7 error=the client exited 1"])
-        self.assertFalse(os.path.exists(self.runs))
-        self.assertEqual(self.gql.calls, self.harness(1))
+        self.assertEqual(self.said(), [f"run launch TASK-7 mode=new sid={SID}",
+                                       f"run end TASK-7 sid={SID} exit=1",
+                                       f"writeback step TASK-7 sid={SID} step=comment",
+                                       f"writeback step TASK-7 sid={SID} step=attach:{PR}",
+                                       f"writeback step TASK-7 sid={SID} step=move:in_review"])
+        posts = self.harness(1)
+        self.assertEqual(self.gql.calls, [*posts[:2],
+                                          ("read", KEY, {"i": UUID}),
+                                          ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
+                                          ("comment", KEY, {"i": UUID, "b": "Build ready: Opened the PR."}),
+                                          ("attach", KEY, {"i": UUID, "u": PR, "t": "TASK-7: Session registry"}),
+                                          ("reread", KEY, {"i": UUID}),
+                                          ("state", KEY, {"i": UUID, "s": STATES["in_review"]}),
+                                          *posts[2:]])
+        result, end = self.events()[-2:]
+        self.assertEqual((result["outcome"]["url"], result["error"], end["rc"]),
+                         (PR, "the client exited 1", 1))
 
     def test_sighup_kills_claude(self):
         def lines():

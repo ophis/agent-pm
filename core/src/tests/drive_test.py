@@ -1893,6 +1893,23 @@ class TuiRunner(Base):
         self.assertEqual([c[0] for c in calls], ["start"])
         self.assertEqual(self.fake.steps, [])
 
+    def test_reported_outcome_survives_a_tui_session_exiting_nonzero(self):
+        def status(name):
+            for event in (progress("start", "go"), outcome(DONE)):
+                drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(event) + "\n")
+            return 7
+
+        r, calls, kinds, _ = self.start(api={"status": status})
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            saved = [json.loads(line) for line in f]
+        result = next(e for e in saved if e["kind"] == "result")
+        end = next(e for e in saved if e["kind"] == "end")
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (7, "done", "the client exited 7"))
+        self.assertEqual(kinds, ["progress", "outcome"])
+        self.assertEqual(result["outcome"]["url"], os.path.join(self.work, "out.md"))
+        self.assertEqual((result["error"], end["rc"]), ("the client exited 7", 7))
+        self.assertEqual([c[0] for c in calls], ["start"])
+
     def test_a_dead_pane_or_a_gone_session_ends_the_run_without_an_outcome(self):
         for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the agent run returned no outcome")),
                               (None, (0, None, "the agent run returned no outcome"))):
