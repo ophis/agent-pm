@@ -7,14 +7,17 @@ usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) give
 session() is the run records' session query.
 
 A Handle runs over its session's Mode (the Mode protocol): driver/modes/headless.py, or driver/modes/tui.py, a named
-tmux session that attach(name) reaches from any process, sessions() lists and close(name) ends. A function taking a
-session name refuses one not matching [A-Za-z0-9_-]+ before any path or tmux use."""
+tmux session that attach(name) reaches from any process, sessions() lists, show(name) puts in a pane (where: layout())
+and close(name) ends. detach() runs a command in a tmux session of its own. A function taking a session name refuses one
+not matching [A-Za-z0-9_-]+ before any path or tmux use."""
+import logging
 import os
+import signal
 import stat
 import time
 import uuid
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -28,15 +31,18 @@ from driver.records import session
 from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
-           "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo",
-           "SessionStatus", "Sessions", "Spec", "Stderr", "TurnEnd", "Usage", "Window", "attach", "close", "records",
-           "session", "session_info", "sessions", "start", "usage"]
+           "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "SIGNALS", "STATES", "SessionBound",
+           "SessionInfo", "SessionStatus", "Sessions", "Spec", "Stderr", "TurnEnd", "Usage", "Window", "attach",
+           "attach_command", "close", "detach", "layout", "records", "session", "session_info", "sessions", "show",
+           "start", "usage"]
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5   # seconds: the longest wait on a Mode for its next event
 PROBE_DIR = "~/.agent-pm/probe"   # a usage probe's cwd when its launch names none; made 0700
 PROBE_TIMEOUT = 120               # seconds: the longest a usage probe runs
+SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+LOG = logging.getLogger("driver")
 
 
 @dataclass(frozen=True)
@@ -303,6 +309,71 @@ def sessions(prefix: str = "") -> Sessions:
 def close(name: str) -> None:
     """Ends tui session `name`: kills it (absent is fine), then removes its session dir."""
     tui.close(_name(name))
+
+
+def _placement(split, split_from, opener=None) -> None:
+    if split is not None and split not in tmux_host.SPLITS:
+        raise ConfigError(f"split must be right or below, got {split!r:.80}")
+    if split_from is not None and not (isinstance(split_from, str) and tmux_host.NAME.fullmatch(split_from)):
+        raise ConfigError(f"split_from must match [A-Za-z0-9_-]+, got {split_from!r:.80}")
+    if opener is not None and not (isinstance(opener, str) and tmux_host.OPENER.fullmatch(opener)):
+        raise ConfigError(f"opener must be a tmux session name or $ITERM_SESSION_ID's value, got {opener!r:.80}")
+
+
+def show(name: str, split: str | None = None, split_from: str | None = None, opener: str | None = None) -> str | None:
+    """Opens a pane on tmux session `name` (tmux_host.open_pane, the tui settings' grid): None, else the reason is
+    logged and attach_command(name) returned. Refusals: a bad argument or setting (ConfigError), no session
+    (DriverError)."""
+    _name(name)
+    _placement(split, split_from, opener)
+    settings = registry.tui()
+    if tmux_host.status(name) is None:
+        raise DriverError(f"no tmux session {name}")
+    why = tmux_host.open_pane(name, split=split, split_from=split_from, opener=opener, per_column=settings.per_column,
+                              retile=settings.retile)
+    if why is None:
+        return None
+    LOG.warning("show %s: %s", name, why)
+    return tmux_host.attach_command(name)
+
+
+def layout(split: str | None = None, split_from: str | None = None) -> str | None:
+    """The opener for show() once the pane it goes beside (split_from's, else the caller's) is found: tmux_host's
+    opener(), None only with split_from. Refusals: a bad or absent split or split_from (ConfigError), no pane
+    (DriverError)."""
+    _placement(split, split_from)
+    if split_from is not None and tmux_host.status(split_from) is None:
+        raise ConfigError(f"no tmux session {split_from}")
+    try:
+        tmux_host.anchor(split_from)
+        try:
+            return tmux_host.opener()
+        except tmux_host.TuiError:
+            if split_from is None:
+                raise
+            return None
+    except tmux_host.TuiError as e:
+        hint = "" if split_from else ": run from tmux or iTerm2, or pass split_from"
+        raise DriverError(f"no pane to show the TUI beside ({e}){hint}") from None
+
+
+def attach_command(name: str) -> str:
+    return tmux_host.attach_command(_name(name))
+
+
+def detach(name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None) -> None:
+    """Runs argv in new tmux session `name`, in cwd with env as given, SIGNALS blocked until argv unblocks them, opener
+    its @opener; returns once argv runs. Refusals: a bad argument (ConfigError), tmux's (DriverError)."""
+    _name(name)
+    if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
+        raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
+    if not printable_abs(cwd):
+        raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+    _placement(None, None, opener)
+    try:
+        tmux_host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
+    except tmux_host.TuiError as e:
+        raise DriverError(f"detach {name}: {e}") from e
 
 
 def _probe_dir() -> str | None:

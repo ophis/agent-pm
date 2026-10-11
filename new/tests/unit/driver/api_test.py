@@ -2,13 +2,14 @@
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
 usage()'s probe is headless.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
-Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close) over tmux_host
-autospecced (no tmux runs)."""
+Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout,
+attach_command, detach) over tmux_host autospecced (no tmux runs)."""
 import dataclasses
 import inspect
 import itertools
 import json
 import os
+import signal
 import stat
 import sys
 import tempfile
@@ -551,7 +552,7 @@ def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
     (absent), sessions [], option None."""
     host = mock.create_autospec(tmux_host)
-    for name in ("RUNNING", "UNKNOWN", "NAME", "TuiError"):
+    for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
     host.PAUSE = 0
     host.attach_command.side_effect = tmux_host.attach_command
@@ -781,6 +782,134 @@ class CloseTest(TuiBase):
         self.name_refused(api.close)
 
 
+PLACEMENTS = (({"split": "left"}, "split must be right or below, got 'left'"),
+              ({"split_from": "a b"}, "split_from must match [A-Za-z0-9_-]+, got 'a b'"),
+              ({"split_from": 5}, "split_from must match [A-Za-z0-9_-]+, got 5"))
+OPENERS = (("x y", "opener must be a tmux session name or $ITERM_SESSION_ID's value, got 'x y'"),
+           ("w0t0p0:a/b", "opener must be a tmux session name or $ITERM_SESSION_ID's value, got 'w0t0p0:a/b'"))
+NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
+
+
+class ShowTest(TuiBase):
+    def setUp(self):
+        super().setUp()
+        self.host.status.return_value = tmux_host.RUNNING
+        self.host.open_pane.return_value = None
+
+    def test_none_once_a_pane_shows_it_placed_with_the_tui_settings(self):
+        self.configure(tui=True, settings={"workers_per_column": 2, "grid_retile": "off"})
+        self.assertIsNone(api.show("w1", split="below", split_from="m1", opener="w0t0p0:AB-12"))
+        self.assertEqual(self.host.mock_calls, [
+            mock.call.status("w1"), mock.call.open_pane("w1", split="below", split_from="m1", opener="w0t0p0:AB-12",
+                                                        per_column=2, retile="off")])
+
+    def test_no_pane_is_the_attach_command_the_reason_logged(self):
+        self.host.status.return_value = 0
+        self.host.open_pane.return_value = f"{NO_PANE}; watch it with tmux attach -t '=w1'"
+        with mock.patch.dict(os.environ, {"TUI_ATTACH_PREFIX": "docker exec -it box"}), \
+                self.assertLogs("driver") as logs:
+            self.assertEqual(api.show("w1"), "docker exec -it box tmux attach -t '=w1'")
+        self.assertEqual(logs.output, [f"WARNING:driver:show w1: {NO_PANE}; watch it with tmux attach -t '=w1'"])
+        self.host.open_pane.assert_called_once_with("w1", split=None, split_from=None, opener=None, per_column=None,
+                                                    retile=None)
+
+    def test_an_absent_session_is_a_driver_error(self):
+        self.host.status.return_value = None
+        with self.assertRaises(api.DriverError) as caught:
+            api.show("w1")
+        self.assertEqual(str(caught.exception), "no tmux session w1")
+        self.host.open_pane.assert_not_called()
+
+    def test_a_bad_name_placement_opener_or_setting_is_refused_before_tmux(self):
+        self.name_refused(api.show)
+        for kwargs, message in (*PLACEMENTS, *(({"opener": o}, m) for o, m in OPENERS)):
+            with self.subTest(kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
+                api.show("w1", **kwargs)
+            self.assertEqual(str(caught.exception), message)
+        self.configure(tui=True, settings={"grid_retile": "never"})
+        with self.assertRaises(api.ConfigError) as caught:
+            api.show("w1")
+        self.assertEqual(str(caught.exception), "grid_retile: want one of all, open-close, off")
+        self.nothing_hosted()
+
+
+class LayoutTest(TuiBase):
+    def test_the_callers_opener_once_its_pane_is_found(self):
+        self.host.opener.return_value = "mgr"
+        self.assertEqual(api.layout(), "mgr")
+        self.assertEqual(self.host.mock_calls, [mock.call.anchor(None), mock.call.opener()])
+
+    def test_beside_a_live_split_from_the_opener_may_be_none(self):
+        self.host.status.return_value = tmux_host.RUNNING
+        self.host.opener.side_effect = tmux_host.TuiError(NO_PANE)
+        self.assertIsNone(api.layout("below", "m1"))
+        self.assertEqual(self.host.mock_calls, [mock.call.status("m1"), mock.call.anchor("m1"), mock.call.opener()])
+
+    def test_no_pane_or_no_opener_is_a_driver_error_with_a_hint_without_split_from(self):
+        hint = ": run from tmux or iTerm2, or pass split_from"
+        self.host.status.return_value = tmux_host.RUNNING
+        for split_from, anchor, opener, message in (
+                (None, NO_PANE, None, f"({NO_PANE}){hint}"),
+                (None, None, "bad $ITERM_SESSION_ID 'x'", f"(bad $ITERM_SESSION_ID 'x'){hint}"),
+                ("m1", "no terminal shows tmux session m1", None, "(no terminal shows tmux session m1)")):
+            with self.subTest(split_from=split_from, anchor=anchor):
+                self.host.anchor.side_effect = anchor and tmux_host.TuiError(anchor)
+                self.host.opener.side_effect = opener and tmux_host.TuiError(opener)
+                with self.assertRaises(api.DriverError) as caught:
+                    api.layout(split_from=split_from)
+                self.assertEqual(str(caught.exception), f"no pane to show the TUI beside {message}")
+
+    def test_a_bad_split_or_split_from_or_an_absent_one_is_refused(self):
+        for kwargs, message in PLACEMENTS:
+            with self.subTest(kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
+                api.layout(**kwargs)
+            self.assertEqual(str(caught.exception), message)
+        self.nothing_hosted()
+        with self.assertRaises(api.ConfigError) as caught:
+            api.layout(split_from="m1")
+        self.assertEqual(str(caught.exception), "no tmux session m1")
+        self.assertEqual(self.host.mock_calls, [mock.call.status("m1")])
+
+
+class AttachCommandTest(TuiBase):
+    def test_tmux_hosts_command_after_the_name_check(self):
+        self.assertEqual(api.attach_command("w1"), "tmux attach -t '=w1'")
+        with mock.patch.dict(os.environ, {"TUI_ATTACH_PREFIX": "docker exec -it box"}):
+            self.assertEqual(api.attach_command("w1"), "docker exec -it box tmux attach -t '=w1'")
+        self.host.reset_mock()
+        self.name_refused(api.attach_command)
+
+
+class DetachTest(TuiBase):
+    def test_hosts_argv_with_the_signals_blocked_and_the_opener(self):
+        env = {"PATH": "/bin", "TMUX": "x"}
+        self.assertIsNone(api.detach("d1", ["tool", "a b"], "/work", env, opener="mgr"))
+        self.assertEqual(self.host.mock_calls, [mock.call.detach("d1", ["tool", "a b"], cwd="/work", env=env,
+                                                                 block=api.SIGNALS, opener="mgr")])
+        api.detach("d2", ("tool",), "/work", env)
+        self.assertEqual(self.host.detach.call_args.kwargs["opener"], None)
+
+    def test_a_bad_name_argv_cwd_or_opener_is_refused_before_tmux(self):
+        self.name_refused(lambda name: api.detach(name, ["tool"], "/work", {}))
+        for args, kwargs, message in (
+                (([], "/work"), {}, "argv must be a non-empty list of str, got []"),
+                (("tool", "/work"), {}, "argv must be a non-empty list of str, got 'tool'"),
+                (([b"tool"], "/work"), {}, "argv must be a non-empty list of str, got [b'tool']"),
+                ((["tool"], "work"), {}, "cwd must be a printable absolute path, got 'work'"),
+                ((["tool"], "/a\nb"), {}, r"cwd must be a printable absolute path, got '/a\nb'"),
+                *(((["tool"], "/work"), {"opener": o}, m) for o, m in OPENERS)):
+            with self.subTest(args=args, kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
+                api.detach("d1", *args, {}, **kwargs)
+            self.assertEqual(str(caught.exception), message)
+        self.nothing_hosted()
+
+    def test_a_tmux_failure_is_a_driver_error(self):
+        self.host.detach.side_effect = tmux_host.TuiError("session d1 exists")
+        with self.assertRaises(api.DriverError) as caught:
+            api.detach("d1", ["tool"], "/work", {})
+        self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
+
+
 class ExportsTest(unittest.TestCase):
     def test_reexports_and_constants(self):
         for name in ("Access", "Spec", "SessionInfo", "ConfigError", "SessionBound", "Activity", "Reply", "TurnEnd",
@@ -792,7 +921,8 @@ class ExportsTest(unittest.TestCase):
         self.assertIs(api.session, records.session)
         self.assertIs(api.DriverError, errors.DriverError)
         for name in ("LimitHit", "Usage", "Window", "SessionStatus", "RESUMABLE", "usage", "session_info", "session",
-                     "DriverError", "Mode", "Sessions", "attach", "close", "sessions"):
+                     "DriverError", "Mode", "Sessions", "attach", "close", "sessions", "SIGNALS", "attach_command",
+                     "detach", "layout", "show"):
             with self.subTest(name=name):
                 self.assertIn(name, api.__all__)
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
@@ -800,6 +930,7 @@ class ExportsTest(unittest.TestCase):
         self.assertEqual((api.MODES, api.STATES, api.POLL), (("headless", "tui"), ("live", "absent", "unknown"), 0.5))
         self.assertEqual((api.PROBE_DIR, api.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
         self.assertEqual(api.IdleTimeout(0.3).seconds, 0.3)
+        self.assertEqual(api.SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
 
 if __name__ == "__main__":
