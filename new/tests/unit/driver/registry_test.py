@@ -133,9 +133,9 @@ class ReadConfigTest(Base):
 
 
 class TablesTest(Base):
-    def test_committed_config_parses_with_no_tables(self):
-        self.assertEqual(registry.tables(), {})
-        self.assertEqual(registry.configured(), [])
+    def test_committed_config_has_the_claude_table(self):
+        self.assertEqual(list(registry.tables()), ["claude"])
+        self.assertEqual(registry.configured(), ["claude"])
 
     def test_the_merged_tables_and_their_sorted_names(self):
         path = self.write("config.toml", '[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n')
@@ -175,7 +175,7 @@ class CacheTest(Base):
         with mock.patch.object(registry, "tables", wraps=registry.tables) as read:
             first = registry.adapter("fake")
             second = registry.adapter("fake")
-            self.assertEqual(registry.configured(), ["a", "fake"])
+            self.assertEqual(registry.configured(), ["a", "claude", "fake"])
         read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
         self.assertIsNot(first, second)
         self.assertEqual((first.config, second.config), ({"scenario": "/s"}, {"scenario": "/s"}))
