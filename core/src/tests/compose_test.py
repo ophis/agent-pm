@@ -485,9 +485,12 @@ class Prompt(Fake):
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
     def test_the_report_command_quotes_its_paths(self):
-        self.assertEqual(compose.report_command("/s", PARAMS), "python3 /s/report.py --to /w/run.jsonl")
+        self.assertEqual(compose.report_command("/s", PARAMS),
+                         f"{shlex.quote(sys.executable)} /s/report.py --to /w/run.jsonl")
         spaced = replace(PARAMS, workdir="/my w")
-        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/run.jsonl'")
+        with mock.patch.object(compose.sys, "executable", "/my Python/bin/python 3"):
+            self.assertEqual(compose.report_command("/s s", spaced),
+                             "'/my Python/bin/python 3' '/s s/report.py' --to '/my w/run.jsonl'")
         self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
     def test_texts_keep_the_names_and_parameters_give_the_clients_paths(self):
@@ -695,7 +698,8 @@ class Parameters(Fake):
         for handover in ("Run `report outcome <file>`.", "Report through `report`."):
             prompt = compose.render(self.root, run, PARAMS, client=Plain(handover))
             self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"], handover)
-            self.assertEqual(parameters(prompt)["report"], "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
+            self.assertEqual(parameters(prompt)["report"],
+                             f"`{shlex.quote(sys.executable)} <scripts>/report.py --to <Workdir>/run.jsonl`")
             self.assertIn(f"## Return\n\n{handover}\n", prompt)
         for handover in ("Say it back.", "Send your report; `report.py` gets it."):
             for params in (PARAMS, None):

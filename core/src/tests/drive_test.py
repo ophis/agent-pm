@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -93,7 +94,7 @@ class Base(unittest.TestCase):
                           layers=layers, cwd=cwd or self.work)[0]
 
     def report(self):
-        return f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl"
+        return compose.report_command(f"{CORE}/src", self.params())
 
 
 class ClientConfig(unittest.TestCase):
@@ -232,7 +233,8 @@ class Claude(Base):
             "--add-dir", TASKS, "--add-dir", METHODS,
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n", launch.argv[2])
+        self.assertIn(f"\n- `report`: `{shlex.quote(sys.executable)} <scripts>/report.py --to "
+                      "<Workdir>/run.jsonl`\n", launch.argv[2])
         self.assertIn("## Return\n\nReport through `report`, never in a reply:", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
@@ -302,7 +304,7 @@ class Claude(Base):
     def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
-        cmd = f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl stop --pending background_tasks"
+        cmd = f"{self.report()} stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"enabledPlugins": {"agent-pm@agent-pm": False},
                           "hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
@@ -740,7 +742,7 @@ class Generic(Base):
 
     def test_access_fills_the_dirs_and_commands_report_then_gate_last(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
+        report = f"{compose.report_command('/s', self.params())} *"
         for name, cfg, repo, dirs, commands in (
                 ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, ["/t"], ["/s/x *", report, gate]),
                 ("no gate", {"commands": ["x"]}, None, ["/t"], ["x", report]),
