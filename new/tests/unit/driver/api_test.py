@@ -2,7 +2,9 @@
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
 usage()'s probe is headless.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
-Mode on a fake clock (time.monotonic patched)."""
+Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close) over tmux_host
+autospecced (no tmux runs)."""
+import dataclasses
 import inspect
 import itertools
 import json
@@ -19,10 +21,12 @@ from unittest import mock
 from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
-from driver import api, errors, records, registry
-from driver.modes import headless
+from driver import api, errors, records, registry, tmux_host
+from driver.modes import headless, tui
 
 WAIT = 10   # upper bound on any wait, in seconds
+SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
 
 
 class BlankAdapter(fake_adapter.FakeAdapter):
@@ -96,12 +100,13 @@ class Base(unittest.TestCase):
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump(list(steps), f)
 
-    def configure(self, runtime="fake", **extra):
-        """A table per PACKAGES name, each with this test's scenario and log; `extra` keys go into runtime's."""
+    def configure(self, runtime="fake", settings=None, **extra):
+        """A table per PACKAGES name, each with this test's scenario and log; `extra` keys go into runtime's; settings:
+        the config's global keys."""
         tables = {name: {"implementation": f"adapters.{name}:{name.capitalize()}Adapter", "scenario": self.scenario,
                          "log": self.log} for name in PACKAGES}
         tables[runtime].update(extra)
-        registry.configure({"adapters": tables})
+        registry.configure({"adapters": tables, **(settings or {})})
 
     def spec(self, **fields) -> api.Spec:
         return api.Spec(workdir=self.workdir, **fields)
@@ -196,13 +201,9 @@ class ChecksTest(Base):
     def test_tui_on_a_runtime_without_it_is_unsupported(self):
         self.refused(api.ConfigError, "runtime 'fake' does not support tui mode", lambda: self.start(mode="tui"))
 
-    def test_tui_on_a_runtime_with_it_is_not_available_yet(self):
-        self.configure(tui=True)
-        self.refused(api.ConfigError, "tui mode is not available yet", lambda: self.start(mode="tui"))
-        self.refused(api.ConfigError, "tui mode is not available yet", lambda: self.start(mode="tui", name="w1"))
-
-    def test_headless_takes_no_name(self):
+    def test_headless_takes_no_name_or_events(self):
         self.refused(api.ConfigError, "name: tui mode only", lambda: self.start(name="w1"))
+        self.refused(api.ConfigError, "events: tui mode only", lambda: self.start(events=self.scenario))
 
     def test_refuses_a_launch_without_a_command(self):
         self.refused(api.ConfigError, "runtime 'blank' gave no command", lambda: self.start(runtime="blank"))
@@ -315,11 +316,6 @@ class HandleTest(Base):
             self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         probe.assert_called_once()
         self.assertEqual(self.drain(handle), [api.Exited(0)])
-
-    def test_attach_is_not_available_yet(self):
-        with self.assertRaises(api.ConfigError) as caught:
-            api.attach("w1")
-        self.assertEqual(str(caught.exception), "tui mode is not available yet")
 
 
 class ModeTest(unittest.TestCase):
@@ -551,6 +547,240 @@ class SessionInfoTest(Base):
         self.assertEqual(str(caught.exception), f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}")
 
 
+def fake_host() -> mock.Mock:
+    """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
+    (absent), sessions [], option None."""
+    host = mock.create_autospec(tmux_host)
+    for name in ("RUNNING", "UNKNOWN", "NAME", "TuiError"):
+        setattr(host, name, getattr(tmux_host, name))
+    host.PAUSE = 0
+    host.attach_command.side_effect = tmux_host.attach_command
+    host.events_file.side_effect = tmux_host.events_file
+    host.status.return_value = None
+    host.sessions.return_value = []
+    host.option.return_value = None
+    return host
+
+
+class TuiBase(Base):
+    def setUp(self):
+        super().setUp()
+        self.configure(tui=True)
+        self.root = os.path.join(os.path.dirname(self.probe_dir), "tui")
+        self.events = os.path.join(self.dir, "events")
+        self.host = fake_host()
+        for module in (api, tui):
+            patch = mock.patch.object(module, "tmux_host", self.host)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tui(self, **kwargs) -> api.Handle:
+        return self.start(mode="tui", **kwargs)
+
+    def nothing_hosted(self):
+        self.assertEqual(self.host.mock_calls, [])
+        self.assertFalse(os.path.lexists(self.root))
+
+    def name_refused(self, call, bad=(*BAD_NAMES, None)):
+        """call(name) refuses each bad name before any tmux call or path use."""
+        for name in bad:
+            with self.subTest(name=name), self.assertRaises(api.ConfigError) as caught:
+                call(name)
+            self.assertEqual(str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+        self.nothing_hosted()
+
+
+class TuiStartTest(TuiBase):
+    def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
+        order = []
+
+        def status(name):
+            order.append(("status", os.path.exists(records.path(self.workdir))))
+
+        self.host.status.side_effect = status
+        self.host.start.side_effect = lambda *a, **k: order.append(("start", [e["kind"] for e in self.written()]))
+        handle = self.tui(name="w1", sid=SID, events=self.events)
+        self.assertEqual(order, [("status", False), ("start", ["session"])])
+        self.assertEqual([c[0] for c in self.host.mock_calls], ["events_file", "status", "start"])
+        self.assertEqual((handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui"))
+        self.assertEqual(handle.info(), api.SessionInfo(SID, "", self.workdir, False, "", ""))
+        (call,) = self.host.start.call_args_list
+        self.assertEqual(call.args[0], "w1")
+        self.assertEqual(call.args[1][-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))])
+        self.assertEqual({**call.kwargs, "env": None}, {"cwd": self.workdir, "env": None, "events": self.events,
+                                                        "status_line": False, "tags": {"@sid": SID}})
+        self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
+        self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
+        self.assertEqual({k: v for k, v in tui.read_state("w1").items() if k in ("runtime", "sid", "events", "words")},
+                         {"runtime": "fake", "sid": SID, "events": self.events,
+                          "words": {"stop": "done", "ask": "blocked", "tool": "working"}})
+
+    def test_the_default_name_is_the_runtime_and_the_sids_first_8_chars(self):
+        for kwargs in ({"sid": SID}, {"resume": SID}):
+            with self.subTest(kwargs=kwargs):
+                self.assertEqual(self.tui(**kwargs).name, "fake-0f8fad5b")
+                self.assertEqual(self.host.start.call_args.args[0], "fake-0f8fad5b")
+        handle = self.tui()
+        self.assertEqual(handle.name, f"fake-{handle.sid[:8]}")
+
+    def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_tmux_or_a_path(self):
+        self.name_refused(lambda name: self.tui(name=name), BAD_NAMES)
+        with self.assertRaises(api.ConfigError) as caught:
+            self.tui(sid="a b")
+        self.assertEqual(str(caught.exception), "name must match [A-Za-z0-9_-]+, got 'fake-a b'")
+        self.nothing_hosted()
+        self.assertFalse(os.path.exists(records.path(self.workdir)))
+
+    def test_a_bad_events_file_is_refused(self):
+        os.mkdir(self.events)
+        sharp = os.path.join(self.dir, "a#b")
+        for bad, message in ((self.events, f"events file {self.events}: Is a directory"),
+                             (sharp, f"events file {sharp}: tmux would misread it"),
+                             (5, "events must be a printable path, got 5"),
+                             ("/a\nb", r"events must be a printable path, got '/a\nb'")):
+            with self.subTest(bad=bad):
+                self.refused(api.ConfigError, message, lambda: self.tui(name="w1", events=bad))
+        self.host.status.assert_not_called()
+        self.assertFalse(os.path.lexists(self.root))
+
+    def test_a_running_or_unknown_session_is_refused_with_no_record(self):
+        for status, message in ((tmux_host.RUNNING, "tui session w1 is running; tmux attach -t '=w1'"),
+                                (tmux_host.UNKNOWN, "tui session w1: its tmux state is unknown")):
+            with self.subTest(status=status):
+                self.host.status.return_value = status
+                self.refused(api.DriverError, message, lambda: self.tui(name="w1"))
+        self.host.start.assert_not_called()
+
+    def test_a_failed_tmux_start_is_a_driver_error_after_the_record_removing_the_session_dir(self):
+        self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
+        with self.assertRaises(api.DriverError) as caught:
+            self.tui(name="w1")
+        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
+        self.assertEqual([e["kind"] for e in self.written()], ["session"])
+        self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+    def test_the_status_line_is_the_tui_settings(self):
+        self.configure(tui=True, settings={"status_line": True})
+        self.tui(name="w1")
+        self.assertIs(self.host.start.call_args.kwargs["status_line"], True)
+
+    def test_a_bad_tui_setting_is_refused_before_anything(self):
+        self.configure(tui=True, settings={"status_line": "yes"})
+        self.refused(api.ConfigError, "status_line: want true or false", lambda: self.tui(name="w1"))
+        self.nothing_hosted()
+
+    def test_the_handles_state_screen_send_and_stop_are_the_tui_modes(self):
+        handle = self.tui(name="w1")
+        self.host.status.return_value = tmux_host.RUNNING
+        self.host.read.return_value = "pane text"
+        self.assertEqual((handle.state(), handle.screen()), ("live", "pane text"))
+        handle.send("hi")
+        self.host.paste.assert_called_once_with("w1", "hi")
+        self.host.keys.assert_called_once_with("w1", "Enter")
+        handle.stop()
+        self.host.kill.assert_called_once_with("w1")
+        self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+
+class AttachTest(TuiBase):
+    def started(self, *hooked) -> None:
+        """Tui session w1 started (sid SID), then a hooks.jsonl record per (label, payload) in `hooked`, its @sid SID;
+        the host's calls cleared."""
+        self.tui(name="w1", sid=SID, events=self.events)
+        with open(os.path.join(self.root, "w1", "hooks.jsonl"), "w") as f:
+            f.writelines(json.dumps({"ts": "", "label": label, "payload": payload}) + "\n" for label, payload in hooked)
+        self.host.option.side_effect = lambda name, key: SID if (name, key) == ("w1", "@sid") else None
+        self.host.reset_mock()
+
+    def test_a_handle_of_the_session_with_its_reply_native_id_and_next_records_events(self):
+        self.started(("tool", {"session_id": "n1"}), ("stop", {"last_message": "r1"}))
+        handle = api.attach("w1", idle_timeout=2)
+        self.assertEqual((handle.name, handle.sid, handle.runtime, handle.mode, handle.reply),
+                         ("w1", SID, "fake", "tui", "r1"))
+        self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
+        self.assertEqual(self.host.mock_calls, [mock.call.option("w1", "@sid")])
+        with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
+            f.write(json.dumps({"ts": "", "label": "stop", "payload": {"last_message": "r2"}}) + "\n")
+        self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))
+        self.assertEqual(handle.reply, "r2")
+
+    def test_a_bad_name_or_idle_timeout_is_refused_before_tmux_or_a_path(self):
+        self.name_refused(api.attach)
+        for bad in (0, -1, True, "1"):
+            with self.subTest(bad=bad), self.assertRaises(api.ConfigError) as caught:
+                api.attach("w1", idle_timeout=bad)
+            self.assertEqual(str(caught.exception), f"idle_timeout must be a positive number of seconds, got {bad!r}")
+        self.nothing_hosted()
+
+    def test_no_session_dir_or_another_sid_is_no_tui_session(self):
+        with self.assertRaises(api.DriverError) as caught:
+            api.attach("w1")
+        self.assertTrue(str(caught.exception).startswith("no tui session w1: "), caught.exception)
+        self.nothing_hosted()
+        self.started()
+        for found in ("other", None):
+            with self.subTest(found=found), self.assertRaises(api.DriverError) as caught:
+                self.host.option.side_effect = lambda name, key: found
+                api.attach("w1")
+            self.assertEqual(str(caught.exception), "no tui session w1")
+
+    def test_a_runtime_without_tui_or_a_registry_error_is_a_driver_error(self):
+        self.started()
+        self.configure(tui=False)
+        for message in ("no tui session w1: runtime 'fake' has no tui mode",
+                        f"no tui session w1: no [adapters.fake] table in {registry.CONFIG} or {registry.LOCAL}"):
+            with self.subTest(message=message), self.assertRaises(api.DriverError) as caught:
+                api.attach("w1")
+            self.assertEqual(str(caught.exception), message)
+            registry.configure({"adapters": {}})
+        self.host.option.assert_not_called()
+
+
+class SessionsTest(TuiBase):
+    def test_the_sessions_with_the_prefix_from_tmux(self):
+        self.host.sessions.return_value = ["w1", "w2"]
+        self.assertEqual(api.sessions("w"), api.Sessions("w", ("w1", "w2")))
+        self.assertEqual(api.sessions(), api.Sessions("", ("w1", "w2")))
+        self.assertEqual(self.host.mock_calls, [mock.call.sessions("w"), mock.call.sessions("")])
+
+    def test_no_server_is_no_names_and_a_tmux_failure_unknown(self):
+        self.assertEqual(api.sessions("w").state("w1"), "absent")
+        self.host.sessions.return_value = None
+        self.assertEqual(api.sessions("w"), api.Sessions("w", None))
+        self.assertEqual(api.sessions("w").state("w1"), "unknown")
+
+    def test_a_bad_prefix_is_refused(self):
+        for bad in ("a b", "../", "w\n", None, 5):
+            with self.subTest(bad=bad), self.assertRaises(api.ConfigError) as caught:
+                api.sessions(bad)
+            self.assertEqual(str(caught.exception), f"prefix must match [A-Za-z0-9_-]*, got {bad!r:.80}")
+        self.nothing_hosted()
+
+    def test_state_of_a_name_with_the_prefix_and_no_collection_protocol(self):
+        found = api.Sessions("w", ("w1", "w2"))
+        self.assertEqual([found.state(n) for n in ("w1", "w2", "w3", "w")], ["live", "live", "absent", "absent"])
+        for name in ("x1", "", None):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                found.state(name)
+        for dunder in ("__iter__", "__len__", "__bool__", "__contains__"):
+            self.assertFalse(hasattr(api.Sessions, dunder), dunder)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            found.names = ()
+
+
+class CloseTest(TuiBase):
+    def test_kills_the_session_and_removes_its_dir(self):
+        self.tui(name="w1")
+        self.host.reset_mock()
+        api.close("w1")
+        self.assertEqual(self.host.mock_calls, [mock.call.kill("w1")])
+        self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+        self.assertTrue(os.path.isdir(self.root))
+
+    def test_a_bad_name_is_refused_before_tmux_or_a_path(self):
+        self.name_refused(api.close)
+
+
 class ExportsTest(unittest.TestCase):
     def test_reexports_and_constants(self):
         for name in ("Access", "Spec", "SessionInfo", "ConfigError", "SessionBound", "Activity", "Reply", "TurnEnd",
@@ -562,10 +792,11 @@ class ExportsTest(unittest.TestCase):
         self.assertIs(api.session, records.session)
         self.assertIs(api.DriverError, errors.DriverError)
         for name in ("LimitHit", "Usage", "Window", "SessionStatus", "RESUMABLE", "usage", "session_info", "session",
-                     "DriverError", "Mode"):
+                     "DriverError", "Mode", "Sessions", "attach", "close", "sessions"):
             with self.subTest(name=name):
                 self.assertIn(name, api.__all__)
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
+        self.assertFalse(hasattr(api, "NO_TUI"))
         self.assertEqual((api.MODES, api.STATES, api.POLL), (("headless", "tui"), ("live", "absent", "unknown"), 0.5))
         self.assertEqual((api.PROBE_DIR, api.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
         self.assertEqual(api.IdleTimeout(0.3).seconds, 0.3)

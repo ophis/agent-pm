@@ -97,10 +97,13 @@ def read_state(path: str) -> dict:
     SESSION_STATE (any same-user process may have changed it); else HookError."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(fd, "rb") as f:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):   # first: fdopen raises on a directory, leaving fd open
                 raise HookError(f"{path}: not a regular file")
-            data = f.read(STATE_MAX + 1)
+            with os.fdopen(fd, "rb", closefd=False) as f:
+                data = f.read(STATE_MAX + 1)
+        finally:
+            os.close(fd)
     except OSError as e:
         raise HookError(f"{path}: {e.strerror}") from None
     if len(data) > STATE_MAX:

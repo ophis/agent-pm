@@ -302,6 +302,19 @@ class InProcess(unittest.TestCase):
                                             unittest.mock.call.mark("working", self.events)])
         self.assertEqual(json.loads(data)["payload"], {"tool_name": "Bash"})
 
+    def test_read_state_of_no_regular_file_leaves_no_fd_open(self):
+        path = os.path.join(self.dir, "session.json")
+        os.unlink(path)
+        for make in (lambda: os.mkdir(path), lambda: os.mkfifo(path)):
+            make()
+            with self.subTest(stat.filemode(os.lstat(path).st_mode)):
+                before = len(os.listdir("/dev/fd"))
+                for _ in range(5):
+                    with self.assertRaises(tui_hook.HookError):
+                        tui_hook.read_state(path)
+                self.assertEqual(len(os.listdir("/dev/fd")), before)
+            (os.rmdir if os.path.isdir(path) else os.unlink)(path)
+
     def test_tmux_host_is_loaded_by_its_path_with_no_sys_path_change(self):
         path, modules = list(sys.path), set(sys.modules)
         module = tui_hook.load_tmux_host()

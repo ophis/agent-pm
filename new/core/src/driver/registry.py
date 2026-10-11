@@ -1,7 +1,7 @@
-"""The adapter registry, the only reader of the core config's [adapters] table: config.toml (CONFIG) with
-~/.agent-pm/core-new.local.toml (LOCAL) merged on top, read through utils.config_file. The tables are read once per
-process, on the first use of configured() or adapter(), and cached (a failed read is not, so the next use reads again);
-configure() sets the cache from a given config instead (tests), reset() drops it. adapter(name) imports package
+"""The Driver's core-config reader: config.toml (CONFIG) with ~/.agent-pm/core-new.local.toml (LOCAL) merged on top,
+read through utils.config_file, of which it keeps [adapters] and the tui keys (TUI_KEYS). They are read once per
+process, on the first use of configured(), adapter() or tui(), and cached (a failed read is not, so the next use reads
+again); configure() sets the cache from a given config instead (tests), reset() drops it. adapter(name) imports package
 adapters.<name> and returns the class its [adapters.<name>].implementation names, "adapters.<name>:<Class>Adapter",
 built from the table's other keys. Every failure is a ConfigError."""
 import importlib
@@ -9,31 +9,49 @@ import inspect
 import re
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from adapters.base import Adapter, ConfigError
+from driver import tmux_host
 from utils.config_file import CONFIG, LOCAL, read_config
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
+TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")   # global keys
 _lock = threading.Lock()
-_cache: dict[str, dict] | None = None
+_cache: dict | None = None
+
+
+@dataclass(frozen=True)
+class TuiSettings:
+    """The tui display settings: tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
+    status_line: bool = False
+    per_column: int | None = None
+    retile: str | None = None
+
+
+def read(path: str = CONFIG, local: str = LOCAL) -> dict:
+    """The merged config's "adapters" ({} when absent or not a table) and each of TUI_KEYS it sets."""
+    try:
+        return _kept(read_config(path, local))
+    except (OSError, ValueError) as e:
+        raise ConfigError(f"core config {path}: {e}") from e
+
+
+def _kept(config: Mapping) -> dict:
+    found = config.get("adapters")
+    return {"adapters": found if isinstance(found, dict) else {}, **{k: config[k] for k in TUI_KEYS if k in config}}
 
 
 def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
-    """The merged config's [adapters]; {} when it is absent or not a table."""
-    try:
-        found = read_config(path, local).get("adapters")
-    except (OSError, ValueError) as e:
-        raise ConfigError(f"core config {path}: {e}") from e
-    return found if isinstance(found, dict) else {}
+    return read(path, local)["adapters"]
 
 
 def configure(config: Mapping) -> None:
-    """Sets the cache to the [adapters] of the whole config `config` ({} when absent or not a table); reads no file."""
+    """Sets the cache from the whole config `config`, as read() keeps it; reads no file."""
     global _cache
-    found = config.get("adapters")
     with _lock:
-        _cache = found if isinstance(found, dict) else {}
+        _cache = _kept(config)
 
 
 def reset() -> None:
@@ -43,23 +61,35 @@ def reset() -> None:
         _cache = None
 
 
-def _tables() -> dict[str, dict]:
+def _config() -> dict:
     global _cache
     with _lock:
         if _cache is None:
-            _cache = tables(CONFIG, LOCAL)
+            _cache = read(CONFIG, LOCAL)
         return _cache
 
 
 def configured() -> list[str]:
-    return sorted(_tables())
+    return sorted(_config()["adapters"])
+
+
+def tui() -> TuiSettings:
+    """The cached tui keys; a value of the wrong type or range is a ConfigError naming its key."""
+    line, per, retile = (_config().get(k) for k in TUI_KEYS)
+    if line is not None and not isinstance(line, bool):
+        raise ConfigError("status_line: want true or false")
+    if per is not None and (isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999):
+        raise ConfigError("workers_per_column: want an integer from 1 to 9999")
+    if retile is not None and (not isinstance(retile, str) or retile not in tmux_host.RETILES):
+        raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.RETILES)}")
+    return TuiSettings(bool(line), per, retile)
 
 
 def adapter(name: str) -> Adapter:
     """The Adapter of runtime `name`, from its [adapters.<name>] table."""
     if not isinstance(name, str) or not NAME.match(name):
         raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
-    table = _tables().get(name)
+    table = _config()["adapters"].get(name)
     if not isinstance(table, dict):
         raise ConfigError(f"no [adapters.{name}] table in {CONFIG} or {LOCAL}")
     config = dict(table)

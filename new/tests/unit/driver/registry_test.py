@@ -1,7 +1,7 @@
-"""new/core/src/driver/registry.py: the [adapters.<name>] tables, their per-process cache and Adapter loading (the
-config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in sys.modules or the
-import system only for the test's span; the registry itself is never patched, except a wrap counting its file reads.
-Each test drops the cache at its end."""
+"""new/core/src/driver/registry.py: the [adapters.<name>] tables and the tui settings, their per-process cache and
+Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in
+sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
+its file reads. Each test drops the cache at its end."""
 import importlib.abc
 import importlib.util
 import os
@@ -131,7 +131,7 @@ class CacheTest(Base):
     def test_the_first_use_reads_the_files_once(self):
         self.register(fake=fake_adapter)
         self.local(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n')
-        with mock.patch.object(registry, "tables", wraps=registry.tables) as read:
+        with mock.patch.object(registry, "read", wraps=registry.read) as read:
             first = registry.adapter("fake")
             second = registry.adapter("fake")
             self.assertEqual(registry.configured(), ["a", "claude", "codex", "fake"])
@@ -162,7 +162,7 @@ class CacheTest(Base):
         self.register(fake=fake_adapter)
         self.local(FAKE + 'scenario = "/file"\n')
         self.assertEqual(registry.adapter("fake").config, {"scenario": "/file"})
-        with mock.patch.object(registry, "tables", wraps=registry.tables) as read:
+        with mock.patch.object(registry, "read", wraps=registry.read) as read:
             self.configure(FAKE + 'scenario = "/given"\n[adapters.a]\nk = 1\n')
             self.assertEqual(registry.adapter("fake").config, {"scenario": "/given"})
             self.assertEqual(registry.configured(), ["a", "fake"])
@@ -171,6 +171,48 @@ class CacheTest(Base):
                     registry.configure(config)
                     self.assertEqual(registry.configured(), [])
         read.assert_not_called()
+
+
+class TuiTest(Base):
+    def test_defaults_when_unset(self):
+        self.configure(FAKE)
+        self.assertEqual(registry.tui(), registry.TuiSettings(False, None, None))
+        self.assertEqual(registry.TuiSettings(), registry.TuiSettings(False, None, None))
+
+    def test_the_global_keys_values(self):
+        for text, want in (('status_line = true\nworkers_per_column = 2\ngrid_retile = "all"\n', (True, 2, "all")),
+                           ('status_line = false\nworkers_per_column = 9999\ngrid_retile = "off"\n',
+                            (False, 9999, "off")),
+                           ('workers_per_column = 1\ngrid_retile = "open-close"\n' + FAKE, (False, 1, "open-close"))):
+            with self.subTest(text=text):
+                self.configure(text)
+                self.assertEqual(registry.tui(), registry.TuiSettings(*want))
+
+    def test_a_tables_key_is_no_setting(self):
+        self.configure('[adapters.fake]\nstatus_line = true\n[roles.pm]\nworkers_per_column = 2\n')
+        self.assertEqual(registry.tui(), registry.TuiSettings())
+
+    def test_read_with_the_adapters_once_from_the_merged_files(self):
+        self.register(fake=fake_adapter)
+        self.local('status_line = true\nworkers_per_column = 4\n' + FAKE + 'scenario = "/s"\n')
+        with mock.patch.object(registry, "read", wraps=registry.read) as read:
+            self.assertEqual(registry.tui(), registry.TuiSettings(True, 4, None))
+            self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
+        read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
+
+    def test_a_value_of_the_wrong_type_or_range_is_a_config_error_naming_its_key(self):
+        self.register(fake=fake_adapter)
+        adapters = tomllib.loads(FAKE)["adapters"]
+        for key, values, message in (
+                ("status_line", ("true", 1, 0, [True]), "status_line: want true or false"),
+                ("workers_per_column", (0, 10000, -1, True, 2.0, "2"),
+                 "workers_per_column: want an integer from 1 to 9999"),
+                ("grid_retile", ("All", "", "never", 1, ["all"]), "grid_retile: want one of all, open-close, off")):
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    registry.configure({"adapters": adapters, key: value})
+                    self.refused(message, registry.tui)
+                    self.assertIs(type(registry.adapter("fake")), fake_adapter.FakeAdapter)
 
 
 class AdapterTest(Base):

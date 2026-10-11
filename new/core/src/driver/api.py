@@ -1,15 +1,14 @@
 """The Driver's API, the only driver module other layers import. start() runs one agent session of a runtime (its
 Adapter from src/driver/registry.py) in a Mode (MODES) and returns its Handle; every check runs before anything starts.
-A headless session's `session` record goes to <workdir>/run.jsonl (records) before its process starts; Handle.events()
-then streams the frozen event set (LimitHit included), Stderr and the Driver's IdleTimeout up to the Driver's Exited,
-recording `client_session` and `stderr` on the way; nothing else is recorded or interpreted. usage(runtime) runs the
-Adapter's usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) gives the Adapter's
-SessionStatus; session() is the run records' session query.
+A session's `session` record goes to <workdir>/run.jsonl (records) before it starts; Handle.events() then streams the
+frozen event set (LimitHit included), Stderr and the Driver's IdleTimeout up to the Driver's Exited, recording
+`client_session` and `stderr` on the way; nothing else is recorded or interpreted. usage(runtime) runs the Adapter's
+usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) gives the Adapter's SessionStatus;
+session() is the run records' session query.
 
-A Handle runs over its session's Mode (the Mode protocol; headless: driver/modes/headless.py). The tui Mode's
-surface is frozen here: start(mode="tui", name=…), attach(name), and send, state, screen and stop on a tui session's
-Handle. Until the Driver's tui Mode is built, each tui path raises ConfigError("tui mode is not available yet") before
-anything starts."""
+A Handle runs over its session's Mode (the Mode protocol): driver/modes/headless.py, or driver/modes/tui.py, a named
+tmux session that attach(name) reaches from any process, sessions() lists and close(name) ends. A function taking a
+session name refuses one not matching [A-Za-z0-9_-]+ before any path or tmux use."""
 import os
 import stat
 import time
@@ -22,21 +21,20 @@ from typing import Protocol
 from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, Headless, Launch,
                            LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage,
                            Window, sid_error)
-from driver import records, registry
+from driver import records, registry, tmux_host
 from driver.errors import DriverError
-from driver.modes import headless
+from driver.modes import headless, tui
 from driver.records import session
 from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
            "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "STATES", "SessionBound", "SessionInfo",
-           "SessionStatus", "Spec", "Stderr", "TurnEnd", "Usage", "Window", "attach", "records", "session",
-           "session_info", "start", "usage"]
+           "SessionStatus", "Sessions", "Spec", "Stderr", "TurnEnd", "Usage", "Window", "attach", "close", "records",
+           "session", "session_info", "sessions", "start", "usage"]
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5   # seconds: the longest wait on a Mode for its next event
-NO_TUI = "tui mode is not available yet"
 PROBE_DIR = "~/.agent-pm/probe"   # a usage probe's cwd when its launch names none; made 0700
 PROBE_TIMEOUT = 120               # seconds: the longest a usage probe runs
 
@@ -45,6 +43,19 @@ PROBE_TIMEOUT = 120               # seconds: the longest a usage probe runs
 class IdleTimeout:
     """A Driver event: no event for `seconds`, start()'s idle_timeout."""
     seconds: float
+
+
+@dataclass(frozen=True)
+class Sessions:
+    """The tmux sessions named `prefix`…; names None: tmux's state is unknown."""
+    prefix: str
+    names: tuple[str, ...] | None
+
+    def state(self, name: str) -> str:
+        """One of STATES; a name without the prefix is a ValueError."""
+        if not isinstance(name, str) or not name.startswith(self.prefix):
+            raise ValueError(f"{name!r:.80} does not start with {self.prefix!r}")
+        return "unknown" if self.names is None else "live" if name in self.names else "absent"
 
 
 class Mode(Protocol):
@@ -75,11 +86,11 @@ class Handle:
     session's name; None in headless mode)."""
 
     def __init__(self, sid: str, runtime: str, mode: str, *, host: Mode, workdir: str, info: SessionInfo,
-                 idle_timeout: float | None, name: str | None = None):
+                 idle_timeout: float | None, name: str | None = None, reply: str | None = None):
         self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
         self._channel = records.path(workdir)
-        self._reply: str | None = None
+        self._reply = reply
         self._queue: deque = deque()   # polled events not yet yielded
         self._closed = False    # the Mode has no more events
         self._ended = False     # Exited yielded, or events() raised
@@ -173,20 +184,20 @@ def _child_env(launch: Launch, cwd: str) -> dict[str, str]:
 
 
 def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None = None,
-          idle_timeout: float | None = None, name: str | None = None, sid: str | None = None) -> Handle:
+          idle_timeout: float | None = None, name: str | None = None, sid: str | None = None,
+          events: str | None = None) -> Handle:
     """Starts a session of `runtime` in `mode` on `prompt` and returns its Handle. resume continues that session id;
     otherwise sid, else a new uuid4, names the new session; start() alone sets spec.sid. With access commands, the
     adapter's runtime_note follows the prompt after a blank line. Refusals (ConfigError, nothing started): a bad mode,
     idle_timeout, resume or sid, a sid other than resume, a caller-set spec.sid, a registry error, a Mode the runtime
-    lacks, tui (not available yet), a name in headless mode, a launch with no command; an exception from the run's
-    launch or the session record's write propagates. Every mode shares these steps up to the session record; the
-    mode's own (_begin_headless) then start the child, with _child_env's environment in launch.cwd, else
-    spec.access.cwd, else spec.workdir."""
+    lacks, name or events in headless mode, a bad tui name, settings or events file, a launch with no command; an
+    exception from the run's launch or the session record's write propagates. Every mode shares these steps up to the
+    session record, then starts the child, with _child_env's environment in launch.cwd, else spec.access.cwd, else
+    spec.workdir. tui: tmux session `name`, else <runtime>-<sid[:8]>, a running one refused (DriverError) before the
+    record; `events` gets its done, blocked and dead lines; no pane opens."""
     if mode not in MODES:
         raise ConfigError(f"mode must be headless or tui, got {mode!r}")
-    if idle_timeout is not None and (isinstance(idle_timeout, bool) or not isinstance(idle_timeout, (int, float))
-                                     or not idle_timeout > 0):
-        raise ConfigError(f"idle_timeout must be a positive number of seconds, got {idle_timeout!r}")
+    _idle(idle_timeout)
     if resume is not None and not (isinstance(resume, str) and resume):
         raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
     if sid is not None and (error := sid_error(sid)):
@@ -199,24 +210,58 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     run = adapter.headless() if mode == "headless" else adapter.tui()
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
-    if mode == "tui":
-        raise ConfigError(NO_TUI)
-    if name is not None:
-        raise ConfigError("name: tui mode only")
     sid = resume or sid or str(uuid.uuid4())
+    if mode == "headless":
+        for key, value in (("name", name), ("events", events)):
+            if value is not None:
+                raise ConfigError(f"{key}: tui mode only")
+    else:
+        settings = registry.tui()
+        name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
+        events = _events(events)
     spec = replace(spec, sid=sid)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
-    launch = run.launch(prompt, spec, resume is not None)
+    launch = (run.launch(prompt, spec, resume is not None) if mode == "headless" else
+              run.launch(prompt, spec, resume is not None, tui.hook_argv(tui.session_dir(name))))
     if not launch.argv:
         raise ConfigError(f"runtime {runtime!r} gave no command")
     cwd = launch.cwd or spec.access.cwd or spec.workdir
+    info = SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume)
+    if mode == "tui":
+        host = tui.TuiMode.prepare(name, run, info, events, runtime=runtime, workdir=spec.workdir)
     os.makedirs(spec.workdir, exist_ok=True)
     records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
                  transcript=launch.transcript, resume=launch.resume)
-    return Handle(sid, runtime, mode, host=_begin_headless(run, launch, cwd), workdir=spec.workdir,
-                  idle_timeout=idle_timeout,
-                  info=SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume))
+    if mode == "headless":
+        host = _begin_headless(run, launch, cwd)
+    else:
+        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=settings.status_line)
+    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info, name=name)
+
+
+def _idle(idle_timeout) -> None:
+    if idle_timeout is not None and (isinstance(idle_timeout, bool) or not isinstance(idle_timeout, (int, float))
+                                     or not idle_timeout > 0):
+        raise ConfigError(f"idle_timeout must be a positive number of seconds, got {idle_timeout!r}")
+
+
+def _name(name) -> str:
+    if not isinstance(name, str) or not tmux_host.NAME.fullmatch(name):
+        raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+    return name
+
+
+def _events(events) -> str | None:
+    """The tui events file, made by tmux_host.events_file."""
+    if events is None:
+        return None
+    if not isinstance(events, str) or not events.isprintable():
+        raise ConfigError(f"events must be a printable path, got {events!r:.80}")
+    try:
+        return tmux_host.events_file(events)
+    except tmux_host.TuiError as e:
+        raise ConfigError(str(e)) from None
 
 
 def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.HeadlessMode:
@@ -229,9 +274,35 @@ def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.Headles
     return host
 
 
-def attach(name: str) -> Handle:
-    """A tui session's Handle, in another process, by its name."""
-    raise ConfigError(NO_TUI)
+def attach(name: str, idle_timeout: float | None = None) -> Handle:
+    """Tui session `name`'s Handle in any process: its reply the last turn's, its events() from the next hook record.
+    Refusals: a bad name or idle_timeout (ConfigError); no such tui session or its runtime's tui (DriverError)."""
+    _name(name)
+    _idle(idle_timeout)
+    state = tui.read_state(name)
+    try:
+        run = registry.adapter(state["runtime"]).tui()
+    except ConfigError as e:
+        raise DriverError(f"no tui session {name}: {e}") from None
+    if run is None:
+        raise DriverError(f"no tui session {name}: runtime {state['runtime']!r} has no tui mode")
+    host = tui.TuiMode.attach(name, state, run)
+    info = SessionInfo(state["sid"], host.bound, state["cwd"], state["project"], state["transcript"], state["resume"])
+    return Handle(state["sid"], state["runtime"], "tui", host=host, workdir=state["workdir"], info=info,
+                  idle_timeout=idle_timeout, name=name, reply=host.reply)
+
+
+def sessions(prefix: str = "") -> Sessions:
+    """The tmux sessions named `prefix`… (tmux_host.sessions); a prefix not matching [A-Za-z0-9_-]* is a ConfigError."""
+    if not isinstance(prefix, str) or prefix and not tmux_host.NAME.fullmatch(prefix):
+        raise ConfigError(f"prefix must match [A-Za-z0-9_-]*, got {prefix!r:.80}")
+    found = tmux_host.sessions(prefix)
+    return Sessions(prefix, None if found is None else tuple(found))
+
+
+def close(name: str) -> None:
+    """Ends tui session `name`: kills it (absent is fine), then removes its session dir."""
+    tui.close(_name(name))
 
 
 def _probe_dir() -> str | None:
