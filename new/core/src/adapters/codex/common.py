@@ -1,4 +1,4 @@
-"""Codex access, settings, account probe and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
+"""Codex access, settings, usage parsing and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
 recovery and session files have bounded nonblocking reads with regular-file, ownership and symlink checks."""
 import fcntl
 import fnmatch
@@ -8,13 +8,13 @@ import math
 import os
 import shlex
 import stat
+import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from adapters.base import ConfigError, Usage
-from .account_probe import probe as _account_probe
+from adapters.base import ConfigError, Launch, Usage
 
 
 def _absolute(path: str, label: str) -> str:
@@ -468,9 +468,9 @@ def _number(value) -> bool:
         return False
 
 
-def _usage(snapshot) -> Usage:
+def _usage(snapshot) -> Usage | None:
     if not isinstance(snapshot, dict):
-        return Usage()
+        return None
     windows = {}
     for key in ("primary", "secondary"):
         window = snapshot.get(key)
@@ -481,11 +481,11 @@ def _usage(snapshot) -> Usage:
             windows[duration] = window
     five, weekly = windows.get(300, {}), windows.get(10080, {})
     percent, used = five.get("usedPercent"), weekly.get("usedPercent")
-    reset, weekly_reset = five.get("resetsAt"), weekly.get("resetsAt")
-    return Usage(percent if _number(percent) and percent >= 0 else None,
-                 used >= 100 if _number(used) and used >= 0 else None,
-                 reset if _number(reset) and reset >= 0 else None,
-                 weekly_reset if _number(weekly_reset) and weekly_reset >= 0 else None)
+    if not _number(percent) or percent < 0 or not _number(used) or used < 0:
+        return None
+    full = used >= 100
+    reset = (weekly if full else five).get("resetsAt")
+    return Usage(percent, full, reset if _number(reset) and reset >= 0 else None)
 
 
 class CodexCommon:
@@ -551,12 +551,19 @@ class CodexCommon:
     def environment(self, snapshot: dict) -> dict[str, str]:
         return {**self.defaults, **self.config.get("env", {}), "CODEX_HOME": snapshot["codex_home"]}
 
-    def usage(self, *, timeout: float = 10) -> Usage:
-        """One no-model account/rateLimits/read request to the installed app-server; no cached fallback."""
-        env = {key: value for key, value in os.environ.items() if key not in self.unset}
-        result = _account_probe({**env, **self.defaults, **self.config.get("env", {})}, timeout)
+    def probe(self) -> Launch:
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
+        return Launch((os.path.realpath(sys.executable), script),
+                      env={**self.defaults, **self.config.get("env", {})}, unset=self.unset)
+
+    @staticmethod
+    def parse_usage(output: str) -> Usage | None:
+        try:
+            result = json.loads(output)
+        except (ValueError, TypeError, RecursionError):
+            return None
         if not isinstance(result, dict):
-            return Usage()
+            return None
         limits = result.get("rateLimitsByLimitId")
         snapshot = limits.get("codex") if isinstance(limits, dict) else None
         return _usage(snapshot if isinstance(snapshot, dict) else result.get("rateLimits"))

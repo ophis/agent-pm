@@ -1,6 +1,6 @@
 # Codex integration parity
 
-Baseline: `origin/main` at `2a90a7a1df42761f700ed9f6d0248592edfb7cc9`. Sources were read from the TASK-318 `tmp/main-parity` snapshot, never imported or executed. Requirements: [TASK-318 adaptation spec](../../../../docs/.autopilot/TASK-318-adaptation-spec.md).
+Baseline: `origin/main` at `2a90a7a1df42761f700ed9f6d0248592edfb7cc9`. Sources were read from the TASK-318 `tmp/main-parity` snapshot, never imported or executed. Requirements: [TASK-318](https://linear.app/ophis-workgroup/issue/TASK-318/eng-rearch-core-3-codex-adapter-headless-one-session-store).
 
 Aliases expand to exact test identities:
 
