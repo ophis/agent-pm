@@ -377,6 +377,116 @@ class Claude(Base):
         self.assertEqual(launch.transcript, clients.claude.transcript(self.repo, SID))
 
 
+class Codex(Base):
+    def test_four_tiers_select_astra_sol_luna_terra_and_show_the_model(self):
+        expected = {"1": "gpt-6-astra", "2": "gpt-6.1-sol",
+                    "3": "gpt-6-luna", "4": "gpt-5.6-terra"}
+        client = clients.get("codex", CORE)
+        self.assertEqual(client.config["tiers"], expected)
+        for tier, model in expected.items():
+            with self.subTest(tier=tier):
+                notice = io.StringIO()
+                with redirect_stderr(notice):
+                    launch = client.launch("prompt", run(tier=int(tier)), params=self.params(),
+                                           access=drive.Access(dirs=[], commands=[], cwd=self.work))
+                self.assertEqual(launch.argv[launch.argv.index("-m") + 1], model)
+                self.assertIn(f"Codex tier {tier} uses {model};", notice.getvalue())
+
+    def test_plan_shows_selected_model_and_local_update_hint(self):
+        config = clients.load_config("codex", CORE)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            launch, resolved = drive.plan(
+                CORE, clients.get("codex", CORE), "researcher", "light-research",
+                params=self.params(), cwd=self.work)
+        self.assertEqual(notice.getvalue(),
+                         f"drive.py: Codex tier {resolved.tier} uses {config['tiers'][str(resolved.tier)]}; "
+                         "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change\n")
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
+
+    def test_missing_model_emits_no_selection_hint(self):
+        config = clients.get("codex", CORE).config
+        client = type(clients.get("codex", CORE))({**config, "tiers": {}})
+        notice = io.StringIO()
+        with redirect_stderr(notice), self.assertRaisesRegex(compose.ConfigError, "no model for tier"):
+            drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+        self.assertNotIn("Codex tier", notice.getvalue())
+
+    def test_every_configured_role_and_task_has_a_headless_command(self):
+        config = clients.load_config("codex", CORE)
+        self.assertEqual(config["implementation"], "CodexClient")
+        self.assertIsInstance(clients.get("codex", CORE), clients.Client)
+        for role, tasks in clients.catalog("codex", CORE).items():
+            for task in (None, *tasks):
+                with self.subTest(role=role, task=task):
+                    launch, resolved = drive.plan(
+                        CORE, clients.get("codex", CORE), role, task, params=self.params(), cwd=self.work)
+                    argv = launch.argv
+                    self.assertEqual(argv[:5], ["codex", "exec", "--json", "--sandbox", "workspace-write"])
+                    self.assertIn("--skip-git-repo-check", argv)
+                    self.assertEqual(argv[argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
+                    self.assertEqual(argv[argv.index("-c") + 1],
+                                     f"model_reasoning_effort={config['efforts'][resolved.effort]}")
+                    self.assertIn("project_doc_max_bytes=0", argv)
+                    self.assertTrue(argv[-1].startswith("# Guide"))
+                    self.assertNotIn("--ignore-rules", argv)
+                    self.assertNotIn("--ignore-user-config", argv)
+                    self.assertEqual((launch.cwd, launch.env, launch.interactive), (self.work, {}, []))
+                    self.assertIn("--add-dir", argv)
+                    self.assertEqual(drive.command(launch, "headless", clients.get("codex", CORE)), argv)
+                    with self.assertRaisesRegex(compose.ConfigError, "has no tui command"):
+                        drive.command(launch, "tui", clients.get("codex", CORE))
+
+    def test_missing_or_malformed_mappings_fail_before_launch(self):
+        config = clients.get("codex", CORE).config
+        for changed, message in (({"tiers": {}}, "no model for tier 2"),
+                                 ({"efforts": {}}, "no effort for 'high'"),
+                                 ({"tiers": []}, "tiers must be a table"),
+                                 ({"tiers": {"2": 7}}, "tier '2'"),
+                                 ({"efforts": {"high": 7}}, "effort 'high'")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(compose.ConfigError, message):
+                client = type(clients.get("codex", CORE))({**config, **changed})
+                drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+
+    def test_untrusted_cwd_outside_workdir_fails_before_launch(self):
+        client = clients.get("codex", CORE)
+        with redirect_stderr(io.StringIO()), self.assertRaisesRegex(compose.ConfigError, "untrusted cwd"):
+            drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.repo)
+        trusted = client.launch("p", run(), params=self.params(),
+                                access=drive.Access(dirs=[TASKS], commands=[], cwd=self.repo, project=True))
+        self.assertEqual(trusted.cwd, self.repo)
+        self.assertNotIn("project_doc_max_bytes=0", trusted.argv)
+        self.assertEqual(trusted.argv[trusted.argv.index("--add-dir") + 1], TASKS)
+
+    def test_handover_requires_reports_and_waiting_for_background_work(self):
+        text = clients.get("codex", CORE).handover()
+        for fragment in ("`report progress", "`report outcome", "last action", "background work", "final reply"):
+            self.assertIn(fragment, text)
+
+    def test_json_events_show_only_user_readable_text(self):
+        client = clients.get("codex", CORE)
+        lines = [
+            '{"type":"thread.started","thread_id":"123"}\n',
+            '{"type":"turn.started"}\n',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Hello\\nworld"}}\n',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"  "}}\n',
+            '{"type":"item.completed","item":{"type":"command_execution","command":"secret"}}\n',
+            '{"type":"error","message":"rate limit"}\n',
+            '{"type":"error","message":{"message":"nested problem"}}\n',
+            '{"type":"turn.failed","error":{"message":"turn failed"}}\n',
+            'not JSON\n',
+            '[]\n',
+        ]
+        seen = list(client.events(lines))
+        self.assertEqual(seen, [clients.Event("text", "Codex session 123 started"),
+                                clients.Event("text", "Hello"), clients.Event("text", "world"),
+                                clients.Event("stderr", "rate limit"),
+                                clients.Event("stderr", "nested problem"),
+                                clients.Event("stderr", "turn failed"),
+                                clients.Event("stderr", "codex: invalid JSON event")])
+        self.assertNotIn("secret", str(seen))
+
+
 class Generic(Base):
     def test_driver_hands_the_client_neutral_access(self):
         launch = self.plan(repo=self.repo)

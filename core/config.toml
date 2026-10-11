@@ -110,8 +110,8 @@ effort = "low"
 #   flags    [clients.claude] only: flags on every claude command; unset → none. --setting-sources is refused: the
 #            driver sets it (trusted_dirs)
 #   allow    extra --allowedTools rules in Claude Code syntax, at any level; unset → none
-#   tiers    [clients.claude] only: tier → model; required for each tier a run uses
-#   efforts  [clients.claude] only: effort → claude's --effort value; required for each effort a run uses
+#   tiers    [clients.claude] and [clients.codex]: tier → model; required for each tier a run uses
+#   efforts  [clients.claude] and [clients.codex]: effort → the client's effort value; required for each effort a run uses
 #   env      [clients.claude] only: variables added to the run's environment; unset → none.
 #            CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: claude -p otherwise kills a workflow after 10 idle minutes
 [clients.claude]
@@ -136,6 +136,25 @@ max = "max"
 
 [clients.claude.env]
 CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = "3600000"
+
+# Codex CLI's headless client (`codex exec --json`). Tiers and efforts are resolved for each role/task before launch.
+# local: [clients.codex.tiers]
+# local: 2 = "<your Codex model>"
+[clients.codex]
+implementation = "CodexClient"
+
+[clients.codex.tiers]
+1 = "gpt-6-astra"
+2 = "gpt-6.1-sol"
+3 = "gpt-6-luna"
+4 = "gpt-5.6-terra"
+
+[clients.codex.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
 
 # Skill client, read by SkillClient (src/clients/skill.py): the prompt `drive.py --client skill` prints for the calling
 # conversation to follow (`/agent-pm:act-as`).
