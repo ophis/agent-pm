@@ -97,10 +97,16 @@ class RuntimeNames(Sample):
                                          'key = "x # codex"\n'})
         self.assertEqual(guards.runtime_names(root), ["config.toml:4: runtime name codex"])
 
+    def test_toml_runtime_line_is_exempt_under_any_table(self):
+        root = self.tree({"config.toml": 'runtime = "codex"\n[roles.x]\nruntime = "codex"\n'
+                                         '[roles.y]\nruntime = "codex"  # note\n'})
+        self.assertEqual(guards.runtime_names(root), [])
+
     def test_toml_name_in_a_key_value_elsewhere(self):
         root = self.tree({"config.toml": '[adapters.codex]\nimplementation = "adapters.codex:CodexAdapter"\n'
-                                         '[roles.pm]\nruntime = "codex"\n'})
-        self.assertEqual(guards.runtime_names(root), ["config.toml:4: runtime name codex"])
+                                         '[roles.pm]\nmodel = "codex"\nruntime = ["codex"]\nruntime = "codex\n'
+                                         'runtime = "codex" x\n'})
+        self.assertEqual(guards.runtime_names(root), [f"config.toml:{n}: runtime name codex" for n in (4, 5, 6, 7)])
 
 
 class OldCore(Sample):
