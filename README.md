@@ -15,20 +15,20 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Solid arrows: import or call, the only direction allowed; dotted: a subclass implements an abstract class; thick: events and replies the Driver passes up uninterpreted. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/` ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)); terms: `CONTEXT.md`. Solid arrows: import or call, the only direction allowed; dotted: a subclass implements an abstract class; thick: events and replies the Driver passes up uninterpreted. A factory method returning None means that runtime lacks the mode. Each runtime is one concrete factory (its package groups its runs and common), so a new runtime is one more factory. The diagram reads top to bottom, from callers to the agent runtime processes.
 
 ```mermaid
 flowchart TB
-  subgraph callers[callers]
+  subgraph L1["callers"]
     O[orchestrator]
     M["manager: /agent-pm:tmux"]
     W[crew.py]
   end
-  subgraph delegate[delegate/]
-    D["API / CLI"]
+  subgraph L2["delegate/ and composer/"]
+    D["delegate: API / CLI"]
+    C[composer]
   end
-  C[composer/]
-  subgraph driver[driver/]
+  subgraph L3["driver/"]
     API[api.py]
     REG[registry.py]
     HM[modes/headless_run]
@@ -36,40 +36,54 @@ flowchart TB
     TH[tmux_host]
     REC[records.py]
   end
-  subgraph adapters[adapters/]
-    F["Adapter (abstract factory)"]
-    CA[ClaudeAdapter]
-    XA[CodexAdapter]
-    HR[HeadlessRun]
-    TR[TuiRun]
-    CR["Claude/Codex HeadlessRun"]
-    CT["Claude/Codex TuiRun"]
-    CM["common (per runtime)"]
+  subgraph L4["adapters/"]
+    subgraph base[base.py]
+      F["Adapter (abstract factory)"]
+      HR["HeadlessRun (abstract)"]
+      TR["TuiRun (abstract)"]
+    end
+    subgraph claude["claude/: one concrete factory"]
+      CA["ClaudeAdapter (factory)"]
+      CH[ClaudeHeadlessRun]
+      CT[ClaudeTuiRun]
+      CC[ClaudeCommon]
+    end
+    subgraph codex["codex/: one concrete factory"]
+      XA["CodexAdapter (factory)"]
+      XH[CodexHeadlessRun]
+      XT[CodexTuiRun]
+      XC[CodexCommon]
+    end
   end
-  P["claude / codex process"]
+  subgraph L5["agent runtime processes"]
+    P["claude / codex"]
+  end
+  L1 ~~~ L2 ~~~ L3 ~~~ L4 ~~~ L5
   O -->|Python API| D
   M -->|"CLI --detach"| D
   W -->|Python API| API
   D --> C
   D --> API
   API --> REG
-  REG -->|implementation| F
   API --> HM
   API --> TM
   API --> REC
+  TM --> TH
+  REG -->|"loads [adapters.name]"| F
   HM -->|"headless_run()"| F
   TM -->|"tui_run()"| F
-  F --> HR
-  F --> TR
-  TM --> TH
   CA -.->|implements| F
   XA -.->|implements| F
-  CR -.->|implements| HR
+  CA -->|creates| CH & CT
+  XA -->|creates| XH & XT
+  CH -.->|implements| HR
+  XH -.->|implements| HR
   CT -.->|implements| TR
-  CR --> CM
-  CT --> CM
-  HM --> P
-  TH --> P
+  XT -.->|implements| TR
+  CH & CT --> CC
+  XH & XT --> XC
+  HM -->|pipe| P
+  TH -->|tmux| P
   API ==>|events, replies| D
 ```
 
