@@ -4,6 +4,8 @@
 
 Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
 
+For local headless Codex role runs, use the [core Codex operating guide](core/CLAUDE.md#codex-headless).
+
 ```mermaid
 flowchart LR
     R["researcher<br>deep-research, light-research"] -->|"report → Approve → promote.py"| P["pm<br>product-design"]

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import sys
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -30,6 +31,7 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
                       "cwd"})
+OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column",
                           "grid_retile"}
 OLD_KEYS = frozenset({"default_task", "tasks"})
@@ -50,8 +52,7 @@ PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", 
               "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
               REPORT: (r"`report[` ]", REPORT)}   # only a code span starting with it: prose says "report" too
 RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
-        "value and written out in full, no name or shell variable left: pre-approved commands match on their exact "
-        "text and each shell call starts fresh, so anything else waits on a permission prompt.")
+        "value and written out in full, no name or shell variable left")
 # The progress mark: core/CLAUDE.md › Rules.
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"   # in the workdir: the agent run's record, its reports and the driver's events (drive.start)
@@ -74,6 +75,13 @@ class PromptClient(Protocol):
     def methods_path(self, root: str) -> str: ...
     def tasks_path(self, root: str) -> str: ...
     def handover(self) -> str: ...
+    def approval(self) -> str: ...
+    def report_interpreter(self) -> str: ...
+
+
+class ConfigClient(Protocol):
+    """The client configuration that run resolution needs, without importing clients here."""
+    config: Mapping
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,12 +122,12 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and Claude
-    session."""
+    """What the caller passes for one agent run: its input, where its deliverable ends up, its workdir and agent-pm
+    run ID."""
     input: str
     out: str
     workdir: str
-    sid: str | None = None   # None → a new session id
+    sid: str | None = None   # None → a new agent-pm run ID
     resume: bool = False
     prefix: str | None = None   # tui runner only: its session's name before the sid (tui_session)
 
@@ -207,6 +215,84 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
     return replace(run, role_title=_title(_read(os.path.join(root, TEXT), rel), rel))
 
 
+def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
+            overlays: Sequence[Mapping] = (), trusted: bool = False) -> RunConfig:
+    """Resolve base (including local config), selected client, then caller overlays: later layers win,
+    role values beat global values within a layer, and output tables replace rather than merge.
+
+    The caller must set `trusted` only for operator-controlled local configuration. An
+    in-process caller can opt in, so this is an API contract rather than a sandbox.
+    """
+    overlays = tuple(overlays)
+    if not trusted and any(overlay for overlay in overlays):
+        raise ConfigError("nonempty run overlays require a trusted caller")
+    roles = _roles(root)
+    if role not in roles:
+        raise ConfigError(f"unknown role {role!r}")
+    client_roles = client.config.get("roles", {})
+    if not isinstance(client_roles, Mapping):
+        raise ConfigError("selected client roles must be a table")
+    for name, table in client_roles.items():
+        if name not in roles:
+            raise ConfigError(f"unknown role {name!r} in selected client")
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"selected client roles.{name} must be a table")
+    for overlay in overlays:
+        _check_overlay(overlay, roles)
+    return load_run(root, role, task, layers=(client.config, *overlays))
+
+
+def catalog(root: str) -> dict[str, dict[str, str]]:
+    """Configured roles and their markdown task indexes, preserving config order."""
+    return {role: index(root, role) for role in _roles(root)}
+
+
+def _roles(root: str) -> Mapping:
+    """The merged base role tables, checked before public catalog or resolution uses them."""
+    path = os.path.join(root, CONFIG)
+    if not os.path.isfile(path):
+        raise ConfigError(f"no core config {path}")
+    roles = repo.read_config(path).get("roles")
+    if not isinstance(roles, Mapping):
+        raise ConfigError(f"malformed [roles] table in {path}")
+    for role, table in roles.items():
+        if not isinstance(role, str) or not isinstance(table, Mapping):
+            raise ConfigError(f"malformed [roles.{role}] table in {path}")
+    return roles
+
+
+def _check_overlay(overlay: Mapping, roles: Mapping) -> None:
+    if not isinstance(overlay, Mapping):
+        raise ConfigError("run overlay must be a table")
+    _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, "run overlay")
+    _check_overlay_output(overlay, "run overlay")
+    if "roles" not in overlay:
+        return
+    if not isinstance(overlay["roles"], Mapping):
+        raise ConfigError("run overlay roles must be a table")
+    for role, table in overlay["roles"].items():
+        if role not in roles:
+            raise ConfigError(f"unknown role {role!r} in run overlay")
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"run overlay roles.{role} must be a table")
+        check_old_keys(table, role, "overlay.")
+        _check_overlay_keys(table, RUN_KEYS, f"run overlay roles.{role}")
+        _check_overlay_output(table, f"run overlay roles.{role}")
+
+
+def _check_overlay_output(table: Mapping, where: str) -> None:
+    if "output" not in table:
+        return
+    if not isinstance(table["output"], Mapping):
+        raise ConfigError(f"{where} output must be a table")
+    _check_overlay_keys(table["output"], OUTPUT_KEYS, f"{where} output")
+
+
+def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
+    if extra := sorted(set(table) - allowed, key=str):
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
+
+
 def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient) -> str:
     """The agent run's prompt for `client`: the guide, then # Parameters (_parameters); its Output section ends with the
     client's handover as Output › Return; last, # Input: the input when params are given, else the client's
@@ -249,9 +335,10 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     return _unique(prompt)
 
 
-def report_command(scripts: str, params: RunParams) -> str:
+def report_command(scripts: str, params: RunParams, interpreter: str = "python3") -> str:
     """The shell command an agent run reports its progress and outcome with, up to its subcommand."""
-    return f"python3 {shlex.quote(os.path.join(scripts, 'report.py'))} --to {shlex.quote(params.channel)}"
+    return (f"{shlex.quote(interpreter)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
+            f"--to {shlex.quote(params.channel)}")
 
 
 def outcome_schema(root: str) -> dict:
@@ -347,7 +434,8 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
     values = {"workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
               "scripts": _code(client.scripts_path(root)), "tasks": _code(client.tasks_path(root)),
               "methods": _code(client.methods_path(root)), "gate": _code(run.gate or "none"),
-              REPORT: _code(f"python3 <scripts>/report.py --to <Workdir>/{CHANNEL}") if params else ""}
+              REPORT: _code(f"{shlex.quote(client.report_interpreter())} <scripts>/report.py --to <Workdir>/{CHANNEL}")
+              if params else ""}
     values |= {f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()}
     unset = {"workdir": "no run params and the client has no inline_workdir", REPORT: "no run params"}
     lines = []
@@ -358,7 +446,8 @@ def _parameters(root: str, run: RunConfig, params: RunParams | None, client: Pro
                               f"({unset.get(source, f'{source} is not set')})")
         if values.get(source) and (where or name in ("<Workdir>", "<scripts>", "<tasks>")):
             lines.append(f"- `{name}`: {values[source]}\n")
-    return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
+    rule = RULE + (client.approval() or ".")
+    return f"# Parameters\n\n{rule}\n\n" + "".join(lines)
 
 
 def _unique(text: str) -> str:

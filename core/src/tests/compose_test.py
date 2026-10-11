@@ -16,9 +16,12 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
+from clients.skill import SkillClient  # noqa: E402
 import compose  # noqa: E402
+import drive  # noqa: E402
 
-class Plain:
+class Plain(clients.Client):
     """A client with the default scripts, methods and tasks paths (or `methods`, `tasks`), no handover and no inline
     workdir or input."""
     def __init__(self, handover="", methods=None, tasks=None, inline_workdir="", inline_input=""):
@@ -90,7 +93,7 @@ branch = "main"
 def parameters(prompt):
     """{name: value} of the prompt's # Parameters lines after compose.RULE, in order; a line of another shape fails."""
     section = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
-    lines = section.removeprefix(f"{compose.RULE}\n\n").splitlines()
+    lines = section.split("\n\n", 1)[1].splitlines()
     return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
 
 
@@ -200,6 +203,72 @@ class Resolve(Fake):
     def test_layers_ignore_their_own_keys(self):
         _, run = self.compose("editor", layers=[{"flags": ["-x"], "description": "d"}])
         self.assertEqual(run.tier, 1)
+
+
+class PublicResolution(Fake):
+    def test_base_client_and_trusted_overlay_precedence(self):
+        self.local('language = "French"\n[roles.writer]\neffort = "max"\n')
+        client = SkillClient({"effort": "low", "output": {"type": "orchestrator"},
+                                      "roles": {"writer": {"tier": 3, "effort": "medium"}}})
+        run = compose.resolve(self.root, client, "writer", "long-note", overlays=(
+            {"tier": 4, "effort": "high"},
+            {"roles": {"writer": {"tier": 1, "output": {"type": "local"}}}},
+        ), trusted=True)
+        self.assertEqual((run.tier, run.effort, run.language, run.task, run.output),
+                         (1, "high", "French", "long-note", {"type": "local"}))
+        self.assertEqual(compose.resolve(self.root, client, "writer").output, {"type": "orchestrator"})
+
+    def test_nonempty_overlay_requires_trust_even_when_valid(self):
+        with self.assertRaisesRegex(compose.ConfigError, "trusted"):
+            compose.resolve(self.root, clients.Client({}), "writer", overlays=({"read": ["/private"]},))
+        self.assertEqual(compose.resolve(self.root, clients.Client({}), "writer", overlays=({},)).tier, 2)
+
+    def test_trusted_overlay_rejects_unknown_and_legacy_keys(self):
+        bad = (({"flags": []}, "flags"), ({"tasks": {}}, "tasks"),
+               ({"output": {"type": "local", "typo": "value"}}, "typo"),
+               ({"roles": {"writer": {"default_task": "short-note"}}}, "default_task"),
+               ({"roles": {"writer": {"tasks": {}}}}, "tasks"),
+               ({"roles": {"writer": {"allow": []}}}, "allow"),
+               ({"roles": {"writer": {"output": {"type": "local", "typo": "value"}}}}, "typo"),
+               ({"roles": {"stranger": {"tier": 3}}}, "stranger"))
+        for overlay, message in bad:
+            with self.subTest(overlay=overlay), self.assertRaisesRegex(compose.ConfigError, message):
+                compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True)
+
+    def test_malformed_overlay_tables_fail_clearly(self):
+        for overlay in (None, [], {"roles": []}, {"roles": {"writer": 2}}, {"output": []},
+                        {"roles": {"writer": {"output": []}}}):
+            with self.subTest(overlay=overlay), self.assertRaises(compose.ConfigError):
+                compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True)
+
+    def test_unknown_role_and_malformed_selected_client_roles(self):
+        with self.assertRaisesRegex(compose.ConfigError, "unknown role"):
+            compose.resolve(self.root, clients.Client({}), "stranger")
+        for roles in ([], {"writer": []}, {"stranger": {"tier": 3}}):
+            with self.subTest(roles=roles), self.assertRaises(compose.ConfigError):
+                compose.resolve(self.root, SkillClient({"roles": roles}), "writer")
+
+    def test_non_string_overlay_key_is_a_config_error(self):
+        with self.assertRaises(compose.ConfigError):
+            compose.resolve(self.root, clients.Client({}), "writer", overlays=({1: "bad", "typo": "bad"},), trusted=True)
+
+    def test_catalog_lists_configured_roles_and_markdown_tasks_in_order(self):
+        self.config(CONFIG + '\n[clients.skill]\nimplementation = "SkillClient"\n')
+        expected = {"writer": {"short-note": "a note; most times; light.",
+                                "long-note": "a long note; when asked; heavy."},
+                    "editor": {"long-note": "a long note; always; heavy."}}
+        self.assertEqual(compose.catalog(self.root), expected)
+        self.assertEqual(list(clients.catalog("skill", self.root)), ["writer", "editor"])
+        self.assertEqual(clients.catalog("skill", self.root), expected)
+        with self.assertRaisesRegex(compose.ConfigError, "clients.nope"):
+            clients.catalog("nope", self.root)
+
+    def test_catalog_rejects_malformed_roles(self):
+        for config in ('tier = 2\neffort = "high"\nroles = 1\n[output]\ntype = "local"\n',
+                       'tier = 2\neffort = "high"\n[output]\ntype = "local"\n[roles]\nwriter = 1\n'):
+            self.config(config)
+            with self.subTest(config=config), self.assertRaises(compose.ConfigError):
+                compose.catalog(self.root)
 
 
 class Index(Fake):
@@ -355,6 +424,17 @@ class Validate(Fake):
 
 
 class Prompt(Fake):
+    def test_client_approval_preserves_claude_and_skill_rule(self):
+        original = ("Each name below stands for its value. Run every command with each name, nested ones included, "
+                    "replaced by its value and written out in full, no name or shell variable left: pre-approved "
+                    "commands match on their exact text and each shell call starts fresh, so anything else waits "
+                    "on a permission prompt.")
+        for client in (ClaudeClient({}), SkillClient({})):
+            prompt = compose.render(self.root, compose.load_run(self.root, "writer"), PARAMS, client=client)
+            self.assertIn("# Parameters\n\n" + original + "\n\n", prompt)
+            self.assertEqual(client.report_interpreter(), "python3")
+        self.assertEqual(clients.Client({}).approval(), "")
+
     def test_sections_in_order(self):
         for task in (None, "long-note"):
             prompt, _ = self.compose(task=task)
@@ -418,9 +498,12 @@ class Prompt(Fake):
         self.assertTrue(body.rstrip().endswith("Keep it local.\n\n## Return\n\nSay it back."))
 
     def test_the_report_command_quotes_its_paths(self):
-        self.assertEqual(compose.report_command("/s", PARAMS), "python3 /s/report.py --to /w/run.jsonl")
+        self.assertEqual(compose.report_command("/s", PARAMS),
+                         "python3 /s/report.py --to /w/run.jsonl")
         spaced = replace(PARAMS, workdir="/my w")
-        self.assertEqual(compose.report_command("/s s", spaced), "python3 '/s s/report.py' --to '/my w/run.jsonl'")
+        with mock.patch.object(compose.sys, "executable", "/my Python/bin/python 3"):
+            self.assertEqual(compose.report_command("/s s", spaced, sys.executable),
+                             "'/my Python/bin/python 3' '/s s/report.py' --to '/my w/run.jsonl'")
         self.assertEqual(spaced.channel, "/my w/run.jsonl")
 
     def test_texts_keep_the_names_and_parameters_give_the_clients_paths(self):
@@ -619,7 +702,7 @@ class Parameters(Fake):
 
     def test_the_rule_opens_the_section_and_with_params_and_no_handover_the_workdir_scripts_and_tasks(self):
         prompt = self.compose()[0]
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: `/w`\n", prompt)
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}.\n\n- `<Workdir>`: `/w`\n", prompt)
         self.assertEqual(list(parameters(prompt).items()), [
             ("<Workdir>", "`/w`"), ("<scripts>", f"`{self.root}/src`"), ("<tasks>", f"`{self.root}/team/tasks`")])
 
@@ -628,7 +711,8 @@ class Parameters(Fake):
         for handover in ("Run `report outcome <file>`.", "Report through `report`."):
             prompt = compose.render(self.root, run, PARAMS, client=Plain(handover))
             self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<scripts>", "<tasks>", "report"], handover)
-            self.assertEqual(parameters(prompt)["report"], "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
+            self.assertEqual(parameters(prompt)["report"],
+                             "`python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
             self.assertIn(f"## Return\n\n{handover}\n", prompt)
         for handover in ("Say it back.", "Send your report; `report.py` gets it."):
             for params in (PARAMS, None):
@@ -1007,6 +1091,42 @@ class Tickets(unittest.TestCase):
 
 
 class RealCore(unittest.TestCase):
+    def test_parameter_rule_defers_command_approval_to_client(self):
+        for name in ("claude", "codex", "skill"):
+            prompt, _ = client_prompt(name, "researcher")
+            approval = ("Command approvals follow Codex automatic review." if name == "codex"
+                        else "pre-approved commands match on their exact text")
+            self.assertIn(approval, prompt)
+            if name == "codex":
+                self.assertNotIn("pre-approved commands match on their exact text", prompt)
+
+    def test_codex_installed_copy_uses_absolute_core_resources(self):
+        with tempfile.TemporaryDirectory() as parent:
+            root = os.path.join(parent, "installed", "core")
+            os.makedirs(root)
+            for name in ("src", "team", "output"):
+                shutil.copytree(os.path.join(CORE, name), os.path.join(root, name))
+            shutil.copy2(os.path.join(CORE, compose.CONFIG), os.path.join(root, compose.CONFIG))
+
+            client = clients.get("codex", root)
+            run = compose.resolve(root, client, "researcher", "light-research")
+            workdir = os.path.join(parent, "run")
+            params = replace(RUN, workdir=workdir, out=os.path.join(workdir, "out.md"))
+            prompt = compose.render(root, run, params, client=client)
+            scripts, tasks, methods = (client.scripts_path(root), client.tasks_path(root), client.methods_path(root))
+            access = drive.access(run, params, repo=None, scripts=scripts, tasks=tasks, methods=methods)
+
+            for name, path in (("<scripts>", scripts), ("<tasks>", tasks), ("<methods>", methods)):
+                self.assertTrue(os.path.isabs(path), name)
+                self.assertTrue(os.path.isdir(path), name)
+                self.assertEqual(parameters(prompt)[name], f"`{path}`")
+            self.assertTrue(os.path.isfile(os.path.join(scripts, "report.py")))
+            self.assertTrue(os.path.isfile(os.path.join(tasks, "light-research.md")))
+            self.assertIn(tasks, access.dirs)
+            self.assertIn(methods, access.dirs)
+            self.assertIn(compose.report_command(scripts, params) + " *", access.commands)
+            self.assertNotIn("CLAUDE_SKILL_DIR", prompt)
+
     def test_core_config_renders_the_language_and_progress_rules_once(self):
         for role in ROLES:
             prompt, run = composed(role)
@@ -1159,12 +1279,12 @@ class RealCore(unittest.TestCase):
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role in ROLES:
-            for client in clients.REGISTRY:
+            for client in ("claude", "codex", "skill"):
                 self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
         for role, task in RUNS:
-            for client in clients.REGISTRY:
+            for client in ("claude", "codex", "skill"):
                 anchors = heading_anchors(client_prompt(client, role, task)[0])
                 self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
 

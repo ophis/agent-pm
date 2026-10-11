@@ -9,10 +9,12 @@ from collections.abc import Iterable, Iterator
 
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
-from .base import PROGRESS, Access, Client, Event, Launch
+from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo
 
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APPROVAL = (": pre-approved commands match on their exact text and each shell call starts fresh, "
+            "so anything else waits on a permission prompt.")
 PROJECTS = os.path.expanduser("~/.claude/projects")
 # This core's own plugin (<plugin>@<marketplace>): agent runs load the user's plugins (--setting-sources user), not it.
 PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
@@ -33,10 +35,17 @@ def transcript(cwd: str, sid: str, projects: str = PROJECTS) -> str:
 class ClaudeClient(Client):
     keys = frozenset({"flags", "tiers", "efforts", "env", "allow", "roles"})
 
+    def session_info(self, workdir: str, sid: str) -> SessionInfo:
+        """Claude can resume by run ID; this core does not inspect Claude's native file here."""
+        return SessionInfo(resume_supported=True)
+
     def __init__(self, config: dict):
         super().__init__(config)
         if any(str(f).split("=")[0] == "--setting-sources" for f in config.get("flags", [])):
             raise ConfigError("--setting-sources is the driver's (trusted_dirs): remove it from [clients.claude].flags")
+
+    def approval(self) -> str:
+        return APPROVAL
 
     def handover(self) -> str:
         return ("Report through `report`, never in a reply:\n\n"
@@ -71,7 +80,7 @@ class ClaudeClient(Client):
             tail += ["--allowedTools", *allow]
         argv = ["claude", "-p", prompt, *head, "--output-format", "stream-json", "--verbose", "--settings",
                 json.dumps(PLUGINS), *tail]
-        stop = report_command(CORE_SCRIPTS, params) + " stop --pending background_tasks"
+        stop = report_command(CORE_SCRIPTS, params, self.report_interpreter()) + " stop --pending background_tasks"
         hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": stop}]}]}}
         interactive = ["claude", prompt, *head, "--name", tui_session(run.role, params.sid, params.prefix),
                        "--settings", json.dumps({**PLUGINS, **hook}), *tail]
@@ -91,3 +100,6 @@ class ClaudeClient(Client):
             for block in content if isinstance(content, list) else ():
                 if isinstance(block, dict) and block.get("type") == "text":
                     yield from (Event("text", t) for t in block.get("text", "").splitlines() if t.strip())
+
+
+RUNS = ClaudeClient.runs

@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -12,18 +13,24 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
 import clients  # noqa: E402
+from clients.claude import ClaudeClient  # noqa: E402
+from clients.skill import SkillClient  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import manager  # noqa: E402
 import report  # noqa: E402
+from clients import codex  # noqa: E402
 
 CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SID = "11111111-2222-3333-4444-555555555555"
@@ -49,7 +56,7 @@ class Recorder(clients.Client):
 
 
 def claude(**overrides):
-    return clients.ClaudeClient({**clients.load_config("claude", CORE), **overrides})
+    return ClaudeClient({**clients.get("claude", CORE).config, **overrides})
 
 
 def own(session="mgr"):
@@ -73,9 +80,14 @@ class Base(unittest.TestCase):
         self.repo = os.path.join(self.tmp.name, "repo")
         os.makedirs(self.repo)
         Recorder.seen = []
-        patch = unittest.mock.patch.dict(clients.REGISTRY, {"fake": Recorder})
-        patch.start()
-        self.addCleanup(patch.stop)
+        module = types.ModuleType("clients.fake")
+        module.FakeClient = Recorder
+        module.RUNS = Recorder.runs
+        self.enterContext(unittest.mock.patch.dict(sys.modules, {"clients.fake": module}))
+        original = clients.load_config
+        self.enterContext(unittest.mock.patch.object(
+            clients, "load_config", side_effect=lambda name, root: ({"implementation": "FakeClient"}
+            if name == "fake" and root == CORE else original(name, root))))
 
     def params(self, **kw):
         return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
@@ -87,7 +99,7 @@ class Base(unittest.TestCase):
                           layers=layers, cwd=cwd or self.work)[0]
 
     def report(self):
-        return f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl"
+        return compose.report_command(f"{CORE}/src", self.params())
 
 
 class ClientConfig(unittest.TestCase):
@@ -121,6 +133,107 @@ class ClientConfig(unittest.TestCase):
                 self.assertIn("[clients.claude]", str(cm.exception))
 
 
+class ClientDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        hermetic.home(self)
+        self.path = os.path.join(self.tmp.name, "config.toml")
+
+    def config(self, text):
+        with open(self.path, "w") as f:
+            f.write(text)
+
+    def test_package_import_does_not_load_unselected_concrete_clients(self):
+        code = """import sys
+import clients
+assert "clients.claude" not in sys.modules
+assert "clients.skill" not in sys.modules
+assert clients.load_module("codex").RUNS
+assert "clients.claude" not in sys.modules
+assert "clients.skill" not in sys.modules
+"""
+        result = subprocess.run([sys.executable, "-c", code], cwd=os.path.join(CORE, "src"),
+                                capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_existing_clients_use_explicit_implementations(self):
+        self.config('[clients.skill]\nimplementation = "SkillClient"\n'
+                    '[clients.claude]\nimplementation = "ClaudeClient"\n')
+        self.assertIsInstance(clients.get("skill", self.tmp.name), SkillClient)
+        self.assertIsInstance(clients.get("claude", self.tmp.name), ClaudeClient)
+        self.assertFalse(hasattr(clients, "names"))
+
+    def test_configured_class_receives_only_runtime_config(self):
+        self.config('[clients.third_party]\nimplementation = "CustomAdapter"\ntier = 3\n')
+        module = types.ModuleType("clients.third_party")
+        module.CustomAdapter = type("CustomAdapter", (clients.Client,), {})
+        module.RUNS = module.CustomAdapter.runs
+        with unittest.mock.patch.dict(sys.modules, {"clients.third_party": module}):
+            client = clients.get("third_party", self.tmp.name)
+            self.assertIsInstance(client, module.CustomAdapter)
+            self.assertEqual(client.config, {"tier": 3})
+            module.CustomAdapter.needs_config = False
+            self.assertEqual(clients.get("third_party", self.tmp.name).config, {})
+
+    def test_missing_or_malformed_implementation_fails_after_module_capability(self):
+        for field in ("", 'implementation = ""', 'implementation = 1', 'implementation = []',
+                      'implementation = {}', 'implementation = "other.Adapter"', 'implementation = "bad name"'):
+            module = types.ModuleType("clients.third")
+            module.RUNS = True
+            with self.subTest(field=field), unittest.mock.patch("importlib.import_module", return_value=module) as imported:
+                self.config("[clients.third]\n" + field + "\n")
+                with self.assertRaisesRegex(compose.ConfigError, "implementation"):
+                    clients.get("third", self.tmp.name)
+                imported.assert_called_once_with(".third", "clients")
+
+    def test_missing_and_malformed_client_configuration_fail(self):
+        for config in (None, "tier = 1\n", "clients = 1\n", "[clients]\nclaude = 1\n"):
+            with self.subTest(config=config):
+                if config is None:
+                    if os.path.exists(self.path):
+                        os.unlink(self.path)
+                else:
+                    self.config(config)
+                with self.assertRaises(compose.ConfigError):
+                    clients.get("claude", self.tmp.name)
+        self.config("[clients.skill]\n")
+        with self.assertRaisesRegex(compose.ConfigError, r"clients.claude"):
+            clients.get("claude", self.tmp.name)
+
+    def test_unsafe_names_never_reach_import(self):
+        self.config("[clients.claude]\n")
+        for name in ("Claude", "../claude", "claude.skill", "a-b", "_private", ""):
+            with self.subTest(name=name), unittest.mock.patch("importlib.import_module") as imported:
+                with self.assertRaises(compose.ConfigError):
+                    clients.get(name, self.tmp.name)
+                imported.assert_not_called()
+
+    def test_missing_module_class_and_wrong_class_fail_clearly(self):
+        self.config('[clients.third]\nimplementation = "ThirdClient"\n')
+        with self.assertRaisesRegex(compose.ConfigError, "module"):
+            clients.get("third", self.tmp.name)
+        module = types.ModuleType("clients.third")
+        module.RUNS = True
+        with unittest.mock.patch.dict(sys.modules, {"clients.third": module}):
+            with self.assertRaisesRegex(compose.ConfigError, "ThirdClient"):
+                clients.get("third", self.tmp.name)
+            module.ThirdClient = object
+            with self.assertRaisesRegex(compose.ConfigError, "subclass"):
+                clients.get("third", self.tmp.name)
+            module.ThirdClient = clients.Client
+            with self.assertRaisesRegex(compose.ConfigError, "subclass"):
+                clients.get("third", self.tmp.name)
+
+    def test_failure_inside_an_existing_module_is_not_disguised_as_missing_module(self):
+        self.config('[clients.third]\nimplementation = "ThirdClient"\n')
+        failure = ModuleNotFoundError("No module named 'dependency'", name="dependency")
+        with unittest.mock.patch("importlib.import_module", side_effect=failure):
+            with self.assertRaisesRegex(compose.ConfigError, "dependency") as cm:
+                clients.get("third", self.tmp.name)
+        self.assertIs(cm.exception.__cause__, failure)
+
+
 class Claude(Base):
     def test_the_prompt_names_the_file_the_agent_writes_the_deliverable_to(self):
         elsewhere = os.path.join(self.tmp.name, "elsewhere", "out.md")
@@ -142,7 +255,8 @@ class Claude(Base):
             "--add-dir", TASKS, "--add-dir", METHODS,
             "--allowedTools", f"Bash(python3 {CORE}/src/repo.py worktree --dir {self.work}/src *)",
             f"Bash({self.report()} *)"])
-        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`\n", launch.argv[2])
+        self.assertIn("\n- `report`: `python3 <scripts>/report.py --to "
+                      "<Workdir>/run.jsonl`\n", launch.argv[2])
         self.assertIn("## Return\n\nReport through `report`, never in a reply:", launch.argv[2])
         self.assertEqual(launch.env, {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
         self.assertEqual(launch.cwd, self.work)
@@ -212,7 +326,7 @@ class Claude(Base):
     def test_interactive_adds_the_stop_hook_to_the_settings(self):
         launch = self.plan(client="claude")
         i = launch.interactive.index("--settings")
-        cmd = f"python3 {CORE}/src/report.py --to {self.work}/run.jsonl stop --pending background_tasks"
+        cmd = f"{self.report()} stop --pending background_tasks"
         self.assertEqual(json.loads(launch.interactive[i + 1]),
                          {"enabledPlugins": {"agent-pm@agent-pm": False},
                           "hooks": {"Stop": [{"hooks": [{"type": "command", "command": cmd}]}]}})
@@ -278,14 +392,517 @@ class Claude(Base):
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
 
     def test_transcript_and_resume_command_follow_the_cwd(self):
-        self.assertEqual(clients.claude.transcript("/a/b.c d", SID, "/p"), f"/p/-a-b-c-d/{SID}.jsonl")
+        self.assertEqual(claude_client.transcript("/a/b.c d", SID, "/p"), f"/p/-a-b-c-d/{SID}.jsonl")
         launch = self.plan(client="claude")
         self.assertEqual((launch.resume, launch.transcript),
-                         (f"cd {self.work} && claude --resume {SID}", clients.claude.transcript(self.work, SID)))
+                         (f"cd {self.work} && claude --resume {SID}", claude_client.transcript(self.work, SID)))
         with redirect_stderr(io.StringIO()):
             launch = self.plan(client="claude", cwd=self.repo)
         self.assertEqual(launch.resume, f"cd {self.repo} && claude --resume {SID} --add-dir {self.work}")
-        self.assertEqual(launch.transcript, clients.claude.transcript(self.repo, SID))
+        self.assertEqual(launch.transcript, claude_client.transcript(self.repo, SID))
+
+
+class Codex(Base):
+    def setUp(self):
+        super().setUp()
+        hermetic.home(self)
+        os.environ.pop("CODEX_HOME", None)
+        self.enterContext(unittest.mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
+
+    def test_report_interpreter_matches_prompt_and_access_command(self):
+        interpreter = "/owned Python/bin/python3"
+        with unittest.mock.patch.object(sys, "executable", interpreter):
+            launch = self.plan("dummy-tester", "echo", client="codex", cwd=self.work)
+        self.assertIn(f"`{shlex.quote(interpreter)} <scripts>/report.py", launch.argv[-1])
+        self.assertIn(compose.report_command(f"{CORE}/src", self.params(), interpreter) + " *",
+                      launch.session_state["commands"])
+
+    def saved_session(self, *, client_id=None):
+        codex_home = os.path.join(self.tmp.name, "user-codex")
+        os.makedirs(codex_home)
+        extra = os.path.join(self.tmp.name, "extra")
+        os.makedirs(extra)
+        snapshot = {"cwd": os.path.realpath(self.work), "project": False, "dirs": [os.path.realpath(extra)],
+                    "commands": ["make test"], "model": "saved-model", "effort": "low", "network": True,
+                    "codex_home": os.path.realpath(codex_home)}
+        state = codex._create_session(self.work, SID, snapshot,
+                                   [snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]])
+        if client_id:
+            codex._bind_session(self.work, SID, client_id)
+        return state.snapshot
+
+    def metadata(self, client_id, snapshot, *, filename=None, payload_id=None, cwd=None):
+        folder = os.path.join(snapshot["codex_home"], "sessions", "2026", "10", "11")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, filename or f"rollout-2026-10-11T01-02-03-{client_id}.jsonl")
+        with open(path, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": payload_id or client_id,
+                       "cwd": cwd or snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        return path
+
+    def test_new_launch_captures_effective_options(self):
+        config_home = os.path.join(self.tmp.name, "user-codex")
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": config_home}), redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch(
+                "prompt", run(), params=self.params(),
+                access=drive.Access(dirs=[self.repo], commands=["make test"], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], os.path.realpath(config_home))
+        self.assertEqual(set(launch.writable_roots),
+                         set(map(os.path.realpath, [self.work, config_home, self.repo])))
+        self.assertEqual(launch.session_state, {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.repo)], "commands": ["make test"], "model": "gpt-6.1-sol",
+                         "effort": "high", "network": False, "codex_home": os.path.realpath(config_home)})
+
+    def test_external_tilde_codex_home_matches_launch_and_recovery_settings(self):
+        config_home = os.path.join(os.path.realpath(self.tmp.name), "user-codex")
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": "~/user-codex"}), \
+                redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch(
+                "prompt", run(), params=self.params(),
+                access=drive.Access(dirs=[], commands=[], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], config_home)
+        self.assertEqual(launch.session_state["codex_home"], config_home)
+        self.assertIn(config_home, launch.writable_roots)
+
+    def test_codex_validates_its_own_saved_payload_before_use(self):
+        snapshot = self.saved_session(client_id=SID)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), SID)
+        with open(path) as f:
+            original = json.load(f)
+        client = clients.get("codex", CORE)
+        for change in ({"network": "yes"}, {"cwd": "/work/../other"}, {"dirs": [2]}, {"extra": True}):
+            data = dict(original, snapshot={**snapshot, **change})
+            with open(path, "w") as f:
+                json.dump(data, f)
+            for use in (lambda: client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS),
+                        lambda: client.resume_location(self.work, SID), lambda: client.session_info(self.work, SID)):
+                with self.subTest(change=change), self.assertRaisesRegex(compose.ConfigError, "Codex recovery"):
+                    use()
+        with open(path, "w") as f:
+            json.dump(dict(original, client_id="not-a-uuid"), f)
+        with self.assertRaisesRegex(compose.ConfigError, "Codex.*ID"):
+            client.session_info(self.work, SID)
+
+    def test_saved_effective_paths_require_recorded_grants_and_store_isolation(self):
+        snapshot = self.saved_session(client_id=SID)
+        self.metadata(SID, snapshot)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), SID)
+        with open(path) as stream:
+            original = json.load(stream)
+        client = clients.get("codex", CORE)
+        changes = [dict(original, writable_roots=[grant for grant in original["writable_roots"] if grant != omitted])
+                   for omitted in original["writable_roots"]]
+        changes.append(dict(original, snapshot={**snapshot, "dirs": [os.path.realpath(os.path.expanduser("~"))]}))
+        for data in changes:
+            with open(path, "w") as stream:
+                json.dump(data, stream)
+            launch = drive.Launch(["fake"], session_state=data["snapshot"], writable_roots=data["writable_roots"])
+            for use in (lambda: client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS),
+                        lambda: client.resume_location(self.work, SID), lambda: client.session_info(self.work, SID),
+                        lambda: client.prepare_session(launch, self.params(resume=True))):
+                with self.subTest(data=data), self.assertRaisesRegex(compose.ConfigError, "writable|grant|changed"):
+                    use()
+
+    def test_saved_paths_may_be_covered_by_parent_grants(self):
+        snapshot = self.saved_session(client_id=SID)
+        self.metadata(SID, snapshot)
+        root = os.path.join(os.path.expanduser("~"), ".agent-pm", "core-sessions")
+        path = codex._path(root, os.path.realpath(self.work), SID)
+        with open(path) as stream:
+            data = json.load(stream)
+        data["writable_roots"] = [os.path.realpath(self.work), os.path.realpath(self.tmp.name)]
+        with open(path, "w") as stream:
+            json.dump(data, stream)
+        client = clients.get("codex", CORE)
+        self.assertEqual(client.resume_location(self.work, SID), (snapshot["cwd"], False))
+        self.assertTrue(client.session_info(self.work, SID).exists)
+        launch = client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        self.assertEqual(launch.session_state, snapshot)
+        client.prepare_session(launch, self.params(resume=True))
+
+    def test_deep_native_metadata_is_a_config_error(self):
+        snapshot = self.saved_session(client_id=SID)
+        path = self.metadata(SID, snapshot)
+        with open(path, "w") as stream:
+            stream.write("[" * 2000 + "0" + "]" * 2000)
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        with unittest.mock.patch.object(json, "_default_decoder", decoder), \
+                self.assertRaisesRegex(compose.ConfigError, "malformed Codex session metadata"):
+            clients.get("codex", CORE).session_info(self.work, SID)
+
+    def test_resume_uses_saved_options_and_parent_flags(self):
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        self.metadata(client_id, snapshot)
+        changed = type(clients.get("codex", CORE))({**clients.get("codex", CORE).config,
+                   "tiers": {"2": "changed-model"}, "shell_network": False})
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.work, "changed-home")}), \
+                redirect_stderr(io.StringIO()):
+            launch = changed.launch("next", run(), params=self.params(resume=True),
+                                    access=drive.Access(dirs=[self.repo], commands=[], cwd=self.work))
+        self.assertEqual(launch.env["CODEX_HOME"], snapshot["codex_home"])
+        self.assertEqual(launch.cwd, snapshot["cwd"])
+        self.assertEqual(launch.session_state, snapshot)
+        self.assertEqual(launch.argv[-3:], ["resume", client_id, "next"])
+        self.assertLess(launch.argv.index("--add-dir"), launch.argv.index("resume"))
+        self.assertEqual(launch.argv[launch.argv.index("--add-dir") + 1], snapshot["dirs"][0])
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], "saved-model")
+        self.assertIn("sandbox_workspace_write.network_access=true", launch.argv)
+        self.assertNotIn("changed-model", launch.argv)
+        self.assertNotIn(self.repo, launch.argv)
+
+    def test_resume_rejects_missing_state_id_file_and_mismatched_metadata(self):
+        client = clients.get("codex", CORE)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex recovery state"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        snapshot = self.saved_session()
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex client ID"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        codex._bind_session(self.work, SID, client_id)
+        with self.assertRaisesRegex(compose.ConfigError, "missing Codex session file"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        path = self.metadata(client_id, snapshot, payload_id="ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        self.metadata(client_id, snapshot)
+        self.metadata(client_id, snapshot, filename=f"rollout-duplicate-{client_id}.jsonl")
+        with self.assertRaisesRegex(compose.ConfigError, "duplicate Codex session files"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_resume_rejects_session_file_symlink_and_wrong_cwd(self):
+        client = clients.get("codex", CORE)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        path = self.metadata(client_id, snapshot, cwd=self.repo)
+        with self.assertRaisesRegex(compose.ConfigError, "mismatched Codex session metadata"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+        os.unlink(path)
+        target = os.path.join(self.tmp.name, "target.jsonl")
+        with open(target, "w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {"id": client_id, "cwd": snapshot["cwd"]}}, stream)
+            stream.write("\n")
+        os.symlink(target, path)
+        with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file symlink"):
+            client.launch("next", run(), params=self.params(resume=True), access=NO_ACCESS)
+
+    def test_fifo_transcript_is_rejected_without_blocking_resume_or_inspection(self):
+        client = clients.get("codex", CORE)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        snapshot = self.saved_session(client_id=client_id)
+        path = self.metadata(client_id, snapshot)
+        os.unlink(path)
+        os.mkfifo(path)
+
+        def expire(signum, frame):
+            self.fail("Codex session access blocked on a FIFO transcript")
+
+        previous = signal.signal(signal.SIGALRM, expire)
+        try:
+            for name, use in (
+                    ("resume", lambda: client.launch("next", run(), params=self.params(resume=True),
+                                                    access=NO_ACCESS)),
+                    ("inspection", lambda: drive.session_info(client, self.work, SID))):
+                with self.subTest(operation=name):
+                    signal.alarm(2)
+                    try:
+                        with self.assertRaisesRegex(compose.ConfigError, "unsafe Codex session file"):
+                            use()
+                    finally:
+                        signal.alarm(0)
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
+    def test_session_info_reports_native_metadata_and_unsupported_usage(self):
+        client = clients.get("codex", CORE)
+        snapshot = self.saved_session()
+        self.assertEqual(client.session_info(self.work, SID).client_id, None)
+        client_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        codex._bind_session(self.work, SID, client_id)
+        missing = client.session_info(self.work, SID)
+        self.assertEqual((missing.resume_supported, missing.inspection_supported, missing.client_id,
+                          missing.exists, missing.usage_supported, missing.usage),
+                         (True, True, client_id, False, False, None))
+        path = self.metadata(client_id, snapshot)
+        found = client.session_info(self.work, SID)
+        self.assertEqual((found.client_id, found.exists, found.transcript), (client_id, True, path))
+        self.assertAlmostEqual(found.last_activity, os.stat(path).st_mtime, delta=1)
+        self.assertIn("codex resume -s workspace-write", found.resume)
+        self.assertTrue(found.resume.endswith(client_id))
+        self.assertIn("CODEX_HOME=", found.resume)
+        self.assertIn("--add-dir", found.resume)
+        self.assertFalse(found.usage_supported)
+
+    def test_four_tiers_select_astra_sol_luna_terra_and_show_the_model(self):
+        expected = {"1": "gpt-6-astra", "2": "gpt-6.1-sol",
+                    "3": "gpt-6-luna", "4": "gpt-5.6-terra"}
+        client = clients.get("codex", CORE)
+        self.assertEqual(client.config["tiers"], expected)
+        for tier, model in expected.items():
+            with self.subTest(tier=tier):
+                notice = io.StringIO()
+                with redirect_stderr(notice):
+                    launch = client.launch("prompt", run(tier=int(tier)), params=self.params(),
+                                           access=drive.Access(dirs=[], commands=[], cwd=self.work))
+                self.assertEqual(launch.argv[launch.argv.index("-m") + 1], model)
+                self.assertIn(f"Codex tier {tier} uses {model};", notice.getvalue())
+
+    def test_plan_shows_selected_model_and_local_update_hint(self):
+        config = clients.load_config("codex", CORE)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            launch, resolved = drive.plan(
+                CORE, clients.get("codex", CORE), "researcher", "light-research",
+                params=self.params(), cwd=self.work)
+        self.assertIn(f"drive.py: Codex tier {resolved.tier} uses {config['tiers'][str(resolved.tier)]}; "
+                      "update [clients.codex.tiers] in ~/.agent-pm/core.local.toml when models change\n",
+                      notice.getvalue())
+        self.assertIn("configured commands are subject to Codex approval", notice.getvalue())
+        self.assertEqual(launch.argv[launch.argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
+
+    def test_missing_model_emits_no_selection_hint(self):
+        config = clients.get("codex", CORE).config
+        client = type(clients.get("codex", CORE))({**config, "tiers": {}})
+        notice = io.StringIO()
+        with redirect_stderr(notice), self.assertRaisesRegex(compose.ConfigError, "no model for tier"):
+            drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+        self.assertNotIn("Codex tier", notice.getvalue())
+
+    def test_every_configured_role_and_task_has_a_headless_command(self):
+        config = clients.load_config("codex", CORE)
+        self.assertEqual(config["implementation"], "CodexClient")
+        self.assertIsInstance(clients.get("codex", CORE), clients.Client)
+        for role, tasks in clients.catalog("codex", CORE).items():
+            for task in (None, *tasks):
+                with self.subTest(role=role, task=task):
+                    launch, resolved = drive.plan(
+                        CORE, clients.get("codex", CORE), role, task, params=self.params(), cwd=self.work)
+                    argv = launch.argv
+                    self.assertEqual(argv[:3], ["codex", "exec", "--json"])
+                    self.assertEqual(argv[argv.index("-s") + 1], "workspace-write")
+                    self.assertIn("--skip-git-repo-check", argv)
+                    self.assertIn('approvals_reviewer="auto_review"', argv)
+                    self.assertIn('approval_policy="on-request"', argv)
+                    self.assertIn("sandbox_workspace_write.network_access=false", argv)
+                    self.assertEqual(argv[argv.index("-m") + 1], config["tiers"][str(resolved.tier)])
+                    self.assertIn(f"model_reasoning_effort={config['efforts'][resolved.effort]}", argv)
+                    self.assertIn("project_doc_max_bytes=0", argv)
+                    self.assertTrue(argv[-1].startswith("# Guide"))
+                    self.assertNotIn("--ignore-rules", argv)
+                    self.assertNotIn("--ignore-user-config", argv)
+                    self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
+                    self.assertEqual((launch.cwd, launch.env, launch.interactive),
+                                     (self.work, {"CODEX_HOME": os.path.realpath(os.path.expanduser("~/.codex"))}, []))
+                    self.assertIn("--add-dir", argv)
+                    self.assertEqual(drive.command(launch, "headless", clients.get("codex", CORE)), argv)
+                    with self.assertRaisesRegex(compose.ConfigError, "has no tui command"):
+                        drive.command(launch, "tui", clients.get("codex", CORE))
+
+    def test_missing_or_malformed_mappings_fail_before_launch(self):
+        config = clients.get("codex", CORE).config
+        for changed, message in (({"tiers": {}}, "no model for tier 2"),
+                                 ({"efforts": {}}, "no effort for 'high'"),
+                                 ({"tiers": []}, "tiers must be a table"),
+                                 ({"tiers": {"2": 7}}, "tier '2'"),
+                                 ({"efforts": {"high": 7}}, "effort 'high'")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(compose.ConfigError, message):
+                client = type(clients.get("codex", CORE))({**config, **changed})
+                drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.work)
+
+    def test_network_requires_a_boolean_and_is_explicit_for_each_choice(self):
+        config = clients.get("codex", CORE).config
+        client_type = type(clients.get("codex", CORE))
+        self.assertIs(config["shell_network"], False)
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), redirect_stderr(io.StringIO()):
+                client = client_type({**config, "shell_network": enabled})
+                launch = client.launch("prompt", run(), params=self.params(),
+                                       access=drive.Access(dirs=[], commands=[], cwd=self.work))
+                self.assertIn(f"sandbox_workspace_write.network_access={str(enabled).lower()}", launch.argv)
+        for bad in (0, 1, "false", None, []):
+            with self.subTest(bad=bad), self.assertRaisesRegex(compose.ConfigError,
+                                                                 r"\[clients.codex\].shell_network must be a boolean"):
+                client_type({**config, "shell_network": bad})
+
+    def test_add_dir_keeps_read_and_write_intent_and_commands_require_approval(self):
+        read_dir, write_dir = os.path.join(self.tmp.name, "read"), os.path.join(self.tmp.name, "write")
+        access = drive.Access(dirs=[read_dir, write_dir], commands=["make test"], cwd=self.work)
+        notice = io.StringIO()
+        with redirect_stderr(notice):
+            launch = clients.get("codex", CORE).launch("prompt", run(), params=self.params(), access=access)
+        self.assertEqual([launch.argv[i + 1] for i, value in enumerate(launch.argv) if value == "--add-dir"],
+                         [read_dir, write_dir])
+        self.assertIn('approvals_reviewer="auto_review"', launch.argv)
+        self.assertIn('approval_policy="on-request"', launch.argv)
+        self.assertEqual(launch.argv[launch.argv.index("-s") + 1], "workspace-write")
+        self.assertIn("configured commands are subject to Codex approval", notice.getvalue())
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", launch.argv)
+        self.assertFalse(any(".rules" in value for value in launch.argv))
+
+    def test_untrusted_project_codex_settings_are_rejected_from_cwd_or_ancestor(self):
+        client = clients.get("codex", CORE)
+        for location, link in (("cwd", False), ("ancestor", False), ("ancestor", True)):
+            with self.subTest(location=location, link=link):
+                root = tempfile.mkdtemp(dir=self.tmp.name)
+                work = os.path.join(root, "work")
+                os.makedirs(work)
+                path = os.path.join(work if location == "cwd" else root, ".codex")
+                if link:
+                    os.symlink(self.repo, path)
+                else:
+                    os.mkdir(path)
+                with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "user-config")}):
+                    with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                        client.launch("p", run(), params=self.params(workdir=work),
+                                      access=drive.Access(dirs=[], commands=[], cwd=work))
+                with redirect_stderr(io.StringIO()):
+                    trusted = client.launch("p", run(), params=self.params(workdir=work),
+                                            access=drive.Access(dirs=[], commands=[], cwd=work, project=True))
+                self.assertEqual(trusted.cwd, work)
+
+    def test_untrusted_project_codex_settings_are_rejected_on_resolved_ancestor(self):
+        client = clients.get("codex", CORE)
+        real_parent = os.path.join(self.tmp.name, "real")
+        os.makedirs(real_parent)
+        os.mkdir(os.path.join(real_parent, ".codex"))
+        real_work = os.path.join(real_parent, "work")
+        os.mkdir(real_work)
+        linked_work = os.path.join(self.tmp.name, "linked-work")
+        os.symlink(real_work, linked_work)
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": os.path.join(self.tmp.name, "user-config")}):
+            with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                client.launch("p", run(), params=self.params(workdir=linked_work),
+                              access=drive.Access(dirs=[], commands=[], cwd=linked_work))
+
+    def test_untrusted_codex_home_cannot_be_project_controlled(self):
+        client = clients.get("codex", CORE)
+        os.makedirs(self.work)
+        cases = [os.path.join(self.work, ".codex")]
+        lexical_link = os.path.join(self.work, "config-link")
+        os.symlink(self.repo, lexical_link)
+        cases.append(lexical_link)
+        real_inside_link = os.path.join(self.tmp.name, "external-link")
+        os.symlink(self.work, real_inside_link)
+        cases.append(real_inside_link)
+        for config_home in cases:
+            with self.subTest(config_home=config_home):
+                with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": config_home}):
+                    with self.assertRaisesRegex(compose.ConfigError, r"CODEX_HOME .*inside.*workdir"):
+                        client.launch("p", run(), params=self.params(),
+                                      access=drive.Access(dirs=[], commands=[], cwd=self.work))
+
+    def test_tilde_codex_home_keeps_literal_and_resolved_workdir_guards(self):
+        client = clients.get("codex", CORE)
+        os.makedirs(self.work)
+        os.symlink(self.repo, os.path.join(self.work, "config-link"))
+        os.symlink(self.work, os.path.join(self.tmp.name, "external-link"))
+        for config_home in ("~/work/config", "~/work/config-link", "~/external-link"):
+            with self.subTest(config_home=config_home), \
+                    unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": config_home}):
+                with self.assertRaisesRegex(compose.ConfigError, r"CODEX_HOME .*inside.*workdir"):
+                    client.launch("p", run(), params=self.params(),
+                                  access=drive.Access(dirs=[], commands=[], cwd=self.work))
+
+    def test_genuine_codex_home_outside_workdir_is_not_a_project_setting(self):
+        client = clients.get("codex", CORE)
+        home = os.path.join(self.tmp.name, ".codex")
+        work = os.path.join(home, "runs", "work")
+        os.makedirs(work)
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": home}), \
+                redirect_stderr(io.StringIO()):
+            launch = client.launch("p", run(), params=self.params(workdir=work),
+                                   access=drive.Access(dirs=[], commands=[], cwd=work))
+        self.assertEqual(launch.cwd, work)
+
+    def test_default_user_settings_with_custom_codex_home_are_not_project_settings(self):
+        default = os.path.join(self.tmp.name, ".codex")
+        os.mkdir(default)
+        work = os.path.join(self.tmp.name, "runs", "work")
+        os.makedirs(work)
+        custom = os.path.join(self.tmp.name, "custom-config")
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": custom}), \
+                redirect_stderr(io.StringIO()):
+            launch = clients.get("codex", CORE).launch("p", run(), params=self.params(workdir=work),
+                         access=drive.Access(dirs=[], commands=[], cwd=work))
+        self.assertEqual(launch.env["CODEX_HOME"], os.path.realpath(custom))
+        os.rmdir(default)
+        os.symlink(custom, default)
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.tmp.name, "CODEX_HOME": custom}), \
+                self.assertRaisesRegex(compose.ConfigError, "project Codex settings"):
+            clients.get("codex", CORE).launch("p", run(), params=self.params(workdir=work),
+                         access=drive.Access(dirs=[], commands=[], cwd=work))
+
+    def test_deep_event_does_not_drop_later_valid_output(self):
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        with unittest.mock.patch.object(json, "_default_decoder", decoder):
+            seen = list(clients.get("codex", CORE).events([
+                "[" * 2000 + "0" + "]" * 2000,
+                '{"type":"item.completed","item":{"type":"agent_message","text":"later"}}']))
+        self.assertEqual(seen, [clients.Event("stderr", "codex: invalid JSON event"),
+                               clients.Event("text", "later")])
+
+    def test_custom_codex_home_at_untrusted_project_ancestor_is_rejected(self):
+        client = clients.get("codex", CORE)
+        home = os.path.join(self.repo, ".codex")
+        work = os.path.join(self.repo, "run")
+        os.makedirs(home)
+        os.makedirs(work)
+        with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+            with self.assertRaisesRegex(compose.ConfigError, r"project Codex settings .*\.codex.*clean workdir"):
+                client.launch("p", run(), params=self.params(workdir=work),
+                              access=drive.Access(dirs=[], commands=[], cwd=work))
+
+    def test_untrusted_cwd_outside_workdir_fails_before_launch(self):
+        client = clients.get("codex", CORE)
+        with redirect_stderr(io.StringIO()), self.assertRaisesRegex(compose.ConfigError, "untrusted cwd"):
+            drive.plan(CORE, client, "researcher", "light-research", params=self.params(), cwd=self.repo)
+        trusted = client.launch("p", run(), params=self.params(),
+                                access=drive.Access(dirs=[TASKS], commands=[], cwd=self.repo, project=True))
+        self.assertEqual(trusted.cwd, self.repo)
+        self.assertNotIn("project_doc_max_bytes=0", trusted.argv)
+        self.assertEqual(trusted.argv[trusted.argv.index("--add-dir") + 1], TASKS)
+
+    def test_handover_requires_progress_child_results_and_terminal_outcome_in_order(self):
+        text = clients.get("codex", CORE).handover()
+        for fragment in (f"[{clients.PROGRESS}:<name>]", "immediately", "`report progress <name> <your report>`",
+                         "before calling the next tool", "every spawned child", "available wait mechanism",
+                         "collect each child result", "background work", "last tool action",
+                         "`report outcome --status <done|needs_input|failed>", "final reply is not an outcome"):
+            self.assertIn(fragment, text)
+        self.assertLess(text.index("`report progress"), text.index("wait for every spawned child"))
+        self.assertLess(text.index("collect each child result"), text.index("`report outcome"))
+        self.assertNotIn("wait_agent", text)  # the available child API can differ by runtime
+
+    def test_json_events_show_only_user_readable_text(self):
+        client = clients.get("codex", CORE)
+        lines = [
+            '{"type":"thread.started","thread_id":"11111111-2222-3333-4444-555555555555"}\n',
+            '{"type":"thread.started","thread_id":"123"}\n',
+            '{"type":"turn.started"}\n',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Hello\\nworld"}}\n',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"  "}}\n',
+            '{"type":"item.completed","item":{"type":"command_execution","command":"secret"}}\n',
+            '{"type":"error","message":"rate limit"}\n',
+            '{"type":"error","message":{"message":"nested problem"}}\n',
+            '{"type":"turn.failed","error":{"message":"turn failed"}}\n',
+            'not JSON\n',
+            '[]\n',
+        ]
+        seen = list(client.events(lines))
+        self.assertEqual(seen, [clients.Event("session", session_id=SID),
+                                clients.Event("stderr", "codex: invalid thread.started ID"),
+                                clients.Event("text", "Hello"), clients.Event("text", "world"),
+                                clients.Event("stderr", "rate limit"),
+                                clients.Event("stderr", "nested problem"),
+                                clients.Event("stderr", "turn failed"),
+                                clients.Event("stderr", "codex: invalid JSON event")])
+        self.assertNotIn("secret", str(seen))
 
 
 class Generic(Base):
@@ -307,9 +924,19 @@ class Generic(Base):
         self.assertEqual((plain.tier, plain.effort), (3, "low"))
         self.assertEqual((layered.tier, layered.effort), (1, "low"))
 
+    def test_plan_uses_public_resolution_and_checks_trusted_overlays(self):
+        client = Recorder({"tier": 3, "effort": "low"})
+        overlays = ({"effort": "high"}, {"roles": {"researcher": {"tier": 1}}})
+        _, planned = drive.plan(CORE, client, "researcher", "light-research", params=self.params(),
+                                layers=overlays, cwd=self.work)
+        resolved = compose.resolve(CORE, client, "researcher", "light-research", overlays=overlays, trusted=True)
+        self.assertEqual(planned, resolved)
+        with self.assertRaisesRegex(compose.ConfigError, "unknown key"):
+            drive.plan(CORE, client, "researcher", params=self.params(), layers=({"surprise": 1},), cwd=self.work)
+
     def test_access_fills_the_dirs_and_commands_report_then_gate_last(self):
         gate = "python3 /u/usage.py {{workdir}} *"
-        report = f"python3 /s/report.py --to {self.work}/run.jsonl *"
+        report = f"{compose.report_command('/s', self.params())} *"
         for name, cfg, repo, dirs, commands in (
                 ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, ["/t"], ["/s/x *", report, gate]),
                 ("no gate", {"commands": ["x"]}, None, ["/t"], ["x", report]),
@@ -336,7 +963,7 @@ class Generic(Base):
     def test_a_client_unknown_or_of_the_wrong_kind(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
-        self.assertIn("unknown client 'nope'", str(cm.exception))
+        self.assertEqual("client 'nope' has no module clients.nope", str(cm.exception))
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
@@ -535,7 +1162,7 @@ class Skill(Base):
                       "<repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
-        self.assertIn(f"\n# Parameters\n\n{compose.RULE}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
+        self.assertIn(f"\n# Parameters\n\n{compose.RULE}{SkillClient({}).approval()}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
                       "start and reused for this invocation\n- `<scripts>`: ", text)
         self.assertNotIn("- `report`:", text)
         self.assertTrue(text.endswith("\n# Input\n\nThe text after `<role>[:<task>]` in your "
@@ -759,10 +1386,10 @@ class ClaudeEvents(unittest.TestCase):
 
 class Handover(unittest.TestCase):
     def test_each_client_names_the_progress_mark(self):
-        for c in (claude(), clients.SkillClient({})):
+        for c in (claude(), SkillClient({})):
             self.assertIn(f"[{clients.PROGRESS}:<name>]", c.handover(), type(c).__name__)
         self.assertIn("before calling the next tool, send a text message containing only that line",
-                      clients.SkillClient({}).handover())
+                      SkillClient({}).handover())
         text = claude().handover()
         self.assertNotIn("ultracode", text)
         self.assertNotIn("progress:budget", text)
@@ -1089,6 +1716,16 @@ class Start(Base):
         self.assertEqual([e["text"] for e in errs], ["boom", "", "bang"])
         self.assertEqual(self.last("result")["error"], "the client exited 1")
 
+    def test_valid_report_survives_nonzero_exit_with_diagnostic_and_original_rc(self):
+        seen = []
+        r, _, _ = self.start([progress("start", "go"), outcome(DONE)], rc=7, sinks=[seen.append])
+        saved = self.last("result")
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (7, "done", "the client exited 7"))
+        self.assertEqual(self.read("out.md"), DONE["deliverable"])
+        self.assertEqual([e.kind for e in seen], ["progress", "outcome"])
+        self.assertEqual(saved["outcome"]["url"], os.path.join(self.work, "out.md"))
+        self.assertEqual((saved["error"], self.last("end")["rc"]), (r.error, 7))
+
     def test_stderr_is_recorded_between_the_reports_it_arrived_with(self):
         r, _, log = self.start([progress("start", "go"), said("hi"), outcome(DONE)], stderr=["warn\n"])
         self.assertEqual(r.returncode, 0)
@@ -1199,10 +1836,10 @@ class Start(Base):
                 self.assertEqual(self.read("out.md") if saved else self.exists("out.md"), saved or False)
                 self.assertEqual(self.last("result")["outcome"]["questions"], data.get("questions", []))
 
-    def test_failed_client_ignores_the_outcome_and_leaves_no_stale_outcome(self):
+    def test_failed_client_does_not_reuse_a_previous_runs_outcome(self):
         self.start([outcome(DONE)])
         seen = []
-        r, _, _ = self.start([outcome(DONE)], rc=143, sinks=[seen.append])
+        r, _, _ = self.start([], rc=143, sinks=[seen.append])
         self.assertEqual((r.returncode, r.outcome, seen), (143, None, []))
         self.assertFalse(self.exists("out.md"))
         self.assertEqual(self.last("result")["error"], "the client exited 143")
@@ -1399,7 +2036,8 @@ class Start(Base):
     def test_a_run_without_a_valid_outcome_records_its_error_and_sinks_get_no_outcome(self):
         for items, rc, error, kinds in (
                 ([said("bye")], 0, "the agent run returned no outcome", ["text"]),
-                ([outcome(DONE)], 143, "the client exited 143", []),
+                ([said("bye")], 143, "the client exited 143", ["text"]),
+                ([outcome({**DONE, "status": "maybe"})], 143, "the client exited 143", []),
                 ([outcome({**DONE, "status": "maybe"})], 0, "invalid outcome: status 'maybe'", [])):
             with self.subTest(items=items, rc=rc):
                 seen = []
@@ -1783,6 +2421,23 @@ class TuiRunner(Base):
         self.assertEqual([c[0] for c in calls], ["start"])
         self.assertEqual(self.fake.steps, [])
 
+    def test_reported_outcome_survives_a_tui_session_exiting_nonzero(self):
+        def status(name):
+            for event in (progress("start", "go"), outcome(DONE)):
+                drive.append_line(os.path.join(self.work, "run.jsonl"), json.dumps(event) + "\n")
+            return 7
+
+        r, calls, kinds, _ = self.start(api={"status": status})
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            saved = [json.loads(line) for line in f]
+        result = next(e for e in saved if e["kind"] == "result")
+        end = next(e for e in saved if e["kind"] == "end")
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (7, "done", "the client exited 7"))
+        self.assertEqual(kinds, ["progress", "outcome"])
+        self.assertEqual(result["outcome"]["url"], os.path.join(self.work, "out.md"))
+        self.assertEqual((result["error"], end["rc"]), ("the client exited 7", 7))
+        self.assertEqual([c[0] for c in calls], ["start"])
+
     def test_a_dead_pane_or_a_gone_session_ends_the_run_without_an_outcome(self):
         for state, result in ((3, (3, None, "the client exited 3")), (0, (0, None, "the agent run returned no outcome")),
                               (None, (0, None, "the agent run returned no outcome"))):
@@ -2006,6 +2661,12 @@ class Detach(Base):
                 self.assertFalse(os.path.exists(self.events))
                 self.assertFalse(os.path.exists(self.work))
                 self.assertEqual(os.listdir(home), [])
+
+    def test_discovered_client_driver_writes_its_cleanup_outcome(self):
+        argv = self.argv("--client", "fake", "--events", self.events, "--driver", "d-drive", "--dry-run")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(drive.main(argv, root=CORE), 0)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_dry_run_prints_the_plan_and_the_driver_and_starts_nothing(self):
         for runner in ("tui", "headless"):   # with --detach, headless takes --events
@@ -2292,6 +2953,116 @@ class Detach(Base):
                 self.assertEqual(self.lines(), [f"d-drive outcome {word}\n"])
                 os.unlink(self.events)
 
+    def test_malformed_client_config_keeps_detached_outcome_and_inline_authority(self):
+        original = clients.load_config
+        for name, expected in (("claude", True), ("skill", False), ("missing", False)):
+            with self.subTest(client=name):
+                def invalid(client_name, root):
+                    return {**original(client_name, root), "invalid_key": True}
+                with unittest.mock.patch.object(clients, "load_config", side_effect=invalid):
+                    code, calls = self.inner(argv=self.argv("--client", name, "--events", self.events,
+                                                           "--driver", "d-drive"))
+                self.assertEqual((code, calls), (2, []))
+                self.assertEqual(os.path.exists(self.events), expected)
+                if expected:
+                    self.assertEqual(self.lines(), ["d-drive outcome error\n"])
+                    os.unlink(self.events)
+
+    def test_startup_config_failures_preserve_module_authority(self):
+        operator = hermetic.home(self)
+        local = os.path.join(operator, "core.local.toml")
+        root = os.path.join(self.tmp.name, "startup-core")
+        os.mkdir(root)
+        config = os.path.join(root, "config.toml")
+        modules = {}
+        for name, runs in (("startup_running", True), ("startup_inline", False)):
+            module = types.ModuleType(f"clients.{name}")
+            module.Adapter = type("Adapter", (clients.Client,), {"runs": runs})
+            module.Other = type("Other", (clients.Client,), {"runs": not runs})
+            module.RUNS = module.Adapter.runs
+            modules[module.__name__] = module
+        self.enterContext(unittest.mock.patch.dict(sys.modules, modules))
+        cases = (("claude", "ClaudeClient", True), ("skill", "SkillClient", False),
+                 ("startup_running", "Adapter", True), ("startup_inline", "Adapter", False))
+        for name, implementation, runs in cases:
+            for failure in ("missing-table", "missing-implementation", "bad-implementation", "base-toml",
+                            "local-toml", "read-error", "constructor", "mismatch"):
+                if failure == "mismatch" and not name.startswith("startup_"):
+                    continue
+                for existing in (False, True):
+                    for pending in (False, True):
+                        with self.subTest(client=name, failure=failure, existing=existing, pending=pending):
+                            if os.path.exists(local):
+                                os.unlink(local)
+                            if os.path.exists(self.events):
+                                os.unlink(self.events)
+                            before = "existing events\n" if existing else ""
+                            if existing:
+                                Path(self.events).write_text(before)
+                            header = f"[clients.{name}]\n"
+                            text = header + f'implementation = "{implementation}"\n'
+                            if failure == "missing-table":
+                                text = "tier = 2\n"
+                            elif failure == "missing-implementation":
+                                text = header
+                            elif failure == "bad-implementation":
+                                text = header + 'implementation = "Missing"\n'
+                            elif failure == "base-toml":
+                                text = "[unfinished"
+                            elif failure == "local-toml":
+                                Path(local).write_text("[unfinished")
+                            elif failure == "constructor":
+                                text += "invalid_key = true\n"
+                            elif failure == "mismatch":
+                                text = header + 'implementation = "Other"\n'
+                            Path(config).write_text(text)
+                            with ExitStack() as stack:
+                                if failure == "read-error":
+                                    stack.enter_context(unittest.mock.patch.object(
+                                        clients, "load_config", side_effect=PermissionError("fixture read denied")))
+                                err = stack.enter_context(redirect_stderr(io.StringIO()))
+                                if pending:
+                                    signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)
+                                    os.kill(os.getpid(), signal.SIGHUP)
+                                    with self.assertRaises(SystemExit) as stopped:
+                                        drive.main(self.argv("--client", name, "--events", self.events,
+                                                             "--driver", "d-drive"), root=root)
+                                    self.assertEqual(stopped.exception.code, 129)
+                                else:
+                                    code = drive.main(self.argv("--client", name, "--events", self.events,
+                                                                "--driver", "d-drive"), root=root)
+                                    self.assertEqual(code, 2, err.getvalue())
+                                    self.assertIn("drive.py:", err.getvalue())
+                            after = Path(self.events).read_text() if os.path.exists(self.events) else ""
+                            if runs:
+                                self.assertRegex(after[len(before):], r"^\d\d:\d\d:\d\d d-drive outcome error\n$")
+                            else:
+                                self.assertEqual(after, before)
+                                self.assertEqual(os.path.exists(self.events), existing)
+
+    def test_unknown_or_invalid_module_has_no_event_authority(self):
+        module = types.ModuleType("clients.unresolved")
+        for failure in ("unknown", "import-error", "missing-capability", "invalid-capability"):
+            for existing in (False, True):
+                with self.subTest(failure=failure, existing=existing), ExitStack() as stack:
+                    if os.path.exists(self.events):
+                        os.unlink(self.events)
+                    if existing:
+                        Path(self.events).write_text("keep\n")
+                    if failure == "import-error":
+                        stack.enter_context(unittest.mock.patch("importlib.import_module",
+                                                                side_effect=ImportError("dependency unavailable")))
+                    elif failure != "unknown":
+                        if failure == "invalid-capability":
+                            module.RUNS = "yes"
+                        stack.enter_context(unittest.mock.patch.dict(sys.modules, {module.__name__: module}))
+                    code, calls = self.inner(argv=self.argv("--client", "unresolved", "--events", self.events,
+                                                           "--driver", "d-drive"))
+                    self.assertEqual((code, calls), (2, []))
+                    self.assertEqual(os.path.exists(self.events), existing)
+                    if existing:
+                        self.assertEqual(Path(self.events).read_text(), "keep\n")
+
     def test_a_driver_that_cannot_start_its_run_appends_error(self):
         code, calls = self.inner(argv=self.argv("--task", "essay", "--events", self.events, "--driver", "d-drive"))
         self.assertEqual((code, calls), (2, []))
@@ -2304,6 +3075,16 @@ class Detach(Base):
         with redirect_stderr(io.StringIO()):
             code = drive.main(self.argv("--events", self.events, "--driver", "d-drive"), root=CORE, popen=popen)
         self.assertEqual((code, self.lines()), (0, ["d-drive outcome done\n"]))
+
+    def test_driver_cleanup_does_not_reload_the_selected_client(self):
+        with unittest.mock.patch.object(clients, "load_module", wraps=clients.load_module) as module, \
+                unittest.mock.patch.object(clients, "load_config", wraps=clients.load_config) as config:
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                code = drive.main(self.argv("--events", self.events, "--driver", "d-drive", "--dry-run"), root=CORE)
+        self.assertEqual(code, 0)
+        module.assert_called_once_with("claude")
+        config.assert_called_once_with("claude", CORE)
+        self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_a_signal_ends_the_driver_with_one_error_line_and_kills_its_tui_session(self):
         killed = []
@@ -2332,10 +3113,12 @@ class Detach(Base):
         self.assertFalse(os.path.exists(self.work))
 
     def test_a_signal_as_the_driver_ends_still_leaves_its_outcome_line(self):
-        sigmask, sent = signal.pthread_sigmask, []
+        sigmask, sent, blocks = signal.pthread_sigmask, [], []
 
         def block_after_a_signal(how, signals):
-            if how == signal.SIG_BLOCK and not sent:
+            if how == signal.SIG_BLOCK:
+                blocks.append(how)
+            if how == signal.SIG_BLOCK and len(blocks) > 1 and not sent:
                 sent.append(how)
                 os.kill(os.getpid(), signal.SIGTERM)   # before the driver's end blocks them
             return sigmask(how, signals)
@@ -2533,7 +3316,7 @@ class Main(Base):
         entry = drive.session(self.work, SID)
         self.assertEqual((entry["cwd"], entry["project"]), (os.getcwd(), False))
         self.assertEqual(entry["resume"], f"cd {os.getcwd()} && claude --resume {SID} --add-dir {self.work}")
-        self.assertEqual(entry["transcript"], clients.claude.transcript(os.getcwd(), SID))
+        self.assertEqual(entry["transcript"], claude_client.transcript(os.getcwd(), SID))
 
     def test_input_is_text_from_the_argument_or_stdin_never_a_files_content(self):
         here = os.getcwd()
@@ -2552,7 +3335,7 @@ class Main(Base):
             self.assertNotIn("SECRET", cmd[2])
 
     def test_no_outcome_exits_1_and_a_client_failure_3(self):
-        for lines, rc, code, want in (((), 0, 1, "no outcome"), ([outcome(DONE)], 1, 3, "the client exited 1")):
+        for lines, rc, code, want in (((), 0, 1, "no outcome"), ((), 1, 3, "the client exited 1")):
             with self.subTest(code=code):
                 got, _, err, _ = self.run_main(lines=lines, rc=rc)
                 self.assertEqual(got, code)
@@ -2588,6 +3371,226 @@ class Main(Base):
                 code = drive.main(["--role", "dummy-tester", *argv], root=CORE)
             self.assertEqual(code, 2, argv)
             self.assertIn("client 'claude' needs --input, --out and --workdir", err.getvalue())
+
+
+class CodexRecoveryDriver(Base):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(unittest.mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
+        self.private = hermetic.home(self)
+        self.client = clients.get("codex", CORE)
+        self.snapshot = {"cwd": os.path.realpath(self.work), "project": False,
+                         "dirs": [os.path.realpath(self.work)],
+                         "commands": ["report *"], "model": "gpt-6-luna", "effort": "low",
+                         "network": False,
+                         "codex_home": os.path.realpath(os.path.join(os.path.dirname(self.private), ".codex"))}
+        self.native = "11111111-2222-4333-8444-555555555555"
+
+    def events(self):
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
+
+    def run_codex(self, native=None, *, resume=False, begun=None, sinks=(), popen=None):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
+        lines = stream({"type": "thread.started", "thread_id": native or self.native})
+        return drive.start(launch, run(), self.params(resume=resume), client=self.client,
+                           begun=begun, sinks=sinks, popen=popen or (lambda argv, **kw: FakeProc(lines)))
+
+    def test_snapshot_exists_before_spawn_and_native_mapping_before_later_events(self):
+        observed = []
+
+        def started():
+            state = codex._load_session(self.work, SID)
+            observed.append((state.snapshot, state.client_id, [e["kind"] for e in self.events()]))
+
+        def popen(argv, **kw):
+            self.assertEqual(codex._load_session(self.work, SID).client_id, None)
+            def lines():
+                yield from stream({"type": "thread.started", "thread_id": self.native})
+                yield from stream({"type": "item.completed", "item": {"type": "agent_message", "text": "later"}})
+            return FakeProc(lines())
+
+        seen = []
+        def sink(event):
+            if event.kind == "text":
+                seen.append((event.text, codex._load_session(self.work, SID).client_id,
+                             [e["kind"] for e in self.events()]))
+        self.run_codex(begun=started, popen=popen, sinks=[sink])
+        self.assertEqual(observed[0][:2], (self.snapshot, None))
+        self.assertEqual(observed[0][2], ["input", "session"])
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"], [self.native])
+        self.assertEqual(seen[0][:2], ("later", self.native))
+        self.assertIn("client_session", seen[0][2])
+
+    def test_resume_keeps_original_state_and_progress_and_rejects_changed_id(self):
+        self.run_codex()
+        drive.note(self.params().channel, "progress", name="review", text="first turn")
+        self.run_codex(resume=True)
+        self.assertIn("first turn", [e["text"] for e in self.events() if e["kind"] == "progress"])
+        self.assertEqual([e["client_id"] for e in self.events() if e["kind"] == "client_session"],
+                         [self.native, self.native])
+        with self.assertRaisesRegex(compose.ConfigError, "different client ID"):
+            self.run_codex("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", resume=True)
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
+
+    def test_resume_rejects_changed_snapshot_before_spawn(self):
+        self.run_codex()
+        launch = drive.Launch(["fake"], cwd=self.work,
+                              session_state={**self.snapshot, "network": True},
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
+        popen = unittest.mock.Mock()
+        with self.assertRaisesRegex(compose.ConfigError, "changed Codex recovery state"):
+            drive.start(launch, run(), self.params(resume=True), client=self.client, popen=popen, sinks=[])
+        popen.assert_not_called()
+        self.assertEqual(codex._load_session(self.work, SID).snapshot, self.snapshot)
+
+    def test_forged_run_record_cannot_change_trusted_mapping(self):
+        self.run_codex()
+        drive.note(self.params().channel, "client_session", sid=SID,
+                   client_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        drive.note(self.params().channel, "session", sid=SID, cwd="/", project=True)
+        self.assertEqual(codex._load_session(self.work, SID).client_id, self.native)
+        self.assertEqual(self.client.resume_location(self.work, SID), (os.path.realpath(self.work), False))
+        self.run_codex(resume=True)
+        self.assertEqual(codex._load_session(self.work, SID).snapshot["dirs"], [os.path.realpath(self.work)])
+
+    def test_driver_delegates_recovery_to_another_client(self):
+        recorded = []
+        class FutureClient(clients.Client):
+            def prepare_session(self, launch, params):
+                recorded.append(("prepare", launch.session_state, params.sid))
+            def record_session(self, params, session_id):
+                recorded.append(("session", params.sid, session_id))
+            def events(self, lines):
+                for _ in lines:
+                    yield clients.Event("session", session_id="future:session-1")
+                    yield clients.Event("text", "future output")
+        payload = {"cursor": {"offset": 3}}
+        launch = drive.Launch(["future"], cwd=self.work, session_state=payload)
+        seen = []
+        def popen(argv, **kw):
+            self.assertEqual(recorded, [("prepare", payload, SID)])
+            return FakeProc(["ready"])
+        def sink(event):
+            self.assertEqual(recorded[-1], ("session", SID, "future:session-1"))
+            seen.append(event)
+        drive.start(launch, run(), self.params(), client=FutureClient({}), sinks=[sink], popen=popen)
+        self.assertEqual(recorded, [("prepare", payload, SID), ("session", SID, "future:session-1")])
+        self.assertIsNone(codex._load_session(self.work, SID))
+        self.assertIn(clients.Event("text", "future output"), seen)
+
+    def test_driver_session_info_delegates_to_client(self):
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertTrue(info.resume_supported)
+        self.assertFalse(info.exists)
+
+    def test_no_native_id_does_not_count_as_a_recoverable_run(self):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
+        result = drive.start(launch, run(), self.params(), client=self.client, sinks=[],
+                             popen=lambda argv, **kw: FakeProc(stream({"type": "turn.completed"})))
+        self.assertIsNone(result.outcome)
+        self.assertIn("did not report a native session ID", result.error)
+        self.assertIsNone(codex._load_session(self.work, SID).client_id)
+
+    def test_startup_json_diagnostics_survive_without_accepting_unbound_reports(self):
+        cases = (({"type": "error", "message": "authentication required"}, "authentication required"),
+                 ({"type": "turn.failed", "error": {"message": "startup failed"}}, "startup failed"),
+                 ({"type": "thread.started", "thread_id": "invalid"}, "codex: invalid thread.started ID"))
+        for index, (event, diagnostic) in enumerate(cases):
+            with self.subTest(event=event):
+                params = self.params(sid=f"{SID}-{index}")
+                launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                                      writable_roots=[self.work, self.snapshot["codex_home"]])
+                seen = []
+                def popen(argv, **kw):
+                    items = [progress("start", "unbound progress"), outcome(DONE), *stream(event)]
+                    return FakeProc(feed(params.channel, items), rc=1)
+                result = drive.start(launch, run(), params, client=self.client, sinks=[seen.append], popen=popen)
+                self.assertEqual(seen, [clients.Event("stderr", diagnostic)])
+                self.assertEqual((result.returncode, result.outcome, result.error),
+                                 (1, None, "the client did not report a native session ID"))
+                self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"][-1], diagnostic)
+                self.assertIsNone(self.client.session_info(self.work, params.sid).client_id)
+                self.assertFalse(os.path.exists(params.out))
+
+    def test_startup_process_stderr_is_logged_without_accepting_unbound_output(self):
+        launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                              writable_roots=[self.work, self.snapshot["codex_home"]])
+        params, seen = self.params(), []
+        diagnostics = ["authentication failed", "please sign in"]
+        def popen(argv, **kw):
+            items = [progress("start", "unbound progress"), outcome(DONE),
+                     *stream({"type": "item.completed", "item": {"type": "agent_message", "text": "unbound text"}})]
+            return FakeProc(feed(params.channel, items), rc=7, stderr=[line + "\n" for line in diagnostics])
+        result = drive.start(launch, run(), params, client=self.client, sinks=[seen.append], popen=popen)
+        self.assertEqual(seen, [clients.Event("stderr", line) for line in diagnostics])
+        self.assertEqual([e["text"] for e in self.events() if e["kind"] == "stderr"], diagnostics)
+        self.assertEqual((result.returncode, result.outcome, result.error),
+                         (7, None, "the client did not report a native session ID"))
+        self.assertIsNone(self.client.session_info(self.work, SID).client_id)
+        self.assertFalse(os.path.exists(params.out))
+
+    def test_fsync_failure_stops_host_before_later_output_and_reports(self):
+        real_fsync = os.fsync
+        for target in ("state", "mirror"):
+            with self.subTest(target=target):
+                # Give each attempt its own recovery record.
+                sid = SID + target
+                params = self.params(sid=sid)
+                process = FakeProc(stream({"type": "thread.started", "thread_id": self.native},
+                                         {"type": "item.completed", "item": {"type": "agent_message", "text": "later"}}))
+                failed = []
+                def fsync(fd):
+                    # Read actual bytes at the durability boundary, after write/flush.
+                    info = os.fstat(fd)
+                    if stat.S_ISREG(info.st_mode):
+                        if target == "state":
+                            root = os.path.join(os.path.dirname(self.private), ".agent-pm", "core-sessions")
+                            paths = [os.path.join(root, name) for name in os.listdir(root) if name.startswith(".state-")]
+                        else:
+                            paths = [params.channel]
+                        for path in paths:
+                            if os.path.exists(path) and os.stat(path).st_ino == info.st_ino:
+                                with open(path) as f:
+                                    data = f.read()
+                                if (target == "state" and f'"client_id":"{self.native}"' in data
+                                        or target == "mirror" and '"kind": "client_session"' in data):
+                                    failed.append(data)
+                                    raise OSError(errno.ENOSPC, "cannot fsync mapping")
+                    return real_fsync(fd)
+                def popen(argv, **kw):
+                    drive.note(params.channel, "progress", name="start", text="queued report")
+                    return process
+                seen = []
+                launch = drive.Launch(["fake"], cwd=self.work, session_state=self.snapshot,
+                                      writable_roots=[self.work, self.snapshot["codex_home"]])
+                with unittest.mock.patch.object(os, "fsync", fsync):
+                    with self.assertRaisesRegex(OSError, "cannot fsync mapping"):
+                        drive.start(launch, run(), params, client=self.client, popen=popen, sinks=[seen.append])
+                self.assertTrue(failed, "must reach fsync after writing the native ID")
+                self.assertTrue(process.killed)
+                self.assertEqual(seen, [])
+                self.assertEqual(codex._load_session(self.work, sid).client_id,
+                                 None if target == "state" else self.native)
+
+    def test_session_query_exposes_native_file_and_manual_resume_without_usage_guess(self):
+        self.run_codex()
+        path = os.path.join(self.snapshot["codex_home"], "sessions", "2026", "10", "10",
+                            f"rollout-2026-10-10-{self.native}.jsonl")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {"id": self.native,
+                                                                "cwd": self.snapshot["cwd"]}}) + "\n")
+        info = drive.session_info(self.client, self.work, SID)
+        self.assertEqual((info.client_id, info.exists, info.transcript), (self.native, True, path))
+        self.assertIsInstance(info.last_activity, float)
+        self.assertIn(f"codex resume -s workspace-write", info.resume)
+        self.assertIn(self.native, info.resume)
+        self.assertFalse(info.usage_supported)
+        self.assertIsNone(info.usage)
 
 
 if __name__ == "__main__":

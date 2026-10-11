@@ -29,7 +29,7 @@ TEXT_KINDS = {"done": "done", "needs_input": "question", "failed": "failed"}
 RUN_STEPS = {"done": "run: in review", "needs_input": "run: needs input", "failed": "run: failed",
              "none": "run: no outcome", "give_up": "run: gave up"}
 STOP = {"kind": "hook", "event": "Stop"}
-SESSION = re.compile(r"(running|done|interrupted) · ")
+SESSION = re.compile(r"(running|done|failed|needs_input|interrupted) · ")
 HARNESS_TEXTS = {router.CAP_COMMENT: "cap", router.INTERRUPTED: "interrupted"}
 RESEARCH = ("Session registries in agent harnesses", "How do agent harnesses keep track of their sessions?")
 INSTRUCTIONS = "Write the PRD for a session registry."
@@ -246,8 +246,8 @@ class Segment(Flow):
     def agent_run(self):
         """Step `run: …` (RUN_STEPS) of the pending run: opens its gate, waits for its end; a tui run's TUI session is
         left with its claude running (launch checks the next run closes it). Then expects its write-back
-        (config.TASKS): a session comment done; a start comment and ledger step once per sid; an outcome's comment,
-        title, attachment, subscriber and move."""
+        (config.TASKS): a session comment with the outcome's status, else done; a start comment and ledger step once
+        per sid; an outcome's comment, title, attachment, subscriber and move."""
         p = self.pending
         if p is None:
             self.fail("agent_run() without a pending claim or resume")
@@ -262,7 +262,7 @@ class Segment(Flow):
                                                       f"{shown.stderr.strip()!r}")
                 self.tuis[p.ident] = p.tui
             want, task, account, report = self.want[p.ident], config.TASKS[p.role], ACCOUNTS[p.role], p.script.report
-            self.expect_session(p.ident, p.sid, "done")
+            self.expect_session(p.ident, p.sid, report["status"] if report else "done")
             first = "start" not in want.ledger.get(p.sid, [])
             comments, steps, changes = [(account, "start")] if first else [], ["start"], {}
             if report:

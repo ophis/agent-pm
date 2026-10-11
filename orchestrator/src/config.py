@@ -23,6 +23,7 @@ if os.environ.get("AGENT_PM_PATH"):
 # Module names this reserves: CLAUDE.md › Architecture (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import repo  # noqa: E402
@@ -87,7 +88,7 @@ def transcript(issue, sid, projects=PROJECTS):
         return None
     rd = run_dir(issue)
     entry = drive.session(rd, sid)
-    return clients.claude.transcript(entry["cwd"] if entry else rd, sid, projects)
+    return claude_client.transcript(entry["cwd"] if entry else rd, sid, projects)
 
 
 TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
@@ -244,23 +245,9 @@ def _fill_root(value, root):
     return value
 
 
-def _check_overlay_keys(table, allowed, where):
-    if extra := sorted(set(table) - allowed):
-        raise SystemExit(f"orchestrator/config.toml [core]: unknown key {extra[0]!r} in {where}")
-
-
 def overlay(root=ROOT):
-    """[core] of <root>/orchestrator/config.toml with LOCAL on top ({} without one), {{root}} filled; its keys are checked
-    here, since core checks only its own config's, the rest by load_config, which every consumer calls first."""
-    layer = _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
-    _check_overlay_keys(layer, compose.RUN_KEYS | {"roles"}, "the global table")
-    for r, role in layer.get("roles", {}).items():
-        try:
-            compose.check_old_keys(role, r, "core.")
-        except compose.ConfigError as e:
-            raise SystemExit(f"orchestrator/config.toml [core]: {e}") from None
-        _check_overlay_keys(role, compose.RUN_KEYS, f"roles.{r}")
-    return layer
+    """The operator's [core] overlay with {{root}} filled; compose.resolve validates its run keys."""
+    return _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
 
 
 def layers(root=ROOT):
@@ -277,7 +264,7 @@ def run_config(role, task=None, root=ROOT):
     """compose.RunConfig of the role (task: None or one it names): core config, then its `[clients.claude]`, then
     layers(root)."""
     core = os.path.join(root, "core")
-    return compose.load_run(core, role, task, layers=[clients.load_config("claude", core), *layers(root)])
+    return compose.resolve(core, clients.get("claude", core), role, task, overlays=layers(root), trusted=True)
 
 
 def writable(work=RUNS_DIR):

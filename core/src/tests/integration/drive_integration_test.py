@@ -11,7 +11,7 @@ import unittest
 TESTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.dirname(TESTS), TESTS]
 import hermetic  # noqa: E402
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import fake_claude  # noqa: E402
 from drive_test import SID, outcome, progress  # noqa: E402
 
@@ -35,7 +35,7 @@ class Integration(unittest.TestCase):
         self.scenario, self.log = os.path.join(self.root, "scenario.json"), os.path.join(self.root, "log.jsonl")
         self.env = {"PATH": fake_claude.install(bin_dir), "HOME": home, "PYTHONUTF8": "1",
                     fake_claude.ENV: self.scenario}
-        self.transcript = clients.claude.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
+        self.transcript = claude_client.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
 
     def argv(self, *extra) -> list[str]:
         return [sys.executable, DRIVE, "--role", self.ROLE, "--input", "Hello.", "--out", self.out, "--workdir",
@@ -164,12 +164,28 @@ class Outcomes(Integration):
             self.assertEqual(f.read(), "Hello.\n")
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
-    def test_nonzero_exit(self):
-        res = self.drive([outcome(DONE)], exit=1)
-        self.assertEqual(res.returncode, 3, res.stderr)
-        self.assertIn("drive.py: the client exited 1", res.stderr)
-        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
-        self.assertFalse(os.path.exists(self.out))
+    def test_nonzero_exit_preserves_report_for_recovery(self):
+        res = self.drive([progress("start", "echoing"), outcome(DONE)], exit=7)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("drive.py: status done", res.stderr)
+        with open(self.out) as f:
+            self.assertEqual(f.read(), DONE["deliverable"])
+        saved = self.last("result")
+        self.assertEqual((saved["outcome"]["status"], saved["outcome"]["url"], saved["error"],
+                          self.last("end")["rc"]), ("done", self.out, "the client exited 7", 7))
+        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual([e["kind"] for e in self.events()][-2:], ["result", "end"])
+
+    def test_nonzero_exit_without_valid_report_still_fails(self):
+        for steps in (["Thinking."], [outcome({**DONE, "status": "maybe"})]):
+            with self.subTest(steps=steps):
+                res = self.drive(steps, exit=7)
+                self.assertEqual(res.returncode, 3, res.stderr)
+                self.assertIn("drive.py: the client exited 7", res.stderr)
+                self.assertEqual((self.last("result")["error"], self.last("end")["rc"]),
+                                 ("the client exited 7", 7))
+                self.assertNotIn("outcome", self.last("result"))
+                self.assertFalse(os.path.exists(self.out))
 
 
 class Stderr(Integration):

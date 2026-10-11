@@ -22,7 +22,7 @@ import router  # noqa: E402
 import run  # noqa: E402
 import sessions  # noqa: E402
 import writeback  # noqa: E402
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 
@@ -94,13 +94,13 @@ class Inner(Base):
     def rec(self):
         return sessions.base(sid=SID, workdir=self.rd, started_at=NOW)
 
-    def harness(self, rc):
+    def harness(self, rc, outcome=None):
         """The session start and end posts: harness account, bounded by sessions.LIMIT."""
         self.assertEqual({t for (_, service, _), t in zip(self.gql.calls, self.gql.timeouts) if service is None},
                          {sessions.LIMIT})
         find = ("find", None, {"i": ID, "p": f"Run {SID} · "})
         return [find, ("comment", None, {"i": ID, "b": sessions.body(self.rec())}),
-                find, ("comment", None, {"i": ID, "b": sessions.body(self.rec(), rc, NOW)})]
+                find, ("comment", None, {"i": ID, "b": sessions.body(self.rec(), rc, NOW, outcome=outcome)})]
 
     def test_build_run(self):
         """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start
@@ -153,15 +153,31 @@ class Inner(Base):
                                             "run no-outcome TASK-7 error=the agent run returned no outcome"])
         self.assertEqual(self.gql.calls, self.harness(0))
 
-    def test_nonzero_exit(self):
+    def test_nonzero_exit_keeps_a_valid_reported_outcome(self):
         def lines():
             reported(self.rd, outcome(DONE))
             yield from ()
         self.lines, self.rc = lines(), 1
         self.assertEqual(self.inner(), 0)
-        self.assertEqual(self.said()[-2:], [f"run end TASK-7 sid={SID} exit=1", "run no-outcome TASK-7 error=the client exited 1"])
-        self.assertFalse(os.path.exists(self.runs))
-        self.assertEqual(self.gql.calls, self.harness(1))
+        self.assertEqual(self.said(), [f"run launch TASK-7 mode=new sid={SID}",
+                                       f"run end TASK-7 sid={SID} exit=1",
+                                       f"writeback step TASK-7 sid={SID} step=comment",
+                                       f"writeback step TASK-7 sid={SID} step=attach:{PR}",
+                                       f"writeback step TASK-7 sid={SID} step=move:in_review"])
+        self.assertIn(f"Run {SID} · done ·", self.gql.calls[-1][2]["b"])
+        self.assertIn("exit 1", self.gql.calls[-1][2]["b"])
+        posts = self.harness(1, outcome=drive.Outcome(**DONE))
+        self.assertEqual(self.gql.calls, [*posts[:2],
+                                          ("read", KEY, {"i": UUID}),
+                                          ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
+                                          ("comment", KEY, {"i": UUID, "b": "Build ready: Opened the PR."}),
+                                          ("attach", KEY, {"i": UUID, "u": PR, "t": "TASK-7: Session registry"}),
+                                          ("reread", KEY, {"i": UUID}),
+                                          ("state", KEY, {"i": UUID, "s": STATES["in_review"]}),
+                                          *posts[2:]])
+        result, end = self.events()[-2:]
+        self.assertEqual((result["outcome"]["url"], result["error"], end["rc"]),
+                         (PR, "the client exited 1", 1))
 
     def test_sighup_kills_claude(self):
         def lines():
@@ -304,7 +320,7 @@ class Inner(Base):
             entry = drive.session(self.rd, SID)
             self.assertEqual((entry["cwd"], entry["project"]), (there, False))
             self.assertIn(f"cd '{there}' && claude --resume {SID} --add-dir '{self.rd}'", self.gql.calls[1][2]["b"])
-        self.assertEqual(config.transcript(ID, SID, self.projects), clients.claude.transcript(there, SID, self.projects))
+        self.assertEqual(config.transcript(ID, SID, self.projects), claude_client.transcript(there, SID, self.projects))
 
     def test_a_failed_session_comment_is_a_registry_error(self):
         self.gql = Gql(node(), lambda name, v: RuntimeError("down") if name == "find" else None)

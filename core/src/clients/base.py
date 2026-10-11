@@ -10,9 +10,9 @@ from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, Ru
 
 @dataclass(frozen=True)
 class Access:
-    """An agent run's client-neutral constraints, as absolute paths and commands to pre-approve."""
-    dirs: list[str]       # extra dirs the agent run may reach
-    commands: list[str]   # shell commands to pre-approve
+    """An agent run's client-neutral access intent; the selected client decides its effective grants."""
+    dirs: list[str]       # combined extra dirs from read/write; effective access is client-specific
+    commands: list[str]   # client interpretation: core/CLAUDE.md › An agent run's command
     cwd: str = ""         # the dir the agent run starts in (drive.place)
     project: bool = False   # whether the client loads cwd's project settings and instructions (drive.place)
 
@@ -29,6 +29,8 @@ class Launch:
     status_line: bool = False   # the config's status_line, set by drive.plan, for the tui runner
     per_column: int | None = None   # the config's workers_per_column, set by drive.plan, for the tui runner
     retile: str | None = None       # the config's grid_retile, set by drive.plan, for the tui runner
+    session_state: dict | None = None  # opaque JSON recovery payload; the client validates its own fields
+    writable_roots: list[str] = field(default_factory=list)  # effective writable locations, including client storage
 
 
 @dataclass(frozen=True)
@@ -37,11 +39,26 @@ class Event:
     both through report.py; or, from the driver, a line of the headless client's stderr (`stderr`), or a progress point
     the run never reported (`missing`, named by it); or a turn end (`stop`, the interactive client's Stop hook, whose
     `pending` counts the background work still running; meaningful on `stop` only)."""
-    kind: Literal["text", "stderr", "progress", "outcome", "missing", "stop"]
+    kind: Literal["text", "stderr", "progress", "outcome", "missing", "stop", "session"]
     text: str = ""
     name: str = ""
     outcome: dict | None = None
     pending: int = 0
+    session_id: str = ""  # native client ID reported by a session event
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """Native session capabilities and current metadata, if the client can inspect them."""
+    resume_supported: bool = False
+    inspection_supported: bool = False
+    client_id: str | None = None
+    exists: bool = False
+    transcript: str | None = None
+    last_activity: float | None = None  # filesystem activity, seconds since epoch
+    resume: str | None = None
+    usage_supported: bool = False
+    usage: dict | None = None
 
 
 class Client:
@@ -68,6 +85,13 @@ class Client:
         """How prompts name core's team/tasks/ dir: its absolute path unless the client says otherwise."""
         return os.path.join(os.path.abspath(root), TEXT, "tasks")
 
+    def approval(self) -> str:
+        """Client policy appended to the Parameters rule, including its punctuation."""
+        return ""
+
+    def report_interpreter(self) -> str:
+        return "python3"
+
     def handover(self) -> str:
         """Prompt text (Output › Return): how the agent run returns its outcome and reports progress; a code span
         starting with `report` names the report command (compose.PARAMETERS)."""
@@ -85,6 +109,22 @@ class Client:
         """The agent run's stdout as text Events."""
         for line in lines:
             yield Event("text", line.rstrip("\n"))
+
+    def prepare_session(self, launch: Launch, params: RunParams) -> None:
+        """Persist or verify recovery state before spawning a recoverable launch."""
+        raise ConfigError(f"{type(self).__name__} does not support recovery state")
+
+    def record_session(self, params: RunParams, session_id: str) -> None:
+        """Persist the native ID before any later output or report is delivered."""
+        raise ConfigError(f"{type(self).__name__} does not support native session recording")
+
+    def resume_location(self, workdir: str, sid: str) -> tuple[str, bool] | None:
+        """Authoritative saved cwd/project when this client has its own recovery state."""
+        return None
+
+    def session_info(self, workdir: str, sid: str) -> SessionInfo:
+        """Native session capabilities and metadata; unsupported unless a client overrides it."""
+        return SessionInfo()
 
     def inline(self, prompt: str) -> str:
         """The prompt for the calling conversation to follow."""

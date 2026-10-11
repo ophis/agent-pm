@@ -16,7 +16,7 @@ import hermetic  # first: config reads HOME at import
 import board_ids
 import config
 sys.path.append(os.path.join(config.ROOT, "core", "src", "tests", "integration"))
-import clients  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 import fake_claude  # noqa: E402
 import fake_gh  # noqa: E402
 import fake_linear  # noqa: E402
@@ -208,7 +208,7 @@ class Flow(unittest.TestCase):
 
     def transcript_path(self, ident, sid):
         """sid's transcript file, the fake claude's in the issue's workdir."""
-        return clients.claude.transcript(self.workdir(ident), sid, os.path.join(self.home, ".claude", "projects"))
+        return claude_client.transcript(self.workdir(ident), sid, os.path.join(self.home, ".claude", "projects"))
 
     def transcript(self, ident, sid):
         """The lines of sid's transcript (transcript_path)."""
