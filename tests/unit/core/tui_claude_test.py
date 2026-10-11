@@ -2697,6 +2697,13 @@ def nap(seconds):
     os.write(2, b'%r\\n' % seconds)
 time.sleep, time.monotonic = nap, lambda: now[0]
 """
+# open() of a process faked for one path: PROC_PATH reads PROC_STAT (Linux's /proc/<pid>/stat)
+FAKE_PROC = """import builtins, io
+real_open = builtins.open
+def fake_open(path, *args, **kwargs):
+    return io.BytesIO(PROC_STAT) if path == PROC_PATH else real_open(path, *args, **kwargs)
+builtins.open = fake_open
+"""
 
 
 class Exec(unittest.TestCase):
@@ -2785,6 +2792,19 @@ class Exec(unittest.TestCase):
                 self.assertEqual((res.returncode, res.stdout), (0, f"{state}\n"), res.stderr)
                 self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
         self.assertIsNone(old.returncode)
+
+    def test_a_zombie_ends_the_wait(self):
+        """Where /proc/<pid>/stat exists, state Z (the field after the last `)`) counts as gone: it has exited and
+        released its locks, only not yet reaped."""
+        old, _ = self.child(60)
+        for stat_line, naps in ((b"%d (python3) Z 1 1 1" % old.pid, 0),
+                                 (b"%d (a) Z (b) S 1 1 1" % old.pid, tui_claude.RESPAWN_WAIT)):
+            with self.subTest(stat=stat_line):
+                prelude = f"PROC_PATH, PROC_STAT = {f'/proc/{old.pid}/stat'!r}, {stat_line!r}\n{FAKE_PROC}{FAKE_CLOCK}"
+                res = self.run_exec([sys.executable, "-c", ALIVE, str(old.pid)], {}, self.root, {}, prelude=prelude,
+                                    after=old.pid)
+                self.assertEqual((res.returncode, res.stdout), (0, "alive\n"), res.stderr)
+                self.assertAlmostEqual(sum(float(x) for x in res.stderr.split()), naps, delta=tui_claude.POLL / 2)
 
     def test_default_signal_dispositions(self):
         for sig in (signal.SIGPIPE, signal.SIGXFSZ):

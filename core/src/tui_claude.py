@@ -116,7 +116,8 @@ PARENT_KEYS = ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_JOB_DIR")
 # Run in the pane as `python -I -c EXEC <file>`. tmux would misread a '#' or a trailing ';', so it has neither.
 # Python ignores SIGPIPE and SIGXFSZ, and execve keeps that: reset them, as Popen does. The handover's `block` signals
 # are blocked before the file goes, and execve keeps them blocked: none ends argv before it can handle them. Its `after`
-# (respawn: the pane's old process) is waited for, once the file is gone, until kill 0 fails, at most RESPAWN_WAIT s.
+# (respawn: the pane's old process) is waited for, once the file is gone, until kill 0 fails or (Linux) its
+# /proc/<pid>/stat state, after the last ')', is Z (exited, not yet reaped), at most RESPAWN_WAIT s.
 EXEC = f"""import json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
@@ -124,6 +125,10 @@ os.unlink(sys.argv[1])
 for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
     try: os.kill(h['after'], 0)
     except OSError: break
+    try:
+        with open('/proc/%d/stat' % h['after'], 'rb') as f: z = f.read().rsplit(b')', 1)[-1].split()[:1] == [b'Z']
+    except OSError: z = False
+    if z: break
     time.sleep({POLL})
 os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
