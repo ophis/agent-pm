@@ -46,7 +46,6 @@ def said(text):
 
 
 def reported(rd, *lines):
-    """Appends to the agent run's report channel, as core's report.py does."""
     with open(os.path.join(rd, compose.CHANNEL), "a") as f:
         f.writelines(json.dumps(line) + "\n" for line in lines)
 
@@ -56,7 +55,6 @@ def outcome(data):
 
 
 class Base(RunBase):
-    """run_fixtures' Base with a fake claude (popen) for the inner."""
     def setUp(self):
         super().setUp()
         self.popen_calls, self.proc = [], None
@@ -93,7 +91,6 @@ class Inner(Base):
         return sessions.base(sid=SID, workdir=self.rd, started_at=NOW)
 
     def harness(self, rc, outcome=None):
-        """The session start and end posts: harness account, bounded by sessions.LIMIT."""
         self.assertEqual({t for (_, service, _), t in zip(self.gql.calls, self.gql.timeouts) if service is None},
                          {sessions.LIMIT})
         find = ("find", None, {"i": ID, "p": f"Run {SID} · "})
@@ -101,8 +98,6 @@ class Inner(Base):
                 find, ("comment", None, {"i": ID, "b": sessions.body(self.rec(), rc, NOW, outcome=outcome)})]
 
     def test_build_run(self):
-        """No --task: the prompt has the run pick its task, its start report naming the pick reaches the start
-        comment."""
         pick = "light-build: a template wording tweak, like TASK-226."
 
         def lines():
@@ -338,7 +333,6 @@ class Inner(Base):
         self.assertEqual(self.gql.calls, self.harness(1))
 
     def test_a_config_role_or_task_error_logs_config_error_and_end(self):
-        """Exit 1, `config-error` then `end`, and nothing else: no runs line, no Linear call, no claude."""
         def bad_config():
             self.write(os.path.join(self.root, "orchestrator", "config.toml"), "team = 1\n")
         cases = [(None, dict(assignee="x@y.com"), "'x@y.com' is not a role account"),
@@ -353,7 +347,7 @@ class Inner(Base):
                 self.assertEqual(self.inner(**kw), 1)
                 error, end = self.said()[n:]
                 want = f"run config-error TASK-7 reason={reason}"
-                self.assertEqual(error[:len(want)] if setup else error, want)   # the config one goes on
+                self.assertEqual(error[:len(want)] if setup else error, want)
                 self.assertEqual(end, f"run end TASK-7 sid={SID} exit=1")
                 self.assertEqual(self.err, "")
                 self.assertFalse(os.path.exists(self.runs))
@@ -368,7 +362,6 @@ class Inner(Base):
 
 
 class Cli(Base):
-    """run.py's arguments, checked before the inner starts."""
     def argv(self):
         return ["--uuid", UUID, "--target", "Ophis/Agent-PM", *forwarded(), "--input", "Do it."]
 

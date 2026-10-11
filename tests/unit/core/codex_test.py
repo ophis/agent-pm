@@ -211,7 +211,6 @@ else:
 
 class ImplicitWritableRoots(unittest.TestCase):
     def test_temporary_home_rejected_on_create_and_load_without_saved_roots(self):
-        # No helper patch: loading must reject the location before trusting any file content.
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home}):
             work = os.path.realpath("/isolated-work")
             root = os.path.join(home, ".agent-pm", "core-sessions")
@@ -254,11 +253,6 @@ WORDS = (("SessionStart", "session"), ("UserPromptSubmit", "working"), ("Permiss
          ("Stop", "done"), ("Interrupt", "interrupt"))
 RESERVED = ": crew.py sets a Codex worker's hooks, session and cwd"
 UNBOUND = f"Codex worker {SID} has no native session: it never took a prompt; start a new worker"
-# The worker's app-server: the repo's fake codex (fake_codex.py, its scenario in $FAKE_CODEX_SCENARIO), its catalog
-# broken as $FAKE_APP says: die (the first n runs exit 1 at once), drop (eventNames), change (eventName → fields of
-# our entry), extra (entries), error (every request after initialize answered with it), deaf (a child in its process
-# group; hooks/list never answered, stdin's end ignored), cwds (hooks/list's data: one entry per cwd given, whatever
-# was asked). Runs and pids are appended to files beside $FAKE_APP.
 APP_SERVER = """import json, os, subprocess, sys, time
 fakes = sys.argv.pop(1)
 app_file = os.environ["FAKE_APP"]
@@ -313,7 +307,6 @@ sys.exit(fake_codex.app_server(sys.argv[1:]))
 
 
 def hook_args(events: str, record: str, tmux: str) -> list[str]:
-    """A Codex worker's hook -c args (core/src/clients/_codex_worker.py): resolved paths."""
     args = []
     python, hook, tmux = map(os.path.realpath, (sys.executable, HOOK, tmux))
     for event, word in WORDS:
@@ -325,8 +318,6 @@ def hook_args(events: str, record: str, tmux: str) -> list[str]:
 
 @contextlib.contextmanager
 def virtual_time():
-    """time.monotonic as a clock that time.sleep advances, and select.select too, by its whole timeout, when nothing
-    is ready within 0.5 s."""
     now, real_select = [time.monotonic()], select.select
 
     def wait(rlist, wlist, xlist, timeout):
@@ -343,9 +334,6 @@ def virtual_time():
 
 
 class Worker(unittest.TestCase):
-    """CodexClient.worker and worker_reply (clients/_codex_worker.py) with a fake app-server (APP_SERVER), in a HOME
-    of the test's own."""
-
     def setUp(self):
         self.home = os.path.realpath(os.path.dirname(hermetic.home(self)))
         self.workers = os.path.join(self.home, ".agent-pm", "core-sessions", "workers")
@@ -408,7 +396,6 @@ class Worker(unittest.TestCase):
             return 0
 
     def make_record(self, native=NATIVE, **fields):
-        """The worker record, its dirs made as worker() makes them."""
         path = os.path.dirname(self.workers)
         for d in (path, self.workers):
             if not os.path.isdir(d):
@@ -422,7 +409,6 @@ class Worker(unittest.TestCase):
         return hook_args(self.events, self.record, self.tmux)
 
     def state(self, hooks):
-        """The hooks.state -c arg trusting hooks as the fake's catalog lists them."""
         entries = fake_codex.catalog(fake_codex.configure([("config", a) for a in hooks[1::2]]), self.codex_home, None)
         return "hooks.state={" + ",".join(f'{json.dumps(e["key"])}={{trusted_hash={json.dumps(e["currentHash"])}}}'
                                           for e in entries) + "}"
@@ -433,8 +419,6 @@ class Worker(unittest.TestCase):
         return str(cm.exception)
 
     def test_a_new_worker(self):
-        """BEL notifications first, the hooks, their trust, the user's flags, `--` and the prompt; a new record; the
-        app-server given the hooks and the user's -c, --enable and --disable items, asked for the worker's cwd."""
         flags = ("-m", "gpt-x", "-c", 'tui.notification_method="auto"', "--config=model_verbosity=\"low\"",
                  "--enable", "apps", "--disable=memory")
         with mock.patch.object(os, "fsync", wraps=os.fsync) as sync:
@@ -488,7 +472,6 @@ class Worker(unittest.TestCase):
                                  f"{name} not found on PATH")
 
     def test_a_resumed_worker(self):
-        """resume <native> -C <cwd> first; the record's CODEX_HOME whatever the env's; the stored executable."""
         self.make_record()
         stored = os.path.join(self.dir, "stored", "codex")
         os.mkdir(os.path.dirname(stored))
@@ -518,8 +501,6 @@ class Worker(unittest.TestCase):
         self.assertEqual(cmd.argv[-4:], ["--", "resume", "-C", "/x"])
 
     def test_protected_paths_refused(self):
-        """A writable root (the cwd, each --add-dir) holding or inside core's src/, the record dir, the tmux binary, the
-        codex executable (resolved) or the events file."""
         core = os.path.realpath(os.path.join(ROOT, "core"))
         m, cx, links = (os.path.join(self.dir, n) for n in ("m", "cx", "links"))
         for d in (m, cx, links):
@@ -638,7 +619,6 @@ class Worker(unittest.TestCase):
         self.assertEqual(self.fails(), f'codex hooks/list: errors for {self.cwd}: ["bad project config"]')
 
     def test_the_one_answer_is_used_whatever_its_cwd_says(self):
-        """One cwd asked: one entry wanted, its cwd as Codex writes it (here the other form of /private/...)."""
         other = self.cwd.removeprefix("/private") if self.cwd.startswith("/private/") else "/private" + self.cwd
         self.breaks(cwds=[other])
         hooks = self.hooks()
@@ -681,7 +661,6 @@ class Worker(unittest.TestCase):
         self.assertEqual(self.runs(), 2)
 
     def test_no_answer_in_20_s_kills_its_process_group(self):
-        """Its stdin closed, it neither exits nor closes stdout within 5 s: its process group is killed."""
         self.breaks(deaf=True)
         with virtual_time():
             self.assertEqual(self.fails(), "codex hooks/list: no answer in 20 s")

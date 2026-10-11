@@ -26,9 +26,6 @@ def fail(stderr):
 
 
 class Fake:
-    """A `run` that answers by argv prefix (a list answers in turn) and records every call; `gh repo clone` makes the
-    checkout's .git."""
-
     def __init__(self, answers):
         self.answers, self.calls, self.timeouts = answers, [], []
 
@@ -50,8 +47,6 @@ class Fake:
 
 
 class Real(Fake):
-    """Real git; `gh` as in Fake; an origin's URL reads as URL."""
-
     def __call__(self, argv, timeout):
         if argv[0] != "git":
             return super().__call__(argv, timeout)
@@ -81,7 +76,6 @@ def pr_list(rows):
 
 
 def pr(base="main"):
-    """The branch's own PR 7."""
     return {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": base, "isCrossRepository": False,
             "author": {"login": "me"}}
 
@@ -158,7 +152,6 @@ class Parse(unittest.TestCase):
                 repo.Repo.parse(spec)
 
     def test_url_forms(self):
-        """url_slug keeps the case as written; origin lowercases it."""
         for url, want in (("git@GitHub.com:O/N.git", "GitHub.com/O/N"), ("https://ghe.io/o/n", "ghe.io/o/n"),
                           ("ssh://git@ghe.io:2222/o/n.git", "ghe.io/o/n"), ("ssh://ghe.io/o/n", "ghe.io/o/n"),
                           ("https://user@github.com/o/n", "github.com/o/n"),
@@ -303,7 +296,6 @@ class Worktree(Base):
         self.assertFalse(any("checkout" in c or "worktree" in c for c in run.calls))
 
     def test_the_checkout_is_named_by_owner_and_name_else_by_the_branch(self):
-        """One --dir: each row's checkout lands beside the earlier ones (the same name under two owners included)."""
         for spec, branch, argv, path in (("a/n", "TASK-1-x", [], "a/n-TASK-1-x"), ("b/n", "TASK-1-x", [], "b/n-TASK-1-x"),
                                          ("o/n", "feat/x", [], "o/n-feat-x"),
                                          ("o/n", "feat/x", ["--name", "TASK-1"], "o/n-TASK-1")):
@@ -397,7 +389,6 @@ class Worktree(Base):
                 self.assertIn("unsafe branch name", err)
 
     def refused(self, argv):
-        """argparse's stderr for `argv`, which it must refuse."""
         err = io.StringIO()
         with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
             repo.main(argv, run=Fake([]), config=self.none)
@@ -414,7 +405,6 @@ class Worktree(Base):
                 self.assertIn(f"{opt} given twice", self.refused([cmd, *argv]))
 
     def test_a_bad_command_line_is_refused(self):
-        """--branch is required; only worktree and status exist (prepare and checkout are gone); --base is status's."""
         for argv, want in ((["worktree", "--dir", self.dir, "o/n"], "--branch"),
                            (["status", "--dir", self.dir, "o/n"], "--branch"),
                            (["prepare", "--dir", self.dir, "--branch", "b", "o/n"], "prepare"),
@@ -430,7 +420,6 @@ class Retry(unittest.TestCase):
              "error: could not lock config file .git/config: File exists")
 
     def git(self, *results, args=("fetch", "origin")):
-        """(stdout or the RuntimeError, run, the mocked sleep)."""
         run = Fake([(["git"], list(results))])
         with unittest.mock.patch.object(repo.time, "sleep") as sleep:
             try:
@@ -467,8 +456,6 @@ class Retry(unittest.TestCase):
 
 
 class Clone(unittest.TestCase):
-    """A real clone of a bare repo, its origin reading as github.com/o/n."""
-
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -490,7 +477,6 @@ class Clone(unittest.TestCase):
         self.none = os.devnull
 
     def listing(self, *paths):
-        """A config.toml whose trusted_dirs lists `paths`."""
         path = os.path.join(self.tmp, "config.toml")
         with open(path, "w") as f:
             f.write(f"trusted_dirs = {json.dumps(paths)}\n")
@@ -631,7 +617,7 @@ class Local(Clone):
                 code = repo.main(["status", "--dir", self.dir, "--branch", "TASK-7-x", *argv, self.clone], run=run, out=out,
                                  err=err, config=self.none)
                 self.assertEqual(code, want, err.getvalue())
-                if want == 0:   # status with a local path
+                if want == 0:
                     self.assertEqual({k: json.loads(out.getvalue())[k] for k in ("pr", "base")}, {"pr": None, "base": "main"})
                     self.assertTrue(run.ran("gh", "pr", "list", "--repo", "github.com/o/n"))
 
@@ -666,7 +652,6 @@ class LocalSafety(Clone):
         self.assertEqual(git("-C", self.wt, "config", "--worktree", "--get", "core.symlinks"), "false")
 
     def symlinks(self, wt=None):
-        """Worktree `wt`'s own core.symlinks, else the clone's; None when unset."""
         res = subprocess.run(["git", "-C", wt or self.clone, "config", *(["--worktree"] if wt else []), "--get",
                               "core.symlinks"], capture_output=True, text=True)
         return res.stdout.strip() if res.returncode == 0 else None
@@ -676,7 +661,6 @@ class LocalSafety(Clone):
         git("-C", self.clone, "worktree", "prune")
 
     def half_made(self):
-        """A worktree whose checkout never finished."""
         git("-C", self.clone, "config", "extensions.worktreeConfig", "true")
         git("-C", self.clone, "worktree", "add", "-q", "--no-checkout", "-b", "TASK-1-x", self.wt, "origin/main")
 
@@ -714,8 +698,6 @@ class LocalSafety(Clone):
         self.assertEqual(os.readlink(link), "/etc/passwd")
 
     def test_only_a_listed_clones_worktree_gets_symlinks_and_the_clone_keeps_its_config(self):
-        """trusted_dirs lists clones by real path, in the config or its local file; listing another clone of the same
-        origin trusts no other."""
         link = self.link_commit()
         other, alias = os.path.join(self.tmp, "clone2"), os.path.join(self.tmp, "alias")
         git("clone", "-q", self.bare, other)
@@ -738,7 +720,7 @@ class LocalSafety(Clone):
                         self.assertEqual(os.readlink(link), "/etc/passwd")
                     else:
                         self.assertTrue(os.path.isfile(link) and not os.path.islink(link))
-                    for scope in (["--worktree"], []):   # set per worktree, and so in effect
+                    for scope in (["--worktree"], []):
                         self.assertEqual(git("-C", self.wt, "config", *scope, "--get", "core.symlinks"), str(on).lower())
                     self.assertEqual(git("-C", self.wt, "status", "--porcelain"), "")
                     self.assertIsNone(self.symlinks())
@@ -749,7 +731,6 @@ class LocalSafety(Clone):
                         os.remove(local)
 
     def test_an_existing_worktree_must_have_the_listed_setting(self):
-        """Made by git (unset), unlisted (false) or listed (true): run with the other setting, refused and unchanged."""
         self.file_commit()
         listed = self.listing(self.clone)
         for made, run_config, found, gives in (("by git", None, "unset", "false"), ("unlisted", listed, "false", "true"),
@@ -845,7 +826,6 @@ class Status(Base):
         return path
 
     def status(self, *answers, argv=(), config=None):
-        """(exit code, the output or stderr, run) of status on a checkout of o/n; `answers` after the gh login's."""
         run = Fake([self.existing(), LOGIN, *answers])
         code, out, err = self.main(["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir, *argv], run, config)
         return code, json.loads(out) if code == 0 else err, run

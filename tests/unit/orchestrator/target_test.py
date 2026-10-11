@@ -10,7 +10,6 @@ def ok(stdout="", code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
 
 class FakeRun:
-    """Maps argv prefixes (tuples) to results; records calls."""
     def __init__(self, table):
         self.table, self.calls = table, []
     def __call__(self, argv, timeout):
@@ -135,8 +134,6 @@ class Check(unittest.TestCase):
         self.assertEqual(self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), repo.SHORT), (tuple(self.ls_remote), repo.SHORT)])
 
     def test_where_the_branches_are_read(self):
-        """In the agent run's own clone (a real .git dir) first, else on GitHub; git never runs in a worktree, behind a
-        symlinked .git, at a legacy checkout path or without the clone dir."""
         elsewhere = os.path.join(self.work, "elsewhere")
         os.makedirs(os.path.join(elsewhere, ".git"))
 
@@ -170,7 +167,6 @@ class Check(unittest.TestCase):
                          target.Invalid("several TASK-26-* branches: TASK-26-a, TASK-26-b"))
 
     def test_read_only_task_branches_are_not_the_build_branch(self):
-        """Exactly the read-only tasks' <ID>-<task> names are dropped; none left: GitHub's branches."""
         read_only = "TASK-26-deep-research\nTASK-26-light-research\nTASK-26-product-design\n"
         self.git_dir()
         for out, branch, remote in (("TASK-26-session-registry\n" + read_only, "TASK-26-session-registry", False),
@@ -206,7 +202,6 @@ class Check(unittest.TestCase):
                 self.assertEqual(self.check(remote=ok(code=128, stderr="no remote"), **extra), target.Transient("git ls-remote: no remote"))
 
     def test_repo_line_or_project_mapping(self):
-        """A Repo: line, good or bad, wins over the mapping; without one, the project's mapping, else no line. Invalid: no call."""
         found = target.Target("ophis", "agent-pm", "TASK-26-session-registry")
         gh = ("gh", "api", "repos/ophis/agent-pm")
         for desc, repos, project, want in (
@@ -274,7 +269,6 @@ def git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
 
 class WithClone(unittest.TestCase):
-    """Real git clones (no network) and hand-made checkouts in a realpath temp dir; `writable=()` unless a test is about it."""
     T = target.Target("ophis", "agent-pm", "TASK-26-x")
     HTTPS = "https://github.com/ophis/agent-pm.git"
 
@@ -300,7 +294,6 @@ class WithClone(unittest.TestCase):
             f.write(text)
 
     def worktree(self, clone):
-        """A checkout whose `.git` file names a gitdir whose `commondir` names `clone`'s `.git`."""
         admin = os.path.join(self.tmp, "admin")
         os.makedirs(admin, exist_ok=True)
         with open(os.path.join(admin, "commondir"), "w") as f:
@@ -340,7 +333,6 @@ class WithClone(unittest.TestCase):
         self.assertEqual(self.run_({"ophis/agent-pm": self.clone("y")}), self.want(""))
 
     def test_a_worktree_of_the_targets_clone_beats_the_table(self):
-        """Its origin matched case-insensitively."""
         y = self.clone("y")
         for name, origin in (("x", self.HTTPS), ("x-scp", "git@github.com:Ophis/Agent-PM.git")):
             x = self.clone(name, origin)

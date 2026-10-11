@@ -46,7 +46,6 @@ def run(**kw):
 
 
 class Recorder(clients.Client):
-    """A fake client that needs no config file and records what the driver hands it."""
     needs_config = False
     seen = []
 
@@ -60,7 +59,6 @@ def claude(**overrides):
 
 
 def own(session="mgr"):
-    """A tmux fake answering every call with `session`, as `display-message` asks; its calls are in .calls."""
     def proc(argv, **kw):
         proc.calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, f"{session}\n", "")
@@ -71,7 +69,7 @@ def own(session="mgr"):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.enterContext(unittest.mock.patch.dict(os.environ))   # the suite may run inside tmux
+        self.enterContext(unittest.mock.patch.dict(os.environ))
         for key in INSIDE:
             os.environ.pop(key, None)
         self.tmp = tempfile.TemporaryDirectory()
@@ -235,7 +233,6 @@ assert "clients.skill" not in sys.modules
 
 
 class ClientWorkers(unittest.TestCase):
-    """The worker interface's defaults, and the configured clients a crew.py start picks from."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -476,7 +473,6 @@ TOOL = {"type": "tool_use", "id": "x", "name": "Bash", "input": {}}
 
 
 def record(kind, *blocks, mid=None):
-    """A transcript line: a `kind` record whose message holds blocks, its id mid."""
     message = {"content": list(blocks)}
     if mid:
         message["id"] = mid
@@ -488,7 +484,6 @@ def text_block(t):
 
 
 class ClaudeWorker(unittest.TestCase):
-    """ClaudeClient's worker capability: crew.py's claude command and a worker's reply."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -517,8 +512,6 @@ class ClaudeWorker(unittest.TestCase):
             ClaudeClient.command_env["X"] = "1"
 
     def test_the_start_and_restart_argv(self):
-        """crew.py's start argv (a new session, with or without a prompt, or a resumed one: one `--` however the prompt
-        starts) and its restart argv (resumed, no prompt, the stored claude), tmux_host's hooks writing the events."""
         flags = ("--model", "m c")
         head = [self.exe, "--session-id", SID, "--name", "w1", *flags]
         cases = (({}, head), ({"prompt": ""}, head), ({"prompt": "do it"}, [*head, "--", "do it"]),
@@ -575,8 +568,6 @@ class ClaudeWorker(unittest.TestCase):
             return self.client.worker_reply(sid)
 
     def test_reply_is_the_last_text_bearing_assistant_message(self):
-        """Its text blocks, from each of its records (one id; none: a message of its own), other records between them
-        skipped; a line without its newline counts only when whole."""
         cases = {
             "the last assistant text wins": ((record("assistant", text_block("first")), record("user", text_block("q")),
                                               record("assistant", text_block("a"), TOOL, text_block("b")),
@@ -610,8 +601,6 @@ class ClaudeWorker(unittest.TestCase):
                 self.assertEqual(self.reply(), want)
 
     def test_a_long_transcript_read_from_its_end(self):
-        """The last message's records span several reads, one starting inside a UTF-8 character; the reads stop at
-        the record before that message."""
         big = "é" * 40000
         earlier = [record("assistant", text_block(f"old {i} " + "x" * 1000), mid=f"m{i}") for i in range(300)]
         last = [record("assistant", text_block("a " + big), mid="mL"), record("assistant", TOOL, mid="mL"),
@@ -637,7 +626,6 @@ class ClaudeWorker(unittest.TestCase):
         self.assertLessEqual(sum(map(len, reads)), len("".join([*last, *tail]).encode()) + clients.base.BLOCK)
 
     def test_no_transcript_of_its_session(self):
-        """None at all, or only another session's."""
         for sids in ((), ("2" + SID[1:],)):
             with self.subTest(sids=sids):
                 for sid in sids:
@@ -1146,7 +1134,7 @@ class Codex(Base):
             self.assertIn(fragment, text)
         self.assertLess(text.index("`report progress"), text.index("wait for every spawned child"))
         self.assertLess(text.index("collect each child result"), text.index("`report outcome"))
-        self.assertNotIn("wait_agent", text)  # the available child API can differ by runtime
+        self.assertNotIn("wait_agent", text)
 
     def test_json_events_show_only_user_readable_text(self):
         client = clients.get("codex", CORE)
@@ -1271,7 +1259,6 @@ class Generic(Base):
 
 
 class Cwd(Base):
-    """drive.place: the run's cwd and whether its project settings load."""
     def setUp(self):
         super().setUp()
         self.trusted = os.path.realpath(os.path.join(self.tmp.name, "trusted"))
@@ -1284,7 +1271,6 @@ class Cwd(Base):
         self.read = [os.path.join(self.tmp.name, "core", "team", d) for d in ("tasks", "methods")]
 
     def core(self, *trusted):
-        """A core root: the committed config.toml, and the local file listing `trusted` as trusted_dirs."""
         root = os.path.join(self.tmp.name, "core")
         os.makedirs(root, exist_ok=True)
         if not os.path.lexists(os.path.join(root, "team")):
@@ -1295,7 +1281,6 @@ class Cwd(Base):
         return root
 
     def launch(self, *trusted, cwd=None, layers=(), **params):
-        """(Launch, stderr) of light-research for claude, trusted_dirs `trusted`."""
         err = io.StringIO()
         with redirect_stderr(err):
             launch = self.plan(client="claude", root=self.core(*trusted), cwd=cwd, layers=layers, **params)
@@ -1366,7 +1351,6 @@ class Cwd(Base):
             self.assertIn(want, str(cm.exception))
 
     def write_record(self, *entries):
-        """<workdir>/run.jsonl holding one `session` event per entry."""
         os.makedirs(self.work, exist_ok=True)
         with open(os.path.join(self.work, "run.jsonl"), "w") as f:
             f.writelines(json.dumps({"ts": "t", "kind": "session", **e}) + "\n" for e in entries)
@@ -1505,7 +1489,6 @@ class Skill(Base):
 
 
 class RoleRuns(Base):
-    """drive.py runs a role; --task, when given, names one of its index."""
     def main(self, *extra):
         out, err = io.StringIO(), io.StringIO()
         argv = ["--input", "Build X.", "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID,
@@ -1569,8 +1552,6 @@ TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 
 
 class TeamRuns(Base):
-    """drive.py runs roles and tasks of team dirs (a local `team_dirs`) as core's, a custom role's <tasks> its team
-    dir's tasks/."""
     def setUp(self):
         super().setUp()
         self.home = hermetic.home(self)
@@ -1579,7 +1560,6 @@ class TeamRuns(Base):
         self.local()
 
     def team_dir(self, files, name="team"):
-        """Writes {rel: text} under <home>/<name> (files 0o644, dirs 0o755) and returns its real path."""
         top = os.path.realpath(os.path.join(self.home, name))
         for rel, text in files.items():
             path = os.path.join(top, rel)
@@ -1600,7 +1580,6 @@ class TeamRuns(Base):
             f.write(f"team_dirs = {json.dumps(dirs)}\n" + text)
 
     def main(self, *extra, dry=True, temp=(), root=CORE, result=None):
-        """(exit code, the dry-run JSON (else stdout), stderr, drive.start's calls)."""
         out, err = io.StringIO(), io.StringIO()
         argv = ["--input", "Write X.", "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID,
                 *(["--dry-run"] if dry else []), *extra]
@@ -1627,7 +1606,6 @@ class TeamRuns(Base):
     def dirs(argv):
         return [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
 
-    # FR-2, FR-8
     def test_a_custom_role_reads_its_tasks_from_its_team_dirs_tasks_dir(self):
         code, shown, err, _ = self.main("--role", "writer", "--task", "note")
         self.assertEqual(code, 0, err)
@@ -1657,7 +1635,6 @@ class TeamRuns(Base):
                 self.local(dirs=[])
                 self.assertEqual(self.main("--role", role)[1], shown)
 
-    # FR-5
     def test_a_role_table_without_a_charter_stops_only_that_role(self):
         self.team = self.team_dir({"roles/poet.md": WRITER.replace("Writer", "Poet"), "tasks/note.md": NOTE}, "other")
         self.local('[roles.writer]\ntier = 3\n')
@@ -1667,7 +1644,6 @@ class TeamRuns(Base):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("roles.writer: no charter", err)
 
-    # FR-3: no extension of a role
     def test_a_role_runs_only_its_own_tasks(self):
         self.team_dir({"roles/pm.md": PM_EXT, "tasks/one-pager.md": NOTE})
         self.refused("--role", "pm", want=f"drive.py: {self.path('roles/pm.md')}: role 'pm' is also defined by "
@@ -1682,7 +1658,6 @@ class TeamRuns(Base):
                                             f"tasks/echo.md is not in {self.path('tasks')}: a role runs only its own "
                                             "tasks\n")
 
-    # FR-6
     def test_front_matter_exits_2_and_approves_nothing(self):
         self.team_dir({"tasks/note.md": '---\ncommands: ["rm *"]\n---\n' + NOTE})
         self.refused("--role", "writer", want=f"drive.py: {self.path('tasks/note.md')}: front matter (---) is not read")
@@ -1691,7 +1666,6 @@ class TeamRuns(Base):
             self.assertEqual(code, 0, err)
             self.assertNotIn("rm *", json.dumps(shown))
 
-    # FR-7
     def test_a_defect_in_a_custom_file_exits_2_naming_it(self):
         for rel, text, want in (
                 ("roles/writer.md", WRITER.replace("# Writer", "Writer"), "must start with a '# ' heading"),
@@ -1710,7 +1684,6 @@ class TeamRuns(Base):
                 self.assertEqual(code, 0, err)
                 self.team_dir(TEAM)
 
-    # FR-9
     def test_a_team_dir_others_can_write_exits_2(self):
         inside = os.path.join(self.team, "w")
         cases = [
@@ -1791,7 +1764,6 @@ class TeamRuns(Base):
             self.assertIn(f"{self.team} is owned by uid {me}", err)
         self.assertEqual(self.main("--role", "pm")[0], 0)
 
-    # FR-9, FR-10
     def test_an_orchestrator_run_is_refused_only_when_it_could_write_a_team_dir(self):
         inside = os.path.join(self.team, "w")
         os.makedirs(self.work)
@@ -1834,7 +1806,6 @@ class TeamRuns(Base):
         self.refused("--role", "Poet", want=f"drive.py: {self.path('roles/Poet.md')}: name 'Poet': want [a-z0-9-]+\n")
         self.assertEqual(self.main("--role", "writer")[0], 0)
 
-    # FR-1
     def test_a_bad_team_dirs_exits_2(self):
         for value, want in (('"x"', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
                             ('["rel"]', "team_dirs: 'rel' is not an absolute or ~ path"),
@@ -1856,7 +1827,6 @@ class TeamRuns(Base):
         self.refused("--role", "pm", root=root, want="drive.py: team_dirs: set it in ~/.agent-pm/core.local.toml, not "
                                                      "config.toml\n")
 
-    # FR-11
     def test_list_prints_each_role_and_task_with_its_source(self):
         code, out, err = self.listed()
         self.assertEqual((code, err), (0, ""))
@@ -1884,7 +1854,6 @@ class TeamRuns(Base):
             self.assertIn("--list takes only --client, not --role" if argv
                           else "the following arguments are required: --role", err.getvalue())
 
-    # FR-11
     def test_list_shows_the_selected_clients_destinations(self):
         claude = self.listed()[1]
         for argv in (("--client", "skill"), ("--client=skill",), ("--cl", "skill")):
@@ -1902,7 +1871,6 @@ class TeamRuns(Base):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("client 'nope' has no module clients.nope", err)
 
-    # FR-8, FR-9: Codex's --add-dir is writable
     def test_a_codex_run_adds_its_tasks_dir_and_can_write_no_other_team_dir(self):
         os.makedirs(self.work)
         self.local(f'cwd = "{self.work}"\n')
@@ -1919,7 +1887,6 @@ class TeamRuns(Base):
                              want=f"drive.py: team_dirs: {self.team} overlaps a dir {name} adds {self.team}: the "
                                   "agent run can write there\n")
 
-    # skill
     def test_the_skill_client_names_the_roles_own_tasks_dir(self):
         for role, tasks in (("writer", self.path("tasks")), ("researcher", TASKS)):
             for extra in ((), ("--dry-run",)):
@@ -1960,7 +1927,6 @@ def outcome(data):
 
 
 def feed(channel, items):
-    """The agent run's stdout: each str a line of it; each dict appended to the channel first, as report.py does."""
     for item in items:
         if isinstance(item, dict):
             drive.append_line(channel, json.dumps(item, ensure_ascii=False) + "\n")
@@ -1974,14 +1940,10 @@ PENDING = {"kind": "stop", "pending": 2}
 
 
 class FakeTui:
-    """tui's API for the tui runner. Each status call takes the next step: a list of items appended to the channel
-    (the pane runs on), or a pane state (None: gone; an int: dead with that status); a (t, step) pair first sets the
-    fake clock, which starts at 0, to t seconds. No step left fails the test."""
     def __init__(self, channel, steps):
         self.channel, self.steps, self.calls, self.now = channel, list(steps), [], 0
 
     def patch(self, **api):
-        """tui's start, status, kill and send replaced by this fake's, or by `api`'s; time.monotonic by its clock."""
         stack = ExitStack()
         stack.enter_context(unittest.mock.patch.multiple(
             drive.tmux_host, **{"start": self.start, "status": self.status, "kill": self.kill, "send": self.send, **api}))
@@ -2036,7 +1998,6 @@ class Handover(unittest.TestCase):
         text = claude().handover()
         self.assertNotIn("ultracode", text)
         self.assertNotIn("progress:budget", text)
-        # claude reports through the report command, the outcome last
         self.assertIn("`report progress <name>", text)
         self.assertIn("`report outcome --status", text)
         self.assertIn("last action", text)
@@ -2077,11 +2038,9 @@ class Report(Base):
             return [json.loads(line) for line in f]
 
     def lines(self):
-        """The lines without their `ts`."""
         return [{k: v for k, v in line.items() if k != "ts"} for line in self.raw()]
 
     def stop_line(self, stdin, *argv):
-        """The one line `report.py stop ARGV` appends with `stdin` as sys.stdin."""
         before = len(self.lines())
         with unittest.mock.patch("sys.stdin", stdin):
             self.assertEqual(self.report("stop", *argv), (0, "report.py: stop reported\n"))
@@ -2258,13 +2217,11 @@ class Validate(Base):
 class Start(Base):
     def setUp(self):
         super().setUp()
-        quiet = redirect_stderr(io.StringIO())   # e.g. the missing start mark of a run that reports none
+        quiet = redirect_stderr(io.StringIO())
         quiet.__enter__()
         self.addCleanup(quiet.__exit__, None, None, None)
 
     def start(self, items, rc=0, output=None, sinks=None, stderr=(), **params):
-        """Runs `items` through drive.start: str lines on stdout, dicts (or callables) on the channel; `stderr`'s
-        lines on stderr."""
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work)
         calls, log = [], io.StringIO()
         p = self.params(**params)
@@ -2283,7 +2240,6 @@ class Start(Base):
             return f.read()
 
     def events(self):
-        """The run's record, <workdir>/run.jsonl, one dict per line."""
         with open(os.path.join(self.work, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
@@ -2385,7 +2341,7 @@ class Start(Base):
 
         def stderr():
             self.assertTrue(out_done.wait(5), "stdout never ended")
-            time.sleep(0.1)   # past the stdout sentinel
+            time.sleep(0.1)
             yield "late\n"
 
         launch = drive.Launch(["fake"], cwd=self.work)
@@ -2641,7 +2597,6 @@ class Start(Base):
         self.assertEqual(self.read("out.md"), "# Doc\n")
 
     def recorded(self, launch, items=(), **params):
-        """drive.start of `launch` over `items`; (result, the record's events when `begun` ran, its events after)."""
         p, seen = self.params(**params), []
         r = drive.start(launch, run(), p, client=claude(), sinks=[], begun=lambda: seen.append(self.events()),
                         popen=lambda argv, **kw: FakeProc(feed(p.channel, items)))
@@ -2747,7 +2702,6 @@ class Start(Base):
 
 
 class Session(Base):
-    """drive.session: a session's entry in <workdir>/run.jsonl."""
     def write(self, *lines):
         os.makedirs(self.work, exist_ok=True)
         with open(os.path.join(self.work, "run.jsonl"), "wb") as f:
@@ -2792,7 +2746,6 @@ class Command(unittest.TestCase):
 
 
 class HostFailure(Base):
-    """drive.start with a runner whose begin or poll raises."""
     def start(self, *, begin=None, poll=None):
         self.stopped = []
         stopped = self.stopped
@@ -2865,7 +2818,6 @@ class TuiRunner(Base):
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
     def start(self, *steps, sinks=None, show=None, api=None, **params):
-        """drive.start with the tui runner over FakeTui(steps), `api` replacing its functions; stderr in self.err."""
         p = self.params(**params)
         self.fake, self.err, seen = FakeTui(p.channel, steps), io.StringIO(), []
         launch = drive.Launch(["fake"], {"FAKE": "1"}, cwd=self.work, interactive=["claude", "hi"])
@@ -2902,7 +2854,6 @@ class TuiRunner(Base):
             self.assertIsNone(drive.TUI_SESSION.fullmatch(name), name)
 
     def launched(self, layout=None, status_line=False, prefix=None, per_column=None, retile=None, **kw):
-        """The keyword arguments of the one tmux_host.start call of drive.start with the tui runner, and its name."""
         p = self.params(prefix=prefix)
         fake = FakeTui(p.channel, [[outcome(DONE)]])
         launch = drive.Launch(["fake"], {}, cwd=self.work, interactive=["claude"], status_line=status_line,
@@ -2913,7 +2864,6 @@ class TuiRunner(Base):
         return name, kw
 
     def test_the_layout_launch_prefix_and_events_reach_tui_start(self):
-        """The layout defaults to the automatic stack; the prefix names the session."""
         unset = {"split": None, "split_from": None, "opener": None, "status_line": False, "per_column": None,
                  "retile": None, "events": None}
         for kw, name, want in (
@@ -3017,7 +2967,7 @@ class TuiRunner(Base):
         cases = ((["--manager", "a/b"], own(), "drive.py: manager 'a/b': want [A-Za-z0-9_-]+\n", ((), ("--dry-run",))),
                  ([], own("a b"), "drive.py: own tmux session 'a b': want [A-Za-z0-9_-]+; give --manager <name>\n",
                   ((), ("--dry-run",))),
-                 (["--manager", "m1"], own(), bad, ((),)))   # a dry run creates nothing, so checks nothing
+                 (["--manager", "m1"], own(), bad, ((),)))
         for extra, proc, want, runs in cases:
             for dry in runs:
                 with self.subTest(extra=extra, dry=dry):
@@ -3218,7 +3168,7 @@ class Detach(Base):
         self.addCleanup(p.stop)
         for k in ("TMUX", "TMUX_PANE", "TUI_ATTACH_PREFIX"):
             os.environ.pop(k, None)
-        os.environ.update(ITERM_SESSION_ID="w0t0p0:AB-12", TERM_PROGRAM="iTerm.app")   # the opener, with no tmux call
+        os.environ.update(ITERM_SESSION_ID="w0t0p0:AB-12", TERM_PROGRAM="iTerm.app")
         self.events = os.path.join(self.tmp.name, "w.events")
         for s in drive.SIGNALS:   # a driver's main sets them and leaves them blocked
             self.addCleanup(signal.signal, s, signal.getsignal(s))
@@ -3231,9 +3181,6 @@ class Detach(Base):
                 "--out", os.path.join(self.work, "out.md"), "--workdir", self.work, "--sid", SID, *extra]
 
     def outer(self, *extra, rc=0, proc=None, events=True, own="mgr"):
-        """drive.main --detach (--events self.events unless not `events`), tmux through `proc`, else a fake that takes
-        the handover file, names the caller's session `own` and has a control-mode client show every session; (exit
-        code, stderr, the tmux calls, the handover)."""
         calls, handover = [], {}
 
         def fake(argv, **kw):
@@ -3255,7 +3202,6 @@ class Detach(Base):
         return code, err.getvalue(), calls, handover
 
     def inner(self, *steps, argv=None, api=None, **kw):
-        """drive.main as the driver of a tui run over FakeTui(steps); (exit code, its calls)."""
         fake = FakeTui(os.path.join(self.work, "run.jsonl"), steps)
         argv = argv or self.argv("--runner", "tui", "--events", self.events, "--driver", "d-drive")
         with fake.patch(**(api or {})), unittest.mock.patch.object(drive, "POLL", 0), redirect_stderr(io.StringIO()):
@@ -3270,12 +3216,11 @@ class Detach(Base):
 
     @staticmethod
     def entries(name):
-        """Manager `name`'s roster entries, validated."""
         with roster.locked(roster.directory(name), write=False) as r:
             return r["entries"]
 
     def test_the_driver_session_never_matches_a_tui_session_or_the_reserved_name(self):
-        reserved = re.compile(r"[a-z][a-z0-9-]*-[A-Z][A-Z0-9]*-\d+-[0-9a-f]{8}")   # <role>-<ID>-<8 hex>
+        reserved = re.compile(r"[a-z][a-z0-9-]*-[A-Z][A-Z0-9]*-\d+-[0-9a-f]{8}")
         self.assertTrue(reserved.fullmatch(drive.tui_session("r", SID, "engineer-TASK-1")))
         for prefix, want in ((None, f"r-{SID[:8]}-drive"), ("engineer-TASK-1", f"engineer-TASK-1-{SID[:8]}-drive")):
             name = drive.driver_session("r", SID, prefix)
@@ -3312,7 +3257,7 @@ class Detach(Base):
         self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_dry_run_prints_the_plan_and_the_driver_and_starts_nothing(self):
-        for runner in ("tui", "headless"):   # with --detach, headless takes --events
+        for runner in ("tui", "headless"):
             with self.subTest(runner=runner):
                 out, proc = io.StringIO(), unittest.mock.Mock()
                 with redirect_stdout(out), redirect_stderr(io.StringIO()):
@@ -3339,7 +3284,7 @@ class Detach(Base):
         self.assertEqual(handover["cwd"], os.getcwd())
         self.assertEqual(handover["block"], [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
         self.assertEqual(handover["env"]["PATH"], os.environ["PATH"])
-        self.assertNotIn("ITERM_SESSION_ID", handover["env"])   # the pane's, from -e
+        self.assertNotIn("ITERM_SESSION_ID", handover["env"])
         self.assertEqual(err, f"drive.py: cwd {os.getcwd()} is not in trusted_dirs: its project settings are off\n"
                               f"drive.py: session {SID}\n"
                               f"drive.py: driver session {driver}: tmux attach -t '={driver}'\n"
@@ -3364,7 +3309,7 @@ class Detach(Base):
                 self.assertEqual(stat.S_IMODE(os.stat(want).st_mode), 0o600)
                 self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(want)).st_mode), 0o700)
                 os.unlink(want)
-        code, _, _, handover = self.outer("--runner", "tui", events=False)   # the caller's tmux session: mgr
+        code, _, _, handover = self.outer("--runner", "tui", events=False)
         self.assertEqual((code, f"--events={want}" in handover["argv"]), (0, True))
         code, _ = self.inner([outcome(DONE)], argv=handover["argv"][2:])
         self.assertEqual(code, 0)
@@ -3375,7 +3320,7 @@ class Detach(Base):
         home = hermetic.home(self)
         os.environ.update(INSIDE)
         code, _, calls, handover = self.outer("--runner", "headless", "--manager", "other", events=False)
-        self.assertEqual((code, [c[1] for c in calls]), (0, ["new-session"]))   # no display-message
+        self.assertEqual((code, [c[1] for c in calls]), (0, ["new-session"]))
         self.assertIn(f"--events={home}/managers/other/events", handover["argv"])
         self.assertTrue(os.path.isfile(os.path.join(home, "managers", "other", "events")))
         self.assertFalse(os.path.exists(os.path.join(home, "managers", "mgr")))
@@ -3398,7 +3343,7 @@ class Detach(Base):
             with self.subTest(text=text), unittest.mock.patch.object(sys, "stdin", io.StringIO(text)):
                 code, _, _, handover = self.outer("--runner", runner, "--input", "-")
                 self.assertEqual((code, handover["argv"][3]), (0, f"--input={text}"))
-        stdin = unittest.mock.Mock()   # the driver of the last row, input "-"
+        stdin = unittest.mock.Mock()
         with unittest.mock.patch.object(sys, "stdin", stdin):
             code, calls = self.inner([outcome(DONE)], argv=handover["argv"][2:])
         stdin.read.assert_not_called()
@@ -3407,7 +3352,7 @@ class Detach(Base):
         self.assertEqual((code, self.lines()), (0, [f"{self.DRIVER} outcome done\n"]))
 
     def test_without_an_opener_the_driver_gets_no_iterm_pane_and_headless_no_tui_line(self):
-        os.environ["TERM_PROGRAM"] = "vscode"   # $ITERM_SESSION_ID left over from another terminal
+        os.environ["TERM_PROGRAM"] = "vscode"
         for runner in ("tui", "headless"):
             with self.subTest(runner=runner):
                 code, err, (argv,), handover = self.outer("--runner", runner)
@@ -3431,7 +3376,7 @@ class Detach(Base):
                 self.assertFalse(os.path.exists(self.events))
 
     def test_the_driver_carries_its_runs_opener_and_none_without_one(self):
-        os.environ.update(INSIDE)   # the caller's tmux session: mgr
+        os.environ.update(INSIDE)
         for runner, want in (("tui", [["set-option", "-t", f"={self.DRIVER}:", "@opener", "mgr"]]), ("headless", [])):
             with self.subTest(runner=runner):
                 code, err, calls, _ = self.outer("--runner", runner)
@@ -3480,7 +3425,7 @@ class Detach(Base):
 
     def test_a_tui_run_detached_from_an_attached_session_gets_its_role_entry_under_the_driver_name(self):
         hermetic.home(self)
-        roster.events(roster.directory("mgr"))   # as crew.py attach
+        roster.events(roster.directory("mgr"))
         os.environ.update(INSIDE)
         code, err, _, handover = self.outer("--runner", "tui", "--task", "echo", "--repo", self.repo, "--client",
                                             "claude", "--split", "below", "--split-from", "s", "--prefix", "p",
@@ -3488,7 +3433,7 @@ class Detach(Base):
         self.assertEqual(code, 0, err)
         self.assertIn("--input=Hello.", handover["argv"])
         (name, e), = self.entries("mgr").items()
-        del e["started"]   # validated by entries
+        del e["started"]
         self.assertEqual((name, e), (f"p-{SID[:8]}-drive", {
             "kind": "role", "sid": SID, "cwd": os.getcwd(), "note": None, "opener": "mgr", "pane": None,
             "split": "below", "split_from": "s", "tui": f"p-{SID[:8]}", "state": "working",
@@ -3510,7 +3455,7 @@ class Detach(Base):
         hermetic.home(self)
         code, err, _, handover = self.outer("--manager", "m1", "--out=--input=x", "--inp", "Other.", events=False)
         self.assertEqual(code, 0, err)
-        self.assertIn("--input=Other.", handover["argv"])   # the abbreviation reached the driver as --input
+        self.assertIn("--input=Other.", handover["argv"])
         (e,) = self.entries("m1").values()
         self.assertEqual(e["resume"][2:], ["--role=dummy-tester", "--out=--input=x", f"--workdir={self.work}",
                                            "--runner=headless", "--detach", "--manager=m1"])
@@ -3519,7 +3464,7 @@ class Detach(Base):
         hermetic.home(self)
         d = roster.directory("m1")
         roster.events(d)
-        for extra, kw, want in ((("--manager", "m1"), {}, 0),   # --events self.events
+        for extra, kw, want in ((("--manager", "m1"), {}, 0),
                                 (("--manager", "m1", "--dry-run"), {"events": False}, 0),
                                 (("--manager", "m1"), {"events": False, "rc": 1}, 3)):
             with self.subTest(extra=extra, kw=kw):
@@ -3535,7 +3480,7 @@ class Detach(Base):
                   "resume": [sys.executable, os.path.abspath(drive.__file__), "--detach"]}
 
         def taken(argv, **kw):
-            self.assertFalse(os.path.exists(path))   # not before the session runs
+            self.assertFalse(os.path.exists(path))
             os.unlink(argv[-1])
             return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -3578,7 +3523,7 @@ class Detach(Base):
         self.assertIn(f"drive.py: driver session {self.DRIVER}: ", err)
         with open(os.path.join(d, "roster.json")) as f:
             self.assertEqual(f.read(), "{")
-        os.environ.update(INSIDE)   # the roster directory's own failure: a bad own session name
+        os.environ.update(INSIDE)
         code, err, _, _ = self.outer(own="a b")
         self.assertEqual(code, 0, err)
         self.assertEqual([line for line in err.splitlines() if line.startswith("manager: ")],
@@ -3734,12 +3679,12 @@ class Detach(Base):
 
         def status(name):
             self.assertTrue(callable(signal.getsignal(signal.SIGHUP)), "no handler: SIGHUP would end the tests")
-            os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session
+            os.kill(os.getpid(), signal.SIGHUP)
             return drive.tmux_host.RUNNING
 
         def kill(name):
             killed.append(name)
-            os.kill(os.getpid(), signal.SIGTERM)   # another, while it stops: blocked
+            os.kill(os.getpid(), signal.SIGTERM)
 
         with self.assertRaises(SystemExit) as cm:
             self.inner(api={"status": status, "kill": kill})
@@ -3747,8 +3692,8 @@ class Detach(Base):
         self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_a_signal_sent_before_the_driver_handles_them_waits_and_ends_it_with_one_error_line(self):
-        signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)   # as detach hands the driver over
-        os.kill(os.getpid(), signal.SIGHUP)   # tmux kill-session as it starts
+        signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)
+        os.kill(os.getpid(), signal.SIGHUP)
         with self.assertRaises(SystemExit) as cm:
             self.inner([outcome(DONE)])
         self.assertEqual(cm.exception.code, 129)
@@ -3763,7 +3708,7 @@ class Detach(Base):
                 blocks.append(how)
             if how == signal.SIG_BLOCK and len(blocks) > 1 and not sent:
                 sent.append(how)
-                os.kill(os.getpid(), signal.SIGTERM)   # before the driver's end blocks them
+                os.kill(os.getpid(), signal.SIGTERM)
             return sigmask(how, signals)
 
         with unittest.mock.patch.object(signal, "pthread_sigmask", block_after_a_signal), \
@@ -3929,10 +3874,10 @@ class Main(Base):
     def test_dry_run_shows_no_events_when_there_is_none(self):
         home = hermetic.home(self)
         proc = unittest.mock.Mock(side_effect=AssertionError("tmux"))
-        code, out, _, _ = self.run_main("--dry-run", "--runner", "tui", proc=proc)   # outside tmux, no --manager
+        code, out, _, _ = self.run_main("--dry-run", "--runner", "tui", proc=proc)
         self.assertEqual((code, "events" in json.loads(out)), (0, False))
         os.environ.update(INSIDE)
-        code, out, _, _ = self.run_main("--dry-run", proc=proc)   # headless: no events, no resolution
+        code, out, _, _ = self.run_main("--dry-run", proc=proc)
         self.assertEqual((code, "events" in json.loads(out), os.listdir(home)), (0, False, []))
 
     def test_a_headless_run_never_resolves_a_manager(self):
@@ -4180,14 +4125,12 @@ class CodexRecoveryDriver(Base):
         real_fsync = os.fsync
         for target in ("state", "mirror"):
             with self.subTest(target=target):
-                # Give each attempt its own recovery record.
                 sid = SID + target
                 params = self.params(sid=sid)
                 process = FakeProc(stream({"type": "thread.started", "thread_id": self.native},
                                          {"type": "item.completed", "item": {"type": "agent_message", "text": "later"}}))
                 failed = []
                 def fsync(fd):
-                    # Read actual bytes at the durability boundary, after write/flush.
                     info = os.fstat(fd)
                     if stat.S_ISREG(info.st_mode):
                         if target == "state":
