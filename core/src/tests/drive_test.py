@@ -870,7 +870,7 @@ class Generic(Base):
     def test_a_client_unknown_or_of_the_wrong_kind(self):
         with self.assertRaises(compose.ConfigError) as cm:
             self.plan(client="nope")
-        self.assertIn("no [clients.nope] table", str(cm.exception))
+        self.assertEqual("client 'nope' has no module clients.nope", str(cm.exception))
         with self.assertRaises(compose.ConfigError):
             self.plan(client="skill")
         with self.assertRaises(compose.ConfigError):
