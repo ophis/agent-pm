@@ -41,6 +41,19 @@ claude -p '<prompt>' --session-id <sid> --model <tier's> --effort <effort's> <[c
 - `claude` needs (nothing checks; a missing one fails the run): `-p`, `stream-json`, `--resume`, `--permission-mode auto`, `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`; for tui, interactive mode and `Stop` hooks in `--settings`; subagents, web search and fetch, file and shell tools; the Workflow tool and built-in `/deep-research` (deep research).
 - Tests that run `drive.py`, `crew.py` or `tui_claude.py` as a process put `src/tests/integration/fake_claude.py` on PATH as `claude` (its docstring: the scenario format). It rejects an option it doesn't know: a new option in this command goes into it too. Their tmux is a private server: `src/tests/integration/live_tmux.py`.
 
+### Codex headless
+
+Select Codex with `drive.py --client codex`. From the repository root, a fresh workdir run can be started with:
+
+```bash
+core="$(pwd)/core"
+work="$(mktemp -d)"
+(cd "$work" && python3 "$core/src/drive.py" --client codex --role dummy-tester --task echo \
+  --input "Hello." --out "$work/out.md" --workdir "$work")
+```
+
+Add `--dry-run` to inspect the command without starting Codex. `[clients.codex.tiers]` and `[clients.codex.efforts]` in `config.toml` choose its model and reasoning effort. The client uses `codex exec --json` in a workspace-write sandbox; readable Codex events and stderr go to the driver, while only `report.py` progress and outcome entries count as reports. Its final reply does not count as an outcome. `--runner tui` and resume are unavailable. An untrusted cwd outside the workdir is rejected; a trusted cwd can load project settings. `--add-dir` grants Codex write access to each added directory, even if it came from a `read` entry, and `commands` do not preapprove shell calls. Use a fresh workdir without project settings for this first headless path. `src/tests/integration/fake_codex.py` gives process tests a fake CLI and an isolated HOME.
+
 ## Add a client
 
 1. **Module and config**: add `src/clients/<name>.py` and `[clients.<name>]` in `config.toml`. The name is a lowercase Python module identifier (`[a-z][a-z0-9_]*`); export a `Client` subclass and set `implementation` to its class name (for example, `grok.py` exports `GrokClient`, and `[clients.grok]` declares `implementation = "GrokClient"`). `clients.get(name, root)` imports that class from `clients.<name>` and removes `implementation` before passing the table to its constructor. The table is the registry; adding a client needs no shared code edit. The table is required even if the class sets `needs_config = False` (then its constructor receives `{}`). `Client.keys` declares client-specific config keys, including `"roles"` if it accepts per-role entries; run keys are allowed already.
