@@ -156,9 +156,12 @@ def bind(entry: str, repo_dir: str | None) -> str | None:
 
 def access(run: RunConfig, workdir: str, *, cwd: str, project: bool, repo_dir: str | None = None,
            team: Team | None = None) -> Intent:
-    """`run`'s Intent. `cwd` and `project` are the caller's, passed through. Dirs: the workdir when `cwd` is another
-    real path, then <tasks>, then each read then write entry with {{methods}} filled and bound (bind), deduped;
-    commands with {{scripts}} and {{workdir}} filled; the gate verbatim. `team` as resolve's."""
+    """`run`'s Intent. `cwd` (an absolute path, else ConfigError) and `project` are the caller's, passed through. Dirs:
+    the workdir when `cwd` is another real path, then <tasks>, then each read then write entry with {{methods}} filled
+    and bound (bind), deduped; commands with {{scripts}} and {{workdir}} filled; the gate verbatim. `team` as
+    resolve's."""
+    if not isinstance(cwd, str) or not os.path.isabs(cwd):
+        raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = _team(team), os.path.abspath(workdir)
     dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks_path(run.role, team)]
     methods = os.path.join(team.root, "methods")

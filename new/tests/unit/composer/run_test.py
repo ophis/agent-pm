@@ -280,12 +280,19 @@ class OwnedKeys(Fake):
 
 
 class Runtime(Fake):
-    def test_the_configs_value_and_a_role_overlay_per_role(self):
+    def setUp(self):
+        super().setUp()
         for role in ("pm", "researcher"):
             self.write({f"roles/{role}.md": EDITOR.replace("# Editor", f"# {role}")})
+
+    def test_the_configs_value_and_a_role_overlay_per_role(self):
         overlay = {"roles": {"pm": {"runtime": "x"}}}
         self.assertEqual([self.resolved(role, overlays=(overlay,)).runtime for role in ("pm", "researcher")],
                          ["x", "a"])
+
+    def test_the_configs_role_table_per_role(self):
+        self.configure(CONFIG + '\n[roles.pm]\nruntime = "x"\n')
+        self.assertEqual([self.resolved(role).runtime for role in ("pm", "researcher")], ["x", "a"])
 
     def test_an_overlays_global_value_beats_the_configs_role_value(self):
         self.configure(CONFIG.replace('effort = "medium"', 'effort = "medium"\nruntime = "w"'))
@@ -385,7 +392,7 @@ class Access(Fake):
     def intent(self, cwd=None, project=False, repo_dir=None, found=None, **kw):
         run = RunConfig(**{"role": "writer", "tier": 2, "effort": "high", "runtime": "a", "output": {"type": "local"},
                            **kw})
-        return access(run, self.work, cwd=cwd or self.work, project=project, repo_dir=repo_dir,
+        return access(run, self.work, cwd=self.work if cwd is None else cwd, project=project, repo_dir=repo_dir,
                       team=found or team(self.root))
 
     def test_dirs_and_commands_filled_and_the_gate_apart_verbatim(self):
@@ -414,6 +421,13 @@ class Access(Fake):
             with self.subTest(cwd=cwd):
                 got = self.intent(cwd=cwd, project=True)
                 self.assertEqual((got.dirs, got.cwd, got.project), (dirs, cwd, True))
+
+    def test_a_cwd_that_is_not_an_absolute_path(self):
+        for cwd in ("", "work"):
+            with self.subTest(cwd=cwd):
+                with self.assertRaises(ConfigError) as cm:
+                    self.intent(cwd=cwd)
+                self.assertEqual(str(cm.exception), f"cwd must be an absolute path, got {cwd!r}")
 
     def test_a_team_dir_roles_tasks_dir(self):
         found, top = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
