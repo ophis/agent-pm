@@ -33,6 +33,7 @@ class ExtensionClientIntegration(unittest.TestCase):
             "    def launch(self, prompt, run, *, params, access):\n"
             "        return Launch(argv=['extension-runner', '--tier', str(run.tier), '--effort', run.effort, prompt],\n"
             "                      cwd=access.cwd)\n"
+            "RUNS = CustomAdapter.runs\n"
         )
 
     def config(self, text):

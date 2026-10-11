@@ -18,6 +18,7 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import hermetic  # noqa: E402
@@ -78,6 +79,7 @@ class Base(unittest.TestCase):
         Recorder.seen = []
         module = types.ModuleType("clients.fake")
         module.FakeClient = Recorder
+        module.RUNS = Recorder.runs
         self.enterContext(unittest.mock.patch.dict(sys.modules, {"clients.fake": module}))
         original = clients.load_config
         self.enterContext(unittest.mock.patch.object(
@@ -150,6 +152,7 @@ class ClientDiscovery(unittest.TestCase):
         self.config('[clients.third_party]\nimplementation = "CustomAdapter"\ntier = 3\n')
         module = types.ModuleType("clients.third_party")
         module.CustomAdapter = type("CustomAdapter", (clients.Client,), {})
+        module.RUNS = module.CustomAdapter.runs
         with unittest.mock.patch.dict(sys.modules, {"clients.third_party": module}):
             client = clients.get("third_party", self.tmp.name)
             self.assertIsInstance(client, module.CustomAdapter)
@@ -157,14 +160,16 @@ class ClientDiscovery(unittest.TestCase):
             module.CustomAdapter.needs_config = False
             self.assertEqual(clients.get("third_party", self.tmp.name).config, {})
 
-    def test_missing_or_malformed_implementation_fails_before_import(self):
+    def test_missing_or_malformed_implementation_fails_after_module_capability(self):
         for field in ("", 'implementation = ""', 'implementation = 1', 'implementation = []',
                       'implementation = {}', 'implementation = "other.Adapter"', 'implementation = "bad name"'):
-            with self.subTest(field=field), unittest.mock.patch("importlib.import_module") as imported:
+            module = types.ModuleType("clients.third")
+            module.RUNS = True
+            with self.subTest(field=field), unittest.mock.patch("importlib.import_module", return_value=module) as imported:
                 self.config("[clients.third]\n" + field + "\n")
                 with self.assertRaisesRegex(compose.ConfigError, "implementation"):
                     clients.get("third", self.tmp.name)
-                imported.assert_not_called()
+                imported.assert_called_once_with(".third", "clients")
 
     def test_missing_and_malformed_client_configuration_fail(self):
         for config in (None, "tier = 1\n", "clients = 1\n", "[clients]\nclaude = 1\n"):
@@ -193,6 +198,7 @@ class ClientDiscovery(unittest.TestCase):
         with self.assertRaisesRegex(compose.ConfigError, "module"):
             clients.get("third", self.tmp.name)
         module = types.ModuleType("clients.third")
+        module.RUNS = True
         with unittest.mock.patch.dict(sys.modules, {"clients.third": module}):
             with self.assertRaisesRegex(compose.ConfigError, "ThirdClient"):
                 clients.get("third", self.tmp.name)
@@ -207,9 +213,9 @@ class ClientDiscovery(unittest.TestCase):
         self.config('[clients.third]\nimplementation = "ThirdClient"\n')
         failure = ModuleNotFoundError("No module named 'dependency'", name="dependency")
         with unittest.mock.patch("importlib.import_module", side_effect=failure):
-            with self.assertRaises(ModuleNotFoundError) as cm:
+            with self.assertRaisesRegex(compose.ConfigError, "dependency") as cm:
                 clients.get("third", self.tmp.name)
-        self.assertIs(cm.exception, failure)
+        self.assertIs(cm.exception.__cause__, failure)
 
 
 class Claude(Base):
@@ -2856,7 +2862,7 @@ class Detach(Base):
 
     def test_malformed_client_config_keeps_detached_outcome_and_inline_authority(self):
         original = clients.load_config
-        for name, expected in (("claude", True), ("skill", False), ("missing", True)):
+        for name, expected in (("claude", True), ("skill", False), ("missing", False)):
             with self.subTest(client=name):
                 def invalid(client_name, root):
                     return {**original(client_name, root), "invalid_key": True}
@@ -2869,22 +2875,100 @@ class Detach(Base):
                     self.assertEqual(self.lines(), ["d-drive outcome error\n"])
                     os.unlink(self.events)
 
-    def test_detached_definition_errors_and_custom_inline_constructor_failures(self):
-        class Inline(clients.Client):
-            runs = False
+    def test_startup_config_failures_preserve_module_authority(self):
+        operator = hermetic.home(self)
+        local = os.path.join(operator, "core.local.toml")
+        root = os.path.join(self.tmp.name, "startup-core")
+        os.mkdir(root)
+        config = os.path.join(root, "config.toml")
+        modules = {}
+        for name, runs in (("startup_running", True), ("startup_inline", False)):
+            module = types.ModuleType(f"clients.{name}")
+            module.Adapter = type("Adapter", (clients.Client,), {"runs": runs})
+            module.Other = type("Other", (clients.Client,), {"runs": not runs})
+            module.RUNS = module.Adapter.runs
+            modules[module.__name__] = module
+        self.enterContext(unittest.mock.patch.dict(sys.modules, modules))
+        cases = (("claude", "ClaudeClient", True), ("skill", "SkillClient", False),
+                 ("startup_running", "Adapter", True), ("startup_inline", "Adapter", False))
+        for name, implementation, runs in cases:
+            for failure in ("missing-table", "missing-implementation", "bad-implementation", "base-toml",
+                            "local-toml", "read-error", "constructor", "mismatch"):
+                if failure == "mismatch" and not name.startswith("startup_"):
+                    continue
+                for existing in (False, True):
+                    for pending in (False, True):
+                        with self.subTest(client=name, failure=failure, existing=existing, pending=pending):
+                            if os.path.exists(local):
+                                os.unlink(local)
+                            if os.path.exists(self.events):
+                                os.unlink(self.events)
+                            before = "existing events\n" if existing else ""
+                            if existing:
+                                Path(self.events).write_text(before)
+                            header = f"[clients.{name}]\n"
+                            text = header + f'implementation = "{implementation}"\n'
+                            if failure == "missing-table":
+                                text = "tier = 2\n"
+                            elif failure == "missing-implementation":
+                                text = header
+                            elif failure == "bad-implementation":
+                                text = header + 'implementation = "Missing"\n'
+                            elif failure == "base-toml":
+                                text = "[unfinished"
+                            elif failure == "local-toml":
+                                Path(local).write_text("[unfinished")
+                            elif failure == "constructor":
+                                text += "invalid_key = true\n"
+                            elif failure == "mismatch":
+                                text = header + 'implementation = "Other"\n'
+                            Path(config).write_text(text)
+                            with ExitStack() as stack:
+                                if failure == "read-error":
+                                    stack.enter_context(unittest.mock.patch.object(
+                                        clients, "load_config", side_effect=PermissionError("fixture read denied")))
+                                err = stack.enter_context(redirect_stderr(io.StringIO()))
+                                if pending:
+                                    signal.pthread_sigmask(signal.SIG_BLOCK, drive.SIGNALS)
+                                    os.kill(os.getpid(), signal.SIGHUP)
+                                    with self.assertRaises(SystemExit) as stopped:
+                                        drive.main(self.argv("--client", name, "--events", self.events,
+                                                             "--driver", "d-drive"), root=root)
+                                    self.assertEqual(stopped.exception.code, 129)
+                                else:
+                                    code = drive.main(self.argv("--client", name, "--events", self.events,
+                                                                "--driver", "d-drive"), root=root)
+                                    self.assertEqual(code, 2, err.getvalue())
+                                    self.assertIn("drive.py:", err.getvalue())
+                            after = Path(self.events).read_text() if os.path.exists(self.events) else ""
+                            if runs:
+                                self.assertRegex(after[len(before):], r"^\d\d:\d\d:\d\d d-drive outcome error\n$")
+                            else:
+                                self.assertEqual(after, before)
+                                self.assertEqual(os.path.exists(self.events), existing)
 
-        for resolved in (compose.ConfigError("missing implementation"), ImportError("missing dependency"),
-                         (Inline, {"invalid_key": True})):
-            with self.subTest(resolved=resolved):
-                expected = isinstance(resolved, Exception)
-                patch = ({"side_effect": resolved} if expected else {"return_value": resolved})
-                with unittest.mock.patch.object(clients, "definition", **patch):
-                    code, calls = self.inner(argv=self.argv("--events", self.events, "--driver", "d-drive"))
-                self.assertEqual((code, calls), (2, []))
-                self.assertEqual(os.path.exists(self.events), expected)
-                if expected:
-                    self.assertEqual(self.lines(), ["d-drive outcome error\n"])
-                    os.unlink(self.events)
+    def test_unknown_or_invalid_module_has_no_event_authority(self):
+        module = types.ModuleType("clients.unresolved")
+        for failure in ("unknown", "import-error", "missing-capability", "invalid-capability"):
+            for existing in (False, True):
+                with self.subTest(failure=failure, existing=existing), ExitStack() as stack:
+                    if os.path.exists(self.events):
+                        os.unlink(self.events)
+                    if existing:
+                        Path(self.events).write_text("keep\n")
+                    if failure == "import-error":
+                        stack.enter_context(unittest.mock.patch("importlib.import_module",
+                                                                side_effect=ImportError("dependency unavailable")))
+                    elif failure != "unknown":
+                        if failure == "invalid-capability":
+                            module.RUNS = "yes"
+                        stack.enter_context(unittest.mock.patch.dict(sys.modules, {module.__name__: module}))
+                    code, calls = self.inner(argv=self.argv("--client", "unresolved", "--events", self.events,
+                                                           "--driver", "d-drive"))
+                    self.assertEqual((code, calls), (2, []))
+                    self.assertEqual(os.path.exists(self.events), existing)
+                    if existing:
+                        self.assertEqual(Path(self.events).read_text(), "keep\n")
 
     def test_a_driver_that_cannot_start_its_run_appends_error(self):
         code, calls = self.inner(argv=self.argv("--task", "essay", "--events", self.events, "--driver", "d-drive"))
@@ -2900,13 +2984,13 @@ class Detach(Base):
         self.assertEqual((code, self.lines()), (0, ["d-drive outcome done\n"]))
 
     def test_driver_cleanup_does_not_reload_the_selected_client(self):
-        selected = clients.get("claude", CORE)
-        with unittest.mock.patch.object(clients, "definition", side_effect=[(type(selected), selected.config),
-                                                                          compose.ConfigError("config changed")]) as get:
+        with unittest.mock.patch.object(clients, "load_module", wraps=clients.load_module) as module, \
+                unittest.mock.patch.object(clients, "load_config", wraps=clients.load_config) as config:
             with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
                 code = drive.main(self.argv("--events", self.events, "--driver", "d-drive", "--dry-run"), root=CORE)
         self.assertEqual(code, 0)
-        self.assertEqual(get.call_count, 1)
+        module.assert_called_once_with("claude")
+        config.assert_called_once_with("claude", CORE)
         self.assertEqual(self.lines(), ["d-drive outcome error\n"])
 
     def test_a_signal_ends_the_driver_with_one_error_line_and_kills_its_tui_session(self):
@@ -2936,10 +3020,12 @@ class Detach(Base):
         self.assertFalse(os.path.exists(self.work))
 
     def test_a_signal_as_the_driver_ends_still_leaves_its_outcome_line(self):
-        sigmask, sent = signal.pthread_sigmask, []
+        sigmask, sent, blocks = signal.pthread_sigmask, [], []
 
         def block_after_a_signal(how, signals):
-            if how == signal.SIG_BLOCK and not sent:
+            if how == signal.SIG_BLOCK:
+                blocks.append(how)
+            if how == signal.SIG_BLOCK and len(blocks) > 1 and not sent:
                 sent.append(how)
                 os.kill(os.getpid(), signal.SIGTERM)   # before the driver's end blocks them
             return sigmask(how, signals)

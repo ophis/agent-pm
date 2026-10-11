@@ -541,3 +541,6 @@ def _bind_session(workdir: str, sid: str, client_id: str) -> _SessionState:
             return existing
         _write(_path(root, workdir, sid), validated, exclusive=False)
         return validated
+
+
+RUNS = CodexClient.runs

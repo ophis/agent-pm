@@ -100,3 +100,6 @@ class ClaudeClient(Client):
             for block in content if isinstance(content, list) else ():
                 if isinstance(block, dict) and block.get("type") == "text":
                     yield from (Event("text", t) for t in block.get("text", "").splitlines() if t.strip())
+
+
+RUNS = ClaudeClient.runs

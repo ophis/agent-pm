@@ -22,3 +22,6 @@ class SkillClient(Client):
 
     def inline(self, prompt: str) -> str:
         return prompt
+
+
+RUNS = SkillClient.runs

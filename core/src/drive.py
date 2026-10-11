@@ -899,18 +899,17 @@ def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subproc
         a.input = sys.stdin.read()
     if a.driver is None:
         return _main(a, root, popen, proc)[0]
-    # Resolve while signals remain blocked: even a stop before _main starts still knows whether this client runs.
-    a.running_client = True
-    try:
-        implementation, table = clients.definition(a.client or "claude", root)
-        a.running_client = implementation.runs
-        a.selected_client = implementation(table if implementation.needs_config else {})
-    except (ConfigError, ImportError) as e:
-        a.client_error = ConfigError(str(e))
-    for s in SIGNALS:
-        signal.signal(s, _stop)
     status = None
     try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+        for s in SIGNALS:
+            signal.signal(s, _stop)
+        try:
+            module = clients.load_module(a.client or "claude")
+            a.running_client = module.RUNS
+            a.selected_client = clients.get(a.client or "claude", root, module=module)
+        except ConfigError as e:
+            a.client_error = e
         try:
             signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)   # blocked by detach until now
             code, status = _main(a, root, popen, proc)
@@ -945,7 +944,6 @@ def _main(a: argparse.Namespace, root: str, popen, proc) -> tuple[int, Status | 
         if a.client_error is not None:
             raise a.client_error
         client = a.selected_client if a.selected_client is not None else clients.get(name, root)
-        a.running_client = client.runs
         if client.runs:
             if a.input is None or a.out is None or a.workdir is None:
                 raise ConfigError(f"client {name!r} needs --input, --out and --workdir")
