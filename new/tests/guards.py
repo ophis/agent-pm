@@ -32,7 +32,8 @@ TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))   # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
 TMUX_HOST = "src/driver/tmux_host.py"
-STANDALONE = (TMUX_HOST,)   # run with -I as files of their own, under the system's Python 3.9 too
+TUI_HOOK = "src/driver/modes/tui_hook.py"
+STANDALONE = (TMUX_HOST, TUI_HOOK)   # run with -I as files of their own, under the system's Python 3.9 too
 
 
 def layer_imports(core: str) -> list[str]:

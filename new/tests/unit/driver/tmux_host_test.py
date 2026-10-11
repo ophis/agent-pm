@@ -735,6 +735,14 @@ class Mark(unittest.TestCase):
                 self.assertEqual(fake.kwargs, [MARK_KW] * 2)
         self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n\d\d:\d\d:\d\d w1 blocked\n$")
 
+    def test_no_events_file_sets_the_state_only(self):
+        for word in ("done", "blocked"):
+            with self.subTest(word):
+                fake = Tmux(pane="w1")
+                tmux_host.mark(word, None, proc=fake)
+                self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", word]])
+        self.assertEqual(self.text(), "old\n")
+
     def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
         fake = Tmux(pane="w1")
         tmux_host.mark("done", self.events, proc=fake)

@@ -172,6 +172,12 @@ class Syntax39(Sample):
         self.assertEqual(len(found), 1, found)
         self.assertTrue(found[0].startswith("src/driver/tmux_host.py: "), found)
 
+    def test_the_tui_hook_is_standalone_too(self):
+        root = self.tree({"src/driver/modes/tui_hook.py": "match x:\n    case _: pass\n"})
+        found = guards.syntax_39(root)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("src/driver/modes/tui_hook.py: "), found)
+
     def test_3_9_syntax_is_clean(self):
         root = self.tree({"src/driver/tmux_host.py": "from __future__ import annotations\n"
                                                      "def f(x: int | None) -> list[str]: return []\n"})

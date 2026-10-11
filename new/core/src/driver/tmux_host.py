@@ -340,17 +340,18 @@ def _taken(path: str, sleep) -> bool:
     return not os.path.exists(path)
 
 
-def mark(word: str, events: str, *, pane: str | None = None, tmux: str = "tmux", proc=subprocess.run) -> None:
+def mark(word: str, events: str | None, *, pane: str | None = None, tmux: str = "tmux",
+         proc=subprocess.run) -> None:
     """The event protocol, for a hook that runs a program: sets the pane's @state to word and, for done and blocked,
-    appends `HH:MM:SS <session> <word>` to events, a regular file of the caller's, never created or followed. pane None:
-    $TMUX_PANE, unset → nothing. tmux: the binary each call runs."""
+    appends `HH:MM:SS <session> <word>` to events (None: no line), a regular file of the caller's, never created or
+    followed. pane None: $TMUX_PANE, unset → nothing. tmux: the binary each call runs."""
     pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
     if not pane:
         return
     if not PANE.fullmatch(pane):
         raise TuiError(f"bad tmux pane {pane!r}")
     _mark_tmux([tmux, "set-option", "-t", pane, "@state", word], proc)
-    if word not in ("done", "blocked"):
+    if word not in ("done", "blocked") or events is None:
         return
     session = _mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"], proc).strip()
     if not NAME.fullmatch(session):
