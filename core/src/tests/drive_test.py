@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import unittest.mock
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -73,9 +74,13 @@ class Base(unittest.TestCase):
         self.repo = os.path.join(self.tmp.name, "repo")
         os.makedirs(self.repo)
         Recorder.seen = []
-        patch = unittest.mock.patch.dict(clients.REGISTRY, {"fake": Recorder})
-        patch.start()
-        self.addCleanup(patch.stop)
+        module = types.ModuleType("clients.fake")
+        module.FakeClient = Recorder
+        self.enterContext(unittest.mock.patch.dict(sys.modules, {"clients.fake": module}))
+        original = clients.load_config
+        self.enterContext(unittest.mock.patch.object(
+            clients, "load_config", side_effect=lambda name, root: {} if name == "fake" and root == CORE
+            else original(name, root)))
 
     def params(self, **kw):
         return compose.RunParams(**{"input": "Research X.", "out": os.path.join(self.work, "out.md"),
@@ -119,6 +124,75 @@ class ClientConfig(unittest.TestCase):
                 with self.assertRaises(compose.ConfigError) as cm:
                     clients.load_config("claude", tmp.name)
                 self.assertIn("[clients.claude]", str(cm.exception))
+
+
+class ClientDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        hermetic.home(self)
+        self.path = os.path.join(self.tmp.name, "config.toml")
+
+    def config(self, text):
+        with open(self.path, "w") as f:
+            f.write(text)
+
+    def test_names_are_configured_in_source_order_and_existing_clients_load(self):
+        self.config("[clients.skill]\n[clients.claude]\n")
+        self.assertEqual(clients.names(self.tmp.name), ("skill", "claude"))
+        self.assertIsInstance(clients.get("skill", self.tmp.name), clients.SkillClient)
+        self.assertIsInstance(clients.get("claude", self.tmp.name), clients.ClaudeClient)
+
+    def test_a_configured_module_and_subclass_are_discovered(self):
+        self.config("[clients.third_party]\n")
+        module = types.ModuleType("clients.third_party")
+        module.ThirdPartyClient = type("ThirdPartyClient", (clients.Client,), {"needs_config": False})
+        with unittest.mock.patch.dict(sys.modules, {"clients.third_party": module}):
+            self.assertIsInstance(clients.get("third_party", self.tmp.name), module.ThirdPartyClient)
+
+    def test_missing_and_malformed_client_configuration_fail(self):
+        for config in (None, "tier = 1\n", "clients = 1\n", "[clients]\nclaude = 1\n"):
+            with self.subTest(config=config):
+                if config is None:
+                    if os.path.exists(self.path):
+                        os.unlink(self.path)
+                else:
+                    self.config(config)
+                with self.assertRaises(compose.ConfigError):
+                    clients.names(self.tmp.name)
+                with self.assertRaises(compose.ConfigError):
+                    clients.get("claude", self.tmp.name)
+        self.config("[clients.skill]\n")
+        with self.assertRaisesRegex(compose.ConfigError, r"clients.claude"):
+            clients.get("claude", self.tmp.name)
+
+    def test_unsafe_names_never_reach_import(self):
+        self.config("[clients.claude]\n")
+        for name in ("Claude", "../claude", "claude.skill", "a-b", "_private", ""):
+            with self.subTest(name=name), unittest.mock.patch("importlib.import_module") as imported:
+                with self.assertRaises(compose.ConfigError):
+                    clients.get(name, self.tmp.name)
+                imported.assert_not_called()
+
+    def test_missing_module_class_and_wrong_class_fail_clearly(self):
+        self.config("[clients.third]\n")
+        with self.assertRaisesRegex(compose.ConfigError, "module"):
+            clients.get("third", self.tmp.name)
+        module = types.ModuleType("clients.third")
+        with unittest.mock.patch.dict(sys.modules, {"clients.third": module}):
+            with self.assertRaisesRegex(compose.ConfigError, "ThirdClient"):
+                clients.get("third", self.tmp.name)
+            module.ThirdClient = object
+            with self.assertRaisesRegex(compose.ConfigError, "subclass"):
+                clients.get("third", self.tmp.name)
+
+    def test_failure_inside_an_existing_module_is_not_disguised_as_missing_module(self):
+        self.config("[clients.third]\n")
+        failure = ModuleNotFoundError("No module named 'dependency'", name="dependency")
+        with unittest.mock.patch("importlib.import_module", side_effect=failure):
+            with self.assertRaises(ModuleNotFoundError) as cm:
+                clients.get("third", self.tmp.name)
+        self.assertIs(cm.exception, failure)
 
 
 class Claude(Base):

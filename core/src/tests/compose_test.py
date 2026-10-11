@@ -1115,12 +1115,12 @@ class RealCore(unittest.TestCase):
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role in ROLES:
-            for client in clients.REGISTRY:
+            for client in clients.names(CORE):
                 self.assertEqual(reference_errors(*role_sources(role, client)), [], (role, client))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
         for role, task in RUNS:
-            for client in clients.REGISTRY:
+            for client in clients.names(CORE):
                 anchors = heading_anchors(client_prompt(client, role, task)[0])
                 self.assertEqual(len(anchors), len(set(anchors)), (role, task, client))
 
