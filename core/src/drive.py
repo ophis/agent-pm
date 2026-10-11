@@ -86,7 +86,7 @@ class Outcome:
 class Result:
     returncode: int
     outcome: Outcome | None   # None: the agent run returned no valid outcome
-    error: str = ""
+    error: str = ""          # client exit diagnostic may accompany a valid outcome
 
 
 def bind(entry: str, repo: str | None) -> str | None:
@@ -706,7 +706,7 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
     come; then checks the last outcome it reported, saves the deliverable to params.out where the destination says
     so (unless the run wrote it there), and hands the outcome on too. Only reports made after this call began count.
     The channel is the run's record: its `input` and `session` events come before `begun` is called and the host
-    starts; `result` (the outcome without its deliverable, else the error) and `end` close it however the run ends,
+    starts; `result` (the outcome without its deliverable and any error) and `end` close it however the run ends,
     an exception (raised on) as `stopped: <type>: <message>`. A done or failed new run that never reported `start`
     gets a stderr line and a `missing` event first. The tui runner names its session tui_session(…, params.prefix)
     and appends its state events to the `events` file. Raises ConfigError, before anything starts, when the client
@@ -733,7 +733,8 @@ def start(launch: Launch, run: RunConfig, params: RunParams, *, client: Client, 
         result = _drive(launch, run, params, host=host, argv=argv, runner=runner, sinks=sinks, out=out)
         rc, closing = result.returncode, {"error": result.error}
         if result.outcome is not None:
-            closing = {"outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"}}
+            closing = {"outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"},
+                       **({"error": result.error} if result.error else {})}
         return result
     except BaseException as e:
         text = " ".join(str(e).split())
@@ -788,14 +789,13 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
     rc = host.returncode()
     for event in tail():
         hand(event)
-    if rc != 0:
-        return Result(rc, None, f"the client exited {rc}")
+    diagnostic = f"the client exited {rc}" if rc != 0 else ""
     if raw is None:
-        return Result(rc, None, "the agent run returned no outcome")
+        return Result(rc, None, diagnostic or "the agent run returned no outcome")
     try:
         outcome = validate(raw, run, params)
     except InvalidOutcome as e:
-        return Result(rc, None, f"invalid outcome: {e}")
+        return Result(rc, None, diagnostic or f"invalid outcome: {e}")
     if run.output["type"] in SAVES_DELIVERABLE and outcome.deliverable:
         if not holds(out, outcome.deliverable):   # else the agent run wrote it there (params.deliverable)
             save(out, outcome.deliverable)
@@ -808,7 +808,7 @@ def _drive(launch: Launch, run: RunConfig, params: RunParams, *, host: Runner, a
             sink(Event("missing", name="start"))
     for sink in sinks:
         sink(Event("outcome", outcome=asdict(outcome)))
-    return Result(rc, outcome)
+    return Result(rc, outcome, diagnostic)
 
 
 def main(argv: list[str], root: str = ROOT, popen=subprocess.Popen, proc=subprocess.run) -> int:
