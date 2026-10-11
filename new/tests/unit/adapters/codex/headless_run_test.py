@@ -52,6 +52,18 @@ class HeadlessRunTest(Base):
                         "type": kind, "error": {"message": message}}
                     self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit(None)])
 
+    def test_source_quota_error_emits_limit(self):
+        run = self.adapter.headless_run()
+        message = "Quota exceeded. Check your plan and billing details."
+        self.assertEqual(list(run.parse({"type": "error", "message": message})),
+                         [Stderr(message), LimitHit(None)])
+
+    def test_source_quota_failed_turn_emits_limit(self):
+        run = self.adapter.headless_run()
+        message = "Quota exceeded. Check your plan and billing details."
+        self.assertEqual(list(run.parse({"type": "turn.failed", "error": {"message": message}})),
+                         [Stderr(message), LimitHit(None)])
+
     def test_source_local_reset_formats_become_unix_seconds(self):
         self.adapter.common.config["env"] = {"TZ": "UTC"}
         run = self.adapter.headless_run()

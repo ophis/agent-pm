@@ -8,6 +8,7 @@ from adapters.base import Activity, HeadlessRun, Launch, LimitHit, Reply, Sessio
 from .common import flags, native_id
 
 LIMIT_PREFIXES = ("You've hit your usage limit.", "You've hit your usage limit for ",
+                  "Quota exceeded. Check your plan and billing details.",
                   "Your workspace is out of credits.",
                   "You hit your spend cap set in your workspace.",
                   "You hit your spend cap set by the owner of your workspace.")
