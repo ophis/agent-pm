@@ -82,20 +82,20 @@ class Main(unittest.TestCase):
 
     def test_each_limit_is_inclusive(self):
         body = "a = 0\n" * 100
-        for path, limit in (("core/a.py", 10), ("tests/a.py", 5)):
+        for path, limit in (("core/a.py", 15), ("tests/a.py", 10)):
             for extra, expected in ((0, 0), (1, 1)):
                 with self.subTest(path=path, extra=extra):
                     comment = "#" + "c" * (3 * limit - 1 + extra)
                     self.assertEqual(self.run_in({path: body + comment + "\n"})[0], expected)
 
     def test_a_large_docstring_fails_its_rule_and_lists_its_file(self):
-        for path, failing, passing in (("core/scratch.py", budget.SOURCE, "tests"),
-                                       ("tests/scratch.py", budget.TESTS, "source")):
+        for path, failing, limit, passing in (("core/scratch.py", budget.SOURCE, 15, "tests"),
+                                              ("tests/scratch.py", budget.TESTS, 10, "source")):
             with self.subTest(path=path):
                 code, lines, err = self.run_in({"core/a.py": CODE, "tests/a_test.py": CODE, path: DOC + CODE})
                 n, total = chars(DOC), 2 * chars(CODE)
-                fail = (f"FAIL {failing.name}: {n / total:.2%} > {failing.limit}% ({n} comment+docstring / {total} "
-                        f"code characters; {n - failing.limit * total // 100} over budget)")
+                fail = (f"FAIL {failing.name}: {n / total:.2%} > {limit}% ({n} comment+docstring / {total} "
+                        f"code characters; {n - limit * total // 100} over budget)")
                 self.assertEqual((code, err), (1, ""))
                 self.assertIn(fail, lines)
                 self.assertEqual(lines[lines.index(fail) + 1], f"  {n / chars(CODE):.2%} {path}")

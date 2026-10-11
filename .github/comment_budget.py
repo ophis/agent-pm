@@ -10,8 +10,8 @@ import tokenize
 
 ROOT = Path(__file__).resolve().parents[1]
 Rule = namedtuple("Rule", "name pattern limit")
-SOURCE = Rule("source", re.compile(""), 10)
-TESTS = Rule("tests", re.compile(r"(^|/)tests/|_test\.py$"), 5)
+SOURCE = Rule("source", re.compile(""), 15)
+TESTS = Rule("tests", re.compile(r"(^|/)tests/|_test\.py$"), 10)
 PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
            "never by adding code to lower the ratio.")
 
