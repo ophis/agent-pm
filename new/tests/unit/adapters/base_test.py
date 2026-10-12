@@ -1,5 +1,5 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
-Adapter, Headless and Tui (hook kinds, labels, limit), through stub subclasses; nothing starts a process."""
+Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
 import dataclasses
 import inspect
 import typing
@@ -10,8 +10,8 @@ from unittest import mock
 from new.tests import hermetic  # noqa: F401
 from adapters import base
 from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Adapter, Blocked, ConfigError, Exited,
-                           Headless, Key, Launch, LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr,
-                           Tui, TurnEnd, Usage, Window)
+                           Headless, InProcess, Key, Launch, LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec,
+                           Stderr, Tui, TurnEnd, Usage, Window)
 
 
 class StubAdapter(Adapter):
@@ -38,6 +38,16 @@ class StubTui(Tui):
 
     def reply(self, payload):
         return payload.get("last", "")
+
+
+class StubInProcess(InProcess):
+    def run(self, prompt, spec, resume):
+        yield Reply(prompt)
+
+
+class CheckOnlyInProcess(InProcess):
+    def check(self, prompt, spec, resume):
+        return None
 
 
 class LabeledTui(StubTui):
@@ -209,6 +219,8 @@ class AdapterTest(Refusals):
             Headless(StubAdapter({}))
         with self.assertRaises(TypeError):
             Tui(StubAdapter({}))
+        with self.assertRaises(TypeError):
+            InProcess(StubAdapter({}))
 
     def test_refuses_the_first_unknown_key_in_sorted_order(self):
         self.refused(lambda: StubAdapter({"zeta": 1, "alpha": 2, "model": "m"}),
@@ -229,6 +241,10 @@ class AdapterTest(Refusals):
                 self.assertIsNone(adapter.usage(output))
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
 
+    def test_in_process_is_none_unless_overridden(self):
+        self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))
+        self.assertIsNone(StubAdapter({}).in_process())
+
     def test_runs_keep_their_adapter(self):
         adapter = StubAdapter({})
         self.assertIs(adapter.headless().adapter, adapter)
@@ -240,6 +256,21 @@ class HeadlessTest(unittest.TestCase):
         lines = ['{"texts": ["a"]}\n', "not json\n", "[1, 2]\n", "\n", "", '"text"\n', "null\n",
                  "[" * 100000 + "]" * 100000 + "\n", "{}\n", '{"texts": ["b", "c"]}']
         self.assertEqual(list(StubHeadless(StubAdapter({})).events(lines)), [Reply("a"), Reply("b"), Reply("c")])
+
+
+class InProcessTest(unittest.TestCase):
+    def test_run_is_its_only_abstract_method(self):
+        self.assertEqual(InProcess.__abstractmethods__, frozenset({"run"}))
+        with self.assertRaises(TypeError):
+            CheckOnlyInProcess(StubAdapter({}))
+
+    def test_keeps_its_adapter_and_checks_nothing_by_default(self):
+        adapter = StubAdapter({})
+        run = StubInProcess(adapter)
+        self.assertIs(run.adapter, adapter)
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertIsNone(run.check("p", Spec(workdir="/w", sid="s"), resume))
 
 
 class TuiTest(unittest.TestCase):
@@ -334,6 +365,8 @@ class NoProcessTest(unittest.TestCase):
             adapter.usage_probe()
             adapter.usage("output")
             adapter.session_status("s", "/c")
+            adapter.in_process()
+            StubInProcess(adapter).check("p", Spec(workdir="/w"), False)
         popen.assert_not_called()
         run.assert_not_called()
 

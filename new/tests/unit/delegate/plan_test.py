@@ -185,9 +185,11 @@ class Refusals(Base):
     def test_each_refusal_names_its_cause_and_nothing_is_written(self):
         tasks = ", ".join(composer.index("researcher"))
         nobody = RunConfig(role="nope", tier=2, effort="high", runtime="fake", output={"type": "local"})
-        for kw, want in (({"mode": "x"}, "mode must be headless or tui, got 'x'"),
+        for kw, want in (({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),
                          ({"name": "n"}, "name: tui mode only"),
                          ({"events": "e"}, "events: tui mode only"),
+                         ({"mode": "in_process", "name": "n"}, "name: tui mode only"),
+                         ({"mode": "in_process", "events": "e"}, "events: tui mode only"),
                          ({"sid": "a", "resume": "b"}, "sid 'a' differs from resume 'b'"),
                          ({"run": nobody}, "unknown role 'nope'"),
                          ({"task": "nope"}, f"task 'nope' is not one of researcher's tasks ({tasks})")):
@@ -251,6 +253,11 @@ class Planned(Base):
         self.assertEqual((got.name, got.events), (None, None))
         self.assertEqual(got.params, RunParams(input="Research X.", out=self.out, workdir=self.work))
         self.assertEqual(self.planned(task=None)[0].run.task, "")
+
+    def test_in_process_is_planned_as_headless(self):
+        got = self.planned(mode="in_process", sid=SID)[0]
+        self.assertEqual(got.mode, "in_process")
+        self.assertEqual(replace(got, mode="headless"), self.planned(sid=SID)[0])
 
     def test_tui_takes_name_and_events_unchecked_for_the_driver_to_check(self):
         for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "rel\n")):

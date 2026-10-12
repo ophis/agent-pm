@@ -1,8 +1,9 @@
 """The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
-starts it in its Mode and returns its Handle. Handle.events() streams its events, Stderr and IdleTimeout (none while
-Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and `stderr`. usage(),
-session_info() and session() give a runtime's Usage, a session's SessionStatus and its record. attach(), sessions(),
-show() and close() reach a tui session by name; detach() runs a command in a tmux session of its own."""
+starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
+and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
+`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record.
+attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a tmux session of its
+own."""
 import contextlib
 import logging
 import os
@@ -16,11 +17,11 @@ from dataclasses import dataclass, replace
 from typing import Protocol
 
 from adapters.base import (RESUMABLE, Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, Headless,
-                           Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, Tui,
-                           TurnEnd, Usage, Window, sid_error)
+                           InProcess, Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr,
+                           Tui, TurnEnd, Usage, Window, sid_error)
 from driver import records, registry, tmux_host
 from driver.errors import DriverError
-from driver.modes import headless, tui
+from driver.modes import headless, in_process, tui
 from driver.records import session
 from utils.paths import printable_abs
 
@@ -30,7 +31,7 @@ __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event
            "attach_command", "close", "detach", "layout", "records", "session", "session_info", "sessions", "show",
            "start", "usage"]
 
-MODES = ("headless", "tui")
+MODES = ("headless", "tui", "in_process")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5
 PROBE_DIR = "~/.agent-pm/probe"
@@ -58,7 +59,8 @@ class Sessions:
 
 
 class Mode(Protocol):
-    """A running session as one mode hosts it; a Handle's only way to it."""
+    """A running session as one mode hosts it; a Handle's only way to it. Its own failure raises from poll (headless:
+    its parse); the session's is its returncode (an in_process run that raised: 1)."""
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
         """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
@@ -171,7 +173,7 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     """tui: tmux session `name`, else <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and
     dead lines."""
     if mode not in MODES:
-        raise ConfigError(f"mode must be headless or tui, got {mode!r}")
+        raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
     _idle(idle_timeout)
     if resume is not None and not (isinstance(resume, str) and resume):
         raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
@@ -191,21 +193,34 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     spec = replace(spec, sid=sid)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
-    launch = steps.launch(prompt, spec, resume is not None)
-    if not launch.argv:
-        raise ConfigError(f"runtime {runtime!r} gave no command")
-    cwd = launch.cwd or spec.access.cwd or spec.workdir
-    info = SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume)
+    info = steps.info(prompt, spec, resume is not None)
     with steps.prepared(info, spec.workdir) as host:
         os.makedirs(spec.workdir, exist_ok=True)
-        records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
-                     transcript=launch.transcript, resume=launch.resume)
-        steps.begin(host, launch, cwd)
+        records.note(records.path(spec.workdir), "session", sid=sid, cwd=info.cwd, project=info.project,
+                     transcript=info.transcript, resume=info.resume)
+        steps.begin(host)
     return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info,
                   name=steps.name)
 
 
-class _HeadlessSteps:
+def _no_tui_keys(name, events) -> None:
+    for key, value in (("name", name), ("events", events)):
+        if value is not None:
+            raise ConfigError(f"{key}: tui mode only")
+
+
+class _LaunchSteps:
+    """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd for begin()."""
+
+    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        self.command = launch = self.launch(prompt, spec, resumed)
+        if not launch.argv:
+            raise ConfigError(f"runtime {self.runtime!r} gave no command")
+        self.cwd = launch.cwd or spec.access.cwd or spec.workdir
+        return SessionInfo(spec.sid, "", self.cwd, spec.access.project, launch.transcript, launch.resume)
+
+
+class _HeadlessSteps(_LaunchSteps):
     name = None
 
     @staticmethod
@@ -213,10 +228,8 @@ class _HeadlessSteps:
         return adapter.headless()
 
     def __init__(self, run: Headless, runtime: str, sid: str, name, events):
-        for key, value in (("name", name), ("events", events)):
-            if value is not None:
-                raise ConfigError(f"{key}: tui mode only")
-        self.run = run
+        _no_tui_keys(name, events)
+        self.run, self.runtime = run, runtime
 
     def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
         return self.run.launch(prompt, spec, resumed)
@@ -224,14 +237,15 @@ class _HeadlessSteps:
     def prepared(self, info: SessionInfo, workdir: str) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
         return contextlib.nullcontext(headless.HeadlessMode(self.run))
 
-    def begin(self, host: headless.HeadlessMode, launch: Launch, cwd: str) -> None:
+    def begin(self, host: headless.HeadlessMode) -> None:
+        launch = self.command
         try:
-            host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
+            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd))
         except (OSError, ValueError) as e:
             raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
 
 
-class _TuiSteps:
+class _TuiSteps(_LaunchSteps):
     @staticmethod
     def run_of(adapter: Adapter) -> Tui | None:
         return adapter.tui()
@@ -249,11 +263,35 @@ class _TuiSteps:
         with tui.lock(self.name):
             yield tui.TuiMode.prepare(self.name, self.run, info, self.events, runtime=self.runtime, workdir=workdir)
 
-    def begin(self, host: tui.TuiMode, launch: Launch, cwd: str) -> None:
-        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=self.settings.status_line)
+    def begin(self, host: tui.TuiMode) -> None:
+        launch = self.command
+        host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd), status_line=self.settings.status_line)
 
 
-_STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps}
+class _InProcessSteps:
+    name = None
+
+    @staticmethod
+    def run_of(adapter: Adapter) -> InProcess | None:
+        return adapter.in_process()
+
+    def __init__(self, run: InProcess, runtime: str, sid: str, name, events):
+        _no_tui_keys(name, events)
+        self.run = run
+
+    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        self.run.check(prompt, spec, resumed)
+        self.args = prompt, spec, resumed
+        return SessionInfo(spec.sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", "")
+
+    def prepared(self, info: SessionInfo, workdir: str) -> contextlib.AbstractContextManager[in_process.InProcessMode]:
+        return contextlib.nullcontext(in_process.InProcessMode(self.run))
+
+    def begin(self, host: in_process.InProcessMode) -> None:
+        host.begin(*self.args)
+
+
+_STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
 
 
 def _idle(idle_timeout) -> None:

@@ -123,7 +123,7 @@ class Tui(Headless):
         return GiveUp(f"no event for {seconds / 3600:g} h")
 
 
-POLICIES = {"headless": Headless, "tui": Tui}
+POLICIES = {"headless": Headless, "tui": Tui, "in_process": Headless}
 
 
 def printable(text: str) -> str:
