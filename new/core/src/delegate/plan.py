@@ -123,10 +123,14 @@ def plan(
     here, project = place(run, workdir, resume_sid=resume, cwd=cwd)
     intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=repo, team=team)
     access = api.Access(
-        intent.dirs, intent.commands + ((intent.gate,) if intent.gate else ()), here, project
+        intent.dirs,
+        intent.commands + ((intent.gate,) if intent.gate else ()),
+        here,
+        project,
+        intent.reads,
     )
     spec = api.Spec(workdir=workdir, access=access, tier=run.tier, effort=run.effort)
-    _check_team_dirs(run, team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
+    _check_team_dirs(team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
     params = RunParams(
         input=input,
         out=out or os.path.join(workdir, DELIVERABLE),
@@ -149,7 +153,6 @@ def plan(
 
 
 def _check_team_dirs(
-    run: RunConfig,
     team: Team,
     guarded: tuple[str, ...],
     write_dirs: tuple[str, ...],
@@ -158,19 +161,14 @@ def _check_team_dirs(
     spec: api.Spec,
     resume: str | None,
 ) -> None:
-    """The dirs `runtime` can write itself (api.writable_dirs) count after the run's, the role's own tasks dir aside."""
+    """Every dir the run can write counts, those `runtime` can write itself (api.writable_dirs) last; spec.access.reads,
+    read only, do not."""
     if not team.dirs and not guarded:
         return
-    writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)] + [
-        (f"write dir {p}", p) for p in write_dirs
-    ]
-    own = team.tasks_dir(run.role)
-    added = [("a dir the run adds", p) for p in spec.access.dirs] + [
-        (f"a dir {runtime} can write", p) for p in api.writable_dirs(runtime, spec, resume)
-    ]
-    writes += [
-        (what, p) for what, p in added if not own or os.path.realpath(p) != os.path.realpath(own)
-    ]
+    writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
+    writes += [(f"write dir {p}", p) for p in write_dirs]
+    writes += [("a dir the run adds", p) for p in spec.access.dirs]
+    writes += [(f"a dir {runtime} can write", p) for p in api.writable_dirs(runtime, spec, resume)]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)
