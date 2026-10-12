@@ -9,8 +9,9 @@ import threading
 import unittest
 import unittest.mock
 
-from new.tests import CORE, hermetic
 import repo
+
+from new.tests import CORE, hermetic
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40

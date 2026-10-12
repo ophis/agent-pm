@@ -1,5 +1,6 @@
 """Codex's abstract factory."""
 from adapters.base import Adapter, SessionStatus
+
 from .common import CodexCommon
 from .headless_run import CodexHeadlessRun
 

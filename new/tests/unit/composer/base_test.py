@@ -2,9 +2,10 @@
 import os
 import unittest
 
-from new.tests import SRC
 import repo
 from composer import base
+
+from new.tests import SRC
 
 
 class Paths(unittest.TestCase):

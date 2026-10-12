@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import config  # noqa: E402
 import drive  # noqa: E402
@@ -188,7 +188,7 @@ def _key(line):
 
 def _recent_keys(path):
     if path not in _recent:
-        cutoff, keys = datetime.now(timezone.utc) - WINDOW, set()
+        cutoff, keys = datetime.now(UTC) - WINDOW, set()
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 for raw in f:

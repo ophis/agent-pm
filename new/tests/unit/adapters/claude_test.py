@@ -8,13 +8,25 @@ import tempfile
 import unittest
 from unittest import mock
 
-from new.tests import hermetic
-from adapters.base import (Access, Activity, ConfigError, Launch, LimitHit, Reply, SessionBound, SessionStatus, Spec,
-                           TurnEnd, Usage)
+from adapters.base import (
+    Access,
+    Activity,
+    ConfigError,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Spec,
+    TurnEnd,
+    Usage,
+)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless_run import ClaudeHeadlessRun
 from driver import registry
+
+from new.tests import hermetic
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'

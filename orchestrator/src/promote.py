@@ -4,7 +4,7 @@ import hashlib
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
@@ -211,7 +211,7 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
         runnable(cfg)
     except CONFIG_ERRORS as e:
         return config_error("promote", e, dry)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     try:
         promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
         promoter.run()

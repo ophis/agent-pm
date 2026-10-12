@@ -1,4 +1,6 @@
-import os, subprocess, unittest
+import os
+import subprocess
+import unittest
 from unittest import mock
 from tests import hermetic  # noqa: F401
 import attended

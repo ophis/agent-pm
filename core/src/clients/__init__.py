@@ -6,10 +6,21 @@ import tomllib
 from collections.abc import Mapping
 from types import ModuleType
 
-from compose import CONFIG, ConfigError, catalog as role_catalog
+from compose import CONFIG, ConfigError
+from compose import catalog as role_catalog
 
-from .base import (PROGRESS, Access, Client, Event, Launch, WorkerCommand, WorkerSpec, client_tables,  # noqa: F401
-                   lines_back, load_config)
+from .base import (  # noqa: F401
+    PROGRESS,
+    Access,
+    Client,
+    Event,
+    Launch,
+    WorkerCommand,
+    WorkerSpec,
+    client_tables,
+    lines_back,
+    load_config,
+)
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 

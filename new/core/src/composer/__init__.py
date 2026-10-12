@@ -15,10 +15,20 @@ A role's index is checked whenever it is read, a team dir file whenever it is lo
 naming the file.
 """
 from composer.base import CONFIG, SCHEMA, SRC, TEAM, ConfigError, anchor, fill, outline, unfenced
-from composer.teams import (PROGRESS, Team, catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team,
-                            team_dirs)
-from composer.run import Intent, RunConfig, RunParams, access, bind, resolve, trusted_dirs
 from composer.prompt import OUTCOME, reference_errors, render
+from composer.run import Intent, RunConfig, RunParams, access, bind, resolve, trusted_dirs
+from composer.teams import (
+                            PROGRESS,
+                            Team,
+                            catalog,
+                            check_overlap,
+                            check_team_dirs,
+                            index,
+                            roles,
+                            tasks_path,
+                            team,
+                            team_dirs,
+)
 
 __all__ = ["ConfigError", "SRC", "TEAM", "CONFIG", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Intent",
            "Team", "team", "team_dirs", "tasks_path", "roles", "index", "catalog", "check_team_dirs", "check_overlap",

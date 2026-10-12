@@ -12,15 +12,25 @@ import tomllib
 import types
 import unittest
 
-from new.tests import NEW, hermetic
-from new.tests.unit.composer.prompt_test import (RUN, composed, heading_anchors, item, parameters, role_sources, rule,
-                                                 section, task_text)
-from new.tests.unit.composer.team_test import INTRO
 import composer
 import repo
 from composer.prompt import RETURN, RULE
 from composer.run import check_old_keys
 from composer.teams import START
+
+from new.tests import NEW, hermetic
+from new.tests.unit.composer.prompt_test import (
+    RUN,
+    composed,
+    heading_anchors,
+    item,
+    parameters,
+    role_sources,
+    rule,
+    section,
+    task_text,
+)
+from new.tests.unit.composer.team_test import INTRO
 
 CATALOG = composer.catalog()
 ROLES = list(CATALOG)

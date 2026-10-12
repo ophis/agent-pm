@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from tests import hermetic  # noqa: F401
 from tests.unit.orchestrator.board_ids import (ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TEAM, role as role_table,
@@ -18,7 +18,7 @@ import sessions
 from tests.unit.orchestrator.run_fixtures import logged, show
 from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
 
-NOW = datetime(2026, 9, 27, 15, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 27, 15, 0, tzinfo=UTC)
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"],
           "Handoff": IDS_BY_KEY["handoff"], "Done": IDS_BY_KEY["done"]}
 PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd"}

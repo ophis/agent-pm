@@ -1,11 +1,11 @@
 import ast
-from collections import namedtuple
 import io
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tokenize
+from collections import namedtuple
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 Rule = namedtuple("Rule", "name pattern limit")

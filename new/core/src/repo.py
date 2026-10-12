@@ -31,7 +31,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from utils.config_file import merge, read_config as _read_config
+from utils.config_file import merge
+from utils.config_file import read_config as _read_config
 from utils.paths import real_dirs, temp_dirs, under
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"

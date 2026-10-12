@@ -4,13 +4,13 @@ import contextlib
 import errno
 import json
 import os
+import posixpath
 import queue
+import re
 import shutil
 import signal
-import subprocess
-import posixpath
-import re
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -29,8 +29,21 @@ import repo as repos  # noqa: E402
 import roster  # noqa: E402
 import tmux_host  # noqa: E402
 from clients import Access, Client, Event, Launch  # noqa: E402
-from compose import (CHANNEL, CONFIG, ROOT, ConfigError, RunConfig, RunParams, Team, fill,  # noqa: E402
-                     outcome_schema, render, report_command, resolve, tui_session)
+from compose import (  # noqa: E402
+    CHANNEL,
+    CONFIG,
+    ROOT,
+    ConfigError,
+    RunConfig,
+    RunParams,
+    Team,
+    fill,
+    outcome_schema,
+    render,
+    report_command,
+    resolve,
+    tui_session,
+)
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)

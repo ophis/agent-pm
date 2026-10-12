@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from new.tests import NEW
 from adapters.base import Access, Spec
 from adapters.codex import CodexAdapter
+
+from new.tests import NEW
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"

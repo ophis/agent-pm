@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from adapters.base import Launch, SessionStatus, Usage
-from new.tests.unit.adapters.codex.support import Base, CHILD, NATIVE
 from adapters.codex import CodexAdapter
+
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class InspectionTest(Base):

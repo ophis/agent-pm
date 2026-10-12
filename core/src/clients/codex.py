@@ -1,12 +1,12 @@
-import json
 import fcntl
-import hashlib
-import tempfile
 import glob
+import hashlib
+import json
 import os
 import shlex
 import stat
 import sys
+import tempfile
 import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager

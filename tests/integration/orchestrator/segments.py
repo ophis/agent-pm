@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import NamedTuple
 
 from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
@@ -164,7 +164,7 @@ class Segment(Flow):
             return Script(outcome, steps, [[STOP] * (drive.STOP_LIMIT - 1)] if outcome == "give_up" else [], {})
         report = {"status": outcome, "title": f"Session registry run {n}", "summary": f"Summary #{n}."}
         if outcome == "done":
-            report["url"] = url or self.doc_url(f"{DIRS[role]}{datetime.now(timezone.utc):%Y-%m-%d}-{ident}-run-{n}.md")
+            report["url"] = url or self.doc_url(f"{DIRS[role]}{datetime.now(UTC):%Y-%m-%d}-{ident}-run-{n}.md")
         if outcome == "needs_input":
             report["questions"] = [f"Question #{n}?"]
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
@@ -387,7 +387,7 @@ class Segment(Flow):
         # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo, and their ts is to the second
         # (drive.stamp), so a claim within its second is no attempt
         time.sleep(max(0, (self.moved_to_todo(ident).replace(microsecond=0) + timedelta(seconds=1)
-                           - datetime.now(timezone.utc)).total_seconds()))
+                           - datetime.now(UTC)).total_seconds()))
 
     def attempts(self, ident):
         moved, entries = self.moved_to_todo(ident), router.parse_log(os.path.join(self.logs, "runs.jsonl"))
@@ -424,7 +424,7 @@ class Segment(Flow):
         with self.step("seed: backlog"):
             src = self.fake.issue(RESEARCH[0], state="done", assignee=self.ids[ACCOUNTS["researcher"]],
                                   project=PROJECT, description=RESEARCH[1])
-            path = f"{RESEARCH_DIR}{datetime.now(timezone.utc):%Y-%m-%d}-{src['identifier']}-session-registries.md"
+            path = f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}-session-registries.md"
             report = {"url": self.doc_url(path), "title": RESEARCH[0]}
             self.publish(path, REPORT)
             with self.fake.lock:

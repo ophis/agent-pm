@@ -12,10 +12,11 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters.base import Adapter, HeadlessRun, Launch, Reply, Stderr
 from driver.modes import headless_run
 from driver.modes.headless_run import HeadlessMode
+
+from new.tests import hermetic  # noqa: F401
 
 WAIT = 10           # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2   # probe()'s timeout where it must pass, in seconds

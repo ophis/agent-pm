@@ -7,14 +7,24 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
+import composer.run
+import repo
+from composer.base import ConfigError
+from composer.run import (
+    RUN_KEYS,
+    Intent,
+    RunConfig,
+    RunParams,
+    access,
+    bind,
+    check_old_keys,
+    resolve,
+    trusted_dirs,
+)
+from composer.teams import team
+
 from new.tests import SRC, hermetic
 from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
-import repo
-import composer.run
-from composer.base import ConfigError
-from composer.run import (RUN_KEYS, Intent, RunConfig, RunParams, access, bind, check_old_keys, resolve,
-                          trusted_dirs)
-from composer.teams import team
 
 CONFIG = """\
 tier = 2

@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
@@ -73,7 +73,7 @@ def parse_line(line):
     try:
         d = json.loads(line)
         if d["kind"] in ("start", "resume") and all(isinstance(d[k], str) for k in ("issue", "sid", "role")):
-            return datetime.fromisoformat(d["ts"]).astimezone(timezone.utc), d["kind"], d["issue"], d["sid"], d["role"]
+            return datetime.fromisoformat(d["ts"]).astimezone(UTC), d["kind"], d["issue"], d["sid"], d["role"]
     except (ValueError, TypeError, KeyError, OverflowError):
         pass
 
@@ -681,7 +681,7 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
         except (attended.Bad, tmux_host.TuiError, roster.RosterError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     start = start or functools.partial(outer, sh=sh, gql=gql, run=run, projects=tdir, keychain=keychain, root=root)
     try:
         if opts["issue"]:

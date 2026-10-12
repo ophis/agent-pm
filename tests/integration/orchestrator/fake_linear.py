@@ -10,7 +10,7 @@ import time
 import urllib.error
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -62,10 +62,10 @@ class _Failure:
 
 def stamp(t=None):
     if t is None:
-        t = datetime.now(timezone.utc)
+        t = datetime.now(UTC)
     elif isinstance(t, str):
         t = datetime.fromisoformat(t.replace("Z", "+00:00"))
-    t = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    t = (t if t.tzinfo else t.replace(tzinfo=UTC)).astimezone(UTC)
     return t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}Z"
 
 

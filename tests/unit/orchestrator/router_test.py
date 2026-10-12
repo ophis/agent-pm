@@ -12,7 +12,7 @@ import tempfile
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from unittest import mock
 
 from tests import hermetic  # noqa: F401
@@ -36,7 +36,7 @@ import drive
 import repo
 import roster
 
-NOW = datetime(2026, 9, 27, 3, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 AGENT, USER = "agent", "user"
 STATES = {"Todo": IDS_BY_KEY["todo"], "In Progress": IDS_BY_KEY["in_progress"], "In Review": IDS_BY_KEY["in_review"]}
 NAMES = {i: n for n, i in STATES.items()}

@@ -11,9 +11,10 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import CORE, SRC, fake_adapter, hermetic
 from adapters.base import Adapter, ConfigError
 from driver import registry
+
+from new.tests import CORE, SRC, fake_adapter, hermetic
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"

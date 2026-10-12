@@ -1,8 +1,9 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from adapters.base import Activity, ConfigError, LimitHit, Reply, SessionBound, Stderr, TurnEnd
-from new.tests.unit.adapters.codex.support import Base, NATIVE
+
+from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 
 class HeadlessRunTest(Base):
@@ -67,11 +68,11 @@ class HeadlessRunTest(Base):
     def test_source_local_reset_formats_become_unix_seconds(self):
         self.adapter.common.config["env"] = {"TZ": "UTC"}
         run = self.adapter.headless_run()
-        today = datetime.now(timezone.utc)
+        today = datetime.now(UTC)
         expected_today = today.replace(hour=16, minute=30, second=0, microsecond=0).timestamp()
         cases = (("You’ve hit your usage limit. Try again at 4:30 PM.", expected_today),
                  ("You’ve hit your usage limit. Upgrade to Pro, or try again at Oct 12th, 2026 4:30 PM.",
-                  datetime(2026, 10, 12, 16, 30, tzinfo=timezone.utc).timestamp()))
+                  datetime(2026, 10, 12, 16, 30, tzinfo=UTC).timestamp()))
         for message, expected in cases:
             with self.subTest(message=message):
                 self.assertEqual(list(run.parse({"type": "error", "message": message})),

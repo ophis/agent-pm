@@ -4173,7 +4173,7 @@ class CodexRecoveryDriver(Base):
         info = drive.session_info(self.client, self.work, SID)
         self.assertEqual((info.client_id, info.exists, info.transcript), (self.native, True, path))
         self.assertIsInstance(info.last_activity, float)
-        self.assertIn(f"codex resume -s workspace-write", info.resume)
+        self.assertIn("codex resume -s workspace-write", info.resume)
         self.assertIn(self.native, info.resume)
         self.assertFalse(info.usage_supported)
         self.assertIsNone(info.usage)

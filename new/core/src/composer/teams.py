@@ -7,9 +7,21 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from composer.base import CONFIG, LOCAL, METHOD, PLACEHOLDER, TEAM, ConfigError, _text, _title, unfenced
+
 from utils.config_file import read_config
 from utils.paths import temp_dirs, under
+
+from composer.base import (
+    CONFIG,
+    LOCAL,
+    METHOD,
+    PLACEHOLDER,
+    TEAM,
+    ConfigError,
+    _text,
+    _title,
+    unfenced,
+)
 
 PROGRESS = "agent-pm-progress"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)

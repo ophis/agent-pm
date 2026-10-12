@@ -17,7 +17,7 @@ import time
 import roster
 from compose import ConfigError
 
-from . import _codex_hook, codex   # codex imports this module: use its names at call time
+from . import _codex_hook, codex  # codex imports this module: use its names at call time
 from .base import WorkerCommand, WorkerSpec
 
 HOOKS = (("SessionStart", "sessionStart", "session"), ("UserPromptSubmit", "userPromptSubmit", "working"),

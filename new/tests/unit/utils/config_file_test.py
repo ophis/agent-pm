@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from new.tests import NEW
 from utils.config_file import merge, read_config
+
+from new.tests import NEW
 
 
 class ConfigFileTest(unittest.TestCase):

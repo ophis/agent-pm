@@ -10,9 +10,21 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import Access, Activity, ConfigError, Exited, LimitHit, Reply, SessionBound, Spec, Stderr, TurnEnd
+from adapters.base import (
+    Access,
+    Activity,
+    ConfigError,
+    Exited,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Spec,
+    Stderr,
+    TurnEnd,
+)
 from adapters.codex import CodexAdapter
 from driver import api, records, registry
+
 from new.tests import NEW
 from new.tests.integration.adapters.codex import fake_codex
 

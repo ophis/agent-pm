@@ -7,7 +7,8 @@ from unittest import mock
 
 from adapters.base import Access, ConfigError
 from adapters.codex import CodexAdapter
-from new.tests.unit.adapters.codex.support import Base, CHILD, NATIVE
+
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class CommonTest(Base):

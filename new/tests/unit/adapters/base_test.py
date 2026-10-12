@@ -6,10 +6,30 @@ import unittest
 from types import MappingProxyType
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters import base
-from adapters.base import (Access, Activity, Adapter, Blocked, ConfigError, Exited, HeadlessRun, Key, Launch,
-                           LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec, Stderr, TuiRun, TurnEnd, Usage)
+from adapters.base import (
+    Access,
+    Activity,
+    Adapter,
+    Blocked,
+    ConfigError,
+    Exited,
+    HeadlessRun,
+    Key,
+    Launch,
+    LimitHit,
+    Paste,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Spec,
+    Stderr,
+    TuiRun,
+    TurnEnd,
+    Usage,
+)
+
+from new.tests import hermetic  # noqa: F401
 
 
 class StubAdapter(Adapter):

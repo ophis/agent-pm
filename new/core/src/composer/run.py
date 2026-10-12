@@ -6,10 +6,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
-from composer.base import CONFIG, LOCAL, SRC, ConfigError, _title, fill
-from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
+
 from utils.config_file import read_config
 from utils.paths import real_dirs
+
+from composer.base import CONFIG, LOCAL, SRC, ConfigError, _title, fill
+from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)

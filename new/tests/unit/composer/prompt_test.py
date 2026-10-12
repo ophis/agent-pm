@@ -8,13 +8,14 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from new.tests import SRC, hermetic
-from new.tests.unit.composer.run_test import CONFIG
-from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 from composer.base import METHOD, TEAM, ConfigError, outline
 from composer.prompt import OUTCOME, PARAMETERS, RESUME, RETURN, RULE, reference_errors, render
 from composer.run import RunParams, resolve
 from composer.teams import index, team
+
+from new.tests import SRC, hermetic
+from new.tests.unit.composer.run_test import CONFIG
+from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 
 TEXTS = {
     "guide.md": ("# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"

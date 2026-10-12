@@ -13,8 +13,26 @@ import os
 import re
 from collections.abc import Mapping
 
-from composer.base import (CODE_SPAN, FILE_REF, LINK, METHOD, OUTPUT, PAREN, SCHEME, SRC, ConfigError, _code, _fence,
-                           _read, _text, _without, anchor, fill, outline, unfenced)
+from composer.base import (
+    CODE_SPAN,
+    FILE_REF,
+    LINK,
+    METHOD,
+    OUTPUT,
+    PAREN,
+    SCHEME,
+    SRC,
+    ConfigError,
+    _code,
+    _fence,
+    _read,
+    _text,
+    _without,
+    anchor,
+    fill,
+    outline,
+    unfenced,
+)
 from composer.run import RunConfig, RunParams
 from composer.teams import PROGRESS, Team, _team, index, tasks_path
 

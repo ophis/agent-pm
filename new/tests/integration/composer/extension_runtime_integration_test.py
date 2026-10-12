@@ -4,6 +4,7 @@ import os
 import unittest
 
 from composer.prompt import RETURN
+
 from new.tests import SRC
 from new.tests.integration.composer import child
 

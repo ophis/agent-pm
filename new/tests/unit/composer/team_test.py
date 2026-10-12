@@ -6,11 +6,21 @@ import tempfile
 import unittest
 from unittest import mock
 
-from new.tests import hermetic
 import repo
 from composer.base import TEAM, ConfigError
-from composer.teams import (catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team, team_dirs,
-                            team_paths)
+from composer.teams import (
+    catalog,
+    check_overlap,
+    check_team_dirs,
+    index,
+    roles,
+    tasks_path,
+    team,
+    team_dirs,
+    team_paths,
+)
+
+from new.tests import hermetic
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +

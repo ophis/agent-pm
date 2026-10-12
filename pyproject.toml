@@ -1,0 +1,15 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+per-file-target-version = { "core/src/tmux_host.py" = "py39" }
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
+
+[tool.ruff.lint.per-file-ignores]
+# tests/hermetic.py must import before the code under test: it sets HOME and patches at import
+"tests/**" = ["I001"]
+# root CLAUDE.md: config imports before any core module (it puts core/src on sys.path)
+"orchestrator/src/**" = ["I001"]
+
+[tool.ruff.format]

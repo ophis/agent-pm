@@ -18,9 +18,20 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
-from adapters.base import Access, Activity, Blocked, Exited, Launch, Reply, SessionBound, Stderr, TurnEnd
+from adapters.base import (
+    Access,
+    Activity,
+    Blocked,
+    Exited,
+    Launch,
+    Reply,
+    SessionBound,
+    Stderr,
+    TurnEnd,
+)
 from driver import api, records, registry
+
+from new.tests import fake_adapter, hermetic
 
 WAIT = 20      # upper bound on any wait, in seconds
 IDLE = 0.3     # idle_timeout, in seconds

@@ -1,9 +1,9 @@
-from collections import Counter
 import json
 import re
-from pathlib import Path
 import sys
 import unittest
+from collections import Counter
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTORY = ROOT / "tests/integration/tmux"

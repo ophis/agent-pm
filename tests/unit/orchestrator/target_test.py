@@ -1,4 +1,9 @@
-import json, os, shutil, subprocess, tempfile, unittest
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
 from types import SimpleNamespace
 from tests import hermetic  # noqa: F401
 import issues

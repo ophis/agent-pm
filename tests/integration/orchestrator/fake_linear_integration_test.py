@@ -5,7 +5,7 @@ import unittest
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from unittest import mock
 
 from tests import hermetic  # noqa: F401
@@ -147,7 +147,7 @@ class Served(unittest.TestCase):
 
     def test_a_move_is_history_by_the_caller(self):
         self.fake.issue("Claimed", identifier="TASK-8")
-        self.fake.move("TASK-8", "in_progress", actor=self.harness, at=datetime(2026, 10, 8, 7, 30, 41, 62000, timezone.utc))
+        self.fake.move("TASK-8", "in_progress", actor=self.harness, at=datetime(2026, 10, 8, 7, 30, 41, 62000, UTC))
         self.assertIsNone(linear.move(self.eng, "TASK-8", STATES["in_review"], STATES["in_progress"]))
         nodes = self.gql(router.Q_HISTORY, i="TASK-8")["issue"]["history"]["nodes"]
         self.assertEqual([(n["actorId"], n["fromStateId"], n["toStateId"]) for n in nodes],
@@ -155,7 +155,7 @@ class Served(unittest.TestCase):
                           (self.harness, STATES["todo"], STATES["in_progress"])])
         self.assertEqual(nodes[1]["createdAt"], "2026-10-08T07:30:41.062Z")
         self.assertRegex(nodes[0]["createdAt"], LINEAR_TIME)
-        self.assertLess(datetime.now(timezone.utc) - linear.parse_time(nodes[0]["createdAt"]), timedelta(seconds=10))
+        self.assertLess(datetime.now(UTC) - linear.parse_time(nodes[0]["createdAt"]), timedelta(seconds=10))
         self.assertEqual(self.fake.find("TASK-8")["state"], STATES["in_review"])
 
     def test_each_failure_kind_as_the_caller_sees_it(self):

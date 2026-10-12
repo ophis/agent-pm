@@ -9,6 +9,7 @@ import unittest
 
 import repo
 from composer.prompt import RESUME, RETURN
+
 from new.tests import NEW
 from new.tests.integration.composer import child
 

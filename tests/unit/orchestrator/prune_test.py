@@ -1,4 +1,11 @@
-import ast, io, json, os, shutil, subprocess, tempfile, unittest
+import ast
+import io
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 from functools import partial
@@ -6,7 +13,11 @@ from unittest import mock
 
 from tests import hermetic  # noqa: F401
 from tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY, TEAM, team_node
-import config, linear, promote, prune, repo
+import config
+import linear
+import promote
+import prune
+import repo
 from tests.unit.orchestrator import promote_test as tp
 from tests.unit.orchestrator.attended_test import Tmux
 from tests.unit.orchestrator.run_fixtures import logged, show

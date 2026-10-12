@@ -1,7 +1,7 @@
 import os
 import subprocess
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator import fake_linear
@@ -42,7 +42,7 @@ class Tick(Flow):
 class Promote(Tick):
     def setUp(self):
         super().setUp()
-        now, researcher, human = datetime.now(timezone.utc), self.ids[ACCOUNTS["researcher"]], self.ids[HUMAN]
+        now, researcher, human = datetime.now(UTC), self.ids[ACCOUNTS["researcher"]], self.ids[HUMAN]
         self.fake.issue(TITLE, identifier=SOURCE, state="in_progress", assignee=researcher, project=PROJECT)
         self.fake.move(SOURCE, "in_review", actor=researcher, at=now - timedelta(minutes=40))
         self.fake.comment(SOURCE, human, INSTRUCTIONS, at=now - timedelta(minutes=30))
@@ -126,7 +126,7 @@ class Prune(Tick):
         engineer = self.ids[ENGINEER]
         done_id = self.fake.issue("ENG: Session registry", identifier=DONE, state="in_review", assignee=engineer,
                                   project=PROJECT)["id"]
-        self.fake.move(DONE, "done", actor=self.ids[HUMAN], at=datetime.now(timezone.utc) - timedelta(hours=25))
+        self.fake.move(DONE, "done", actor=self.ids[HUMAN], at=datetime.now(UTC) - timedelta(hours=25))
         self.fake.issue("ENG: Session reaper", identifier=OPEN, state="in_progress", assignee=engineer, project=PROJECT)
         work = os.path.join(self.apm, "work")
         gone = [os.path.join(work, DONE, *p) for p in (CLONE, ("publish",), ("tmp",))]

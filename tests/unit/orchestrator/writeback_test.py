@@ -1,4 +1,9 @@
-import hashlib, json, os, shutil, tempfile, unittest
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+import unittest
 from dataclasses import replace
 from unittest import mock
 from tests import hermetic  # noqa: F401
@@ -375,7 +380,7 @@ class FinishSteps(Base):
         ctx = self.ctx(gql=gql)
         spec, plan = self.files(ctx)
         self.assertTrue(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan])))
-        body = f"Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
+        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
         self.assertEqual(gql.calls, expect(files=[spec_comment(), plan_comment()], body=body, state="in_review",
                                            attach=PR, attach_title="ENG-7: x"))
         self.assertIn(f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=SystemExit: linear api error: body too long",

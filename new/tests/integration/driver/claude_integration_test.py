@@ -16,9 +16,20 @@ import unittest
 import uuid
 from unittest import mock
 
-from new.tests import SRC, fake_claude, hermetic
-from adapters.base import Activity, Exited, LimitHit, Reply, SessionBound, SessionStatus, Stderr, TurnEnd, Usage
+from adapters.base import (
+    Activity,
+    Exited,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Stderr,
+    TurnEnd,
+    Usage,
+)
 from driver import api, registry
+
+from new.tests import SRC, fake_claude, hermetic
 
 WAIT = 20    # upper bound on any wait, in seconds
 IDLE = 0.5   # idle_timeout, in seconds

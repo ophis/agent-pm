@@ -11,8 +11,17 @@ import roster
 import tmux_host
 from compose import ConfigError, RunConfig, RunParams, report_command, tui_session
 
-from .base import PROGRESS, Access, Client, Event, Launch, SessionInfo, WorkerCommand, WorkerSpec, lines_back
-
+from .base import (
+    PROGRESS,
+    Access,
+    Client,
+    Event,
+    Launch,
+    SessionInfo,
+    WorkerCommand,
+    WorkerSpec,
+    lines_back,
+)
 
 CORE_SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APPROVAL = (": pre-approved commands match on their exact text and each shell call starts fresh, "

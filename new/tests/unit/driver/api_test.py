@@ -13,10 +13,11 @@ import unittest
 import uuid
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, records, registry
+
+from new.tests import fake_adapter, hermetic
 
 WAIT = 10   # upper bound on any wait, in seconds
 

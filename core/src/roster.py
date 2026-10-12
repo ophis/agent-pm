@@ -19,7 +19,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import tmux_host
 
@@ -132,7 +132,7 @@ def printable(text: str) -> bool:
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _or(words) -> str:

@@ -5,6 +5,7 @@ import re
 import unittest
 
 from composer.prompt import RESUME
+
 from new.tests import NEW
 from new.tests.integration.composer import child
 
