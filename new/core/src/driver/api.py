@@ -361,6 +361,9 @@ class _TuiSteps(_LaunchSteps):
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
         self.name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
         self.events = _events(events)
+        self.tmux = tmux_host.tmux_path()
+        if self.tmux is None:
+            raise DriverError("tmux not found")
 
     def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
         return self.run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(self.name)))
@@ -369,7 +372,13 @@ class _TuiSteps(_LaunchSteps):
     def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
         with tui.lock(self.name):
             yield tui.TuiMode.prepare(
-                self.name, self.run, info, self.events, runtime=self.runtime, workdir=workdir
+                self.name,
+                self.run,
+                info,
+                self.events,
+                runtime=self.runtime,
+                workdir=workdir,
+                tmux=self.tmux,
             )
 
     def begin(self, host: tui.TuiMode) -> None:

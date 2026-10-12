@@ -32,6 +32,7 @@ from driver.modes import headless, in_process, tui
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+TMUX = "/opt/tmux/bin/tmux"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 
@@ -954,7 +955,7 @@ class WritableDirsTest(Base):
 
 def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), sessions [], option None, pane %1."""
+    (absent), sessions [], option None, pane %1, tmux_path TMUX."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -965,6 +966,7 @@ def fake_host() -> mock.Mock:
     host.sessions.return_value = []
     host.option.return_value = None
     host.pane.return_value = "%1"
+    host.tmux_path.return_value = TMUX
     return host
 
 
@@ -1012,7 +1014,8 @@ class TuiStartTest(TuiBase):
         handle = self.tui(name="w1", sid=SID, events=self.events)
         self.assertEqual(order, [("status", False), ("start", ["session"])])
         self.assertEqual(
-            [c[0] for c in self.host.mock_calls], ["events_file", "status", "start", "pane"]
+            [c[0] for c in self.host.mock_calls],
+            ["events_file", "tmux_path", "status", "start", "pane"],
         )
         self.assertEqual(
             (handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui")
@@ -1030,7 +1033,7 @@ class TuiStartTest(TuiBase):
                 "env": None,
                 "events": self.events,
                 "status_line": False,
-                "tags": {"@sid": SID},
+                "tags": {"@sid": SID, "@runtime": "fake"},
             },
         )
         self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
@@ -1039,15 +1042,22 @@ class TuiStartTest(TuiBase):
             {
                 k: v
                 for k, v in tui.read_state("w1").items()
-                if k in ("runtime", "sid", "events", "words")
+                if k in ("runtime", "sid", "events", "words", "tmux_path")
             },
             {
                 "runtime": "fake",
                 "sid": SID,
                 "events": self.events,
                 "words": {"stop": "done", "ask": "blocked", "tool": "working"},
+                "tmux_path": TMUX,
             },
         )
+
+    def test_no_tmux_on_path_is_a_driver_error_with_nothing_started(self):
+        self.host.tmux_path.return_value = None
+        self.refused(api.DriverError, "tmux not found", lambda: self.tui(name="w1"))
+        self.assertEqual(self.host.mock_calls, [mock.call.tmux_path()])
+        self.assertFalse(os.path.lexists(self.root))
 
     def test_the_names_lock_is_held_from_prepare_to_begin(self):
         held = []
