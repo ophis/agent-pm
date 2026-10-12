@@ -162,9 +162,10 @@ class Slot(NamedTuple):
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           status_line: bool = False, tags: dict[str, str] | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its terminal keys the
-    pane's, PWD cwd), tags and decorate's options set in the same tmux call (an instant death still gets its dead
-    line); opens no pane. A running session is refused, a dead one replaced; argv reaches the pane through a 0600
-    handover file. Raising, it leaves no session of its own."""
+    pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>`
+    border and the status line set in the same tmux call (an instant death still gets its dead line); opens no pane.
+    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Raising, it
+    leaves no session of its own."""
     _name(session)
     options = _tags(session, tags or {})
     argv = _command(argv, env)
@@ -375,13 +376,6 @@ def events_file(path: str) -> str:
     return path
 
 
-def decorate(session: str, events: str | None = None, *, status_line: bool = False, proc=subprocess.run) -> None:
-    """Sets @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>` border and the
-    status line."""
-    for args in _decorations(_name(session), events, status_line):
-        _tmux_ok(args, proc)
-
-
 def _decorations(session: str, events: str | None, status_line: bool) -> list[list[str]]:
     target = f"={session}:"
     died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
@@ -535,7 +529,7 @@ def open_pane(session: str, *, split: str | None = None, split_from: str | None 
     if tmux is None:
         return "tmux not found"
     tmux = os.path.abspath(tmux)
-    own = grid = None
+    own = grid = new = None
     try:
         if opener is None:
             try:
@@ -550,7 +544,14 @@ def open_pane(session: str, *, split: str | None = None, split_from: str | None 
             window, manager, at, side = grid
             if split is not None or split_from is not None:
                 print("tui: show: grid: --split/--split-from ignored", file=sys.stderr)
-            new, why = _split(session, side, at, tmux, proc)
+            # muted: an old mode's hook tile could land after a later drag; _grid_up unmutes
+            _tmux(["set-option", "-w", "-t", window, GRID_BUSY, window], proc)
+            try:
+                new, why = _split(session, side, at, tmux, proc)
+            finally:
+                if new is None:
+                    with contextlib.suppress(TuiError):
+                        _tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
         elif split_from is not None:
             new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
