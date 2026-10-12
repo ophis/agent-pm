@@ -677,6 +677,43 @@ class TuiIntegrationTest(Live):
                 )
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 2)
 
+    def test_writable_dirs_api_queries_tui_saved_roots_and_current_temp_environment(self):
+        first_tmp, next_tmp, ignored_home = (
+            self.root / n for n in ("first-tmp", "next-tmp", "ignored-home")
+        )
+        first_tmp.mkdir()
+        next_tmp.mkdir()
+        self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(first_tmp)
+        registry.configure(self.config)
+        fresh = api.writable_dirs("codex", self.spec)
+        self.assertEqual(
+            list(fresh[:4]), [str(p) for p in (self.work, self.cwd, self.codex_home, self.extra)]
+        )
+        self.assertIn(str(first_tmp), fresh)
+        self.assertFalse((self.home / ".agent-pm" / "core-new-sessions").exists())
+        self.assertEqual(self.logged(), [])
+        first = self.start()
+        self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
+        saved = self.bound().writable_roots
+        first.stop()
+        self.config["adapters"]["codex"]["env"].update(
+            {"TMPDIR": str(next_tmp), "CODEX_HOME": str(ignored_home)}
+        )
+        registry.configure(self.config)
+        changed_spec = dataclasses.replace(
+            self.spec, access=Access(cwd=str(self.extra), project=True)
+        )
+        before = self.record().read_bytes()
+        resumed = api.writable_dirs("codex", changed_spec, resume=self.sid)
+        self.assertEqual(list(resumed[: len(saved)]), saved)
+        self.assertIn(str(next_tmp), resumed)
+        self.assertNotIn(str(ignored_home), resumed)
+        self.assertEqual(self.record().read_bytes(), before)
+        second = self.start(resume=self.sid)
+        self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("first"))
+        self.assertEqual(self.calls()[-1]["env"]["TMPDIR"], str(next_tmp))
+        self.assertEqual(self.calls()[-1]["env"]["CODEX_HOME"], str(self.codex_home))
+
 
 class HookTrustIntegrationTest(Live):
     def test_interleaved_catalog_notifications_exact_hashes_and_cleanup(self):

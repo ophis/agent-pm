@@ -32,3 +32,6 @@ class CodexAdapter(Adapter):
     def session_status(self, sid, cwd):
         found = self.common.inspect(sid, cwd)
         return SessionStatus(found.resumable, found.last_active, found.resume)
+
+    def writable_dirs(self, spec, resume):
+        return self.common.writable_dirs(spec, resume)

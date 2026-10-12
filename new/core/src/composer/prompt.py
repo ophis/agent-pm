@@ -15,6 +15,7 @@ import re
 from collections.abc import Mapping
 
 from utils.markdown import unfenced
+from utils.protocol import OUTCOME, PROGRESS
 
 from composer.base import (
     CODE_SPAN,
@@ -32,9 +33,8 @@ from composer.base import (
     read_text,
 )
 from composer.run import RunConfig, RunParams
-from composer.teams import PROGRESS, Team, index, tasks_path, team_or_default
+from composer.teams import Team, index, tasks_path, team_or_default
 
-OUTCOME = "agent-pm-outcome"
 RESUME = (
     "Resumed agent run after an interruption. These rules are current and may have changed since this session "
     "started. The input below is current: it adds to this session's earlier input. Continue the task this "

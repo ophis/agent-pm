@@ -244,3 +244,40 @@ class TuiTest(Base):
                     if not resume:
                         self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+
+    def test_tui_adapter_queries_fresh_saved_and_effective_temp_roots(self):
+        home, temporary = self.root / "configured-home", self.root / "configured-tmp"
+        home.mkdir()
+        temporary.mkdir()
+        alias = self.root / "temporary-link"
+        alias.symlink_to(temporary)
+        adapter = CodexAdapter(
+            self.common.config | {"env": {"CODEX_HOME": str(home), "TMPDIR": str(alias)}}
+        )
+        run = adapter.tui()
+        expected = [str(p) for p in (self.work, self.cwd, home, self.extra)]
+        with mock.patch("subprocess.Popen") as proc:
+            roots = run.adapter.writable_dirs(self.spec, False)
+            self.assertEqual(list(roots[:4]), expected)
+            self.assertIn(str(temporary), roots)
+            self.assertEqual(len(roots), len(set(roots)))
+            self.assertFalse((self.home / ".agent-pm").exists())
+            with mock.patch("shutil.which", return_value="/protected/codex"):
+                run.launch("hello", self.spec, False, HOOK)
+            saved = self.common.load(str(self.work), self.spec.sid).writable_roots
+            changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
+            changed = CodexAdapter(
+                self.common.config
+                | {"env": {"CODEX_HOME": str(changed_home), "TMPDIR": str(changed_tmp)}}
+            ).tui()
+            spec = dataclasses.replace(
+                self.spec,
+                access=dataclasses.replace(self.spec.access, cwd=str(self.extra), dirs=()),
+            )
+            before = self.record().read_bytes()
+            resumed = changed.adapter.writable_dirs(spec, True)
+            self.assertEqual(list(resumed[: len(saved)]), saved)
+            self.assertIn(str(changed_tmp), resumed)
+            self.assertNotIn(str(changed_home), resumed)
+            self.assertEqual(self.record().read_bytes(), before)
+        proc.assert_not_called()

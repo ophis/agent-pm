@@ -1,6 +1,7 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
-committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks and
+writable dirs; the committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a
+process."""
 
 from new.tests import hermetic
 
@@ -1142,8 +1143,8 @@ NOW = epoch("2026-10-11 10:00")  # a Sunday
 
 
 class LimitTest(unittest.TestCase):
-    def limit(self, screen):
-        with mock.patch("time.time", return_value=NOW):
+    def limit(self, screen, now=NOW):
+        with mock.patch("time.time", return_value=now):
             return ClaudeAdapter({}).tui().limit(screen)
 
     def check(self, rows):
@@ -1203,6 +1204,18 @@ class LimitTest(unittest.TestCase):
                 (week.format("sat 9am"), epoch("2026-10-17 09:00")),
             )
         )
+
+    def test_a_year_less_date_over_a_day_past_is_next_years(self):
+        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
+        for now, when, resets in (
+            ("2026-12-30 10:00", "Jan 2, 9am", "2027-01-02 09:00"),
+            ("2026-01-01 10:00", "Jan 2, 9am", "2026-01-02 09:00"),
+            ("2026-12-30 10:00", "Dec 30, 9am", "2026-12-30 09:00"),
+            ("2026-12-30 10:00", "Dec 29, 9am", "2027-12-29 09:00"),
+            ("2026-12-30 10:00", "Jan 2, 2026, 9am", "2026-01-02 09:00"),
+        ):
+            with self.subTest(now=now, when=when):
+                self.assertEqual(self.limit(week.format(when), epoch(now)), LimitHit(epoch(resets)))
 
     def test_no_known_zone_is_local_time(self):
         self.addCleanup(time.tzset)
@@ -1300,6 +1313,46 @@ class AdapterTest(Base):
         self.assertEqual(
             ClaudeAdapter({}).session_status("x", self.work), SessionStatus("no", None, "")
         )
+
+
+class WritableDirsTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.cwd, self.added = (os.path.join(self.tmp, name) for name in ("cwd", "added"))
+        for path in (self.cwd, self.added):
+            os.mkdir(path)
+        self.link = os.path.join(self.tmp, "link")
+        os.symlink(self.added, self.link)
+
+    def dirs(self, resume=False, workdir=None, **access) -> tuple[str, ...]:
+        spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
+        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume)
+
+    def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
+        self.assertEqual(self.dirs(), (self.work,))
+        self.assertEqual(self.dirs(dirs=(self.added, self.cwd)), (self.work, self.added, self.cwd))
+
+    def test_the_cwd_first_when_set(self):
+        self.assertEqual(self.dirs(cwd=self.cwd), (self.cwd,))
+        self.assertEqual(self.dirs(cwd=self.cwd, dirs=(self.added,)), (self.cwd, self.added))
+
+    def test_real_paths_each_once_in_order(self):
+        work_link = os.path.join(self.tmp, "work-link")
+        os.symlink(self.work, work_link)
+        self.assertEqual(self.dirs(workdir=work_link), (self.work,))
+        self.assertEqual(
+            self.dirs(cwd=self.link, dirs=(self.added, self.work, work_link, self.cwd + "/")),
+            (self.added, self.work, self.cwd),
+        )
+
+    def test_a_resume_the_same(self):
+        for access, dirs in (
+            ({}, (self.work,)),
+            ({"cwd": self.cwd}, (self.cwd,)),
+            ({"dirs": (self.link, self.work)}, (self.work, self.added)),
+        ):
+            with self.subTest(access=access):
+                self.assertEqual(self.dirs(True, **access), dirs)
 
 
 class CommittedConfigTest(Base):

@@ -232,18 +232,16 @@ class CodexCommon:
             if not snapshot["project"]:
                 _guard_untrusted_project(state.workdir, snapshot["cwd"], snapshot["codex_home"])
             return state
-        workdir, sid = session_identity(spec.workdir, spec.sid)
-        cwd = absolute_path(spec.access.cwd or workdir, "cwd")
-        home = absolute_path(
-            _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
-        )
+        roots = self._new_roots(spec)
+        workdir, cwd, home, *dirs = roots
+        workdir, sid = session_identity(workdir, spec.sid)
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
         snapshot = validate_snapshot(
             {
                 "cwd": cwd,
                 "project": spec.access.project,
-                "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
+                "dirs": dirs,
                 "commands": list(spec.access.commands),
                 "model": self._mapped("tiers", spec.tier),
                 "effort": self._mapped("efforts", spec.effort),
@@ -251,9 +249,28 @@ class CodexCommon:
                 "codex_home": home,
             }
         )
-        return create_session(
-            workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]], persist=persist
+        return create_session(workdir, sid, snapshot, roots, persist=persist)
+
+    def _new_roots(self, spec) -> list[str]:
+        workdir = absolute_path(spec.workdir, "workdir")
+        cwd = absolute_path(spec.access.cwd or workdir, "cwd")
+        home = absolute_path(
+            _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
         )
+        return [workdir, cwd, home, *(absolute_path(path, "dir") for path in spec.access.dirs)]
+
+    @_recover
+    def writable_dirs(self, spec, resume: bool) -> tuple[str, ...]:
+        if resume:
+            state = self.load(spec.workdir, spec.sid)
+            if state is None:
+                raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+            roots = state.writable_roots
+        else:
+            roots = self._new_roots(spec)
+        environment = {**os.environ, **self.defaults, **self.config.get("env", {})}
+        implicit = map(os.path.realpath, implicit_writable_roots(environment))
+        return tuple(dict.fromkeys([*roots, *implicit]))
 
     @_recover
     def save(self, state: SessionState) -> SessionState:

@@ -30,14 +30,16 @@ ITERM_OPENER = re.compile(rf"[A-Za-z0-9]+:{ITERM_ID.pattern}")  # w0t0p0:<unique
 OPENER = re.compile(rf"{NAME.pattern}|{ITERM_OPENER.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
 USER_OPTION = re.compile(r"@[A-Za-z0-9_-]+")
-# a missing session or server (a stale socket: refused) or socket
+# a missing session, pane or server (a stale socket: refused) or socket
 ABSENT = re.compile(
-    r"can't find session.*|no server running.*|error connecting to .* \(No such file or directory\)",
+    r"can't find (session|pane).*|no server running.*|"
+    r"error connecting to .* \(No such file or directory\)",
     re.S,
 )
 RUNNING = "running"
 UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
 HANDOVER_TIMEOUT = 10
+ERRPIPE = "errpipe"
 POLL = 0.1
 RESPAWN_WAIT = 10
 PAUSE = 0.5
@@ -130,25 +132,30 @@ TERMINAL_KEYS = (
     "COLUMNS",
     "LINES",
 )
-# Runs as `python -I -c EXEC <file>`, so no '#' or trailing ';'. Resets SIGPIPE and SIGXFSZ as Popen does; `block`
-# stays blocked across execve; a cwd it cannot enter leaves the handover untaken; it waits up to RESPAWN_WAIT s for
-# `after` to exit or turn zombie.
-EXEC = f"""import json, os, signal, sys, time
+# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE, SIGXFSZ reset; any
+# error's errno (else EINVAL) to the errpipe. `block` stays blocked across execve; a cwd it cannot enter or no errpipe
+# reader: handover untaken; waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
+EXEC = f"""import errno, json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
-os.chdir(h['cwd'])
-os.unlink(sys.argv[1])
-for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
-    try: os.kill(h['after'], 0)
-    except OSError: break
-    try:
-        with open('/proc/%d/stat' % h['after'], 'rb') as f: z = f.read().rsplit(b')', 1)[-1].split()[:1] == [b'Z']
-    except OSError: z = False
-    if z: break
-    time.sleep({POLL})
-h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
-for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
-os.execve(h['argv'][0], h['argv'], h['env'])"""
+w = os.open(sys.argv[2], os.O_WRONLY | os.O_NONBLOCK)
+try:
+    os.chdir(h['cwd'])
+    os.unlink(sys.argv[1])
+    for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
+        try: os.kill(h['after'], 0)
+        except OSError: break
+        try:
+            with open('/proc/%d/stat' % h['after'], 'rb') as f: z = f.read().rsplit(b')', 1)[-1].split()[:1] == [b'Z']
+        except OSError: z = False
+        if z: break
+        time.sleep({POLL})
+    h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
+    for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+    os.execve(h['argv'][0], h['argv'], h['env'])
+except BaseException as e:
+    os.write(w, b'%d' % (isinstance(e, OSError) and e.errno or errno.EINVAL))
+    raise"""
 
 
 class TuiError(Exception):
@@ -199,14 +206,14 @@ def start(
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its terminal keys the
     pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>`
     border and the status line set in the same tmux call (an instant death still gets its dead line); opens no pane.
-    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Raising, it
-    leaves no session of its own."""
+    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Returns once
+    argv has exec'd; raising, it leaves no session of its own."""
     _name(session)
     options = _tags(session, tags or {})
     argv = _command(argv, env)
     if events is not None:
         events = events_file(events)
-    tmp = None
+    tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
@@ -216,7 +223,7 @@ def start(
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if isinstance(state, int):
             kill(session, proc=proc)
-        _handover(path, argv, cwd, env)
+        pipe = _handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
         decorations = [
             arg for args in _decorations(session, events, status_line) for arg in (";", *args)
@@ -252,7 +259,7 @@ def start(
             ):  # another start took the name: not ours to kill
                 may_run = False
             raise TuiError(f"tmux: {_err(res)}")
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep):
             raise TuiError("the session did not start")
         may_run = False
     except OSError as e:
@@ -260,6 +267,8 @@ def start(
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
+        if pipe is not None:
+            os.close(pipe)
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
@@ -283,7 +292,7 @@ def detach(
         raise TuiError(
             f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
         )
-    for arg in argv:  # execve would fail after the handover is taken
+    for arg in argv:
         if "\0" in arg:
             raise TuiError("an argv item holds a NUL character")
         try:
@@ -293,12 +302,12 @@ def detach(
     argv = _command(argv, env)
     iterm = env.get("ITERM_SESSION_ID", "")
     terminal = ["-e", f"ITERM_SESSION_ID={iterm}"] if ITERM_OPENER.fullmatch(iterm) else []
-    tmp = None
+    tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
-        _handover(path, argv, cwd, env, block=[int(s) for s in block])
+        pipe = _handover(path, argv, cwd, env, block=[int(s) for s in block])
         may_run = True
         res = _tmux(
             [
@@ -321,7 +330,7 @@ def detach(
                 may_run = False
                 raise TuiError(f"session {session} exists")
             raise TuiError(f"tmux: {_err(res)}")
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep):
             raise TuiError(f"session {session} did not start")
         may_run = False
     except OSError as e:
@@ -329,6 +338,8 @@ def detach(
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
+        if pipe is not None:
+            os.close(pipe)
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
@@ -344,28 +355,29 @@ def respawn(
     sleep=time.sleep,
 ) -> None:
     """Runs argv in the session's pane in place of its command (respawn-pane -k), clearing its history in the same
-    command; argv starts once the old process is gone, or after RESPAWN_WAIT s."""
+    command; argv starts once the old process is gone, or after RESPAWN_WAIT s. Returns as start does."""
     _name(session)
     argv = _command(argv, env)
-    tmp = None
+    tmp = pipe = None
     try:
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
         target = f"={session}:"
         pid = _tmux_ok(["display-message", "-p", "-t", target, "#{pane_pid}"], proc).stdout.strip()
-        _handover(
-            path, argv, cwd, env, after=int(pid) if re.fullmatch(r"[1-9][0-9]*", pid) else None
-        )
+        after = int(pid) if re.fullmatch(r"[1-9][0-9]*", pid) else None
+        pipe = _handover(path, argv, cwd, env, after=after)
         _tmux_ok(
             ["clear-history", "-t", target, ";", "respawn-pane", "-k", "-t", target, *wrapper], proc
         )
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep, RESPAWN_WAIT if after else 0):
             raise TuiError("the pane did not respawn")
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
+        if pipe is not None:
+            os.close(pipe)
 
 
 def _command(argv: list[str], env: dict[str, str]) -> list[str]:
@@ -378,11 +390,11 @@ def _command(argv: list[str], env: dict[str, str]) -> list[str]:
 
 
 def _wrapper(tmp: str) -> tuple[str, list[str]]:
-    path = os.path.join(tmp, "handover.json")
-    for arg in (sys.executable, path):
+    path, fifo = os.path.join(tmp, "handover.json"), os.path.join(tmp, ERRPIPE)
+    for arg in (sys.executable, path, fifo):
         if "#" in arg or arg.endswith(";"):
             raise TuiError(f"tmux would misread {arg!r}")
-    return path, [sys.executable, "-I", "-c", EXEC, path]
+    return path, [sys.executable, "-I", "-c", EXEC, path, fifo]
 
 
 def _handover(
@@ -392,7 +404,7 @@ def _handover(
     env: dict[str, str],
     after: int | None = None,
     block: list[int] | None = None,
-) -> None:
+) -> int:
     cwd = os.path.abspath(cwd)
     child = {k: v for k, v in env.items() if k not in TERMINAL_KEYS}
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
@@ -406,6 +418,9 @@ def _handover(
             },
             f,
         )
+    fifo = os.path.join(os.path.dirname(path), ERRPIPE)
+    os.mkfifo(fifo, 0o600)
+    return os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
 
 
 def _tags(session: str, tags: dict[str, str]) -> list[str]:
@@ -419,12 +434,34 @@ def _tags(session: str, tags: dict[str, str]) -> list[str]:
     return args
 
 
-def _taken(path: str, sleep) -> bool:
-    for _ in range(round(HANDOVER_TIMEOUT / POLL)):
-        if not os.path.exists(path):
-            return True
+def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> bool:
+    """Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises."""
+    polls, out = 0, b""
+    while os.path.exists(path):
+        if polls == round(HANDOVER_TIMEOUT / POLL):
+            return False
         sleep(POLL)
-    return not os.path.exists(path)
+        polls += 1
+    polls = 0
+    while True:  # only now: a FIFO no writer opened reads EOF
+        try:
+            chunk = os.read(pipe, 64)
+        except BlockingIOError:
+            if polls >= round((HANDOVER_TIMEOUT + extra) / POLL):
+                return False
+            sleep(POLL)
+            polls += 1
+            continue
+        if not chunk:
+            break
+        out += chunk
+    if out:
+        try:
+            reason = os.strerror(int(out))
+        except (ValueError, OverflowError):
+            reason = "bad errpipe data"
+        raise TuiError(f"cannot run {command}: {reason}")
+    return True
 
 
 def mark(
@@ -508,9 +545,9 @@ def _decorations(session: str, events: str | None, status_line: bool) -> list[li
     ]
 
 
-def status(session: str, *, proc=subprocess.run):
-    """RUNNING, None (no session or server), UNKNOWN, or the dead pane's exit status (signal n: -n)."""
-    target = f"={_name(session)}:"
+def status(target: str, *, proc=subprocess.run):
+    """RUNNING, None (target or server absent), UNKNOWN, or the dead pane's exit status (signal n: -n)."""
+    target = _target(target)
     try:
         res = _tmux(
             [
@@ -550,8 +587,8 @@ def sessions(prefix: str = "", *, proc=subprocess.run) -> list[str] | None:
     return sorted(n for n in res.stdout.split("\n") if NAME.fullmatch(n) and n.startswith(prefix))
 
 
-def kill(session: str, *, proc=subprocess.run) -> None:
-    _tmux_ok(["kill-session", "-t", f"={_name(session)}"], proc)
+def kill(target: str, *, proc=subprocess.run) -> None:
+    _tmux_ok(["kill-session", "-t", _target(target, "")], proc)
 
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
@@ -560,10 +597,10 @@ def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> N
     keys(session, "Enter", proc=proc)
 
 
-def paste(session: str, text: str, *, proc=subprocess.run) -> None:
+def paste(target: str, text: str, *, proc=subprocess.run) -> None:
     """A bracketed paste through a buffer of its own, deleted even on failure."""
-    target = f"={_name(session)}:"
-    buffer = f"tui-{session}-{uuid.uuid4().hex}"
+    buffer = f"tui-{target}-{uuid.uuid4().hex}"
+    target = _target(target)
     # load-buffer from stdin keeps text exact: send-keys -l lost long text's head, set-buffer a trailing ';'
     _tmux_ok(["load-buffer", "-b", buffer, "-"], proc, text)
     try:
@@ -574,18 +611,18 @@ def paste(session: str, text: str, *, proc=subprocess.run) -> None:
         raise
 
 
-def keys(session: str, *names: str, proc=subprocess.run) -> None:
+def keys(target: str, *names: str, proc=subprocess.run) -> None:
     """Presses tmux keys (Enter, Escape, C-c); a name tmux would misread raises first."""
-    target = f"={_name(session)}:"
+    target = _target(target)
     for name in names:
         if name.startswith("-") or name.endswith(";"):
             raise TuiError(f"tmux would misread {name!r}")
     _tmux_ok(["send-keys", "-t", target, *names], proc)
 
 
-def option(session: str, name: str, *, proc=subprocess.run) -> str | None:
-    """None when unset or the session absent."""
-    target = f"={_name(session)}:"
+def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
+    """None when unset or the target absent."""
+    target = _target(target)
     if not USER_OPTION.fullmatch(name):
         raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
     res = _tmux(["show-options", "-v", "-t", target, name], proc)
@@ -611,9 +648,9 @@ def pane(session: str, *, proc=subprocess.run) -> str | None:
     return found
 
 
-def read(session: str, lines: int | None = None, *, proc=subprocess.run) -> str:
+def read(target: str, lines: int | None = None, *, proc=subprocess.run) -> str:
     """The visible pane's text, or its last `lines` lines with history; trailing blank lines dropped."""
-    args = ["capture-pane", "-p", "-J", "-t", f"={_name(session)}:"]
+    args = ["capture-pane", "-p", "-J", "-t", _target(target)]
     if lines is not None:
         if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
             raise TuiError(f"lines must be a positive int, not {lines!r}")
@@ -1671,6 +1708,16 @@ def _name(session: str) -> str:
     if not NAME.fullmatch(session):
         raise TuiError(f"invalid session name {session!r}: want [A-Za-z0-9_-]+")
     return session
+
+
+def _target(target: str, suffix: str = ":") -> str:
+    if PANE.fullmatch(target):
+        return target
+    if not NAME.fullmatch(target):
+        raise TuiError(
+            f"invalid target {target!r}: want a session name [A-Za-z0-9_-]+ or a pane id %N"
+        )
+    return f"={target}{suffix}"
 
 
 def _tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
