@@ -204,7 +204,7 @@ class TuiMode:
         return found
 
     def _scan(self) -> list[Event]:
-        """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, a changed LimitHit."""
+        """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit per appearance."""
         try:
             screen = " ".join(tmux_host.read(self.name).split())
         except tmux_host.TuiError:
@@ -213,7 +213,7 @@ class TuiMode:
         found = [Activity("")] if self._dialogs - shown else []   # first: a later Blocked keeps the idle pause
         found += [Blocked(d) for d in self.run.dialogs if d in shown - self._dialogs]
         limit = self.run.limit(screen)
-        if limit is not None and limit != self._limit:
+        if limit is not None and self._limit is None:
             found.append(limit)
         if shown - self._dialogs:
             self._mark_blocked()

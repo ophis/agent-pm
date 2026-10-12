@@ -492,10 +492,10 @@ class ScanTest(Base):
                 self.assertEqual(self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]])
                 getattr(self.host, method).side_effect = None
 
-    def test_a_limit_is_one_event_until_it_changes(self):
+    def test_a_limit_is_one_event_per_appearance_its_reset_changing_or_not(self):
         mode = self.started()
-        self.assertEqual(self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200"),
-                         [[LimitHit(100.0)], [], [LimitHit(200.0)], [], [LimitHit(200.0)]])
+        self.assertEqual(self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
+                         [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []])
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()

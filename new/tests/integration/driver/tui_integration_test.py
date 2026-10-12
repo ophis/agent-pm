@@ -41,11 +41,12 @@ print(json.dumps([*before, repr(event), handle.reply]))
 
 
 class Stream:
-    """A Handle's events(), drained by a thread into a queue."""
+    """A Handle's events(), drained by `thread` into a queue."""
 
     def __init__(self, handle: api.Handle):
         self.queue = queue.Queue()
-        threading.Thread(target=self._drain, args=(handle,), daemon=True).start()
+        self.thread = threading.Thread(target=self._drain, args=(handle,), daemon=True)
+        self.thread.start()
 
     def _drain(self, handle):
         try:
@@ -119,7 +120,8 @@ class Live(unittest.TestCase):
         """Waits until the events file's lines, times dropped, are `want`; pokes the server meanwhile."""
         def check():
             self.poke()
-            return [line.split(" ", 1)[1] for line in live_tmux.events(self.events)] == list(want)
+            self.assertEqual([line.split(" ", 1)[1] for line in live_tmux.events(self.events)], list(want))
+            return True
         live_tmux.wait(check, what=f"events lines {want}")
 
     def poke(self):
