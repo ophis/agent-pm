@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 
 from utils import markdown
-from utils.config_file import CONFIG
+from utils.config_file import CONFIG as CONFIG
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEAM = os.path.join(os.path.dirname(SRC), "team")

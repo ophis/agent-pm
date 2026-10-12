@@ -3,6 +3,8 @@ driver/tmux_host.py lays them out: the grid (columns, name order, sub-sessions, 
 settling and re-tiling modes, and a split outside it; ported from main's crew integration tests. Sessions are
 tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
 fails the test. Also start's dead line for a command ending at once."""
+from new.tests import hermetic, live_tmux
+
 import contextlib
 import functools
 import io
@@ -15,7 +17,6 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic, live_tmux
 from driver import api, registry, tmux_host
 
 MANAGER = "mgr"

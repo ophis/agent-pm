@@ -4,6 +4,8 @@ the launch's environment; then stop() of a process group and a process that outl
 record and resume steps. The fake adapter, a subclass whose launch takes env, unset and cwd from its config, and one
 whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
 given to registry.configure."""
+from new.tests import fake_adapter, hermetic
+
 import dataclasses
 import io
 import json
@@ -19,8 +21,18 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
-from adapters.base import Access, Activity, Blocked, Exited, Launch, LimitHit, Reply, SessionBound, Stderr, TurnEnd
+from adapters.base import (
+    Access,
+    Activity,
+    Blocked,
+    Exited,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Stderr,
+    TurnEnd,
+)
 from driver import api, records, registry
 
 WAIT = 20      # upper bound on any wait, in seconds
@@ -206,7 +218,7 @@ class IdleTest(Base):
         self.assertEqual({e for _, e in idles}, {api.IdleTimeout(IDLE)})
         self.assertEqual(alive, [True] * len(idles))
         times = [marks[0][0]] + [at for at, _ in idles]
-        for before, after in zip(times, times[1:]):
+        for before, after in zip(times, times[1:], strict=False):
             self.assertGreaterEqual(after - before, IDLE - 0.01)
 
     def test_none_after_blocked(self):

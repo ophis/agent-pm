@@ -4,6 +4,8 @@ usage() and session_info(), over the fake adapter and test adapters registered i
 usage()'s probe is headless.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
 Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout,
 attach_command, detach) over tmux_host autospecced (no tmux runs)."""
+from new.tests import fake_adapter, hermetic
+
 import dataclasses
 import fcntl
 import inspect
@@ -20,7 +22,6 @@ import unittest
 import uuid
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, errors, records, registry, tmux_host

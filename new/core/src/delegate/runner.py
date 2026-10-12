@@ -9,11 +9,12 @@ from datetime import datetime
 from pathlib import Path
 
 from composer import OUTCOME, RunConfig, Team
+from driver import api
+
 from delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome, save
 from delegate.outcome import read as read_outcome
 from delegate.plan import ConfigError, Plan, plan
 from delegate.reply import marks, outcome_block
-from driver import api
 
 IDLE_TIMEOUT = 2 * 60 * 60   # seconds
 FIX = ("The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "

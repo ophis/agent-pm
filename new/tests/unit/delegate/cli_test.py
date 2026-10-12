@@ -1,5 +1,8 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
 drive_test Main, RoleRuns and TeamRuns cases of its command line."""
+from new.tests import fake_adapter, hermetic
+from new.tests.unit.delegate.runner_test import DONE, START, block, limit, said
+
 import io
 import json
 import os
@@ -13,8 +16,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
-from new.tests.unit.delegate.runner_test import DONE, START, block, limit, said
 import composer
 from composer.prompt import RESUME
 from delegate import Outcome, Result, cli

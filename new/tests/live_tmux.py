@@ -1,5 +1,7 @@
 """Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE, ITERM_SESSION_ID or
 TERM_PROGRAM. No tmux: the test skips."""
+from new.tests import fake_claude
+
 import os
 import resource
 import select
@@ -10,8 +12,6 @@ import tempfile
 import threading
 import time
 from typing import NamedTuple
-
-from new.tests import fake_claude
 
 # two words: tmux execs them, not the user's login shell (and its rc files)
 IDLE = ("cat", "-")
@@ -229,7 +229,7 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
         return Box(x, y, x + w, y + h)
 
     def stacked(boxes: list[Box], what: str) -> None:
-        if any(a.bottom >= b.top for a, b in zip(boxes, boxes[1:])):
+        if any(a.bottom >= b.top for a, b in zip(boxes, boxes[1:], strict=False)):
             fail(f"{what}: not stacked top to bottom in the order given")
 
     def cell_box(cell) -> Box:
@@ -273,7 +273,7 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
     boxes = [_union(column) for column in cells]
     if boxes and (boxes[0].left != m.right + 1 or boxes[-1].right != int(width)):
         fail(f"the columns span {boxes[0].left} to {boxes[-1].right}; want {m.right + 1} to {width}")
-    if any(a.right >= b.left for a, b in zip(boxes, boxes[1:])):
+    if any(a.right >= b.left for a, b in zip(boxes, boxes[1:], strict=False)):
         fail("the columns overlap or are out of order")
     if boxes and max(b.width for b in boxes) - min(b.width for b in boxes) > 1:
         fail(f"column widths {[b.width for b in boxes]} differ by more than 1")

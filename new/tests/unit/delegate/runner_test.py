@@ -1,6 +1,8 @@
 """delegate/runner.py over the fake runtime (new/tests/fake_adapter/, registered in-process): callbacks and replies
 (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21), idle (FR-22), a usage limit (FR-58), and main's
 drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines."""
+from new.tests import fake_adapter, hermetic
+
 import dataclasses
 import io
 import json
@@ -19,10 +21,8 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
 import composer
-from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run
-from delegate import runner
+from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
 from delegate.outcome import save
 from delegate.runner import FIX, IDLE_TIMEOUT, printable
 from driver import registry

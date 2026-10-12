@@ -918,10 +918,7 @@ def _grid_tree(manager: str, panes: list[str], sessions: list[tuple[int, str, st
     names = {row[1] for row in sessions}
     parent = {}   # a node's pane, or an orphan group's name -> its parent's; None: main
     for pane, (_, opener) in owner.items():
-        if opener in node:
-            parent[pane] = node[opener]
-        else:
-            parent[pane] = opener if opener and opener not in names else None
+        parent[pane] = node.get(opener, opener if opener and opener not in names else None)
 
     def under(key) -> list[str]:
         return [*([key] if key in owner else []), *(p for k, up in parent.items() if up == key for p in under(k))]

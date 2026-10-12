@@ -2,6 +2,10 @@
 the real ClaudeAdapter runs new/tests/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
+from new.tests import SRC, fake_claude, live_tmux
+from new.tests.integration.driver import detach_integration_test as detach_live
+from new.tests.integration.driver import tui_integration_test as tui_live
+
 import functools
 import json
 import os
@@ -10,12 +14,9 @@ import signal
 import subprocess
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
-from new.tests import SRC, fake_claude, live_tmux
-from new.tests.integration.driver import detach_integration_test as detach_live
-from new.tests.integration.driver import tui_integration_test as tui_live
 from adapters.base import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
 from adapters.claude.tui import ClaudeTui
 from driver import api, registry, tmux_host
@@ -26,7 +27,7 @@ TABLE = {"implementation": "adapters.claude:ClaudeAdapter",
          "flags": ["--permission-mode", "auto", "--strict-mcp-config"]}
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
-RESETS = datetime(2027, 10, 15, 9, tzinfo=timezone.utc).timestamp()
+RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
 ATTACH = """import json, sys
 src, table, name, text = sys.argv[1:]

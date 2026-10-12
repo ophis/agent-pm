@@ -1,6 +1,8 @@
 """new/tests/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
 file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
 pipe, in a private tmux server's pane and under ClaudeTui's launch."""
+from new.tests import fake_claude, hermetic, live_tmux
+
 import glob
 import json
 import os
@@ -12,7 +14,6 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import fake_claude, hermetic, live_tmux
 from adapters.base import Access, Spec
 from adapters.claude import ClaudeAdapter
 from adapters.claude.tui import ClaudeTui

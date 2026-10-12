@@ -12,12 +12,24 @@ import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Blocked, Event, Paste, SessionBound, SessionInfo,
-                           Stderr, Tui)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Blocked,
+    Event,
+    Paste,
+    SessionBound,
+    SessionInfo,
+    Stderr,
+    Tui,
+)
+from utils.files import read_regular
+
 from driver import tmux_host
 from driver.errors import DriverError
 from driver.modes import tui_hook
-from utils.files import read_regular
 
 TUI_DIR = "~/.agent-pm/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}

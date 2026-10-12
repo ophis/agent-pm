@@ -2,6 +2,20 @@
 neutral Return and Parameters, the FR-31 destinations, the package API, the root core/team/ and the schema left as on main, and the shipped
 text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
+from new.tests import CORE, NEW, hermetic
+from new.tests.unit.composer.prompt_test import (
+    RUN,
+    composed,
+    heading_anchors,
+    item,
+    parameters,
+    role_sources,
+    rule,
+    section,
+    task_text,
+)
+from new.tests.unit.composer.team_test import INTRO
+
 import glob
 import hashlib
 import os
@@ -12,10 +26,6 @@ import tomllib
 import types
 import unittest
 
-from new.tests import CORE, NEW, hermetic
-from new.tests.unit.composer.prompt_test import (RUN, composed, heading_anchors, item, parameters, role_sources, rule,
-                                                 section, task_text)
-from new.tests.unit.composer.team_test import INTRO
 import composer
 from composer.base import CONFIG, SRC, anchor, fill, outline
 from composer.prompt import RETURN, RULE, reference_errors

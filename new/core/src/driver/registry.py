@@ -9,8 +9,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from adapters.base import Adapter, ConfigError
-from driver import tmux_host
 from utils.config_file import CONFIG, LOCAL, read_config
+
+from driver import tmux_host
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")

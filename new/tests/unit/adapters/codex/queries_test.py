@@ -1,3 +1,5 @@
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
+
 import json
 import os
 import sys
@@ -6,7 +8,6 @@ from pathlib import Path
 from unittest import mock
 
 from adapters.base import Launch, SessionStatus, Usage, Window
-from new.tests.unit.adapters.codex.support import Base, CHILD, NATIVE
 from adapters.codex import CodexAdapter
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)

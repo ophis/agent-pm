@@ -1,4 +1,6 @@
 """new/core/src/utils/files.py: read_regular."""
+from new.tests import hermetic  # noqa: F401
+
 import errno
 import os
 import tempfile
@@ -7,7 +9,6 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from new.tests import hermetic  # noqa: F401
 from utils import files
 
 DATA = b"0123456789"

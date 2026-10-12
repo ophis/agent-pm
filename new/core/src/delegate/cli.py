@@ -16,10 +16,11 @@ if __name__ == "__main__":   # as a script: src/ first, in place of this dir
 
 import composer  # noqa: E402
 from composer import RunParams, Team  # noqa: E402
-from delegate import Begun, ConfigError, Plan, plan, run  # noqa: E402
-from delegate.runner import printable  # noqa: E402
 from driver import api  # noqa: E402
 from utils.args import Once  # noqa: E402
+
+from delegate import Begun, ConfigError, Plan, plan, run  # noqa: E402
+from delegate.runner import printable  # noqa: E402
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 

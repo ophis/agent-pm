@@ -1,5 +1,7 @@
 """new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
 helpers' cases: unit/utils/)."""
+from new.tests import hermetic
+
 import io
 import json
 import os
@@ -10,7 +12,6 @@ import threading
 import unittest
 import unittest.mock
 
-from new.tests import hermetic
 import repo
 
 LOCAL = "core-new.local.toml"
@@ -48,7 +49,7 @@ class Fake:
         return any(c[:len(prefix)] == list(prefix) for c in self.calls)
 
     def timeout(self, *prefix):
-        return next(t for c, t in zip(self.calls, self.timeouts) if c[:len(prefix)] == list(prefix))
+        return next(t for c, t in zip(self.calls, self.timeouts, strict=False) if c[:len(prefix)] == list(prefix))
 
 
 class Real(Fake):

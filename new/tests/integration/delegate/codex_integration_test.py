@@ -1,6 +1,18 @@
 """delegate/cli.py as a subprocess, --runtime codex, over new/tests/integration/adapters/codex/fake_codex.py (on PATH as
 `codex`); HOME, its recovery store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from
 any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
+from new.tests import NEW
+from new.tests.integration.adapters.codex import fake_codex
+from new.tests.integration.delegate.cli_integration_test import (
+    CLI,
+    DONE,
+    SID,
+    UNSAVED,
+    UNSAVED_ERROR,
+    mark,
+)
+from new.tests.unit.delegate.runner_test import block
+
 import json
 import os
 import shlex
@@ -10,10 +22,6 @@ import tempfile
 import unittest
 from unittest import mock
 
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_codex
-from new.tests.integration.delegate.cli_integration_test import CLI, DONE, SID, UNSAVED, UNSAVED_ERROR, mark
-from new.tests.unit.delegate.runner_test import block
 from delegate.runner import FIX
 
 NATIVE = fake_codex.NATIVE

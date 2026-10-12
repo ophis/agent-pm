@@ -13,11 +13,25 @@ import os
 import re
 from collections.abc import Mapping
 
-from composer.base import (CODE_SPAN, FILE_REF, LINK, METHOD, OUTPUT, PAREN, SCHEME, SRC, ConfigError, anchor, fill,
-                           outline, read_text)
+from utils.markdown import unfenced
+
+from composer.base import (
+    CODE_SPAN,
+    FILE_REF,
+    LINK,
+    METHOD,
+    OUTPUT,
+    PAREN,
+    SCHEME,
+    SRC,
+    ConfigError,
+    anchor,
+    fill,
+    outline,
+    read_text,
+)
 from composer.run import RunConfig, RunParams
 from composer.teams import PROGRESS, Team, index, tasks_path, team_or_default
-from utils.markdown import unfenced
 
 OUTCOME = "agent-pm-outcome"
 RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "

@@ -3,13 +3,15 @@ the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook 
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
 a start while another process closes the name."""
+from new.tests import SRC, fake_adapter, hermetic, live_tmux
+
+import itertools
 import json
 import os
 import queue
 import signal
 import subprocess
 import sys
-import itertools
 import tempfile
 import threading
 import time
@@ -17,7 +19,6 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from new.tests import SRC, fake_adapter, hermetic, live_tmux
 from adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
 from driver import api, records, registry, tmux_host
 from driver.modes import tui

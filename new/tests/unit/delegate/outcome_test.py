@@ -1,5 +1,7 @@
 """delegate/outcome.py: main's drive.validate cases with the same results (FR-20), read with deliverable_file (FR-19),
 and main's save cases."""
+from new.tests import SRC  # noqa: F401
+
 import dataclasses
 import json
 import os
@@ -9,7 +11,6 @@ import threading
 import unittest
 import unittest.mock
 
-from new.tests import SRC  # noqa: F401
 import composer
 from composer import RunConfig
 from delegate import outcome

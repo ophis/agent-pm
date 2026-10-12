@@ -7,10 +7,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
 
-from composer.base import CONFIG, SRC, ConfigError, fill, title_of
-from composer.teams import Team, index, no_charter, role_tables, tasks_path, team_or_default
 from utils.config_file import LOCAL, read_config
 from utils.paths import real_dirs
+
+from composer.base import CONFIG, SRC, ConfigError, fill, title_of
+from composer.teams import Team, index, no_charter, role_tables, tasks_path, team_or_default
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)

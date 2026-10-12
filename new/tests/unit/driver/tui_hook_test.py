@@ -1,6 +1,8 @@
 """new/core/src/driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the
 payload on stdin, $TMUX_PANE set, PATH only a stub tmux that logs each call (no tmux runs here); in process for its one
 locked write and its load of tmux_host; and the file standing alone."""
+from new.tests import SRC, guards, hermetic  # noqa: F401
+
 import ast
 import fcntl
 import io
@@ -15,7 +17,6 @@ import unittest
 import unittest.mock
 import uuid
 
-from new.tests import SRC, guards, hermetic  # noqa: F401
 from driver.modes import tui_hook
 
 HOOK = os.path.join(SRC, "driver", "modes", "tui_hook.py")

@@ -1,8 +1,9 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
+from new.tests import CORE, SRC
+
 import os
 import unittest
 
-from new.tests import CORE, SRC
 from composer import base
 from utils import config_file
 

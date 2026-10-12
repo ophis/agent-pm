@@ -6,8 +6,22 @@ import os
 import shlex
 import sys
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, Launch,
-                           LimitHit, Reply, SessionBound, Tui, TurnEnd)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Adapter,
+    Blocked,
+    Exited,
+    Headless,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Tui,
+    TurnEnd,
+)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 

@@ -1,6 +1,8 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
 committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+from new.tests import hermetic
+
 import json
 import os
 import re
@@ -12,9 +14,24 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from new.tests import hermetic
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Blocked, ConfigError, Launch, LimitHit, Reply,
-                           SessionBound, SessionStatus, Spec, TurnEnd, Usage, Window)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Access,
+    Activity,
+    Blocked,
+    ConfigError,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Spec,
+    TurnEnd,
+    Usage,
+    Window,
+)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless import ClaudeHeadless

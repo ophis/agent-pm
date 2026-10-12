@@ -2,6 +2,8 @@
 Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
+from new.tests import SRC, fake_adapter, hermetic
+
 import importlib.abc
 import importlib.util
 import os
@@ -12,7 +14,6 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import SRC, fake_adapter, hermetic
 from adapters.base import Adapter, ConfigError
 from driver import registry
 

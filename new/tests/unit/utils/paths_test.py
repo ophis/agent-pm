@@ -1,4 +1,6 @@
 """new/core/src/utils/paths.py: real_dirs, under, temp_dirs and printable_abs."""
+from new.tests import NEW
+
 import os
 import subprocess
 import tempfile
@@ -6,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from new.tests import NEW
 from utils.paths import printable_abs, real_dirs, temp_dirs, under
 
 

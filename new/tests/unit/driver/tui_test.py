@@ -2,6 +2,8 @@
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
+from new.tests import SRC, fake_adapter, hermetic
+
 import errno
 import fcntl
 import inspect
@@ -16,9 +18,19 @@ import threading
 import unittest
 from unittest import mock
 
-from new.tests import SRC, fake_adapter, hermetic
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Blocked, Key, LimitHit, Paste, SessionBound,
-                           SessionInfo, TurnEnd)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Blocked,
+    Key,
+    LimitHit,
+    Paste,
+    SessionBound,
+    SessionInfo,
+    TurnEnd,
+)
 from driver import api, tmux_host
 from driver.errors import DriverError
 from driver.modes import tui

@@ -8,10 +8,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
 from utils.config_file import LOCAL, read_config
 from utils.markdown import unfenced
 from utils.paths import temp_dirs, under
+
+from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
 
 PROGRESS = "agent-pm-progress"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)

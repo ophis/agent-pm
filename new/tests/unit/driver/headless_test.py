@@ -1,5 +1,7 @@
 """new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
+from new.tests import hermetic  # noqa: F401
+
 import json
 import os
 import signal
@@ -12,7 +14,6 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters.base import Adapter, Headless, Launch, Reply, Stderr
 from driver.errors import DriverError
 from driver.modes import headless

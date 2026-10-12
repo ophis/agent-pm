@@ -1,18 +1,28 @@
 """composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and Validate tests, less
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
+from new.tests import SRC, hermetic
+from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
+
 import inspect
 import os
 import tempfile
 import unittest
 from dataclasses import fields, replace
 
-from new.tests import SRC, hermetic
-from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 import composer.run
 from composer.base import ConfigError
-from composer.run import (RUN_KEYS, Intent, RunConfig, RunParams, access, bind, check_old_keys, resolve,
-                          trusted_dirs)
+from composer.run import (
+    RUN_KEYS,
+    Intent,
+    RunConfig,
+    RunParams,
+    access,
+    bind,
+    check_old_keys,
+    resolve,
+    trusted_dirs,
+)
 from composer.teams import team
 from utils import config_file
 
@@ -178,7 +188,7 @@ class Overlays(Fake):
                ({"roles": {"writer": {"tasks": {}}}}, "[{t}.roles.writer] has 'tasks': task-level config and "
                 "default_task are gone; set run keys in [{t}.roles.writer] (a run without a task picks one)"))
         labels = (({}, "run overlay", "overlay"), ({"label": ("my.toml", "core")}, "my.toml", "core"))
-        for (overlay, message), (kwargs, source, table) in ((b, l) for b in bad for l in labels):
+        for (overlay, message), (kwargs, source, table) in ((b, label) for b in bad for label in labels):
             with self.subTest(overlay=overlay, table=table):
                 self.assertEqual(self.refused(overlays=(overlay,), **kwargs), f"{source}: {message.format(t=table)}")
 

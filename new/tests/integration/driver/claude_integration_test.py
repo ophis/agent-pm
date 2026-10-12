@@ -2,6 +2,8 @@
 registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
+from new.tests import SRC, fake_claude, hermetic
+
 import json
 import os
 import shlex
@@ -16,9 +18,18 @@ import unittest
 import uuid
 from unittest import mock
 
-from new.tests import SRC, fake_claude, hermetic
-from adapters.base import (Activity, Exited, LimitHit, Reply, SessionBound, SessionStatus, Stderr, TurnEnd, Usage,
-                           Window)
+from adapters.base import (
+    Activity,
+    Exited,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Stderr,
+    TurnEnd,
+    Usage,
+    Window,
+)
 from driver import api, registry
 
 WAIT = 20    # upper bound on any wait, in seconds

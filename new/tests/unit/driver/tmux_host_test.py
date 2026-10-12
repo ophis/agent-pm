@@ -1,6 +1,8 @@
 """new/core/src/driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
 start (no pane), detach, respawn, status, sessions, paste/keys/send, read, option, pane, mark, the events file, the
 show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
+from new.tests import guards, hermetic  # noqa: F401
+
 import ast
 import errno
 import fcntl
@@ -21,7 +23,6 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-from new.tests import guards, hermetic  # noqa: F401
 from driver import tmux_host
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
@@ -180,7 +181,7 @@ def panes(*rows):
     """A list-panes result printing rows of (pane_dead, pane_tty, pane_id) in the call's -F format."""
     def result(argv):
         fmt = argv[argv.index("-F") + 1]
-        values = [dict(zip(("pane_dead", "pane_tty", "pane_id"), row)) for row in rows]
+        values = [dict(zip(("pane_dead", "pane_tty", "pane_id"), row, strict=False)) for row in rows]
         return 0, "".join(re.sub(r"#\{(\w+)\}", lambda m: v[m.group(1)], fmt) + "\n" for v in values)
     return result
 

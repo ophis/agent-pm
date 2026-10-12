@@ -1,7 +1,8 @@
 """utils/markdown.py: unfenced lines and fenced blocks."""
+from new.tests import SRC  # noqa: F401
+
 import unittest
 
-from new.tests import SRC  # noqa: F401
 from composer import base
 from utils.markdown import fenced, unfenced
 

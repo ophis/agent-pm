@@ -9,6 +9,7 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 
 from adapters.base import Event, Headless, Stderr
+
 from driver.errors import DriverError
 
 STOP_WAIT = 5
