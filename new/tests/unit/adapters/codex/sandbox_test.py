@@ -8,6 +8,7 @@ from unittest import mock
 from agent_pm.session.adapters.base import ConfigError
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
@@ -55,7 +56,7 @@ class SandboxTest(Base):
     def test_adapter_has_no_policy_configuration(self):
         for key in ("sandbox", "shell_network"):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, "unknown key"):
-                CodexAdapter(self.adapter.config | {key: "workspace-write"})
+                configured(CodexAdapter, self.adapter.config | {key: "workspace-write"})
 
     def test_legacy_snapshot_fails_closed_in_both_modes(self):
         state = self.prepare()
@@ -77,3 +78,27 @@ class SandboxTest(Base):
             self.edit_record(snapshot=state.snapshot | {"flags": value})
             with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "snapshot flags"):
                 self.common.load(str(self.work), self.spec.sid)
+
+    def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                supplied = ("--enable", "web", "--", "literal", "--last")
+                spec = dataclasses.replace(self.spec, sid=f"separator-{mode}", flags=supplied)
+                first = self.argv(self.adapter, mode, spec)
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                self.rollout()
+                changed = dataclasses.replace(spec, flags=("--", "changed"))
+                second = self.argv(self.adapter, mode, changed, True)
+                for argv in (first, second):
+                    boundary = argv.index("--")
+                    self.assertEqual(argv[boundary:], ["--", "literal", "--last", "hi"])
+                    self.assertIn("gpt-test", argv[:boundary])
+                    self.assertIn(str(self.extra), argv[:boundary])
+                    self.assertIn("project_doc_max_bytes=0", argv[:boundary])
+                    if mode == "tui":
+                        self.assertEqual(
+                            sum(word.startswith("hooks.") for word in argv[:boundary]), 6
+                        )
+                self.assertEqual(
+                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+                )

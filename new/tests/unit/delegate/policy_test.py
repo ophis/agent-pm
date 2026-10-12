@@ -9,6 +9,7 @@ from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.driver.selection import select
 
 from new.tests.case import NEW
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 
@@ -47,7 +48,7 @@ class PolicyTest(Base):
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
-        adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
+        adapter = configured(CodexAdapter, {**self.adapter.config, "env": {"K": "config"}})
         resumed = adapter.headless().launch("two", changed, True)
         self.assertEqual(state.snapshot["flags"], list(flags))
         self.assertEqual(first.env["K"], "saved")
@@ -74,7 +75,7 @@ class PolicyTest(Base):
                     'approvals_reviewer="auto_review"',
                 )
             else:
-                adapter = ClaudeAdapter({})
+                adapter = configured(ClaudeAdapter, {})
                 spec = Spec(
                     workdir=str(self.work),
                     sid=NATIVE,
@@ -96,3 +97,11 @@ class PolicyTest(Base):
             for name in forbidden:
                 with self.subTest(path=path, name=name):
                     self.assertNotIn(name, path.read_text())
+
+    def test_recovery_helpers_use_driver_selection_without_literal_builders(self):
+        root = Path(NEW) / "core" / "src" / "agent_pm" / "session" / "adapters"
+        for runtime in ("claude", "codex"):
+            source = (root / runtime / "common.py").read_text()
+            with self.subTest(runtime=runtime):
+                self.assertNotIn("--resume", source)
+                self.assertNotIn('"resume"', source)

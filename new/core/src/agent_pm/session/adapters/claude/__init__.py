@@ -38,7 +38,7 @@ class ClaudeAdapter(Adapter):
 
     def __init__(self, config):
         super().__init__(config)
-        self.common = ClaudeCommon(self.config)
+        self.common = ClaudeCommon(self.config, selector=self.select_session)
 
     def headless(self):
         return ClaudeHeadless(self)

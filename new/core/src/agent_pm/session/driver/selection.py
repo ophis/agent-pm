@@ -1,3 +1,4 @@
+import functools
 import re
 
 from agent_pm.session.adapters.base import ConfigError
@@ -24,3 +25,10 @@ def check(flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str,
         if flag in forbidden or word in forbidden:
             raise ConfigError(f"{flag}: picks the session; use sid= or resume=")
         i += 2 if word in valued and not eq else 1
+
+
+def configure(adapter):
+    adapter.configure_selector(
+        functools.partial(select, syntax=adapter.selection, uuid=adapter.selection_uuid)
+    )
+    return adapter

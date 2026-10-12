@@ -10,6 +10,7 @@ from unittest import mock
 from agent_pm.session.adapters.base import Access, ConfigError, SessionInfo
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -68,12 +69,13 @@ class CommonTest(Base):
         saved = self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        other = CodexAdapter(
+        other = configured(
+            CodexAdapter,
             {
                 "tiers": {"1": "changed"},
                 "efforts": {"low": "high"},
                 "env": {"CODEX_HOME": str(self.root / "elsewhere")},
-            }
+            },
         )
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
         resumed = other.common.prepare(spec, True)
@@ -90,7 +92,9 @@ class CommonTest(Base):
         self.spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, env=env)
         )
-        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
+        adapter = configured(
+            CodexAdapter, {**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}}
+        )
         launch = adapter.headless().launch("hi", self.spec, False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
@@ -266,7 +270,9 @@ class CommonTest(Base):
                 self.common.load(str(self.work), self.spec.sid)
 
     def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
-        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
+        )
         with self.assertRaisesRegex(ConfigError, "writable"):
             adapter.common.prepare(self.spec, False)
         self.assertFalse((self.home / ".agent-pm").exists())
@@ -276,7 +282,9 @@ class CommonTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         saved = self.record().read_bytes()
-        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
+        )
         self.assertEqual(adapter.common.prepare(self.spec, True).native_id, NATIVE)
         self.assertEqual(self.record().read_bytes(), saved)
 
@@ -328,7 +336,7 @@ class CommonTest(Base):
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    CodexAdapter(self.adapter.config | {key: value})
+                    configured(CodexAdapter, self.adapter.config | {key: value})
                 self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -339,9 +347,11 @@ class CommonTest(Base):
         ):
             for source, target in values.items():
                 with self.subTest(key=key, source=source):
-                    adapter = CodexAdapter(self.adapter.config | {key: {source: target}})
+                    adapter = configured(
+                        CodexAdapter, self.adapter.config | {key: {source: target}}
+                    )
                     self.assertEqual(adapter.common._mapped(key, source), target)
-        CodexAdapter(self.adapter.config | {"tiers": {}, "efforts": {}})
+        configured(CodexAdapter, self.adapter.config | {"tiers": {}, "efforts": {}})
 
     def test_invalid_environment_names_and_values_fail_before_launch(self):
         for key, value in (
@@ -354,7 +364,7 @@ class CommonTest(Base):
         ):
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    CodexAdapter(self.adapter.config | {"env": {key: value}})
+                    configured(CodexAdapter, self.adapter.config | {"env": {key: value}})
                 self.assertIn("[adapters.codex].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -366,8 +376,8 @@ class CommonTest(Base):
             {"env": {"A": 1}},
         ):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
-                CodexAdapter({"tiers": {}, "efforts": {}, **cfg})
-        adapter = CodexAdapter({"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
+                configured(CodexAdapter, {"tiers": {}, "efforts": {}, **cfg})
+        adapter = configured(CodexAdapter, {"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
         launch = adapter.headless().launch(
             "hi", dataclasses.replace(self.spec, tier=None, effort=None), False
         )
@@ -384,7 +394,7 @@ class CommonTest(Base):
             ("efforts", dataclasses.replace(self.spec, tier=None)),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
-                CodexAdapter({}).headless().launch("hi", spec, False)
+                configured(CodexAdapter, {}).headless().launch("hi", spec, False)
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
@@ -402,7 +412,7 @@ class WritableDirsTest(Base):
     def test_config_codex_home(self):
         home = self.root / "config-codex"
         self.new_launch(
-            CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
+            configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
         )
 
     def test_environment_codex_home_real_path(self):
@@ -420,7 +430,7 @@ class WritableDirsTest(Base):
         saved = self.prepare().writable_roots
         record = self.record().read_bytes()
         elsewhere = str(self.root / "elsewhere")
-        other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
+        other = configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
         spec = dataclasses.replace(self.spec, access=Access(project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec, False))
         dirs = other.writable_dirs(spec, True)
@@ -431,7 +441,7 @@ class WritableDirsTest(Base):
     def test_read_dirs_are_never_added_saved_or_writable(self):
         read = self.root / "read"
         read.mkdir()
-        adapter = CodexAdapter(self.adapter.config)
+        adapter = configured(CodexAdapter, self.adapter.config)
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
         argv = adapter.headless().launch("hi", spec, False).argv
@@ -471,8 +481,8 @@ class WritableDirsTest(Base):
         target = self.root / "config-tmp"
         target.mkdir()
         (self.root / "tmp-link").symlink_to(target)
-        adapter = CodexAdapter(
-            self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
         )
         self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, False))
         self.assertIn(str(target), adapter.writable_dirs(self.spec, False))

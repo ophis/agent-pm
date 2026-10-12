@@ -236,6 +236,14 @@ class Adapter(ABC):
             raise ConfigError(f"unknown key {extra[0]!r} in {type(self).__name__}'s config")
         self.config = dict(config)
 
+    def select_session(self, native: str, resume: bool) -> tuple[str, ...]:
+        if not hasattr(self, "_selector"):
+            raise ConfigError("session selector is not configured by Driver")
+        return self._selector(native, resume)
+
+    def configure_selector(self, selector: Callable[[str, bool], tuple[str, ...]]) -> None:
+        self._selector = selector
+
     @abstractmethod
     def headless(self) -> "Headless | None":
         """A fresh Headless, or None."""

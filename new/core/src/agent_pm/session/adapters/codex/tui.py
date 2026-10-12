@@ -91,6 +91,7 @@ class CodexTui(Tui):
                 f"timeout={3 if event == 'Interrupt' else 10}}}]}}]",
             )
         ]
+        _, literal = sessions.split_flags(saved_flags)
         argv = [
             exe,
             *spec._select(self.native, resume),
@@ -101,7 +102,11 @@ class CodexTui(Tui):
             'tui.notification_method="bel"',
             *flags(snapshot, interactive=True),
             *hook_flags,
-            *(["--", prompt] if prompt else []),
+            *(
+                [*literal, *([prompt] if prompt else [])]
+                if literal
+                else (["--", prompt] if prompt else [])
+            ),
         ]
         data = {
             "argv": argv,

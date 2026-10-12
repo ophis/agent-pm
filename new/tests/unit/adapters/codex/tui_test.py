@@ -23,6 +23,7 @@ from agent_pm.session.adapters.base import (
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.utils.paths import IMPORT_ROOT
 
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
@@ -65,10 +66,10 @@ class TuiTest(Base):
             self.spec,
             flags=("-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false"),
         )
-        saved = CodexAdapter(self.adapter.config).common.prepare(self.spec, False)
+        saved = configured(CodexAdapter, self.adapter.config).common.prepare(self.spec, False)
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        other = CodexAdapter({"env": {"CODEX_HOME": str(self.extra)}})
+        other = configured(CodexAdapter, {"env": {"CODEX_HOME": str(self.extra)}})
         run, launch, data = self.launch(True, other)
         self.assertEqual(data["argv"][:3], ["/protected/codex", "resume", NATIVE])
         self.assertIn("gpt-test", data["argv"])
@@ -79,7 +80,9 @@ class TuiTest(Base):
     def test_the_session_env_is_last_in_the_launch_env_and_its_resume(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         self.spec = dataclasses.replace(self.spec, access=access)
-        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
+        adapter = configured(
+            CodexAdapter, {**self.adapter.config, "env": {"PYTHONPATH": "/config"}}
+        )
         _, launch, _ = self.launch(adapter=adapter)
         self.assertEqual(launch.env["PYTHONPATH"], "/a b;c")
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
@@ -107,7 +110,7 @@ class TuiTest(Base):
         self.assertIn("CODEX_CI", launch.unset)
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
-        adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
+        adapter = configured(CodexAdapter, {"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = adapter.tui().launch("hi", second, False, HOOK)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
@@ -212,7 +215,7 @@ class TuiTest(Base):
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
-        adapter = CodexAdapter({"env": {"TZ": "UTC"}})
+        adapter = configured(CodexAdapter, {"env": {"TZ": "UTC"}})
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
         screen = "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› "
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
@@ -225,7 +228,7 @@ class TuiTest(Base):
         self.assertIn("Sign in with ChatGPT to use Codex", self.adapter.tui().dialogs)
 
     def test_driver_flattened_limit_screen_keeps_header_and_reset(self):
-        adapter = CodexAdapter({"env": {"TZ": "UTC"}})
+        adapter = configured(CodexAdapter, {"env": {"TZ": "UTC"}})
         screen = (
             "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › "
         )
@@ -252,7 +255,7 @@ class TuiTest(Base):
             for index, tmpdir in enumerate(("/protected", "/driver-only", IMPORT_ROOT, sys.prefix)):
                 with self.subTest(resume=resume, tmpdir=tmpdir):
                     config = {**self.common.config, "env": {"TMPDIR": tmpdir}}
-                    adapter = CodexAdapter(config)
+                    adapter = configured(CodexAdapter, config)
                     spec = (
                         self.spec if resume else dataclasses.replace(self.spec, sid=f"env-{index}")
                     )
@@ -276,8 +279,9 @@ class TuiTest(Base):
         temporary.mkdir()
         alias = self.root / "temporary-link"
         alias.symlink_to(temporary)
-        adapter = CodexAdapter(
-            self.common.config | {"env": {"CODEX_HOME": str(home), "TMPDIR": str(alias)}}
+        adapter = configured(
+            CodexAdapter,
+            self.common.config | {"env": {"CODEX_HOME": str(home), "TMPDIR": str(alias)}},
         )
         run = adapter.tui()
         expected = [str(p) for p in (self.work, self.cwd, home, self.extra)]
@@ -291,9 +295,10 @@ class TuiTest(Base):
                 run.launch("hello", self.spec, False, HOOK)
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
-            changed = CodexAdapter(
+            changed = configured(
+                CodexAdapter,
                 self.common.config
-                | {"env": {"CODEX_HOME": str(changed_home), "TMPDIR": str(changed_tmp)}}
+                | {"env": {"CODEX_HOME": str(changed_home), "TMPDIR": str(changed_tmp)}},
             ).tui()
             spec = dataclasses.replace(
                 self.spec,

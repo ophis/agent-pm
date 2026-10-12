@@ -40,6 +40,8 @@ Delegate reads `[policy.<runtime>]` `flags` (an argv list) and `env` (a string t
 
 The default policy sets Claude `--permission-mode auto` and Codex `-s danger-full-access`, `approval_policy="on-request"`, `approvals_reviewer="auto_review"`. To use Codex `workspace-write`, replace its policy flags with `-s workspace-write`, the approval options, `-c sandbox_workspace_write.network_access=false`, and `-c sandbox_workspace_write.writable_roots=[]`. Full access does not enforce writable-root or team-dir boundaries.
 
+For existing `~/.agent-pm/core-new.local.toml` overrides, remove `[adapters.codex]` `sandbox` and `shell_network`: those keys now fail validation. Express them in `[policy.codex].flags` using the options above. Move Claude `--permission-mode` overrides from `[adapters.claude].flags` into `[policy.claude].flags`; retain dialogue flags in the Adapter table. Policy flag lists replace the defaults wholesale, so repeat every option you intend to keep.
+
 Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
 
 ## Access

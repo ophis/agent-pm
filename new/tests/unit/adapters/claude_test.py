@@ -36,13 +36,24 @@ from agent_pm.session.adapters.base import (
     Spec as BaseSpec,
 )
 from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.driver import registry
 from agent_pm.session.driver.selection import select
 
 from new.tests.case import Case
+from new.tests.selection import configured
+
+
+class ClaudeCommon(UnconfiguredCommon):
+    def __init__(self, config):
+        super().__init__(
+            config,
+            selector=lambda native, resume: select(
+                native, resume, ClaudeAdapter.selection, uuid=True
+            ),
+        )
 
 
 def Spec(**fields):
@@ -126,17 +137,18 @@ class Base(Case):
 
     def launch(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless().launch(prompt, spec, resume)
+        return configured(ClaudeAdapter, config).headless().launch(prompt, spec, resume)
 
 
 class ConfigTest(Base):
     def test_every_key_is_optional_and_each_is_accepted(self):
-        self.assertEqual(ClaudeAdapter({}).config, {})
-        self.assertEqual(ClaudeAdapter(CONFIG).config, CONFIG)
+        self.assertEqual(configured(ClaudeAdapter, {}).config, {})
+        self.assertEqual(configured(ClaudeAdapter, CONFIG).config, CONFIG)
 
     def test_an_unknown_key_is_refused(self):
         self.refused(
-            lambda: ClaudeAdapter({"model": "m"}), "unknown key 'model' in ClaudeAdapter's config"
+            lambda: configured(ClaudeAdapter, {"model": "m"}),
+            "unknown key 'model' in ClaudeAdapter's config",
         )
 
     def test_a_wrong_type_names_the_key_never_the_value(self):
@@ -165,7 +177,7 @@ class ConfigTest(Base):
         for key, value in rows:
             with self.subTest(key=key, value=value):
                 self.refused(
-                    lambda: ClaudeAdapter({key: value}),
+                    lambda: configured(ClaudeAdapter, {key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
 
@@ -180,7 +192,7 @@ class ConfigTest(Base):
         ):
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    ClaudeAdapter({"env": {key: value}})
+                    configured(ClaudeAdapter, {"env": {key: value}})
                 self.assertIn("[adapters.claude].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -192,12 +204,12 @@ class ConfigTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: ClaudeAdapter({"flags": flags}),
+                    lambda: configured(ClaudeAdapter, {"flags": flags}),
                     "--setting-sources is the Driver's: remove it from [adapters.claude].flags",
                 )
 
     def test_the_env_attributes(self):
-        adapter = ClaudeAdapter({})
+        adapter = configured(ClaudeAdapter, {})
         self.assertEqual(
             (adapter.session_env, adapter.identity_env, adapter.child_defaults),
             ("CLAUDECODE", UNSET, {}),
@@ -357,7 +369,7 @@ class ArgvTest(Base):
 class ReadRulesTest(Base):
     def modes(self, resume=False, config=None, **access):
         spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
-        adapter = ClaudeAdapter({} if config is None else config)
+        adapter = configured(ClaudeAdapter, {} if config is None else config)
         return (
             lambda: adapter.headless().launch("hi", spec, resume),
             lambda: adapter.tui().launch("hi", spec, resume, HOOK),
@@ -456,7 +468,7 @@ class EnvTest(Base):
         self.env({"PYTHONPATH": "/parent"})
         for launch in (
             self.launch(config=config, access=access),
-            ClaudeAdapter(config)
+            configured(ClaudeAdapter, config)
             .tui()
             .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
         ):
@@ -564,7 +576,7 @@ INIT = {"type": "system", "subtype": "init", "session_id": SID}
 class ParseTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).headless()
+        self.run = configured(ClaudeAdapter, {}).headless()
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -633,17 +645,20 @@ class ParseTest(Base):
         )
         for record, events in rows:
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), events)
+                self.assertEqual(
+                    list(configured(ClaudeAdapter, {}).headless().parse(record)), events
+                )
 
     def test_a_rejected_rate_limit_event_is_a_limit_hit(self):
         self.assertEqual(self.parse(rejected(1700000000)), [LimitHit(1700000000.0)])
         for record in (rejected(status="allowed"), rejected(status="allowed_warning")):
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), [])
+                self.assertEqual(list(configured(ClaudeAdapter, {}).headless().parse(record)), [])
         for resets in (None, True, "1700000000", 1e999):
             with self.subTest(resets=resets):
                 self.assertEqual(
-                    list(ClaudeAdapter({}).headless().parse(rejected(resets))), [LimitHit(None)]
+                    list(configured(ClaudeAdapter, {}).headless().parse(rejected(resets))),
+                    [LimitHit(None)],
                 )
 
     def test_an_assistant_rate_limit_error_is_one_limit_hit_with_the_remembered_reset(self):
@@ -651,7 +666,7 @@ class ParseTest(Base):
             self.parse(rejected(5), assistant(text("limit"), error="rate_limit"), rejected(6)),
             [LimitHit(5.0), Reply("limit")],
         )
-        run = ClaudeAdapter({}).headless()
+        run = configured(ClaudeAdapter, {}).headless()
         self.assertEqual(
             [
                 e
@@ -664,10 +679,12 @@ class ParseTest(Base):
             ],
             [LimitHit(None), Reply("limit")],
         )
-        self.assertEqual(list(ClaudeAdapter({}).headless().parse(assistant(error="other"))), [])
+        self.assertEqual(
+            list(configured(ClaudeAdapter, {}).headless().parse(assistant(error="other"))), []
+        )
 
     def test_each_run_sends_its_own(self):
-        adapter = ClaudeAdapter({})
+        adapter = configured(ClaudeAdapter, {})
         first, second = adapter.headless(), adapter.headless()
         self.assertIsNot(first, second)
         self.assertEqual(list(first.parse(rejected(1))), [LimitHit(1.0)])
@@ -1025,7 +1042,7 @@ WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 def tui_launch(work, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, **spec})
-    return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+    return configured(ClaudeAdapter, config).tui().launch(prompt, spec, resume, HOOK)
 
 
 class TuiArgvTest(Base):
@@ -1309,7 +1326,7 @@ def said(mid, *blocks) -> dict:
 class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).tui()
+        self.run = configured(ClaudeAdapter, {}).tui()
         self.path = os.path.join(self.tmp, "t.jsonl")
 
     def transcript(self, *records):
@@ -1453,7 +1470,7 @@ NOW = epoch("2026-10-11 10:00")  # a Sunday
 class LimitTest(Case):
     def limit(self, screen, now=NOW):
         with mock.patch("time.time", return_value=now):
-            return ClaudeAdapter({}).tui().limit(screen)
+            return configured(ClaudeAdapter, {}).tui().limit(screen)
 
     def check(self, rows):
         for screen, resets in rows:
@@ -1592,12 +1609,12 @@ class LimitTest(Case):
 
 class AdapterTest(Base):
     def test_its_parts(self):
-        adapter = ClaudeAdapter(CONFIG)
+        adapter = configured(ClaudeAdapter, CONFIG)
         self.assertEqual(
             ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"})
         )
         self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
-        self.assertIsInstance(adapter.common, ClaudeCommon)
+        self.assertIsInstance(adapter.common, UnconfiguredCommon)
         for mode, kind in ((adapter.headless, ClaudeHeadless), (adapter.tui, ClaudeTui)):
             with self.subTest(kind=kind):
                 self.assertIs(type(mode()), kind)
@@ -1607,19 +1624,22 @@ class AdapterTest(Base):
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
         self.assertEqual(
-            ClaudeAdapter(CONFIG).usage_probe(),
+            configured(ClaudeAdapter, CONFIG).usage_probe(),
             Launch(PROBE, env={**CEILING, "K": "v"}, unset=UNSET),
         )
-        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
-        self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
+        self.assertEqual(
+            configured(ClaudeAdapter, {}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None)
+        )
+        self.assertIsNone(configured(ClaudeAdapter, {}).usage("garbage"))
 
     def test_session_status(self):
         self.assertEqual(
-            ClaudeAdapter({}).session_status(SID, self.work),
+            configured(ClaudeAdapter, {}).session_status(SID, self.work),
             SessionStatus("no", None, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
         )
         self.assertEqual(
-            ClaudeAdapter({}).session_status("x", self.work), SessionStatus("no", None, "")
+            configured(ClaudeAdapter, {}).session_status("x", self.work),
+            SessionStatus("no", None, ""),
         )
 
 
@@ -1634,7 +1654,7 @@ class WritableDirsTest(Base):
 
     def dirs(self, resume=False, workdir=None, **access) -> tuple[str, ...]:
         spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
-        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume)
+        return configured(ClaudeAdapter, CONFIG).writable_dirs(spec, resume)
 
     def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
@@ -1696,7 +1716,9 @@ class WritableDirsTest(Base):
                         access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
                         flags=given,
                     )
-                    self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec, resume), dirs)
+                    self.assertEqual(
+                        configured(ClaudeAdapter, CONFIG).writable_dirs(spec, resume), dirs
+                    )
 
 
 class CommittedConfigTest(Base):

@@ -29,6 +29,11 @@ VALUED = {
 }
 
 
+def split_flags(flags) -> tuple[list[str], list[str]]:
+    index = flags.index("--") if "--" in flags else len(flags)
+    return list(flags[:index]), list(flags[index:])
+
+
 def options(flags):
     i = 0
     while i < len(flags) and flags[i] != "--":

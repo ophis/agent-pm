@@ -6,7 +6,8 @@
 # Each layer reads only its own keys: the Composer (src/agent_pm/role/composer/) the run keys, [output],
 # [roles.<role>], trusted_dirs and team_dirs; src/agent_pm/role/agent_tools/repo.py users and trusted_dirs;
 # src/agent_pm/manager/roster.py runtime (the default of src/agent_pm/manager/crew.py's workers); the Driver
-# (src/agent_pm/session/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
+# (src/agent_pm/session/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile;
+# the Delegate (src/agent_pm/role/delegate/plan.py) [policy.<runtime>].
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among

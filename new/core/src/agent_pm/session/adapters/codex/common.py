@@ -34,6 +34,7 @@ from .sessions import (
     session_file,
     session_identity,
     session_paths,
+    split_flags,
     store_directory,
     store_root,
     validate_snapshot,
@@ -173,7 +174,8 @@ def flags(snapshot: dict, *, interactive: bool) -> list[str]:
             else ()
         ),
     ]
-    result = [*snapshot["flags"], *model]
+    supplied, _ = split_flags(snapshot["flags"])
+    result = [*supplied, *model]
     if not snapshot["project"]:
         result.extend(("-c", "project_doc_max_bytes=0"))
     for directory in snapshot["dirs"]:
@@ -241,7 +243,8 @@ class CodexCommon:
         "GH_PAGER": "cat",
     }
 
-    def __init__(self, config):
+    def __init__(self, config, *, selector=None):
+        self.selector = selector
         self.config = dict(config)
         for name, keys in (("tiers", TIERS), ("efforts", EFFORTS)):
             values = config.get(name, {})
@@ -409,8 +412,18 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
+        if self.selector is None:
+            raise ConfigError("session selector is not configured by Driver")
+        selection = self.selector(state.native_id, True)
+        _, literal = split_flags(snapshot["flags"])
         command = shlex.join(
-            ["codex", "resume", *flags(snapshot, interactive=True), state.native_id]
+            [
+                "codex",
+                *selection[:-1],
+                *flags(snapshot, interactive=True),
+                *selection[-1:],
+                *literal,
+            ]
         )
         env = {
             "CODEX_HOME": snapshot["codex_home"],

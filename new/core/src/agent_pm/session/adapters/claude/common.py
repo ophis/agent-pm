@@ -170,7 +170,8 @@ class ClaudeCommon:
         "--strict-mcp-config",
     )
 
-    def __init__(self, config: Mapping):
+    def __init__(self, config: Mapping, *, selector=None):
+        self.selector = selector
         for key, ok, what in CHECKS:
             if key in config and not ok(config[key]):
                 raise ConfigError(f"{TABLE}.{key} must be {what}")
@@ -211,8 +212,8 @@ class ClaudeCommon:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.config_dir(), "projects", project, f"{sid}.jsonl")
 
-    @staticmethod
     def resume(
+        self,
         cwd: str,
         sid: str,
         workdir: str | None = None,
@@ -220,7 +221,9 @@ class ClaudeCommon:
     ) -> str:
         q = shlex.quote
         assign = "".join(f"{name}={q(value)} " for name, value in env.items())
-        command = f"cd {q(cwd)} && {assign}claude --resume {q(sid)}"
+        if self.selector is None:
+            raise ConfigError("session selector is not configured by Driver")
+        command = f"cd {q(cwd)} && {assign}" + shlex.join(("claude", *self.selector(sid, True)))
         if workdir is not None and os.path.realpath(workdir) != os.path.realpath(cwd):
             command += f" --add-dir {q(workdir)}"
         return command
