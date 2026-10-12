@@ -65,6 +65,10 @@ def _close(name: str, pane: str | None = None) -> None:
     except tmux_host.TuiError as e:
         if tmux_host.status(pane or name) is not None:
             raise DriverError(f"cannot close tui session {name}: {e}") from None
+    _drop(name)
+
+
+def _drop(name: str) -> None:
     try:
         _remove(session_dir(name))
     except OSError as e:
@@ -383,11 +387,16 @@ class TuiMode:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """Under the name's lock, unless another pane holds the name, kills its pane's session (no pane: the name's)
-        and removes the dir; then ends (returncode: the code seen, else -SIGHUP)."""
+        """Under the name's lock, unless another pane holds the name, kills its pane's session (absent: none; tmux
+        failing: the name's) and removes the dir; then ends (returncode: the code seen, else -SIGHUP)."""
         if self._live:
             with lock(self.name):
-                if self._holder() in (self._pane, None, tmux_host.UNKNOWN):
+                holder = self._holder()
+                if holder is None:
+                    _drop(self.name)
+                elif holder == tmux_host.UNKNOWN:
+                    _close(self.name)
+                elif holder == self._pane:
                     _close(self.name, self._pane)
         self._live = False
         self._end()

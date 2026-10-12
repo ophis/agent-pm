@@ -436,13 +436,14 @@ def _tags(session: str, tags: dict[str, str]) -> list[str]:
 
 def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> bool:
     """Whether the handover went in HANDOVER_TIMEOUT s, then the errpipe hit EOF (execve) in HANDOVER_TIMEOUT + extra
-    s; an errno raises."""
+    s more; an errno or bad data raises."""
     polls, out = 0, b""
     while os.path.exists(path):
         if polls == round(HANDOVER_TIMEOUT / POLL):
             return False
         sleep(POLL)
         polls += 1
+    polls = 0
     while True:  # only now: a FIFO no writer opened reads as EOF
         try:
             chunk = os.read(pipe, 64)
@@ -456,7 +457,11 @@ def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> boo
             break
         out += chunk
     if out:
-        raise TuiError(f"cannot run {command}: {os.strerror(int(out))}")
+        try:
+            reason = os.strerror(int(out))
+        except (ValueError, OverflowError):
+            reason = "bad errpipe data"
+        raise TuiError(f"cannot run {command}: {reason}")
     return True
 
 

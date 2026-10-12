@@ -286,7 +286,8 @@ class Tmux:
     (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what display-message
     prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv (after
     EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
-    then per `wrapper` closes it ("exec"), writes that errno and closes it, or keeps it open ("hang", fd `writer`)."""
+    then per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang",
+    fd `writer`)."""
 
     def __init__(self, pane=None, fail=(), hand_over=True, results=None, wrapper="exec"):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
@@ -329,7 +330,8 @@ class Tmux:
                 os.unlink(self.path)
                 if self.wrapper != "hang":
                     if self.wrapper != "exec":
-                        os.write(self.writer, b"%d" % self.wrapper)
+                        data = self.wrapper
+                        os.write(self.writer, data if isinstance(data, bytes) else b"%d" % data)
                     os.close(self.writer)
         return done(argv)
 
@@ -708,6 +710,37 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.sleep.assert_not_called()
         self.assertEqual(os.listdir(self.temp), [])
+
+    def test_a_handover_at_its_last_poll_still_gets_the_whole_exec_wait(self):
+        fake, slept = Tmux(hand_over=False), []
+        last = round(tmux_host.HANDOVER_TIMEOUT / tmux_host.POLL)
+
+        def sleep(seconds):
+            slept.append(seconds)
+            if len(slept) == last:
+                fake.writer = os.open(fake.fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.unlink(fake.path)
+            elif len(slept) == last + 3:
+                os.close(fake.writer)
+
+        self.sleep = sleep
+        self.start(fake)
+        self.assertEqual(len(slept), last + 3)
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+
+    def test_bad_errpipe_data_is_an_error_and_kills_the_session(self):
+        for data in (b"x", b"9" * 20):
+            with self.subTest(data=data):
+                fake = Tmux(wrapper=data)
+                with self.assertRaisesRegex(
+                    tmux_host.TuiError,
+                    "^" + re.escape(f"cannot run {self.tool}: bad errpipe data") + "$",
+                ):
+                    self.start(fake)
+                self.assertEqual(
+                    fake.commands(), ["display-message", "new-session", "kill-session"]
+                )
+                self.assertEqual(os.listdir(self.temp), [])
 
     def test_never_execd_is_not_started(self):
         fake = Tmux(wrapper="hang")

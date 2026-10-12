@@ -981,12 +981,11 @@ class BoundTest(Base):
         mode.stop()
         self.assertEqual(mode.returncode(0), 3)
 
-    def test_stop_closes_unless_another_pane_holds_the_name(self):
-        for holder, closed in (
-            ("%1", True),
-            (None, True),
-            ("%2", False),
-            (tmux_host.TuiError("tmux: boom"), True),
+    def test_stop_kills_its_pane_while_it_holds_the_name_the_name_when_tmux_fails(self):
+        for holder, kills, removed in (
+            ("%1", [mock.call("%1")], True),
+            ("%2", [], False),
+            (tmux_host.TuiError("tmux: boom"), [mock.call(NAME)], True),
         ):
             with self.subTest(holder=holder):
                 mode = self.started()
@@ -994,10 +993,19 @@ class BoundTest(Base):
                 self.host.pane.side_effect = holder if isinstance(holder, Exception) else None
                 mode.stop()
                 self.assertEqual(
-                    (self.host.kill.called, os.path.isdir(self.dir)), (closed, not closed)
+                    (self.host.kill.call_args_list, os.path.isdir(self.dir)), (kills, not removed)
                 )
                 self.assertEqual(mode.poll(0), ([], True))
                 self.host.pane.side_effect = None
+
+    def test_stop_with_the_name_absent_kills_nothing_as_a_new_server_may_reuse_its_pane_id(self):
+        mode = self.started()
+        self.host.pane.return_value = None
+        self.host.status.side_effect = lambda target: tmux_host.RUNNING if target == "%1" else None
+        mode.stop()
+        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME)])
+        self.assertNoSessionDir()
+        self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
     def test_stop_checks_the_holder_and_closes_under_the_names_lock(self):
         held = []
@@ -1022,7 +1030,7 @@ class BoundTest(Base):
         self.host.read.assert_not_called()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
-    def test_with_no_pane_bound_it_reads_no_screen_and_stops_by_name(self):
+    def test_with_no_pane_bound_it_reads_no_screen_and_stops_killing_nothing(self):
         self.host.pane.return_value = None  # begin found no pane
         mode = self.prepare()
         mode.begin(("/bin/run",), cwd=self.tmp, env={})
@@ -1030,7 +1038,8 @@ class BoundTest(Base):
         self.assertEqual(mode.poll(0), ([], True))
         mode.stop()
         self.host.read.assert_not_called()
-        self.host.kill.assert_called_once_with(NAME)
+        self.host.kill.assert_not_called()
+        self.assertNoSessionDir()
 
     def test_its_pane_unknown_is_no_scan_and_no_end(self):
         mode = self.started()
