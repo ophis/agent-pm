@@ -1,15 +1,6 @@
 """orchestrator promote.py, ported from the old promote_test (less its prune hook, step 6) onto config.load(): every
 Linear call goes as the harness account."""
 
-from new.tests.unit.orchestrator import run_fixtures
-from new.tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TEAM, team_node
-from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
-from new.tests.unit.orchestrator.board_ids import role as role_table
-from new.tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
-from new.tests.unit.orchestrator.run_fixtures import HARNESS, logged, show
-
-import config
-
 import io
 import json
 import os
@@ -19,9 +10,15 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-import linear
-import promote
-import sessions
+from agent_pm_orchestrator import config, linear, promote, sessions
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator import run_fixtures
+from new.tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TEAM, team_node
+from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
+from new.tests.unit.orchestrator.board_ids import role as role_table
+from new.tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
+from new.tests.unit.orchestrator.run_fixtures import HARNESS, logged, show
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=UTC)
 STATES = {
@@ -477,7 +474,7 @@ class TestIdempotency(Base):
         self.assertEqual(a[14], "4")
 
 
-class TestChildTitle(unittest.TestCase):
+class TestChildTitle(Case):
     def test_child_title(self):
         for prefix, src_prefix, src, want in (
             ("TDD", "PRD", "PRD: Session Registry", "TDD: Session Registry"),
@@ -838,9 +835,9 @@ class TestPath(Base):
 
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin"}):
             self.run_main("--dry-run", gql=spy)
-            self.assertEqual(os.environ["PATH"], config.PATH)
-        self.assertEqual(set(seen), {config.PATH})
-        self.assertIn("/opt/homebrew/bin", config.PATH)
+            self.assertEqual(os.environ["PATH"], config.path())
+        self.assertEqual(set(seen), {config.path()})
+        self.assertIn("/opt/homebrew/bin", config.path())
 
 
 if __name__ == "__main__":

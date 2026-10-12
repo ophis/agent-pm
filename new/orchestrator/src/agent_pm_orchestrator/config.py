@@ -5,26 +5,20 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(1, os.path.join(ROOT, "core", "src"))
-import composer  # noqa: E402
-from utils import config_file, repos  # noqa: E402
-from utils.git import GUARD  # noqa: E402
-from utils.paths import temp_dirs, under  # noqa: E402
-from utils.repos import NAME, OWNER  # noqa: E402
+from agent_pm import composer
+from agent_pm.utils import config_file, repos
+from agent_pm.utils.git import GUARD
+from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.repos import NAME, OWNER
 
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
 LOCAL = "~/.agent-pm/orchestrator-new.local.toml"
-PATH = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
-if os.environ.get("AGENT_PM_PATH"):
-    PATH = f"{os.environ['AGENT_PM_PATH']}:{PATH}"
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
@@ -145,14 +139,21 @@ class ConfigError(SystemExit):
         self.msg, self.logs_dir = msg, logs_dir
 
 
-def load(root: str = ROOT, *, path: str = CONFIG, core: str = config_file.CONFIG) -> Config:
+def load(
+    root: str = ROOT,
+    *,
+    path: str = CONFIG,
+    local: str = LOCAL,
+    core: str = config_file.CONFIG,
+    core_local: str = config_file.LOCAL,
+) -> Config:
     try:
-        cfg = config_file.read_config(path, LOCAL)
+        cfg = config_file.read_config(path, local)
     except (OSError, ValueError) as e:
         raise ConfigError(f"orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg, root)
     try:
-        return _load(cfg, root, work, core)
+        return _load(cfg, root, work, local, core, core_local)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -178,6 +179,13 @@ def tui_issue(name):
     return m.groups() if m else None
 
 
+def path():
+    """The PATH run, promote and their tools get, read at call: AGENT_PM_PATH (if set) before the default dirs."""
+    default = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
+    front = os.environ.get("AGENT_PM_PATH")
+    return f"{front}:{default}" if front else default
+
+
 def sh_run(argv, timeout):
     return subprocess.run(
         argv,
@@ -185,7 +193,7 @@ def sh_run(argv, timeout):
         text=True,
         timeout=timeout,
         stdin=subprocess.DEVNULL,
-        env={**os.environ, "PATH": PATH},
+        env={**os.environ, "PATH": path()},
     )
 
 
@@ -251,10 +259,10 @@ def _work_dir(cfg, root, clones=None):
     return path
 
 
-def _load(cfg, root, work, core):
-    _load_config(cfg, root)
-    roles = _runnable(cfg, root, work, core)
-    docs = _docs(roles)
+def _load(cfg, root, work, local, core, core_local):
+    _load_config(cfg, root, local)
+    roles = _runnable(cfg, root, work, core, core_local)
+    docs = _docs(roles, core_local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
         for k in ("states", "task_labels", "project_repos", "local_clones")
@@ -309,10 +317,10 @@ def _missing(cfg):
     return missing
 
 
-def _load_config(cfg, root):
+def _load_config(cfg, root, local):
     if missing := _missing(cfg):
         raise ConfigError(
-            f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {LOCAL} "
+            f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {local} "
             "(orchestrator/config.toml's `# local:` lines)"
         )
     _check_ids(cfg)
@@ -409,10 +417,10 @@ def _fill_root(value, root):
     return value
 
 
-def _runnable(cfg, root, work, core):
+def _runnable(cfg, root, work, core, core_local):
     try:
-        core_roles = config_file.read_config(core).get("roles", {})
-        trusted = composer.trusted_dirs(config=core)
+        core_roles = config_file.read_config(core, core_local).get("roles", {})
+        trusted = composer.trusted_dirs(config=core, local=core_local)
     except (OSError, ValueError, composer.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
@@ -433,8 +441,9 @@ def _runnable(cfg, root, work, core):
                 overlays=[overlay],
                 label=("orchestrator/config.toml", "core"),
                 config=core,
+                local=core_local,
             )
-            tasks = tuple(composer.index(name, config=core))
+            tasks = tuple(composer.index(name, config=core, local=core_local))
         except composer.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(
@@ -480,14 +489,14 @@ def _runnable(cfg, root, work, core):
     return out
 
 
-def _docs(roles):
+def _docs(roles, core_local):
     outs = {name: o for name, r in roles.items() if (o := r.run.output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
         raise ConfigError(
             "core: document roles must publish to one github.com repo and branch (their [output] in "
-            f"{config_file.LOCAL})"
+            f"{core_local})"
         )
     return Docs(name, branch, MappingProxyType({r: o["dir"] for r, o in outs.items()}))
 

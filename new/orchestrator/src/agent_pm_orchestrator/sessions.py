@@ -1,16 +1,12 @@
 """Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness account under its
 session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it when a late write left an older one."""
 
-import os
 import re
-import sys
 import threading
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
+from agent_pm.driver import api
 
-import linear  # noqa: E402
-from driver import api  # noqa: E402
+from agent_pm_orchestrator import config, linear
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10

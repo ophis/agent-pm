@@ -3,15 +3,15 @@ session a client shows, fake_claude interactive as runtime `claude`: FR-43 close
 the TUI `<role>-<ID>-<sid8>` shows beside the --split-from session, or in the --opener's grid; the run writes back
 and leaves its TUI open."""
 
+import functools
+import unittest
+
 from new.tests import live_tmux
 from new.tests.integration.delegate.cli_integration_test import mark
 from new.tests.integration.orchestrator.flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
 from new.tests.unit.delegate.runner_test import block
 from new.tests.unit.orchestrator.run_fixtures import ID, SID, UUID
 from new.tests.unit.orchestrator.writeback_test import PRD
-
-import functools
-import unittest
 
 MANAGER = "manager"
 TUI = f"pm-{ID}-{SID[:8]}"
@@ -53,7 +53,7 @@ class Tui(Flow):
 
     def run_tui(self, *argv):
         res = self.script(
-            RUN,
+            *RUN,
             *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
             *("--assignee", ACCOUNTS["pm"], "--runtime", "claude", "--mode", "new", "--tui"),
             *argv,

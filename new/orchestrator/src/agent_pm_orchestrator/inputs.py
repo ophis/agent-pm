@@ -2,19 +2,16 @@
 
 import fnmatch
 import json
-import os
 import re
-import sys
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import TASKS, sh_run  # noqa: E402
+from agent_pm.utils.shell import SHORT, err_text
 
-import issues  # noqa: E402
-from linear import parse_time  # noqa: E402
-from target import pr_title  # noqa: E402
-from utils.shell import SHORT, err_text  # noqa: E402
+from agent_pm_orchestrator import issues
+from agent_pm_orchestrator.config import TASKS, sh_run
+from agent_pm_orchestrator.linear import parse_time
+from agent_pm_orchestrator.target import pr_title
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 RAW = "Accept: application/vnd.github.raw+json"

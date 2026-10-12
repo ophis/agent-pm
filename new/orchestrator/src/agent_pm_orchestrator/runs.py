@@ -2,13 +2,10 @@
 
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402, F401
+from agent_pm.utils.files import append_line
 
-import linear  # noqa: E402
-from utils.files import append_line  # noqa: E402
+from agent_pm_orchestrator import linear
 
 
 def note(path, kind, **fields):

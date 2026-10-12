@@ -15,11 +15,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
+from agent_pm.utils.files import append_line
+from agent_pm.utils.text import printable
 
-from utils.files import append_line  # noqa: E402
-from utils.text import printable  # noqa: E402
+from agent_pm_orchestrator import config
 
 SEAM = "AGENT_PM_LINEAR"
 URL = "https://api.linear.app/graphql"

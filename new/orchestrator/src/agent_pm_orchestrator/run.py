@@ -10,17 +10,12 @@ import re
 import signal
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
+from agent_pm import delegate
+from agent_pm.driver import api
+from agent_pm.utils.text import printable
 
-import delegate  # noqa: E402
-import linear  # noqa: E402
-import runs  # noqa: E402
-import sessions  # noqa: E402
-import writeback  # noqa: E402
-from driver import api  # noqa: E402
-from linear import ISSUE_ID, log, one_line  # noqa: E402
-from utils.text import printable  # noqa: E402
+from agent_pm_orchestrator import config, linear, runs, sessions, writeback
+from agent_pm_orchestrator.linear import ISSUE_ID, log, one_line
 
 
 def _stop(signum, frame):
@@ -62,7 +57,7 @@ def _context(a, cfg, role, gql, rd):
 
 
 def inner(a, cfg, *, gql, run=delegate.run):
-    os.environ["PATH"] = config.PATH
+    os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
     signal.pthread_sigmask(signal.SIG_UNBLOCK, api.SIGNALS)  # api.detach blocked them until now

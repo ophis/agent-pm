@@ -4,19 +4,16 @@ local clone its checkout may use (with_clone)."""
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass, replace
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
-from config import CLONES, REF, TASKS, repo_slug, sh_run  # noqa: E402
+import agent_pm.utils.repos
+from agent_pm.utils.git import GUARD, common_dir
+from agent_pm.utils.paths import under
+from agent_pm.utils.repos import NAME, OWNER
+from agent_pm.utils.shell import SHORT, err_text
 
-import issues  # noqa: E402
-import utils.repos  # noqa: E402
-from utils.git import GUARD, common_dir  # noqa: E402
-from utils.paths import under  # noqa: E402
-from utils.repos import NAME, OWNER  # noqa: E402
-from utils.shell import SHORT, err_text  # noqa: E402
+from agent_pm_orchestrator import config, issues
+from agent_pm_orchestrator.config import CLONES, REF, TASKS, repo_slug, sh_run
 
 MAPPED = "project mapping "
 
@@ -117,7 +114,7 @@ def _repo_info(o, n, run):
 
 
 def checkout(ident, owner, name, *, work) -> str:
-    return utils.repos.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+    return agent_pm.utils.repos.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
 def _branches(ident, o, n, run, work, roles):

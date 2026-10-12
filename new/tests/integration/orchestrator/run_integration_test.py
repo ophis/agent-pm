@@ -2,6 +2,14 @@
 config. Done runs write back as writeback_test pins them, plus the session comment by its session id; a run with no
 outcome; a usage limit (FR-59) and its resume; a resume after a lost ledger write (FR-54)."""
 
+import os
+import re
+import shlex
+import unittest
+from datetime import UTC, datetime
+
+from agent_pm_orchestrator import linear
+
 from new.tests.integration.delegate.cli_integration_test import mark, option
 from new.tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
@@ -16,14 +24,6 @@ from new.tests.unit.delegate.runner_test import block
 from new.tests.unit.orchestrator.board_ids import STATES
 from new.tests.unit.orchestrator.run_fixtures import ID, SESSION, SID, UUID
 from new.tests.unit.orchestrator.writeback_test import APPROVE_MAPPED, DOC, PR, PRD
-
-import os
-import re
-import shlex
-import unittest
-from datetime import UTC, datetime
-
-import linear
 
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 RESETS = "2026-10-11T10:00:00+00:00"  # T in the runs' TZ
@@ -81,7 +81,7 @@ class Run(Flow):
     def run_py(self, steps, mode="new", **scenario):
         self.scene(steps, **scenario)
         res = self.script(
-            RUN,
+            *RUN,
             *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
             *("--assignee", ACCOUNTS[self.role], "--runtime", "claude", "--mode", mode),
             *(("--target", "ophis/agent-pm") if self.role == "engineer" else ()),

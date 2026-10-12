@@ -1,21 +1,17 @@
 """orchestrator inputs.py, ported from the old inputs_test (its Checkout case on the composer), plus FR-57: a Handoff
 whose Instructions hold a `## Comments` line."""
 
-from new.tests import hermetic  # noqa: F401
-
-import config
-
 import json
 import os
 import re
 import unittest
 from types import SimpleNamespace
 
-import composer
-import inputs
-import issues
-import target
-from utils.shell import SHORT
+from agent_pm import composer
+from agent_pm.utils.shell import SHORT
+from agent_pm_orchestrator import config, inputs, issues, target
+
+from new.tests.case import Case
 
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}
@@ -88,7 +84,7 @@ def fenced(text, fence=FENCE):
     return f"{fence}markdown\n{text}\n{fence}"
 
 
-class DocPath(unittest.TestCase):
+class DocPath(Case):
     def test_accepted(self):
         for url, want in (
             (BASE + "Research/a.md", "Research/a.md"),
@@ -139,7 +135,7 @@ class DocPath(unittest.TestCase):
         )
 
 
-class Gather(unittest.TestCase):
+class Gather(Case):
     def test_read_argv_and_text(self):
         gh = Gh(
             {
@@ -454,7 +450,7 @@ BUILD_PRECEDENCE = (
 )
 
 
-class RenderResearch(unittest.TestCase):
+class RenderResearch(Case):
     def test_golden_full(self):
         iss = research_issue()
         src = inputs.Sources(
@@ -582,7 +578,7 @@ class RenderResearch(unittest.TestCase):
         )
 
 
-class Fence(unittest.TestCase):
+class Fence(Case):
     def render_doc(self, text):
         src = inputs.Sources((inputs.Doc(BASE + "Research/a.md", "Research/a.md", text),), None)
         return inputs.render(issue("Q"), "researcher", src, humans=HUMANS, target=None, docs=DOCS)
@@ -603,7 +599,7 @@ class Fence(unittest.TestCase):
                 )
 
 
-class RenderDesign(unittest.TestCase):
+class RenderDesign(Case):
     HANDOFF = lines(
         "Handoff from RES-4: https://linear.app/t/issue/RES-4",
         "",
@@ -766,7 +762,7 @@ class RenderDesign(unittest.TestCase):
         self.assertIn("## Brief\n\nCompare queues\n\nAnn, t:\nGo.", got)
 
 
-class RenderBuild(unittest.TestCase):
+class RenderBuild(Case):
     TARGET = target.Target("ophis", "agent-pm", "ENG-7-session-registry")
     PRD = inputs.Doc(
         BASE + "Product%20Design/2026-09-05-PM-9-q.md",
@@ -997,7 +993,7 @@ class RenderBuild(unittest.TestCase):
         )
 
 
-class HandoffWithACommentsLine(unittest.TestCase):
+class HandoffWithACommentsLine(Case):
     def test_repo_links_and_instructions_agree(self):
         prd = RenderBuild.PRD.url
         d = "\n\n".join(
@@ -1025,7 +1021,7 @@ class HandoffWithACommentsLine(unittest.TestCase):
         )
 
 
-class Checkout(unittest.TestCase):
+class Checkout(Case):
     def test_a_build_prompts_repo_py_commands_take_the_inputs_checkout(self):
         t = target.Target("ophis", "agent-pm", "ENG-7-x")
         text = inputs.render(
@@ -1054,7 +1050,8 @@ class Checkout(unittest.TestCase):
                 )
                 for cmd, base in (("worktree", ""), ("status", "[--base <Base:>] ")):
                     self.assertIn(
-                        f"/repo.py {cmd} --dir <Workdir>/src --branch <branch> [--name <checkout>] {base}<repo>`",
+                        f"python3 -P -m agent_pm.agent_tools.repo {cmd} --dir <Workdir>/src --branch <branch> "
+                        f"[--name <checkout>] {base}<repo>`",
                         prompt,
                     )
 

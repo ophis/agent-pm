@@ -1,30 +1,26 @@
 """orchestrator config.py, ported from the old config_test (less its clients layer and transcript cases) onto load()'s
 frozen Config, plus the old attended name cases (TUI names)."""
 
-from new.tests import NEW, ORCH_SRC, hermetic
-from new.tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
-
-import config
-
 import dataclasses
 import json
 import os
 import re
 import shlex
 import subprocess
-import sys
 import tempfile
 import tomllib
 import unittest
 from unittest import mock
 
-import composer
-import delegate
-from utils import config_file
-from utils.git import GUARD
-from utils.shell import SHORT
+from agent_pm import composer, delegate
+from agent_pm.utils import config_file
+from agent_pm.utils.git import GUARD
+from agent_pm.utils.shell import SHORT
+from agent_pm_orchestrator import config
 
-REPO = os.path.dirname(NEW)
+from new.tests.case import ORCH_ROOT, PY, Case, child_env
+from new.tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+
 BASE = (
     HEADER
     + role("researcher", 'next = "pm"')
@@ -55,7 +51,7 @@ P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000
 SLUG = "ophis/agent-pm"
 HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
-GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
+GATE = "python3 -P -m agent_pm_orchestrator.router --brake"
 LABEL = ("orchestrator/config.toml", "core")
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
@@ -81,14 +77,13 @@ def write(path, text):
 
 class ConfigFile:
     def setUp(self):
-        self.home = hermetic.home(self)
-        write(os.path.join(self.home, "core-new.local.toml"), CORE_LOCAL)
+        write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
 
     def local(self, text):
-        write(os.path.join(self.home, "orchestrator-new.local.toml"), text)
+        write(os.path.join(self.agent_pm, "orchestrator-new.local.toml"), text)
 
     def load(self, text):
         path = os.path.join(self.dir, "config.toml")
@@ -102,26 +97,12 @@ class ConfigFile:
         return cm.exception
 
 
-class Config(ConfigFile, unittest.TestCase):
+class Config(ConfigFile, Case):
     def test_tests_never_read_this_machines_local_file(self):
         self.assertEqual(
-            os.path.expanduser(config.LOCAL), os.path.join(self.home, "orchestrator-new.local.toml")
+            os.path.expanduser(config.LOCAL),
+            os.path.join(self.agent_pm, "orchestrator-new.local.toml"),
         )
-
-    def test_tests_home_already_gone_at_exit_prints_nothing(self):
-        res = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import shutil; from new.tests import hermetic; shutil.rmtree(hermetic.HOME)",
-            ],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=60,
-        )
-        self.assertEqual((res.returncode, res.stderr), (0, ""))
 
     def test_stage_order(self):
         self.assertEqual(self.load(PIPELINE).stages, {"researcher": 0, "pm": 1, "engineer": 2})
@@ -397,12 +378,20 @@ class Config(ConfigFile, unittest.TestCase):
         self.assertEqual(
             resolve.call_args_list,
             [
-                mock.call(r, None, overlays=[overlay], label=LABEL, config=config_file.CONFIG)
+                mock.call(
+                    r,
+                    None,
+                    overlays=[overlay],
+                    label=LABEL,
+                    config=config_file.CONFIG,
+                    local=config_file.LOCAL,
+                )
                 for r in roles
             ],
         )
         self.assertEqual(
-            index.call_args_list, [mock.call(r, config=config_file.CONFIG) for r in roles]
+            index.call_args_list,
+            [mock.call(r, config=config_file.CONFIG, local=config_file.LOCAL) for r in roles],
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
@@ -416,7 +405,7 @@ class Config(ConfigFile, unittest.TestCase):
         )
         self.assertIsNone(e.logs_dir)
         self.assertIsInstance(e, SystemExit)
-        logs = os.path.join(os.path.realpath(self.home), "logs")
+        logs = os.path.join(os.path.realpath(self.agent_pm), "logs")
         for message, text in (
             (
                 "orchestrator/config.toml: " + missing("team"),
@@ -432,18 +421,18 @@ class Config(ConfigFile, unittest.TestCase):
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
     def test_importing_reads_no_config_file(self):
-        write(os.path.join(self.home, "orchestrator-new.local.toml"), "[[[ not toml")
+        write(os.path.join(self.agent_pm, "orchestrator-new.local.toml"), "[[[ not toml")
         code = (
-            "import json, sys; sys.path.insert(0, sys.argv[1]); import config\n"
+            "import json\nfrom agent_pm_orchestrator import config\n"
             "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
         )
         res = subprocess.run(
-            [sys.executable, "-c", code, ORCH_SRC],
+            [*PY, "-c", code],
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
-            env={**os.environ, "HOME": os.path.dirname(self.home)},
+            env=child_env(None, ORCH_ROOT),
         )
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         msg, logs = json.loads(res.stdout)
@@ -474,7 +463,7 @@ def fields(roles):
     return {r: (x.account, x.key, x.tasks, x.max_runs, x.next) for r, x in roles.items()}
 
 
-class Runnable(ConfigFile, unittest.TestCase):
+class Runnable(ConfigFile, Case):
     def runs(self, text=PIPELINE):
         return self.load(text).roles
 
@@ -575,10 +564,10 @@ DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir
 DIRS = {"researcher": "Research/", "pm": "Designs/"}
 
 
-class OtherRoot(ConfigFile, unittest.TestCase):
+class OtherRoot(ConfigFile, Case):
     def setUp(self):
         super().setUp()
-        os.remove(os.path.join(self.home, "core-new.local.toml"))
+        os.remove(os.path.join(self.agent_pm, "core-new.local.toml"))
         self.root = os.path.join(self.dir, "my root")
         self.dir = os.path.join(self.root, "orchestrator")
         os.makedirs(self.dir)
@@ -599,15 +588,37 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         with mock.patch.object(
             composer,
             "index",
-            side_effect=lambda r, config: (
-                {"deep-research": ""} if r == "researcher" else index(r, config=config)
+            side_effect=lambda r, config, local: (
+                {"deep-research": ""} if r == "researcher" else index(r, config=config, local=local)
             ),
         ) as fake:
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
         self.assertEqual(
             fake.call_args_list,
-            [mock.call(r, config=self.core_path) for r in ("researcher", "pm", "engineer")],
+            [
+                mock.call(r, config=self.core_path, local=config_file.LOCAL)
+                for r in ("researcher", "pm", "engineer")
+            ],
         )
+
+    def test_reads_only_the_paths_passed(self):
+        for name in ("orchestrator-new.local.toml", "core-new.local.toml"):
+            write(os.path.join(self.agent_pm, name), "[[[ not toml")
+        path, local, core_local = (
+            os.path.join(self.dir, n) for n in ("config.toml", "local.toml", "core.local.toml")
+        )
+        write(path, PIPELINE)
+        write(local, role("engineer", "max_runs = 2"))
+        write(core_local, 'language = "French"\n')
+        with mock.patch.object(config_file, "open", create=True, side_effect=open) as opened:
+            cfg = config.load(
+                self.root, path=path, local=local, core=self.core_path, core_local=core_local
+            )
+        self.assertEqual(
+            {c.args[0] for c in opened.call_args_list}, {path, local, self.core_path, core_local}
+        )
+        engineer = cfg.roles["engineer"]
+        self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
 
     def test_an_index_error_stops_the_caller(self):
         error = composer.ConfigError("roles/researcher.md: lists 'ghost' without tasks/ghost.md")
@@ -745,7 +756,7 @@ DEPLOYMENT = {
 }
 
 
-class Local(ConfigFile, unittest.TestCase):
+class Local(ConfigFile, Case):
     def test_local_on_top(self):
         self.local(
             HEADER
@@ -778,7 +789,7 @@ class Local(ConfigFile, unittest.TestCase):
     def test_local_alone_and_no_local(self):
         self.local(PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
-        os.remove(os.path.join(self.home, "orchestrator-new.local.toml"))
+        os.remove(os.path.join(self.agent_pm, "orchestrator-new.local.toml"))
         self.assertEqual(self.load(PIPELINE).team, TEAM)
 
     def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
@@ -799,10 +810,10 @@ STEPS = (
 )
 
 
-class TeamDirsIgnored(ConfigFile, unittest.TestCase):
+class TeamDirsIgnored(ConfigFile, Case):
     def setUp(self):
         super().setUp()
-        self.team = os.path.realpath(os.path.join(self.home, "team"))
+        self.team = os.path.realpath(os.path.join(self.agent_pm, "team"))
         writer = (
             "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
             "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
@@ -814,7 +825,7 @@ class TeamDirsIgnored(ConfigFile, unittest.TestCase):
             path = os.path.join(self.team, rel)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             write(path, text)
-        self.work = os.path.join(os.path.dirname(self.home), "work")
+        self.work = os.path.join(os.path.dirname(self.agent_pm), "work")
 
     def seen(self):
         pm = self.load(PIPELINE).roles["pm"]
@@ -833,7 +844,7 @@ class TeamDirsIgnored(ConfigFile, unittest.TestCase):
     def test_team_dirs_change_no_orchestrator_run(self):
         before = self.seen()
         write(
-            os.path.join(self.home, "core-new.local.toml"),
+            os.path.join(self.agent_pm, "core-new.local.toml"),
             f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
         )
         self.assertIn(
@@ -845,11 +856,10 @@ class TeamDirsIgnored(ConfigFile, unittest.TestCase):
         self.assertFalse(os.path.exists(self.work))
 
 
-class RealConfig(unittest.TestCase):
+class RealConfig(Case):
     def setUp(self):
-        home = hermetic.home(self)
-        write(os.path.join(home, "core-new.local.toml"), CORE_LOCAL)
-        self.local = os.path.join(home, "orchestrator-new.local.toml")
+        write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
+        self.local = os.path.join(self.agent_pm, "orchestrator-new.local.toml")
 
     def load(self, local=None):
         if local is not None:
@@ -927,7 +937,7 @@ def git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
 
 
-class Clones(ConfigFile, unittest.TestCase):
+class Clones(ConfigFile, Case):
     def setUp(self):
         super().setUp()
         self.dir = os.path.realpath(self.dir)
@@ -970,7 +980,7 @@ class Clones(ConfigFile, unittest.TestCase):
 
 class LocalClones(Clones):
     def test_entries_stored_as_realpaths(self):
-        home = os.path.realpath(os.path.dirname(self.home))
+        home = os.path.realpath(os.path.dirname(self.agent_pm))
         real = os.path.join(home, "real")
         os.makedirs(real)
         os.symlink(real, os.path.join(self.dir, "link"))
@@ -1054,7 +1064,7 @@ class LocalClonesRunnable(Clones):
         clone_error.assert_not_called()
 
 
-class Writable(unittest.TestCase):
+class Writable(Case):
     def test_work_then_the_temp_dirs(self):
         with mock.patch.object(config, "temp_dirs", return_value=("/t1", "/t2")):
             self.assertEqual(config.writable("/w"), ("/w", "/t1", "/t2"))
@@ -1062,7 +1072,7 @@ class Writable(unittest.TestCase):
             config.writable()
 
 
-class RepoSlug(unittest.TestCase):
+class RepoSlug(Case):
     def test_slug(self):
         cases = {
             "ophis/agent-pm": ("ophis", "agent-pm"),
@@ -1083,9 +1093,9 @@ class RepoSlug(unittest.TestCase):
                 self.assertEqual(config.repo_slug(value), want)
 
 
-class WorkDir(ConfigFile, unittest.TestCase):
+class WorkDir(ConfigFile, Case):
     def test_unset_is_in_home(self):
-        work = os.path.realpath(self.home)
+        work = os.path.realpath(self.agent_pm)
         cfg = self.load(PIPELINE)
         self.assertEqual(
             (cfg.work_dir, cfg.runs_dir, cfg.logs_dir, cfg.runs_log, cfg.run_dir("TASK-9")),
@@ -1105,7 +1115,7 @@ class WorkDir(ConfigFile, unittest.TestCase):
         )
 
     def test_set(self):
-        home = os.path.realpath(os.path.dirname(self.home))
+        home = os.path.realpath(os.path.dirname(self.agent_pm))
         self.assertEqual(
             self.load('work_dir = "~/d"\n' + PIPELINE).work_dir, os.path.join(home, "d")
         )
@@ -1148,49 +1158,69 @@ class WorkDir(ConfigFile, unittest.TestCase):
                 self.fails(f"orchestrator/config.toml: {msg}", text + BASE + tail)
 
 
-class PathSeam(unittest.TestCase):
-    def read(self, **env):
-        env = {
-            **{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"},
-            **env,
-            "PYTHONPATH": REPO,
-        }
-        res = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "from new.tests import hermetic; import config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))",
-            ],
-            cwd=REPO,
-            env=env,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=60,
-        )
-        self.assertEqual((res.returncode, res.stderr), (0, ""))
-        home, path = json.loads(res.stdout)
-        return f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin", path
+IMPORT_ALONE = """import json, os, sys
+opened = []
+sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
+from agent_pm_orchestrator import config
+home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
+os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
+print(json.dumps({
+    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
+    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
+    "path": config.path(),
+}))
+"""
+
+
+class PathSeam(Case):
+    def path(self, home, env):
+        """config.path() with HOME `home` and AGENT_PM_PATH as in `env` (unset when absent)."""
+        rest = {k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}
+        with mock.patch.dict(os.environ, {**rest, "HOME": home, **env}, clear=True):
+            return config.path()
 
     def test_agent_pm_path_goes_in_front_empty_or_unset_is_the_default(self):
-        for env, front in (
-            ({"AGENT_PM_PATH": "/fakes/bin:/more"}, "/fakes/bin:/more:"),
-            ({}, ""),
-            ({"AGENT_PM_PATH": ""}, ""),
-        ):
-            with self.subTest(env=env):
-                default, path = self.read(**env)
-                self.assertEqual(path, front + default)
+        for home in (self.home, os.path.join(self.home, "other")):
+            default = f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+            for env, front in (
+                ({"AGENT_PM_PATH": "/fakes/bin:/more"}, "/fakes/bin:/more:"),
+                ({}, ""),
+                ({"AGENT_PM_PATH": ""}, ""),
+            ):
+                with self.subTest(home=home, env=env):
+                    self.assertEqual(self.path(home, env), front + default)
+
+    def test_importing_reads_no_config_home_or_environment(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {**os.environ, "HOME": home, "AGENT_PM_PATH": "/before/bin"}
+            res = subprocess.run(
+                [*PY, "-c", IMPORT_ALONE],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=60,
+                env=child_env(env, ORCH_ROOT),
+            )
+            self.assertEqual((res.returncode, res.stderr), (0, ""))
+            self.assertEqual(
+                json.loads(res.stdout),
+                {
+                    "read": [],
+                    "kept": [],
+                    "path": "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/bin:/bin",
+                },
+            )
+            self.assertEqual(os.listdir(home), [])
 
 
-class Shell(unittest.TestCase):
+class Shell(Case):
     def test_sh_run(self):
         with (
             mock.patch.object(config.subprocess, "run", return_value="res") as run,
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}),
         ):
             self.assertEqual(config.sh_run(["git", "status"], 5), "res")
-            env = {**os.environ, "PATH": config.PATH}
+            env = {**os.environ, "PATH": config.path()}
         run.assert_called_once_with(
             ["git", "status"],
             capture_output=True,
@@ -1206,7 +1236,7 @@ ID = "TASK-12"
 A, B = "engineer-TASK-12-0b6f2c1e", "dummy-tester-TASK-12-7c1d9e2f"
 
 
-class TuiNames(unittest.TestCase):
+class TuiNames(Case):
     def test_prefix_of_a_role_and_issue(self):
         for role_name in ("engineer", "dummy-tester", "pm2"):
             with self.subTest(role=role_name):

@@ -1,24 +1,23 @@
-"""The orchestrator's integration flows: a hermetic HOME with both local files, FakeLinear over HTTP (the
-AGENT_PM_LINEAR seam) with the harness, role and human accounts, fake_claude as `claude`, run.py and promote.py as
-subprocesses, and readers of Linear, the logs and a run's files."""
-
-from new.tests import ORCH_SRC, fake_claude, hermetic
-from new.tests.integration.orchestrator import fake_linear
-from new.tests.unit.orchestrator import run_fixtures
-from new.tests.unit.orchestrator.run_fixtures import ID, SID
+"""The orchestrator's integration flows: the test's HOME with both local files, FakeLinear over HTTP (the
+AGENT_PM_LINEAR seam) with the harness, role and human accounts, fake_claude as `claude`, run and promote as
+`python3 -P -m` subprocesses, and readers of Linear, the logs and a run's files."""
 
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import tomllib
-import unittest
 
-import linear
+from agent_pm_orchestrator import linear
 
-RUN, PROMOTE = (os.path.join(ORCH_SRC, n) for n in ("run.py", "promote.py"))
+from new.tests import fake_claude
+from new.tests.case import ORCH_ROOT, PY, Case, child_env
+from new.tests.integration.orchestrator import fake_linear
+from new.tests.unit.orchestrator import run_fixtures
+from new.tests.unit.orchestrator.run_fixtures import ID, SID
+
+RUN, PROMOTE = (("-m", f"agent_pm_orchestrator.{n}") for n in ("run", "promote"))
 _CFG = tomllib.loads(run_fixtures.local("/"))
 ROLES = tuple(_CFG["roles"])
 ACCOUNTS = {r: _CFG["roles"][r]["account"] for r in ROLES}
@@ -28,8 +27,8 @@ HARNESS, HARNESS_EMAIL = _CFG["harness_key"], "harness@agents.test"
 PROJECT = {"id": run_fixtures.PROJECT, "name": "Widgets"}
 TIMEOUT = 60
 GUARD = (
-    "import shutil, sys; sys.path.insert(0, sys.argv[1]); import config; "
-    "print(shutil.which('claude', path=config.PATH))"
+    "import shutil\nfrom agent_pm_orchestrator import config\n"
+    "print(shutil.which('claude', path=config.path()))"
 )
 
 
@@ -54,10 +53,8 @@ def jsonl(path):
         return []
 
 
-class Flow(unittest.TestCase):
+class Flow(Case):
     def setUp(self):
-        self.apm = hermetic.home(self)
-        self.home = os.path.dirname(self.apm)
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         state = os.path.join(self.root, "state")
@@ -66,7 +63,7 @@ class Flow(unittest.TestCase):
             ("orchestrator-new.local.toml", run_fixtures.local(state)),
             ("core-new.local.toml", run_fixtures.CORE_LOCAL),
         ):
-            with open(os.path.join(self.apm, name), "w") as f:
+            with open(os.path.join(self.agent_pm, name), "w") as f:
                 f.write(text)
         self.fake = fake_linear.FakeLinear(harness=HARNESS)
         self.ids = {HARNESS_EMAIL: self.fake.user(HARNESS_EMAIL, "Harness", HARNESS)}
@@ -87,6 +84,7 @@ class Flow(unittest.TestCase):
     def env(self):
         return {
             **self.base(),
+            **child_env({}, ORCH_ROOT),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
@@ -95,8 +93,8 @@ class Flow(unittest.TestCase):
         }
 
     def guard(self):
-        """config.PATH must find the fake claude first: never a real one."""
-        res = self.script("-c", GUARD, ORCH_SRC)
+        """config.path() must find the fake claude first: never a real one."""
+        res = self.script("-c", GUARD)
         self.assertEqual(
             (res.returncode, res.stdout), (0, os.path.join(self.bin, "claude") + "\n"), res.stderr
         )
@@ -107,7 +105,7 @@ class Flow(unittest.TestCase):
 
     def script(self, *argv):
         return subprocess.run(
-            [sys.executable, *argv],
+            [*PY, *argv],
             cwd=self.root,
             env=self.env(),
             stdin=subprocess.DEVNULL,
@@ -117,7 +115,7 @@ class Flow(unittest.TestCase):
         )
 
     def promote(self, *argv):
-        return self.script(PROMOTE, *argv)
+        return self.script(*PROMOTE, *argv)
 
     def logged(self):
         return run_fixtures.logged(self.logs)

@@ -1,4 +1,5 @@
-"""Case, every test's base, and the child helpers: agent_pm only from this tree's import root (ROOT)."""
+"""Case, every test's base, and the child helpers: agent_pm and agent_pm_orchestrator only from this tree's import
+roots (ROOT, ORCH_ROOT)."""
 
 import os
 import sys
@@ -12,22 +13,20 @@ from agent_pm.utils import paths
 NEW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(NEW, "core")
 ROOT = os.path.join(CORE, "src")
+ORCH_ROOT = os.path.join(NEW, "orchestrator", "src")
 PY = (sys.executable, "-P", "-s")
 
 
 class Case(unittest.TestCase):
-    """Fails a test at once if agent_pm is another tree's, else runs it (whatever its setUp) in a fresh temp HOME,
-    self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
+    """Fails a test at once if agent_pm or agent_pm_orchestrator is another tree's, else runs it (whatever its setUp)
+    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
 
     def run(self, result=None):
-        if os.path.realpath(paths.IMPORT_ROOT) != os.path.realpath(ROOT):
+        if foreign := _foreign():
             result = self.defaultTestResult() if result is None else result
             result.startTest(self)
             try:
-                self.fail(
-                    f"agent_pm is imported from {paths.IMPORT_ROOT}, not this tree's {ROOT}: "
-                    "run with PYTHONPATH=new/core/src"
-                )
+                self.fail(foreign)
             except self.failureException:
                 result.addFailure(self, sys.exc_info())
             result.stopTest(self)
@@ -43,6 +42,26 @@ class Case(unittest.TestCase):
                 return super().run(result)
             finally:
                 registry.reset()
+
+
+def _foreign() -> str | None:
+    """The failure when agent_pm, or agent_pm_orchestrator if imported, is not from this tree's root, else None."""
+    orch = sys.modules.get("agent_pm_orchestrator")
+    orch_root = (
+        os.path.dirname(os.path.dirname(getattr(orch, "__file__", None) or ""))
+        if orch
+        else ORCH_ROOT
+    )
+    for name, found, root, pythonpath in (
+        ("agent_pm", paths.IMPORT_ROOT, ROOT, "new/core/src"),
+        ("agent_pm_orchestrator", orch_root, ORCH_ROOT, "new/core/src:new/orchestrator/src"),
+    ):
+        if os.path.realpath(found) != os.path.realpath(root):
+            return (
+                f"{name} is imported from {found}, not this tree's {root}: "
+                f"run with PYTHONPATH={pythonpath}"
+            )
+    return None
 
 
 def child_env(base=None, *extra: str) -> dict[str, str]:

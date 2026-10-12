@@ -1,14 +1,16 @@
-"""new/tests/case.py: Case.run's temp HOME, registry resets and import-root check, on inner tests; child_env."""
+"""new/tests/case.py: Case.run's temp HOME, registry resets and import-root checks, on inner tests; child_env."""
 
 import os
+import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
 from agent_pm.driver import registry
 from agent_pm.utils import paths
 
-from new.tests.case import ROOT, Case, child_env
+from new.tests.case import NEW, ORCH_ROOT, ROOT, Case, child_env
 
 
 class CaseTest(Case):
@@ -89,6 +91,38 @@ class CaseTest(Case):
             failure,
         )
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
+
+    def orchestrator(self, root):
+        """An agent_pm_orchestrator package module found under `root`."""
+        module = types.ModuleType("agent_pm_orchestrator")
+        module.__file__ = os.path.join(root, "agent_pm_orchestrator", "__init__.py")
+        return module
+
+    def test_agent_pm_orchestrator_from_another_tree_fails_the_test_before_its_set_up(self):
+        ran = []
+        elsewhere = {"agent_pm_orchestrator": self.orchestrator("/elsewhere/src")}
+        with mock.patch.dict(sys.modules, elsewhere):
+            result = self.run_inner(ran.append, set_up=ran.append)
+        ((_, failure),) = result.failures
+        self.assertIn(
+            f"agent_pm_orchestrator is imported from /elsewhere/src, not this tree's {ORCH_ROOT}: "
+            "run with PYTHONPATH=new/core/src:new/orchestrator/src",
+            failure,
+        )
+        self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
+
+    def test_agent_pm_orchestrator_absent_or_this_trees_passes(self):
+        self.assertEqual(ORCH_ROOT, os.path.join(NEW, "orchestrator", "src"))
+        self.assertTrue(os.path.isfile(self.orchestrator(ORCH_ROOT).__file__))
+        for found in (None, self.orchestrator(ORCH_ROOT)):
+            ran = []
+            with self.subTest(found=found), mock.patch.dict(sys.modules):
+                sys.modules.pop("agent_pm_orchestrator", None)
+                if found:
+                    sys.modules["agent_pm_orchestrator"] = found
+                result = self.run_inner(ran.append)
+            self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+            self.assertEqual(len(ran), 1)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath(self):
         base = {

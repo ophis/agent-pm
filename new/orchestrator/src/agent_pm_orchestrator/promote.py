@@ -4,13 +4,8 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
-
-import issues  # noqa: E402
-import linear  # noqa: E402
-import sessions  # noqa: E402
-from linear import (  # noqa: E402
+from agent_pm_orchestrator import config, issues, linear, sessions
+from agent_pm_orchestrator.linear import (
     config_error,
     linear_error,
     linear_gql,
@@ -273,7 +268,7 @@ class Promoter:
 
 
 def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG):
-    os.environ["PATH"] = config.PATH
+    os.environ["PATH"] = config.path()
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(HELP.strip(), file=sys.stderr)
         return 2

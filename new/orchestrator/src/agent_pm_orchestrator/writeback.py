@@ -7,17 +7,16 @@ import hashlib
 import json
 import os
 import stat
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import LOCAL, TASKS  # noqa: E402
+from agent_pm.delegate import Outcome, Progress
+from agent_pm.utils.files import save
 
-from delegate import Outcome, Progress  # noqa: E402
-from issues import Issue  # noqa: E402
-from linear import (  # noqa: E402
+from agent_pm_orchestrator.config import LOCAL, TASKS
+from agent_pm_orchestrator.issues import Issue
+from agent_pm_orchestrator.linear import (
     call,
     client_id,
     comment,
@@ -28,8 +27,7 @@ from linear import (  # noqa: E402
     reraise_signal,
     subscribe,
 )
-from target import MAPPED  # noqa: E402
-from utils.files import save  # noqa: E402
+from agent_pm_orchestrator.target import MAPPED
 
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"

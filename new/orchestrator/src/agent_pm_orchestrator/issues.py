@@ -1,14 +1,10 @@
 """Linear issues as the orchestrator reads them (read_issue) and the one Handoff grammar: handoff, parse_handoff
 and head."""
 
-import os
 import re
-import sys
 from dataclasses import dataclass
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import linear  # noqa: E402
-import sessions  # noqa: E402
+from agent_pm_orchestrator import linear, sessions
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }
