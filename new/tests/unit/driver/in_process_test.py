@@ -1,12 +1,13 @@
 """new/core/src/driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
+from new.tests import hermetic  # noqa: F401
+
 import signal
 import threading
 import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters.base import Adapter, InProcess, Reply, Spec, Stderr
 from driver.errors import DriverError
 from driver.modes.in_process import InProcessMode

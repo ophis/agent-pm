@@ -3,6 +3,9 @@
 drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines. The tui
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
 in_process-only fake, with no child process."""
+from new.tests import fake_adapter, hermetic
+from new.tests.unit.driver.api_test import SPAWNS
+
 import contextlib
 import dataclasses
 import io
@@ -22,11 +25,8 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
-from new.tests.unit.driver.api_test import SPAWNS
 import composer
-from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run
-from delegate import runner
+from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
 from delegate.outcome import save
 from delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT, printable
 from driver import api, registry

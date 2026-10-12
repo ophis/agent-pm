@@ -10,8 +10,24 @@ import sys
 import threading
 import time
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, InProcess,
-                           Launch, LimitHit, Reply, SessionBound, Stderr, Tui, TurnEnd)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Adapter,
+    Blocked,
+    Exited,
+    Headless,
+    InProcess,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Stderr,
+    Tui,
+    TurnEnd,
+)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 

@@ -1,5 +1,7 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
 Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
+from new.tests import hermetic  # noqa: F401
+
 import dataclasses
 import inspect
 import typing
@@ -7,11 +9,33 @@ import unittest
 from types import MappingProxyType
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters import base
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Adapter, Blocked, ConfigError, Exited,
-                           Headless, InProcess, Key, Launch, LimitHit, Paste, Reply, SessionBound, SessionStatus, Spec,
-                           Stderr, Tui, TurnEnd, Usage, Window)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Access,
+    Activity,
+    Adapter,
+    Blocked,
+    ConfigError,
+    Exited,
+    Headless,
+    InProcess,
+    Key,
+    Launch,
+    LimitHit,
+    Paste,
+    Reply,
+    SessionBound,
+    SessionStatus,
+    Spec,
+    Stderr,
+    Tui,
+    TurnEnd,
+    Usage,
+    Window,
+)
 
 
 class StubAdapter(Adapter):

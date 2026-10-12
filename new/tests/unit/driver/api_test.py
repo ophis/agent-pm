@@ -5,6 +5,8 @@ usage()'s probe is headless.probe patched, but for a spawn error. An in_process 
 SPAWNS patched to fail during its run; claude and codex, from the committed config, refuse it. The Mode protocol, and
 a Handle over a scripted Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close,
 show, layout, attach_command, detach) over tmux_host autospecced (no tmux runs)."""
+from new.tests import fake_adapter, hermetic
+
 import contextlib
 import dataclasses
 import fcntl
@@ -22,7 +24,6 @@ import unittest
 import uuid
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, errors, records, registry, tmux_host

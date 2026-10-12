@@ -8,6 +8,7 @@ import threading
 import traceback
 
 from adapters.base import Event, InProcess, Spec, Stderr
+
 from driver.errors import DriverError
 
 END = object()

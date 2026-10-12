@@ -16,14 +16,37 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from adapters.base import (RESUMABLE, Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, Headless,
-                           InProcess, Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr,
-                           Tui, TurnEnd, Usage, Window, sid_error)
+from adapters.base import (
+    RESUMABLE,
+    Access,
+    Activity,
+    Adapter,
+    Blocked,
+    ConfigError,
+    Event,
+    Exited,
+    Headless,
+    InProcess,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionInfo,
+    SessionStatus,
+    Spec,
+    Stderr,
+    Tui,
+    TurnEnd,
+    Usage,
+    Window,
+    sid_error,
+)
+from utils.paths import printable_abs
+
 from driver import records, registry, tmux_host
 from driver.errors import DriverError
 from driver.modes import headless, in_process, tui
 from driver.records import session
-from utils.paths import printable_abs
 
 __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event", "Exited", "Handle", "IdleTimeout",
            "LimitHit", "MODES", "Mode", "POLL", "RESUMABLE", "Reply", "SIGNALS", "STATES", "SessionBound",

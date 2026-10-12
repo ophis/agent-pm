@@ -1,6 +1,9 @@
 """delegate/cli.py as a subprocess over new/tests/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
 a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, an interrupt, a usage limit, config errors.
 Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
+from new.tests import SRC, fake_claude, hermetic
+from new.tests.unit.delegate.runner_test import block
+
 import json
 import os
 import re
@@ -10,11 +13,9 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
-from new.tests import SRC, fake_claude, hermetic
-from new.tests.unit.delegate.runner_test import block
 from composer.prompt import RESUME
 from delegate.runner import FIX
 from driver import api, registry
@@ -300,7 +301,7 @@ class UsageLimit(Integration):
     def test_a_limit_ends_the_run_and_its_session_stays_resumable(self):
         res = self.drive([mark("start", "echoing"), {"kind": "limit", "resets_at": RESETS}, block(DONE)])
         self.assertEqual(res.returncode, 3, res.stderr)
-        resets = datetime.fromtimestamp(RESETS, timezone.utc).isoformat(timespec="seconds")
+        resets = datetime.fromtimestamp(RESETS, UTC).isoformat(timespec="seconds")
         self.assertIn(f"delegate: usage limit; resets at {resets}\n", res.stderr)
         self.assertNotIn("status done", res.stderr)
         self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "limit", "result", "end"])

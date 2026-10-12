@@ -1,5 +1,8 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
 dir checks (TeamRuns), for a custom team and for the configured team dirs."""
+from new.tests import NEW, hermetic
+from new.tests.unit.composer.team_test import POET, VERSE
+
 import io
 import json
 import os
@@ -12,8 +15,6 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from new.tests import NEW, hermetic
-from new.tests.unit.composer.team_test import POET, VERSE
 import composer
 from composer import RunConfig, RunParams
 from composer.base import SRC

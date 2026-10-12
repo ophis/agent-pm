@@ -17,6 +17,8 @@ ignore = [
 "new/tests/**" = ["B023", "SIM117"]
 # SIM115: the open() spy hands its file to the code under test, which closes it
 "tests/unit/core/drive_test.py" = ["SIM115"]
+# B027: InProcess.check is an optional hook whose default does nothing
+"new/core/src/adapters/base.py" = ["B027"]
 
 [tool.ruff.lint.isort]
 # Import side effects order these first: hermetic (tests/, new/tests/) sets HOME before code under test,
