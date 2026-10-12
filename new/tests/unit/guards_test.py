@@ -136,6 +136,12 @@ class RuntimeNames(Sample):
             ["src/driver/x.py:1: runtime name Claude", "src/driver/x.py:2: runtime name codex"],
         )
 
+    def test_print_prompt_is_a_runtime_name(self):
+        root = self.tree({"src/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
+        self.assertEqual(
+            guards.runtime_names(root), ["src/delegate/x.py:1: runtime name print_prompt"]
+        )
+
     def test_adapters_subpackage_is_exempt(self):
         root = self.tree({"src/adapters/claude/x.py": 'NAME = "claude"\n'})
         self.assertEqual(guards.runtime_names(root), [])
@@ -149,6 +155,15 @@ class RuntimeNames(Sample):
             }
         )
         self.assertEqual(guards.runtime_names(root), ["config.toml:4: runtime name codex"])
+
+    def test_toml_print_prompt_table_header_and_implementation_line_are_exempt(self):
+        root = self.tree(
+            {
+                "config.toml": "# [adapters.print_prompt]  act-as's runtime\n[adapters.print_prompt]\n"
+                'implementation = "adapters.print_prompt:PrintPromptAdapter"\n'
+            }
+        )
+        self.assertEqual(guards.runtime_names(root), [])
 
     def test_toml_runtime_line_is_exempt_under_any_table(self):
         root = self.tree(

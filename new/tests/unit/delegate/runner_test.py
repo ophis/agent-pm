@@ -41,6 +41,8 @@ FAILED = {**DONE, "status": "failed", "deliverable": ""}
 INVALID = {**DONE, "status": "maybe"}
 INVALID_ERROR = "status 'maybe' is not one of done, needs_input, failed"
 START = "[agent-pm-progress:start] go"
+GH = {"type": "github", "repo": "o/docs", "branch": "main", "dir": "R/"}
+PR = {"type": "pull-request"}
 
 
 def block(data) -> str:
@@ -394,16 +396,18 @@ class Start(Base):
         )
         self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
 
-    def test_a_destination_decides_the_url_and_whether_the_deliverable_is_saved(self):
-        gh = {"type": "github", "repo": "o/docs", "branch": "main", "dir": "R/"}
-        url = "https://github.com/o/docs/blob/main/x.md"
+    def test_a_destination_decides_the_url_and_each_saves_a_deliverable(self):
+        url, pr_url = "https://github.com/o/docs/blob/main/x.md", "https://github.com/o/n/pull/7"
         for output, data, want_url, saved in (
             ({"type": "local"}, DONE, self.out, "# Doc\n"),
             ({"type": "orchestrator"}, DONE, "", "# Doc\n"),
-            (gh, {**DONE, "url": url}, url, None),
+            (GH, {**DONE, "url": url}, url, "# Doc\n"),
+            (PR, {**DONE, "url": pr_url}, pr_url, "# Doc\n"),
             ({"type": "local"}, NEEDS, "", None),
+            (GH, NEEDS, "", None),
         ):
             with self.subTest(output=output, status=data["status"]):
+                self.fresh()
                 r = self.go(said(START, block(data)), output=output)
                 self.assertEqual(r.outcome.url, want_url)
                 self.assertEqual(
@@ -412,6 +416,40 @@ class Start(Base):
                 self.assertEqual(
                     self.last("result")["outcome"]["questions"], data.get("questions", [])
                 )
+
+    def test_a_failed_save_raises_where_out_is_the_deliverables_home_else_is_noted(self):
+        denied = PermissionError(13, "Permission denied")
+        for output in ({"type": "local"}, {"type": "orchestrator"}):
+            with self.subTest(output=output):
+                self.fresh()
+                with mock.patch("os.replace", side_effect=denied), self.assertRaises(OSError):
+                    self.go(said(START, block(DONE)), output=output)
+                self.assertEqual(
+                    (self.last("result")["error"], os.path.lexists(self.out)),
+                    (f"stopped: PermissionError: {denied}", False),
+                )
+        for output, url in (
+            (GH, "https://github.com/o/docs/blob/main/x.md"),
+            (PR, "https://github.com/o/n/pull/7"),
+        ):
+            with self.subTest(output=output):
+                self.fresh()
+                with mock.patch("os.replace", side_effect=denied):
+                    r = self.go(said(START, block({**DONE, "url": url})), output=output)
+                self.assertEqual(
+                    (r.returncode, r.outcome.status, r.outcome.url, r.error), (0, "done", url, "")
+                )
+                self.assertEqual(self.events[-1], Finished(r))
+                self.assertEqual(
+                    self.kinds(), ["session", "input", "progress", "save_error", "result", "end"]
+                )
+                self.assertEqual(
+                    bare(self.last("save_error")), {"kind": "save_error", "error": str(denied)}
+                )
+                self.assertIn(
+                    f"delegate: cannot save the deliverable to {self.out}: {denied}\n", self.err
+                )
+                self.assertFalse(os.path.lexists(self.out))
 
     def test_without_out_nothing_is_saved(self):
         r = self.go(said(START, block(DONE)), out=None)

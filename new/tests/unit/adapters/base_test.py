@@ -327,6 +327,12 @@ class AdapterTest(Refusals):
                 self.assertIsNone(adapter.usage(output))
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
 
+    def test_writable_dirs_are_none_unless_overridden(self):
+        spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(StubAdapter({}).writable_dirs(spec, resume), ())
+
     def test_in_process_is_none_unless_overridden(self):
         self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))
         self.assertIsNone(StubAdapter({}).in_process())

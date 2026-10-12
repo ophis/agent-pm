@@ -349,11 +349,17 @@ class _Attempts:
 
     def finish(self, outcome: Outcome, rc: int) -> Result:
         p, kind = self.plan, self.plan.run.output["type"]
-        if kind in SAVES_DELIVERABLE and outcome.deliverable and p.out:
+        if outcome.deliverable and p.out:
             if not api.records.holds(
                 p.out, outcome.deliverable
             ):  # else the agent run wrote it there
-                save(p.out, outcome.deliverable)
+                try:
+                    save(p.out, outcome.deliverable)
+                except OSError as e:
+                    if kind in SAVES_DELIVERABLE:
+                        raise
+                    _say(f"delegate: cannot save the deliverable to {p.out}: {e}")
+                    self.note("save_error", error=str(e))
             if kind == "local":
                 outcome = replace(outcome, url=p.out)
         if not p.resume and outcome.status != "needs_input" and "start" not in self.seen:

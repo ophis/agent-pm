@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-TURN_END = "turn_end"  # hook kinds
+TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
 
@@ -150,8 +150,6 @@ RESUMABLE = ("yes", "no", "unknown")
 
 @dataclass(frozen=True)
 class Window:
-    """One usage limit window."""
-
     used_percent: float  # may exceed 100
     resets_at: float | None  # None: not given
 
@@ -214,6 +212,10 @@ class Adapter(ABC):
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
+
+    def writable_dirs(self, spec: Spec, resume: bool) -> tuple[str, ...]:
+        """Own write dirs (resume: spec.sid's); override if any."""
+        return ()
 
 
 class Headless(ABC):

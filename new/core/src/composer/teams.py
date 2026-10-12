@@ -12,10 +12,10 @@ from pathlib import Path
 from utils.config_file import LOCAL, read_config
 from utils.markdown import unfenced
 from utils.paths import temp_dirs, under
+from utils.protocol import PROGRESS
 
 from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
 
-PROGRESS = "agent-pm-progress"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
 KINDS = ("roles", "tasks", "templates")
 TEAM_NAME = re.compile(r"[a-z0-9-]+")
