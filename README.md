@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` (not drawn) holds shared stdlib-only tools any layer may import; it imports no layer. `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The Delegate hands a task to an agent through the Driver, or to the InstructionDriver for instructions only (act-as; it replaces the `print_prompt` adapter in [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356)). The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` holds shared stdlib-only tools any layer may import; it imports no layer. `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The Delegate hands a task to an agent through the Driver, or to the InstructionDriver for instructions only (act-as; it replaces the `print_prompt` adapter in [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356)). The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -30,7 +30,6 @@ flowchart TB
       R["router.py<br>pick · usage gate · detach"]
       RU["run.py<br>one run · write-back"]
       PP["promote.py → prune.py"]
-      CF["config.py"]
     end
     W[crew.py]
   end
@@ -38,7 +37,6 @@ flowchart TB
     D["delegate/<br>API · CLI · outcome check"]
     C["composer/<br>prompt · run spec"]
     ID["InstructionDriver (TASK-356)<br>hands the prompt back"]
-    AT["agent_tools/repo.py<br>run by the agent"]
     T["core/team/<br>roles · tasks · templates"]
   end
   subgraph L3[sessions]
@@ -47,6 +45,11 @@ flowchart TB
       CL[Claude adapter]
       CX[Codex adapter]
     end
+  end
+  subgraph SH[used by every layer]
+    U["utils/"]
+    CFG["config"]
+    AT["agent_tools/<br>run by the agent"]
   end
   subgraph RT[agent runtimes]
     P1[Claude Code]
@@ -58,7 +61,6 @@ flowchart TB
   A -->|CLI| D
   W -->|"start · show · sessions"| DR
   RU <==>|"delegate.run · events, outcome"| D
-  CF -->|resolve| C
   OR -->|"session chores"| DR
   D --> C
   C -->|reads| T
@@ -68,7 +70,6 @@ flowchart TB
   CL --> P1
   CX --> P2
   R ~~~ RU
-  PP ~~~ CF
   C ~~~ DR
 ```
 
