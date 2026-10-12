@@ -1,6 +1,4 @@
-"""new/core/src/utils/git.py: common_dir over real git worktrees; git's lock retries."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
 
 import os
 import subprocess
@@ -8,8 +6,10 @@ import tempfile
 import unittest
 import unittest.mock
 
-import utils.git
-from utils.git import common_dir
+import agent_pm.utils.git
+from agent_pm.utils.git import common_dir
+
+from new.tests.case import Case
 
 
 def git(*argv):
@@ -24,7 +24,7 @@ def fail(stderr):
     return subprocess.CompletedProcess([], 1, "", stderr)
 
 
-class CommonDir(unittest.TestCase):
+class CommonDir(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -111,7 +111,7 @@ class CommonDir(unittest.TestCase):
                 self.assertIsNone(common_dir(path))
 
 
-class Retry(unittest.TestCase):
+class Retry(Case):
     LOCKS = (
         "fatal: Unable to create '/w/.git/index.lock': File exists.",
         "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
@@ -126,9 +126,9 @@ class Retry(unittest.TestCase):
             calls.append(argv)
             return answers.pop(0)
 
-        with unittest.mock.patch.object(utils.git.time, "sleep") as sleep:
+        with unittest.mock.patch.object(agent_pm.utils.git.time, "sleep") as sleep:
             try:
-                return utils.git.git(run, "/w", *args), calls, sleep
+                return agent_pm.utils.git.git(run, "/w", *args), calls, sleep
             except RuntimeError as e:
                 return e, calls, sleep
 
@@ -170,7 +170,7 @@ class Retry(unittest.TestCase):
 
     def test_pre_options_go_before_the_worktree_and_the_timeout_is_passed(self):
         seen = []
-        utils.git.git(
+        agent_pm.utils.git.git(
             lambda argv, t: seen.append((argv, t)) or ok(),
             "/w",
             "status",

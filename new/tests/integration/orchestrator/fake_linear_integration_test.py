@@ -2,9 +2,6 @@
 linear_gql (the AGENT_PM_LINEAR seam): projection, isMe, failures, the router's board reads, the promote, prune and
 write-back ops, comments by client id (FR-54, FR-55)."""
 
-from new.tests.integration.orchestrator import fake_linear
-from new.tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
-
 import functools
 import os
 import time
@@ -16,13 +13,11 @@ from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-import issues
-import linear
-import promote
-import prune
-import router
-import sessions
-import writeback
+from agent_pm_orchestrator import issues, linear, promote, prune, router, sessions, writeback
+
+from new.tests.case import Case
+from new.tests.integration.orchestrator import fake_linear
+from new.tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"
@@ -34,10 +29,10 @@ VIEWER = "query { viewer { id } }"
 LINEAR_TIME = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"
 
 
-class Table(unittest.TestCase):
+class Table(Case):
     def test_every_query_constant_has_an_op(self):
         want = {
-            f"{m.__name__}.{k}": v
+            f"{m.__name__.rpartition('.')[2]}.{k}": v
             for m in (linear, router, issues, sessions, writeback, promote, prune)
             for k, v in vars(m).items()
             if k[:2] in ("Q_", "M_") and isinstance(v, str)
@@ -130,7 +125,7 @@ class Table(unittest.TestCase):
                 self.assertEqual(fake_linear.stamp(t), "2026-10-09T07:30:41.062Z")
 
 
-class Served(unittest.TestCase):
+class Served(Case):
     def setUp(self):
         self.fake = fake = fake_linear.FakeLinear(harness=HARNESS)
         self.harness = fake.user(HARNESS_EMAIL, "Harness", HARNESS)

@@ -1,11 +1,11 @@
-from tests import ROOT
-
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from tests import ROOT
 
 CTMUX = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "ctmux")
 FAKE = """#!{python}

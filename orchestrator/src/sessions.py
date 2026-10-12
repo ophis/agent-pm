@@ -7,7 +7,6 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-
 import drive  # noqa: E402
 import linear  # noqa: E402
 from clients import claude as claude_client  # noqa: E402

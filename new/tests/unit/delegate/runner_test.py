@@ -4,9 +4,6 @@ drive_test Start, HostFailure and Sinks cases: records, saving, the missing star
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
 in_process-only fake, with no child process."""
 
-from new.tests import fake_adapter, hermetic
-from new.tests.unit.driver.api_test import SPAWNS
-
 import contextlib
 import dataclasses
 import io
@@ -26,12 +23,16 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-import composer
-from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
-from delegate.outcome import save
-from delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from driver import api, registry
-from utils import text as text_utils
+from agent_pm import composer
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
+from agent_pm.delegate.outcome import save
+from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.driver import api, registry
+from agent_pm.utils import text as text_utils
+
+from new.tests import fake_adapter
+from new.tests.case import Case
+from new.tests.unit.driver.api_test import SPAWNS
 
 SID = "11111111-2222-3333-4444-555555555555"
 NAME = "fake-11111111"
@@ -128,11 +129,10 @@ class FakeHandle:
             raise self.stop_fail
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd the workdir."""
 
     def setUp(self):
-        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
@@ -142,10 +142,9 @@ class Base(unittest.TestCase):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
         )
-        patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter})
+        patch = mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(registry.reset)
         registry.configure(
             {
                 "adapters": {

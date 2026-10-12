@@ -1,8 +1,6 @@
 """delegate/outcome.py: main's drive.validate cases with the same results (FR-20) and read with deliverable_file (FR-19);
 main's save cases: unit/utils/files_test.py."""
 
-from new.tests import SRC  # noqa: F401
-
 import dataclasses
 import json
 import os
@@ -12,11 +10,13 @@ import threading
 import unittest
 import unittest.mock
 
-import composer
-from composer import RunConfig
-from delegate import outcome
-from delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
-from utils import files
+from agent_pm import composer
+from agent_pm.composer import RunConfig
+from agent_pm.delegate import outcome
+from agent_pm.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
+from agent_pm.utils import files
+
+from new.tests.case import Case
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}
@@ -40,7 +40,7 @@ def schema():
         return json.load(f)
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -69,7 +69,7 @@ class Base(unittest.TestCase):
         return path
 
 
-class Schema(unittest.TestCase):
+class Schema(Case):
     def test_schema_and_validate_agree(self):
         s = schema()
         self.assertEqual(tuple(s["properties"]["status"]["enum"]), STATUSES)
@@ -352,7 +352,7 @@ class ReadRace(Base):
         self.assertIn("replaced while it was opened", str(cm.exception))
 
 
-class Save(unittest.TestCase):
+class Save(Case):
     def test_is_the_utils_one(self):
         self.assertIs(outcome.save, files.save)
 

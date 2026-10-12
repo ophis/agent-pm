@@ -1,44 +1,40 @@
-"""The Composer in a child process: `python3 -I` with only new/core/src on its sys.path, the test's own HOME (its
+"""The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME (its
 ~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
 agent run as its caller (the Delegate) would."""
-
-from new.tests import SRC, hermetic
 
 import json
 import os
 import subprocess
-import sys
 import tempfile
-import unittest
+
+from new.tests import case
+from new.tests.case import PY, child_env
 
 TIMEOUT = 60
-PRELUDE = "import json, os, sys\nsys.path.insert(0, sys.argv[1])\nimport composer\n"
+PRELUDE = "import json, os, sys\nfrom agent_pm import composer\n"
 COMPOSE = """import dataclasses
-req = json.loads(sys.argv[2])
+req = json.loads(sys.argv[1])
 try:
     team = composer.team(composer.TEAM, composer.team_dirs())
     run = composer.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()), team=team)
     intent = composer.access(run, req["workdir"], cwd=req["cwd"], project=False, team=team)
-    own = team.tasks_dir(run.role)
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
-    writes += [("a dir the run adds", d) for d in intent.dirs
-               if not own or os.path.realpath(d) != os.path.realpath(own)]
+    writes += [("a dir the run adds", d) for d in intent.dirs]
     composer.check_team_dirs(team.dirs, writes=writes)
     params = composer.RunParams(input=req["input"], out=req["out"], workdir=req["workdir"],
                                 resume=req.get("resume", False))
     print(json.dumps({"run": dataclasses.asdict(run), "intent": dataclasses.asdict(intent),
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
-                      "files": [composer.__file__, sys.modules["utils.config_file"].__file__,
-                                sys.modules["utils.paths"].__file__], "repo_imported": "repo" in sys.modules}))
+                      "files": [composer.__file__, sys.modules["agent_pm.utils.config_file"].__file__,
+                                sys.modules["agent_pm.utils.paths"].__file__],
+                      "repo_imported": "agent_pm.agent_tools.repo" in sys.modules}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
-        self.home = os.path.dirname(self.agent_pm)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
@@ -53,9 +49,9 @@ class Case(unittest.TestCase):
 
     def child(self, code: str, *args: str):
         res = subprocess.run(
-            [sys.executable, "-I", "-c", PRELUDE + code, SRC, *args],
+            [*PY, "-c", PRELUDE + code, *args],
             cwd=self.root,
-            env={**os.environ, "HOME": self.home},
+            env=child_env({**os.environ, "HOME": self.home}),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

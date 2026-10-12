@@ -1,9 +1,7 @@
-"""new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
+"""adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks and
 writable dirs; the committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a
 process."""
-
-from new.tests import hermetic
 
 import json
 import os
@@ -16,7 +14,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -34,11 +32,13 @@ from adapters.base import (
     Usage,
     Window,
 )
-from adapters.claude import ClaudeAdapter
-from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless import ClaudeHeadless
-from adapters.claude.tui import ClaudeTui
-from driver import registry
+from agent_pm.adapters.claude import ClaudeAdapter
+from agent_pm.adapters.claude.common import ClaudeCommon
+from agent_pm.adapters.claude.headless import ClaudeHeadless
+from agent_pm.adapters.claude.tui import ClaudeTui
+from agent_pm.driver import registry
+
+from new.tests.case import Case
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
@@ -85,13 +85,12 @@ WHAT = {
     "allow": "a list of strings",
     "tiers": 'a table from tier "1"–"4" to a model name',
     "efforts": "a table from effort (low, medium, high, xhigh, max) to a string",
-    "env": "a table of strings to strings",
+    "env": "a table of environment names to strings without NUL",
 }
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.home = os.path.dirname(hermetic.home(self))
         self.tmp = self.dir()
         self.config_dir = os.path.join(self.tmp, "config")
         self.env({"CLAUDE_CONFIG_DIR": self.config_dir})
@@ -145,6 +144,7 @@ class ConfigTest(Base):
             ("efforts", "SECRET"),
             ("efforts", {"low": 1}),
             ("efforts", {"turbo": "SECRET"}),
+            ("efforts", {1: "SECRET"}),
             ("env", "SECRET"),
             ("env", {"K": 1}),
             ("env", {1: "SECRET"}),
@@ -156,6 +156,21 @@ class ConfigTest(Base):
                     lambda: ClaudeAdapter({key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
+
+    def test_invalid_environment_names_and_values_fail_before_launch(self):
+        for key, value in (
+            ("", "SECRET"),
+            ("A=B", "SECRET"),
+            ("A\0B", "SECRET"),
+            (1, "SECRET"),
+            ("A", "SECRET\0"),
+            ("A", 1),
+        ):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    ClaudeAdapter({"env": {key: value}})
+                self.assertIn("[adapters.claude].env", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
 
     def test_setting_sources_in_flags_is_refused(self):
         for flags in (
@@ -197,7 +212,7 @@ class ModelEffortTest(Base):
 
 class ArgvTest(Base):
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
         self.assertEqual(
             self.launch("do it", tier=4, effort="low", access=access).argv,
             (
@@ -225,6 +240,8 @@ class ArgvTest(Base):
                 "--allowedTools",
                 "Bash(git status)",
                 "Bash(ls)",
+                "Read(//r1/**)",
+                "Read(//r 2/**)",
                 "Read",
                 "Edit(/x)",
                 "--",
@@ -320,6 +337,80 @@ class ArgvTest(Base):
         self.assertEqual(ClaudeCommon.uuid(SID), SID)
 
 
+class ReadRulesTest(Base):
+    def modes(self, resume=False, config=None, **access):
+        spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
+        adapter = ClaudeAdapter({} if config is None else config)
+        return (
+            lambda: adapter.headless().launch("hi", spec, resume),
+            lambda: adapter.tui().launch("hi", spec, resume, HOOK),
+        )
+
+    def both(self, resume=False, config=None, **access) -> list[tuple[str, ...]]:
+        return [launch().argv for launch in self.modes(resume, config, **access)]
+
+    def test_reads_alone_are_allowed_tools_never_added_dirs(self):
+        for argv in self.both(reads=("/r",)):
+            self.assertEqual(argv[-4:], ("--allowedTools", "Read(//r/**)", "--", "hi"))
+            self.assertNotIn("--add-dir", argv)
+
+    def test_the_root_is_one_rule(self):
+        for argv in self.both(reads=("/", "//")):
+            self.assertEqual(argv[-4:], ("--allowedTools", "Read(//**)", "--", "hi"))
+
+    def test_a_symlinked_read_dir_gets_a_rule_for_both_spellings_each_once(self):
+        target = os.path.join(self.tmp, "target")
+        os.mkdir(target)
+        link = os.path.join(self.tmp, "link")
+        os.symlink(target, link)
+        for reads, dirs in (
+            ((link,), (link, target)),
+            ((link + "/", target), (link, target)),
+            ((target, link), (target, link)),
+        ):
+            with self.subTest(reads=reads):
+                for argv in self.both(reads=reads):
+                    self.assertEqual(
+                        argv[-5:],
+                        ("--allowedTools", *(f"Read(/{d}/**)" for d in dirs), "--", "hi"),
+                    )
+
+    def test_a_resume_keeps_the_rules(self):
+        for argv in self.both(True, CONFIG, commands=("ls",), reads=("/r",)):
+            self.assertEqual(argv[1 + argv.index("--resume")], SID)
+            self.assertEqual(
+                argv[-7:],
+                ("--allowedTools", "Bash(ls)", "Read(//r/**)", "Read", "Edit(/x)", "--", "hi"),
+            )
+
+    def test_a_read_dir_a_rule_cannot_hold_literally_is_refused_before_any_launch(self):
+        bad = ["", "r", "./r", "/r\n", "/r\0", *(f"/r{c}s" for c in "*?[]{}()\\,"), "/" + "*" * 99]
+        for read in bad:
+            for launch in self.modes(reads=("/ok", read)):
+                with (
+                    self.subTest(read=read),
+                    mock.patch("agent_pm.adapters.claude.common.Launch") as made,
+                ):
+                    self.refused(
+                        launch,
+                        f"claude: read dir {read!r:.80} must be a printable absolute path "
+                        "without *?[]{}()\\,",
+                    )
+                    made.assert_not_called()
+
+    def test_a_read_dir_whose_real_path_a_rule_cannot_hold_is_refused(self):
+        target = os.path.join(self.tmp, "a*b")
+        os.mkdir(target)
+        link = os.path.join(self.tmp, "link")
+        os.symlink(target, link)
+        for launch in self.modes(reads=(link,)):
+            self.refused(
+                launch,
+                f"claude: read dir {target!r:.80} must be a printable absolute path without "
+                "*?[]{}()\\,",
+            )
+
+
 class EnvTest(Base):
     def test_defaults_overlaid_by_the_config_env(self):
         self.assertEqual(ClaudeCommon({}).env(), CEILING)
@@ -334,6 +425,20 @@ class EnvTest(Base):
         self.assertEqual(launch.unset, UNSET)
         self.assertEqual(ClaudeCommon.UNSET, UNSET)
         self.assertEqual(launch.cwd, "")
+
+    def test_the_session_env_wins_over_the_config_env(self):
+        config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
+        access = Access(env={"PYTHONPATH": "/root", "S": "s"})
+        self.env({"PYTHONPATH": "/parent"})
+        for launch in (
+            self.launch(config=config, access=access),
+            ClaudeAdapter(config)
+            .tui()
+            .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+        ):
+            self.assertEqual(
+                dict(launch.env), {**CEILING, "K": "v", "PYTHONPATH": "/root", "S": "s"}
+            )
 
 
 class TranscriptTest(Base):
@@ -398,6 +503,15 @@ class ResumeTest(Base):
             self.launch(access=Access(cwd=cwd)).resume,
             f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)}",
         )
+
+    def test_the_launch_resume_assigns_the_session_env_quoted(self):
+        env = {"PYTHONPATH": "/a b;c", "S": "s"}
+        resume = self.launch(access=Access(env=env)).resume
+        self.assertEqual(
+            resume,
+            f"cd {shlex.quote(self.work)} && PYTHONPATH='/a b;c' S=s claude --resume {SID}",
+        )
+        self.assertEqual(shlex.split(resume)[3:6], ["PYTHONPATH=/a b;c", "S=s", "claude"])
 
 
 def line(record) -> str:
@@ -564,7 +678,7 @@ def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
 
-class ParseUsageTest(unittest.TestCase):
+class ParseUsageTest(Case):
     def test_router_gate_cases(self):
         rows = (
             (['{"type":"system"}', "garbage"], False),
@@ -893,7 +1007,7 @@ class TuiArgvTest(Base):
         return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
 
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
         self.assertEqual(
             self.tui("do it", tier=4, effort="low", access=access).argv,
             (
@@ -917,6 +1031,8 @@ class TuiArgvTest(Base):
                 "--allowedTools",
                 "Bash(git status)",
                 "Bash(ls)",
+                "Read(//r1/**)",
+                "Read(//r 2/**)",
                 "Read",
                 "Edit(/x)",
                 "--",
@@ -1142,7 +1258,7 @@ def epoch(stamp, zone=LA) -> float:
 NOW = epoch("2026-10-11 10:00")  # a Sunday
 
 
-class LimitTest(unittest.TestCase):
+class LimitTest(Case):
     def limit(self, screen, now=NOW):
         with mock.patch("time.time", return_value=now):
             return ClaudeAdapter({}).tui().limit(screen)
@@ -1354,6 +1470,14 @@ class WritableDirsTest(Base):
             with self.subTest(access=access):
                 self.assertEqual(self.dirs(True, **access), dirs)
 
+    def test_read_dirs_never(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(
+                    self.dirs(resume, dirs=(self.added,), reads=(self.cwd, self.link)),
+                    (self.work, self.added),
+                )
+
 
 class CommittedConfigTest(Base):
     def test_the_claude_table_builds_a_claude_adapter(self):
@@ -1368,7 +1492,6 @@ class CommittedConfigTest(Base):
             },
         )
         registry.configure({"adapters": tables})
-        self.addCleanup(registry.reset)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (

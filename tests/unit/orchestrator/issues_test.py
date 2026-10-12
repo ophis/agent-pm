@@ -1,8 +1,8 @@
-from tests import hermetic  # noqa: F401
-
 import unittest
 
 import issues
+
+from tests import hermetic  # noqa: F401
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 HUMANS = ("ann@example.com", "bob@example.com")

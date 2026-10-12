@@ -2,8 +2,6 @@
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter, a script whose interpreter is missing, an env execve refuses."""
 
-from new.tests import hermetic, live_tmux
-
 import errno
 import json
 import os
@@ -14,7 +12,10 @@ import time
 import unittest
 from unittest import mock
 
-from driver import api, tmux_host
+from agent_pm.driver import api, tmux_host
+
+from new.tests import live_tmux
+from new.tests.case import Case
 
 MANAGER = "mgr"
 # The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists, at most 30 s.
@@ -29,10 +30,9 @@ for _ in range(600):
 """
 
 
-class DetachTest(unittest.TestCase):
+class DetachTest(Case):
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
-        self.server = live_tmux.Server(self, home)
+        self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()

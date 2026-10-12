@@ -1,7 +1,5 @@
-"""new/core/src/adapters/print_prompt/: PrintPromptAdapter's factory and keys; PrintPromptInProcess's check, its run's
+"""agent_pm/adapters/print_prompt/: PrintPromptAdapter's factory and keys; PrintPromptInProcess's check, its run's
 replies and the prompt file it writes, with every process spawn patched to fail."""
-
-from new.tests import hermetic  # noqa: F401
 
 import contextlib
 import json
@@ -10,10 +8,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-from adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
-from adapters.print_prompt import PrintPromptAdapter
-from adapters.print_prompt.in_process import PrintPromptInProcess
-from delegate.reply import marks, outcome_block
+from agent_pm.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
+from agent_pm.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.adapters.print_prompt.in_process import PrintPromptInProcess
+from agent_pm.delegate.reply import marks, outcome_block
+
+from new.tests.case import Case
 
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 START = "[agent-pm-progress:start] the composed prompt is handed to the caller"
@@ -25,7 +25,7 @@ PROMPT = (
 )
 
 
-class Factory(unittest.TestCase):
+class Factory(Case):
     def test_in_process_only_a_fresh_run_each_call(self):
         adapter = PrintPromptAdapter({})
         self.assertEqual((adapter.headless(), adapter.tui()), (None, None))
@@ -50,7 +50,7 @@ class Factory(unittest.TestCase):
                 )
 
 
-class Run(unittest.TestCase):
+class Run(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

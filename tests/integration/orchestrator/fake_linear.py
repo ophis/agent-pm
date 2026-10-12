@@ -1,8 +1,3 @@
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
-from tests.unit.orchestrator.board_ids import STATES, TEAM
-
-import config
-
 import functools
 import hashlib
 import io
@@ -19,6 +14,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import config
 import issues
 import linear
 import promote
@@ -26,6 +22,9 @@ import prune
 import router
 import sessions
 import writeback
+
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import STATES, TEAM
 
 KEY = "TASK"
 BACKLOG = "00000000-0000-4000-8000-000000000017"

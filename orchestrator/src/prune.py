@@ -20,12 +20,11 @@ import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
-from config import CLONES, RUNS_DIR  # noqa: E402
-
 import attended  # noqa: E402
+import config  # noqa: E402
 import repo  # noqa: E402
 import tmux_host  # noqa: E402
+from config import CLONES, RUNS_DIR  # noqa: E402
 from linear import HISTORY, ISSUE_ID, Unavailable, call, last_move, log, one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)

@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -12,8 +13,22 @@ import tomllib
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import fake_codex
+
+def _sibling(name):
+    key = "_agent_pm_" + name
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py")
+    if key in sys.modules:
+        found = getattr(sys.modules[key], "__file__", None)
+        if found != path:
+            raise ImportError(f"{key} is {found}, not {path}")
+        return sys.modules[key]
+    spec = importlib.util.spec_from_file_location(key, path)
+    module = sys.modules[key] = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+fake_codex = _sibling("fake_codex")
 
 EVENTS = (
     "SessionStart",
@@ -236,7 +251,7 @@ def interactive(args):
     options = parser()
     options.add_argument("--no-daemon", action="store_true", required=True)
     options.add_argument("-C", required=True)
-    options.add_argument("-s", choices=("workspace-write",), required=True)
+    options.add_argument("-s", choices=("danger-full-access", "workspace-write"), required=True)
     options.add_argument("-m")
     options.add_argument("--add-dir", action="append", default=[])
     options.add_argument("prompt", nargs="?")

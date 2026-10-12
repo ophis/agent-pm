@@ -1,7 +1,3 @@
-from tests import hermetic  # noqa: F401
-from tests.integration.orchestrator import fake_linear
-from tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
-
 import functools
 import os
 import time
@@ -19,6 +15,10 @@ import prune
 import router
 import sessions
 import writeback
+
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator import fake_linear
+from tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"

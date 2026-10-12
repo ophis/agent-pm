@@ -2,19 +2,18 @@
 deliverable is the planned prompt, saved to out, no child process; headless and resume refused; each role's
 destination and prompt the same under claude, codex and print_prompt."""
 
-from new.tests import hermetic
-from new.tests.unit.delegate.runner_test import no_child
-
 import io
 import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 
-import composer
-from delegate import Begun, ConfigError, Finished, Progress, plan, run
-from delegate.reply import marks
-from driver import registry
+from agent_pm import composer
+from agent_pm.delegate import Begun, ConfigError, Finished, Progress, plan, run
+from agent_pm.delegate.reply import marks
+
+from new.tests.case import Case
+from new.tests.unit.delegate.runner_test import no_child
 
 SID = "11111111-2222-3333-4444-555555555555"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")
@@ -29,16 +28,13 @@ dir = "Research/"
 """
 
 
-class PrintPrompt(unittest.TestCase):
+class PrintPrompt(Case):
     """A HOME of the test's own; per role, workdir <tmp>/<role> (not made), out its prompt.md."""
 
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
-        registry.reset()
-        self.addCleanup(registry.reset)
 
     def given(self, role, **kw):
         """(args, kw) for run() and plan(): print_prompt in_process, sid SID, the cwd the workdir, unless `kw`."""

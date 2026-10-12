@@ -2,10 +2,6 @@
 seam: each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its answer
 projected to the query's selection."""
 
-from new.tests.unit.orchestrator.board_ids import STATES, TEAM
-
-import config
-
 import functools
 import hashlib
 import io
@@ -22,13 +18,18 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import issues
-import linear
-import promote
-import prune
-import router
-import sessions
-import writeback
+from agent_pm_orchestrator import (
+    config,
+    issues,
+    linear,
+    promote,
+    prune,
+    router,
+    sessions,
+    writeback,
+)
+
+from new.tests.unit.orchestrator.board_ids import STATES, TEAM
 
 KEY = "TASK"
 BACKLOG = "00000000-0000-4000-8000-000000000017"
@@ -45,7 +46,10 @@ TYPES = {
 NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
-MODULES = {m.__name__: m for m in (linear, router, issues, sessions, writeback, promote, prune)}
+MODULES = {
+    m.__name__.rpartition(".")[2]: m
+    for m in (linear, router, issues, sessions, writeback, promote, prune)
+}
 BUILT = {
     "router.issues": router.q_issues(),
     "router.issues+relations": router.q_issues(router.RELATIONS),

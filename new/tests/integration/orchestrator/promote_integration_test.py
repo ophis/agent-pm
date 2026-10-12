@@ -2,6 +2,13 @@
 the source Done; a failed move or a Linear outage is retried without a second child; the tick's prune closes a
 finished issue's TUI session on a private tmux server, deletes its checkouts and archives it."""
 
+import os
+import subprocess
+import unittest
+from datetime import UTC, datetime, timedelta
+
+from agent_pm_orchestrator import promote
+
 from new.tests.integration.orchestrator import fake_linear
 from new.tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
@@ -12,13 +19,6 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     Flow,
     TmuxFlow,
 )
-
-import os
-import subprocess
-import unittest
-from datetime import UTC, datetime, timedelta
-
-import promote
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."

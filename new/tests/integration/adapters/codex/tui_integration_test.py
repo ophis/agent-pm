@@ -1,5 +1,4 @@
-from new.tests import NEW, SRC, live_tmux
-from new.tests.integration.adapters.codex import fake_codex, fake_tui
+"""Codex interactive Driver sessions and hook trust with private tmux and fake runtimes."""
 
 import concurrent.futures
 import dataclasses
@@ -13,13 +12,12 @@ import sys
 import tempfile
 import threading
 import time
-import unittest
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     Blocked,
@@ -30,19 +28,22 @@ from adapters.base import (
     Spec,
     TurnEnd,
 )
-from adapters.codex import tui_start
-from driver import api, records, registry
+from agent_pm.adapters.codex import tui_start
+from agent_pm.driver import api, records, registry
+
+from new.tests import live_tmux
+from new.tests.case import NEW, PY, ROOT, Case, child_env
+from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
-sys.path.insert(0, sys.argv[1])
-from driver import api, registry
-registry.configure(json.loads(sys.argv[2]))
-h = api.attach(sys.argv[3])
+from agent_pm.driver import api, registry
+registry.configure(json.loads(sys.argv[1]))
+h = api.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]
-if sys.argv[4]:
-    h.send(sys.argv[4])
+if sys.argv[3]:
+    h.send(sys.argv[3])
     turn = next(e for e in h.events() if isinstance(e, api.TurnEnd))
     print(json.dumps([before, [turn.reply, turn.pending], h.reply]))
 else:
@@ -98,7 +99,7 @@ class Stream:
             pass
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
         parent = os.environ.get("AGENT_PM_TEST_TMP", NEW)
         tmp = tempfile.TemporaryDirectory(dir=parent)
@@ -198,8 +199,8 @@ class Live(unittest.TestCase):
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
-            [sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(self.config), name, text],
-            env=dict(os.environ),
+            [*PY, "-c", ATTACH, json.dumps(self.config), name, text],
+            env=child_env(),
             text=True,
             capture_output=True,
             stdin=subprocess.DEVNULL,
@@ -254,6 +255,19 @@ class TuiIntegrationTest(Live):
             ["--no-daemon", "-C", str(self.cwd), "-c", 'tui.notification_method="bel"'],
         )
         self.assertEqual(
+            call["argv"][5:11],
+            [
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ],
+        )
+        self.assertNotIn("--add-dir", call["argv"])
+        self.assertFalse(any(word.startswith("sandbox_workspace_write.") for word in call["argv"]))
+        self.assertEqual(
             call["argv"][-2:],
             ["--", "quoted ' prompt\nnext\n\n" + registry.adapter("codex").runtime_note],
         )
@@ -278,7 +292,11 @@ class TuiIntegrationTest(Live):
             [call["argv"][-1], "more", "last"],
         )
         kinds = [r["kind"] for r in records.read(records.path(str(self.work)))]
-        self.assertEqual(kinds, ["session", "client_session"])
+        self.assertEqual(
+            [kind for kind in kinds if kind != "session_metadata"], ["session", "client_session"]
+        )
+        self.assertTrue(handle.info().transcript)
+        self.assertIn(self.bound().native_id, handle.info().resume)
         handle.stop()
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
         self.assertEqual(api.sessions().state("w1"), "absent")
@@ -381,6 +399,40 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.attach()[2:], ["root", self.bound().native_id])
         stream.quiet()
 
+    def test_workspace_write_flags_and_saved_policy_through_driver(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
+        handle = self.start()
+        Stream(self, handle).until(TurnEnd)
+        native = self.bound().native_id
+        handle.stop()
+        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        registry.configure(self.config)
+        resumed = self.start(resume=self.sid)
+        Stream(self, resumed).until(TurnEnd)
+        first, second = self.calls()
+        expected = [
+            "-s",
+            "workspace-write",
+            "-c",
+            'approval_policy="on-request"',
+            "-c",
+            'approvals_reviewer="auto_review"',
+            "-c",
+            "sandbox_workspace_write.network_access=false",
+            "-c",
+            "sandbox_workspace_write.writable_roots=[]",
+            "-m",
+            "gpt-test",
+            "-c",
+            "model_reasoning_effort=low",
+            "--add-dir",
+            str(self.extra),
+        ]
+        self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
+        self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
+        self.assertEqual(self.bound().snapshot["sandbox"], "workspace-write")
+
     def test_resume_keeps_native_id_cwd_home_model_effort_dirs_network_and_commands(self):
         handle = self.start()
         stream = Stream(self, handle)
@@ -390,7 +442,12 @@ class TuiIntegrationTest(Live):
         changed = self.root / "changed"
         changed.mkdir()
         cfg = self.config["adapters"]["codex"]
-        cfg.update(tiers={"1": "changed"}, efforts={"low": "high"}, shell_network=True)
+        cfg.update(
+            tiers={"1": "changed"},
+            efforts={"low": "high"},
+            shell_network=True,
+            sandbox="workspace-write",
+        )
         cfg["env"]["CODEX_HOME"] = str(changed)
         registry.configure(self.config)
         spec = dataclasses.replace(
@@ -401,6 +458,9 @@ class TuiIntegrationTest(Live):
         )
         self.scene([["resumed"]])
         resumed = self.start(resume=self.sid, spec=spec)
+        self.assertTrue(resumed.info().project)
+        self.assertTrue(resumed.info().transcript)
+        self.assertIn(native, resumed.info().resume)
         found = Stream(self, resumed).until(TurnEnd)
         self.assertEqual(found, [SessionBound(native), Activity(), Activity(), TurnEnd("resumed")])
         first, second = self.calls()
@@ -502,7 +562,7 @@ class TuiIntegrationTest(Live):
         native.write_bytes(original)
 
     def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_runtime(self):
-        roots = (str(self.home), self.server.bin, SRC, sys.prefix)
+        roots = (str(self.home), self.server.bin, ROOT, sys.prefix)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
                 spec = dataclasses.replace(

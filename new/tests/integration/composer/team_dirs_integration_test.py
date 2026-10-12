@@ -1,8 +1,5 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
-dir added; its catalog row; a read dir holding the team dir refused."""
-
-from new.tests import NEW
-from new.tests.integration.composer import child
+dir to read, never added; its catalog row; a read dir holding the team dir composes unadded, a write dir refused."""
 
 import json
 import os
@@ -11,8 +8,11 @@ import shutil
 import tempfile
 import unittest
 
-from composer.prompt import RESUME, RETURN
-from utils.paths import temp_dirs, under
+from agent_pm.composer.prompt import RESUME, RETURN
+from agent_pm.utils.paths import temp_dirs, under
+
+from new.tests.case import NEW
+from new.tests.integration.composer import child
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
@@ -30,11 +30,11 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from utils.config_file import CONFIG, read_config
+CATALOG = """from agent_pm.utils.config_file import CONFIG, LOCAL, read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(read_config(CONFIG))
-params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
+team.check_all(read_config(CONFIG, LOCAL))
+params = composer.RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
 rows = {}
 for role, tasks in composer.catalog(team).items():
     run = composer.resolve(role, team=team)
@@ -80,7 +80,7 @@ class TeamDirs(child.Case):
     def test_a_team_dirs_role_composes_with_its_tasks_dir(self):
         got = self.composed()
         self.assertEqual(TASKS_PARAM.search(got["prompt"])[1], self.tasks)
-        self.assertIn(self.tasks, got["intent"]["dirs"])
+        self.assertEqual((got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks]))
         self.assertEqual(os.listdir(self.work), [])
 
     def test_the_catalog_lists_its_role_after_cores_with_its_sources(self):
@@ -100,23 +100,31 @@ class TeamDirs(child.Case):
         tasks = TASKS_PARAM.search(prompt)[1]
         with open(os.path.join(tasks, "note.md"), encoding="utf-8") as f:
             self.assertIn(f"\n   {MARK}\n", f.read())
-        self.assertIn(tasks, got["intent"]["dirs"])
+        self.assertIn(tasks, got["intent"]["reads"])
         self.assertIn(f"\n{RETURN}\n", prompt)
         self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
-    def test_a_run_and_its_resume_add_its_tasks_dir(self):
+    def test_a_run_and_its_resume_read_its_tasks_dir_unadded(self):
         for resume in (False, True):
             with self.subTest(resume=resume):
                 got = self.composed(resume=resume)
-                dirs = got["intent"]["dirs"]
-                self.assertIn(self.tasks, map(os.path.realpath, dirs))
-                self.assertNotIn(CORE_TASKS, dirs)
+                dirs, reads = got["intent"]["dirs"], got["intent"]["reads"]
+                self.assertIn(self.tasks, map(os.path.realpath, reads))
+                self.assertNotIn(self.tasks, map(os.path.realpath, dirs))
+                self.assertNotIn(CORE_TASKS, dirs + reads)
                 self.assertIn(f"`{self.tasks}`", got["prompt"])
                 self.assertEqual(got["prompt"].startswith(RESUME), resume)
                 self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
-    def test_a_read_dir_holding_the_team_dir_is_refused(self):
+    def test_a_read_dir_holding_the_team_dir_composes_unadded(self):
         self.local(f"[roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
+        got = self.composed()
+        self.assertEqual(
+            (got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks, self.team])
+        )
+
+    def test_a_write_dir_holding_the_team_dir_is_refused(self):
+        self.local(f"[roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
         got = self.compose("writer", "note")
         self.assertEqual(
             got,

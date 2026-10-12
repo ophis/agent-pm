@@ -31,7 +31,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import attended  # noqa: E402
 import config  # noqa: E402
+import drive  # noqa: E402
+import inputs  # noqa: E402
+import issues  # noqa: E402
+import linear  # noqa: E402
+import roster  # noqa: E402
+import target  # noqa: E402
+import tmux_host  # noqa: E402
+import writeback  # noqa: E402
 from config import (  # noqa: E402
     LOCAL,
     PATH,
@@ -50,16 +59,6 @@ from config import (  # noqa: E402
     stage_order,
     transcript,
 )
-
-import attended  # noqa: E402
-import drive  # noqa: E402
-import inputs  # noqa: E402
-import issues  # noqa: E402
-import linear  # noqa: E402
-import roster  # noqa: E402
-import target  # noqa: E402
-import tmux_host  # noqa: E402
-import writeback  # noqa: E402
 from linear import (  # noqa: E402
     CONFIG_ERRORS,
     ISSUE_ID,

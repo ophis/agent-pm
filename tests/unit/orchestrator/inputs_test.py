@@ -1,7 +1,3 @@
-from tests import hermetic  # noqa: F401
-
-import config
-
 import json
 import os
 import re
@@ -10,10 +6,13 @@ from types import SimpleNamespace
 
 import clients
 import compose
+import config
 import inputs
 import issues
 import repo
 import target
+
+from tests import hermetic  # noqa: F401
 
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}

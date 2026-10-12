@@ -1,14 +1,14 @@
-"""new/core/src/utils/shell.py: err_text and redact."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/shell.py: err_text and redact."""
 
 import subprocess
 import unittest
 
-from utils import shell
+from agent_pm.utils import shell
+
+from new.tests.case import Case
 
 
-class ErrText(unittest.TestCase):
+class ErrText(Case):
     def test_userinfo_is_redacted(self):
         res = subprocess.CompletedProcess(
             [],

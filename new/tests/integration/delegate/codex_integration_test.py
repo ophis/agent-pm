@@ -2,7 +2,18 @@
 `codex`); HOME, its recovery store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from
 any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
 
-from new.tests import NEW
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+from agent_pm.delegate.runner import FIX
+
+from new.tests.case import NEW, Case, child_env
 from new.tests.integration.adapters.codex import fake_codex
 from new.tests.integration.delegate.cli_integration_test import (
     CLI,
@@ -14,17 +25,6 @@ from new.tests.integration.delegate.cli_integration_test import (
 )
 from new.tests.unit.delegate.runner_test import block
 
-import json
-import os
-import shlex
-import subprocess
-import sys
-import tempfile
-import unittest
-from unittest import mock
-
-from delegate.runner import FIX
-
 NATIVE = fake_codex.NATIVE
 END = {"out": {"type": "turn.completed"}}
 
@@ -34,7 +34,9 @@ def said(*texts) -> list[dict]:
     return [*map(fake_codex.message, texts), END]
 
 
-class Integration(unittest.TestCase):
+class Integration(Case):
+    ROLE, TASK = "dummy-tester", "echo"
+
     def setUp(self):
         home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         tmp = tempfile.TemporaryDirectory()
@@ -56,6 +58,7 @@ class Integration(unittest.TestCase):
             os.path.join(root, "exec.jsonl"),
         )
         self.env = {
+            **child_env({}),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "HOME": self.home,
             "PYTHONUTF8": "1",
@@ -68,14 +71,13 @@ class Integration(unittest.TestCase):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario}, f)
         argv = [
-            sys.executable,
-            CLI,
+            *CLI,
             "--runtime",
             "codex",
             "--role",
-            "dummy-tester",
+            self.ROLE,
             "--task",
-            "echo",
+            self.TASK,
             "--input",
             "Hello.",
             "--out",
@@ -125,7 +127,8 @@ class Codex(Integration):
             self.assertIn(line, res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
         self.assertEqual(
-            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"]
+            self.kinds(),
+            ["session", "input", "client_session", "session_metadata", "progress", "result", "end"],
         )
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE])
         (call,) = self.calls()
@@ -197,6 +200,7 @@ class Codex(Integration):
                 "session",
                 "input",
                 "client_session",
+                "session_metadata",
                 "progress",
                 "invalid",
                 "session",

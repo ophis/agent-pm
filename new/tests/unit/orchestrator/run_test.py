@@ -1,6 +1,20 @@
 """orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event, plus FR-43's TUI close
 and --tui's show on a fake Driver api, each Linear call's identity and the usage-limit path (FR-59)."""
 
+import io
+import json
+import os
+import signal
+import unittest
+from contextlib import redirect_stderr
+from datetime import UTC, datetime
+from unittest import mock
+
+from agent_pm import delegate
+from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
+from agent_pm.driver import api
+from agent_pm_orchestrator import config, linear, run, sessions, writeback
+
 from new.tests.unit.orchestrator.board_ids import STATES
 from new.tests.unit.orchestrator.fake_api import FakeApi
 from new.tests.unit.orchestrator.run_fixtures import (
@@ -16,26 +30,6 @@ from new.tests.unit.orchestrator.run_fixtures import (
     Base,
     Gql,
 )
-
-import config
-
-import io
-import json
-import os
-import shlex
-import signal
-import unittest
-from contextlib import redirect_stderr
-from datetime import UTC, datetime
-from unittest import mock
-
-import delegate
-import linear
-import run
-import sessions
-import writeback
-from delegate import Begun, Finished, Limit, Outcome, Progress, Result
-from driver import api
 
 RUNTIME = "claude"
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
@@ -211,7 +205,7 @@ class Inner(Case):
         )
         self.assertEqual(self.delegate.dirs, [True])
         self.assertEqual(self.api.info, [(RUNTIME, SID, self.rd)] * 2)
-        self.assertEqual(os.environ["PATH"], config.PATH)
+        self.assertEqual(os.environ["PATH"], config.path())
         self.assertEqual([o for o in self.order if o[0] == "show"], [])
 
     def test_no_outcome_leaves_the_issue(self):
@@ -282,8 +276,7 @@ class Inner(Case):
         (researcher, *_), _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
         self.assertEqual(
-            researcher.gate,
-            f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake researcher",
+            researcher.gate, "python3 -P -m agent_pm_orchestrator.router --brake researcher"
         )
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 

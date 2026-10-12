@@ -84,7 +84,7 @@ max_runs = 3
 #              status_line, workers_per_column, grid_retile and clients are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
-gate = "python3 {{root}}/orchestrator/src/router.py --brake researcher"
+gate = "python3 -P -m agent_pm_orchestrator.router --brake researcher"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: show = ""

@@ -1,8 +1,3 @@
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import HEADER, STATES, role
-
-import config
-
 import json
 import os
 import subprocess
@@ -11,11 +6,15 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
+import config
 import inputs
 import issues
 import linear
 import sessions
 import writeback
+
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import HEADER, STATES, role
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

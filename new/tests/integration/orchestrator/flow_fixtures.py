@@ -1,27 +1,26 @@
-"""The orchestrator's integration flows: a hermetic HOME with both local files ([task_labels] included), FakeLinear over
-HTTP (the AGENT_PM_LINEAR seam) with the harness, role and human accounts and the task label group, fake_claude as
-`claude`, run.py, promote.py and router.py as subprocesses, and readers of Linear, the logs and a run's files.
-TmuxFlow adds a private tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
-
-from new.tests import ORCH_SRC, fake_claude, hermetic, live_tmux
-from new.tests.integration.orchestrator import fake_gh, fake_linear
-from new.tests.unit.orchestrator import board_ids, run_fixtures
-from new.tests.unit.orchestrator.run_fixtures import ID, SID
+"""The orchestrator's integration flows: the test's HOME with both local files ([task_labels] included), FakeLinear
+over HTTP (the AGENT_PM_LINEAR seam) with the harness, role and human accounts and the task label group, fake_claude
+as `claude`, run, promote and router as `python3 -P -m` subprocesses, and readers of Linear, the logs and a run's
+files. TmuxFlow adds a private tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
 
 import copy
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import tomllib
-import unittest
 from urllib.parse import quote
 
-import linear
+from agent_pm_orchestrator import linear
 
-RUN, PROMOTE, ROUTER = (os.path.join(ORCH_SRC, n) for n in ("run.py", "promote.py", "router.py"))
+from new.tests import fake_claude, live_tmux
+from new.tests.case import ORCH_ROOT, PY, Case, child_env
+from new.tests.integration.orchestrator import fake_gh, fake_linear
+from new.tests.unit.orchestrator import board_ids, run_fixtures
+from new.tests.unit.orchestrator.run_fixtures import ID, SID
+
+RUN, PROMOTE, ROUTER = (("-m", f"agent_pm_orchestrator.{n}") for n in ("run", "promote", "router"))
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
 _CFG = tomllib.loads(run_fixtures.local("/") + TASK_LABELS)
@@ -43,8 +42,8 @@ MANAGER = "manager"
 TIMEOUT = 60
 TAIL = 20
 GUARD = (
-    "import json, shutil, sys; sys.path.insert(0, sys.argv[1]); import config; "
-    "print(json.dumps({n: shutil.which(n, path=config.PATH) for n in sys.argv[2:]}))"
+    "import json, shutil, sys\nfrom agent_pm_orchestrator import config\n"
+    "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
 
 
@@ -77,12 +76,10 @@ def tail(path):
         return []
 
 
-class Flow(unittest.TestCase):
+class Flow(Case):
     SHIMS = ("claude",)
 
     def setUp(self):
-        self.apm = hermetic.home(self)
-        self.home = os.path.dirname(self.apm)
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         state = os.path.join(self.root, "state")
@@ -91,7 +88,7 @@ class Flow(unittest.TestCase):
             ("orchestrator-new.local.toml", run_fixtures.local(state) + TASK_LABELS),
             ("core-new.local.toml", run_fixtures.CORE_LOCAL),
         ):
-            with open(os.path.join(self.apm, name), "w") as f:
+            with open(os.path.join(self.agent_pm, name), "w") as f:
                 f.write(text)
         self.fake = fake_linear.FakeLinear(harness=HARNESS)
         self.ids = {HARNESS_EMAIL: self.fake.user(HARNESS_EMAIL, "Harness", HARNESS)}
@@ -115,6 +112,7 @@ class Flow(unittest.TestCase):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
+            **child_env({}, ORCH_ROOT),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
@@ -123,8 +121,8 @@ class Flow(unittest.TestCase):
         }
 
     def guard(self):
-        """config.PATH must find each of SHIMS in self.bin first: never a real one."""
-        res = self.script("-c", GUARD, ORCH_SRC, *self.SHIMS)
+        """config.path() must find each of SHIMS in self.bin first: never a real one."""
+        res = self.script("-c", GUARD, *self.SHIMS)
         want = {n: os.path.join(self.bin, n) for n in self.SHIMS}
         self.assertEqual((res.returncode, res.stdout), (0, json.dumps(want) + "\n"), res.stderr)
 
@@ -134,7 +132,7 @@ class Flow(unittest.TestCase):
 
     def script(self, *argv):
         return subprocess.run(
-            [sys.executable, *argv],
+            [*PY, *argv],
             cwd=self.root,
             env=self.env(),
             stdin=subprocess.DEVNULL,
@@ -144,10 +142,10 @@ class Flow(unittest.TestCase):
         )
 
     def promote(self, *argv):
-        return self.script(PROMOTE, *argv)
+        return self.script(*PROMOTE, *argv)
 
     def router(self, *argv):
-        return self.script(ROUTER, *argv)
+        return self.script(*ROUTER, *argv)
 
     def logged(self):
         return run_fixtures.logged(self.logs)

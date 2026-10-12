@@ -1,5 +1,4 @@
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_codex
+"""Codex headless Driver sessions and recovery through fake native processes."""
 
 import dataclasses
 import json
@@ -9,11 +8,10 @@ import subprocess
 import sys
 import tempfile
 import threading
-import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     ConfigError,
@@ -25,15 +23,18 @@ from adapters.base import (
     Stderr,
     TurnEnd,
 )
-from adapters.codex import CodexAdapter
-from driver import api, records, registry
+from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.driver import api, records, registry
+
+from new.tests.case import NEW, Case
+from new.tests.integration.adapters.codex import fake_codex
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "Hello.\n"}
 
 
-class HeadlessIntegrationTest(unittest.TestCase):
+class HeadlessIntegrationTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)
@@ -67,7 +68,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
             access=Access(
                 cwd=str(self.cwd),
                 project=True,
-                dirs=(str(self.extra), str(self.tasks)),
+                dirs=(str(self.extra),),
+                reads=(str(self.tasks),),
                 commands=("git status",),
             ),
         )
@@ -88,7 +90,6 @@ class HeadlessIntegrationTest(unittest.TestCase):
             )
         )
         registry.configure(self.config)
-        self.addCleanup(registry.reset)
 
     def scene(self, steps=None, **fields):
         if steps is not None:
@@ -131,29 +132,32 @@ class HeadlessIntegrationTest(unittest.TestCase):
     def record(self):
         return next((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
 
-    def expected_args(self, prompt, resume=False):
-        return [
+    def expected_args(self, prompt, resume=False, sandbox="danger-full-access"):
+        args = [
             "exec",
             "--json",
             "--skip-git-repo-check",
             "-s",
-            "workspace-write",
+            sandbox,
             "-c",
             'approval_policy="on-request"',
             "-c",
             'approvals_reviewer="auto_review"',
-            "-c",
-            "sandbox_workspace_write.network_access=false",
-            "-c",
-            "sandbox_workspace_write.writable_roots=[]",
-            "-m",
-            "gpt-test",
-            "-c",
-            "model_reasoning_effort=low",
-            "--add-dir",
-            str(self.extra),
-            "--add-dir",
-            str(self.tasks),
+        ]
+        if sandbox == "workspace-write":
+            args.extend(
+                [
+                    "-c",
+                    "sandbox_workspace_write.network_access=false",
+                    "-c",
+                    "sandbox_workspace_write.writable_roots=[]",
+                ]
+            )
+        args.extend(["-m", "gpt-test", "-c", "model_reasoning_effort=low"])
+        if sandbox == "workspace-write":
+            args.extend(["--add-dir", str(self.extra)])
+        return [
+            *args,
             *(["resume", NATIVE] if resume else []),
             "--",
             prompt + "\n\n" + self.adapter.runtime_note,
@@ -197,7 +201,11 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
         self.assertEqual(
-            [(entry["kind"], entry.get("client_id")) for entry in self.written()],
+            [
+                (entry["kind"], entry.get("client_id"))
+                for entry in self.written()
+                if entry["kind"] != "session_metadata"
+            ],
             [("session", None), ("client_session", NATIVE)],
         )
 
@@ -212,6 +220,22 @@ class HeadlessIntegrationTest(unittest.TestCase):
             (entry["cwd"], entry["env"]["PWD"], entry["env"]["CODEX_HOME"]),
             (str(self.cwd), str(self.cwd), str(self.codex_home)),
         )
+
+    def test_workspace_write_exact_flags_and_saved_policy_through_driver(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
+        self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))
+        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        registry.configure(self.config)
+        self.drain(
+            api.start("codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid)
+        )
+        first, second = self.logged()
+        self.assertEqual(first["argv"], self.expected_args("one", sandbox="workspace-write"))
+        self.assertEqual(
+            second["argv"], self.expected_args("again", resume=True, sandbox="workspace-write")
+        )
+        self.assertEqual(second["snapshot"]["snapshot"]["sandbox"], "workspace-write")
 
     def direct_launch(self, prompt, resume=False):
         adapter = CodexAdapter(
@@ -324,7 +348,12 @@ class HeadlessIntegrationTest(unittest.TestCase):
         alternate = self.root / "changed"
         alternate.mkdir()
         cfg = self.config["adapters"]["codex"]
-        cfg.update(tiers={"1": "changed"}, efforts={"low": "high"}, shell_network=True)
+        cfg.update(
+            tiers={"1": "changed"},
+            efforts={"low": "high"},
+            shell_network=True,
+            sandbox="workspace-write",
+        )
         cfg["env"]["CODEX_HOME"] = str(alternate)
         registry.configure(self.config)
         access = Access(
@@ -332,6 +361,9 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
         spec = dataclasses.replace(self.spec, tier=4, effort="max", access=access)
         handle = api.start("codex", "headless", "again", spec, resume=self.sid, sid=self.sid)
+        self.assertTrue(handle.info().project)
+        self.assertEqual(handle.info().transcript, str(fake_codex.session_path(NATIVE)))
+        self.assertIn(NATIVE, handle.info().resume)
         self.assertEqual(self.drain(handle)[0], SessionBound(NATIVE))
         first, second = self.logged()
         self.assertEqual(second["snapshot"]["snapshot"], first["snapshot"]["snapshot"])
@@ -349,7 +381,9 @@ class HeadlessIntegrationTest(unittest.TestCase):
             [first["prompt"], second["prompt"]],
         )
 
-    def test_add_dir_order_and_tasks_prompt_survive_resume(self):
+    def test_add_dir_order_survives_resume_and_the_tasks_dir_is_read_unadded(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):
             with self.subTest(resume=resume):
@@ -376,7 +410,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
                     for i, arg in enumerate(entry["argv"])
                     if arg == "--add-dir"
                 ]
-                self.assertEqual(dirs, [str(self.extra), str(self.tasks)])
+                self.assertEqual(dirs, [str(self.extra)])
+                self.assertNotIn(str(self.tasks), dirs)
                 self.assertIn(f"`{self.tasks}`", entry["prompt"])
                 self.assertFalse((self.work / "tasks").exists())
 
@@ -397,7 +432,10 @@ class HeadlessIntegrationTest(unittest.TestCase):
             [SessionBound(NATIVE), *(Reply(text) for text in texts), TurnEnd(texts[-1]), Exited(0)],
         )
         self.assertEqual(handle.reply, texts[-1])
-        self.assertEqual([entry["kind"] for entry in self.written()], ["session", "client_session"])
+        self.assertEqual(
+            [entry["kind"] for entry in self.written() if entry["kind"] != "session_metadata"],
+            ["session", "client_session"],
+        )
         self.assertFalse((self.work / "out.md").exists())
 
     def test_interrupted_first_turn_keeps_binding_and_resumes(self):
@@ -632,8 +670,18 @@ class HeadlessIntegrationTest(unittest.TestCase):
                 info.transcript,
                 info.resume,
             ),
-            ("caller-owned", "caller-owned", NATIVE, str(self.cwd), True, "", ""),
+            (
+                "caller-owned",
+                "caller-owned",
+                NATIVE,
+                str(self.cwd),
+                True,
+                str(fake_codex.session_path(NATIVE)),
+                info.resume,
+            ),
         )
+        self.assertIn(NATIVE, info.resume)
+        self.assertEqual(records.session(str(self.work), handle.sid)["transcript"], info.transcript)
         status = api.session_info("codex", handle.sid, str(self.cwd))
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)

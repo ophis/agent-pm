@@ -2,18 +2,14 @@
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
 
-from new.tests import SRC, hermetic
-from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
-
 import inspect
 import os
 import tempfile
 import unittest
 from dataclasses import fields, replace
 
-import composer.run
-from composer.base import ConfigError
-from composer.run import (
+from agent_pm.composer.base import ConfigError
+from agent_pm.composer.run import (
     RUN_KEYS,
     Intent,
     RunConfig,
@@ -24,8 +20,12 @@ from composer.run import (
     resolve,
     trusted_dirs,
 )
-from composer.teams import team
-from utils import config_file
+from agent_pm.composer.teams import team
+from agent_pm.utils import config_file
+from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.case import Case
+from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 
 CONFIG = """\
 tier = 2
@@ -52,8 +52,8 @@ TIER = "tier must be an integer 1–4"
 RUNTIME = "runtime must be a non-empty one-line name, got "
 
 
-class Fake(unittest.TestCase):
-    """A team root and config file in a temp dir; a HOME of the test's own for the local config."""
+class Fake(Case):
+    """A team root, config and local file in a temp dir; a HOME of the test's own."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -61,9 +61,9 @@ class Fake(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "team")
         self.config = os.path.join(self.tmp, "config.toml")
+        self.local_file = os.path.join(self.tmp, "local.toml")
         self.write(FILES)
         self.configure(CONFIG)
-        hermetic.home(self)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -77,7 +77,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+        with open(self.local_file, "w") as f:
             f.write(text)
 
     def team_dir(self, files):
@@ -87,7 +87,8 @@ class Fake(unittest.TestCase):
         return team(self.root, (top,)), top
 
     def resolved(self, role="writer", task=None, found=None, **kw):
-        return resolve(role, task, team=found or team(self.root), config=self.config, **kw)
+        kw = {"config": self.config, "local": self.local_file, **kw}
+        return resolve(role, task, team=found or team(self.root), **kw)
 
     def refused(self, role="writer", task=None, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -401,8 +402,8 @@ class Runtime(Fake):
 
     def test_resolve_takes_no_runtime_client_or_trust(self):
         self.assertEqual(
-            list(inspect.signature(composer.run.resolve).parameters),
-            ["role", "task", "overlays", "label", "team", "config"],
+            list(inspect.signature(resolve).parameters),
+            ["role", "task", "overlays", "label", "team", "config", "local"],
         )
 
 
@@ -437,7 +438,7 @@ class TeamRoles(Fake):
         )
 
 
-class Params(unittest.TestCase):
+class Params(Case):
     def test_its_fields(self):
         self.assertEqual([f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume"])
 
@@ -465,10 +466,10 @@ class Params(unittest.TestCase):
 
 class TrustedDirs(Fake):
     def test_unset_none_else_the_local_files_real_paths(self):
-        self.assertEqual((trusted_dirs(), trusted_dirs(self.config)), (frozenset(), frozenset()))
+        self.assertEqual(trusted_dirs(self.config, self.local_file), frozenset())
         self.local('trusted_dirs = ["~/data", "/x/../y"]\n')
         self.assertEqual(
-            trusted_dirs(self.config),
+            trusted_dirs(self.config, self.local_file),
             frozenset({os.path.realpath(os.path.expanduser("~/data")), os.path.realpath("/y")}),
         )
 
@@ -480,11 +481,32 @@ class TrustedDirs(Fake):
             with self.subTest(value=value):
                 self.local(f"trusted_dirs = {value}\n")
                 with self.assertRaises(ConfigError) as cm:
-                    trusted_dirs(self.config)
+                    trusted_dirs(self.config, self.local_file)
                 self.assertEqual(str(cm.exception), msg)
 
 
-class Bind(unittest.TestCase):
+class ExplicitPaths(Fake):
+    """resolve and trusted_dirs read only the config and local passed, never the HOME one (malformed here)."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+            f.write("malformed = [\n")
+
+    def test_resolve(self):
+        self.local('[roles.writer]\neffort = "low"\n')
+        self.assertEqual(self.resolved().effort, "low")
+        self.assertEqual(self.resolved(local=os.devnull).effort, "medium")
+
+    def test_trusted_dirs(self):
+        self.local('trusted_dirs = ["/x/../y"]\n')
+        self.assertEqual(
+            trusted_dirs(self.config, self.local_file), frozenset({os.path.realpath("/y")})
+        )
+        self.assertEqual(trusted_dirs(self.config, os.devnull), frozenset())
+
+
+class Bind(Case):
     def test_repo_is_the_repo_dir_else_dropped_and_any_other_entry_a_path(self):
         self.assertEqual(bind("repo", "/r/x/.."), "/r")
         self.assertIsNone(bind("repo", None))
@@ -519,45 +541,78 @@ class Access(Fake):
             team=found or team(self.root),
         )
 
-    def test_dirs_writes_and_commands_filled_and_the_gate_apart_verbatim(self):
+    def test_dirs_reads_writes_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
-        for name, cfg, repo_dir, dirs, writes, commands, want in (
+        env = {"PYTHONPATH": IMPORT_ROOT}
+        out = os.path.join(self.methods, "out")
+        for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
             (
                 "gate",
-                {"commands": ["{{scripts}}/x *"], "gate": gate},
+                {"commands": ["python3 -P -m x *"], "gate": gate},
                 None,
+                [],
                 [self.tasks],
                 [],
-                [f"{SRC}/x *"],
+                ["python3 -P -m x *"],
                 gate,
+                env,
             ),
-            ("no gate", {"commands": ["x"]}, None, [self.tasks], [], ["x"], ""),
+            ("no gate", {"commands": ["x"]}, None, [], [self.tasks], [], ["x"], "", env),
+            ("a gate alone", {"gate": gate}, None, [], [self.tasks], [], [], gate, env),
             (
                 "repo entry binds to the repo dir",
-                {"write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]},
+                {"write": ["repo"], "commands": ["x --dir {{workdir}}/src *"]},
                 self.repo,
-                [self.tasks, self.repo],
                 [self.repo],
-                [f"{SRC}/x --dir {self.work}/src *"],
+                [self.tasks],
+                [self.repo],
+                [f"x --dir {self.work}/src *"],
                 "",
+                env,
             ),
             (
                 "no repo dir drops the repo entry",
                 {"read": ["repo"], "write": ["repo", "~/w", "~/w"]},
                 None,
-                [self.tasks, home],
+                [home],
+                [self.tasks],
                 [home],
                 [],
                 "",
+                {},
             ),
             (
-                "methods fills read and write, deduped",
-                {"read": ["{{methods}}", self.tasks], "write": ["{{methods}}/out", "{{methods}}"]},
-                None,
-                [self.tasks, self.methods, os.path.join(self.methods, "out")],
-                [os.path.join(self.methods, "out"), self.methods],
+                "read dirs after the tasks dir, deduped",
+                {"read": ["{{methods}}", "repo", self.tasks, "{{methods}}"]},
+                self.repo,
+                [],
+                [self.tasks, self.methods, self.repo],
+                [],
                 [],
                 "",
+                {},
+            ),
+            (
+                "methods fills read and write, deduped, write wins",
+                {"read": ["{{methods}}", self.tasks], "write": ["{{methods}}/out", "{{methods}}"]},
+                None,
+                [out, self.methods],
+                [self.tasks],
+                [out, self.methods],
+                [],
+                "",
+                {},
+            ),
+            (
+                "a tasks dir to write",
+                {"write": [self.tasks]},
+                None,
+                [self.tasks],
+                [],
+                [self.tasks],
+                [],
+                "",
+                {},
             ),
         ):
             with self.subTest(name):
@@ -565,27 +620,48 @@ class Access(Fake):
                     self.intent(repo_dir=repo_dir, **cfg),
                     Intent(
                         dirs=tuple(dirs),
+                        reads=tuple(reads),
                         writes=tuple(writes),
                         commands=tuple(commands),
                         gate=want,
+                        env=session,
                         cwd=self.work,
                         project=False,
                     ),
                 )
 
-    def test_the_workdir_comes_first_only_when_the_cwd_is_another_dir(self):
+    def test_a_dir_to_read_and_write_is_only_in_dirs_also_through_a_symlink(self):
+        shared, link = os.path.join(self.tmp, "shared"), os.path.join(self.tmp, "link")
+        tasks_link = os.path.join(self.tmp, "tasks-link")
+        os.makedirs(shared)
+        os.symlink(shared, link)
+        os.symlink(self.tasks, tasks_link)
+        for read, write, dirs, reads in (
+            ([shared], [shared], (shared,), (self.tasks,)),
+            ([link], [shared], (shared,), (self.tasks,)),
+            ([shared], [link], (link,), (self.tasks,)),
+            ([], [tasks_link], (tasks_link,), ()),
+            ([link, shared], [], (), (self.tasks, link)),
+        ):
+            with self.subTest(read=read, write=write):
+                got = self.intent(read=read, write=write)
+                self.assertEqual((got.dirs, got.reads, got.writes), (dirs, reads, tuple(write)))
+
+    def test_the_workdir_comes_first_only_when_the_cwd_is_another_dir_and_then_is_no_read_dir(self):
         other, link = os.path.join(self.tmp, "other"), os.path.join(self.tmp, "link")
         for d in (self.work, other):
             os.makedirs(d)
         os.symlink(self.work, link)
-        for cwd, dirs in (
-            (self.work, (self.tasks,)),
-            (link, (self.tasks,)),
-            (other, (self.work, self.tasks)),
+        for cwd, dirs, reads in (
+            (self.work, (self.repo,), (self.tasks, link)),
+            (link, (self.repo,), (self.tasks, link)),
+            (other, (self.work, self.repo), (self.tasks,)),
         ):
             with self.subTest(cwd=cwd):
-                got = self.intent(cwd=cwd, project=True)
-                self.assertEqual((got.dirs, got.cwd, got.project), (dirs, cwd, True))
+                got = self.intent(cwd=cwd, project=True, read=[link], write=[self.repo])
+                self.assertEqual(
+                    (got.dirs, got.reads, got.cwd, got.project), (dirs, reads, cwd, True)
+                )
 
     def test_a_cwd_that_is_not_an_absolute_path(self):
         for cwd in ("", "work"):
@@ -594,15 +670,17 @@ class Access(Fake):
                     self.intent(cwd=cwd)
                 self.assertEqual(str(cm.exception), f"cwd must be an absolute path, got {cwd!r}")
 
-    def test_a_team_dir_roles_tasks_dir(self):
+    def test_a_team_dir_roles_tasks_dir_is_read_not_added(self):
         found, top = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
-        self.assertEqual(self.intent(found=found, role="poet").dirs, (os.path.join(top, "tasks"),))
+        got = self.intent(found=found, role="poet")
+        self.assertEqual((got.dirs, got.reads), ((), (os.path.join(top, "tasks"),)))
 
     def test_an_unknown_placeholder(self):
         for key in ("read", "write", "commands"):
-            with self.subTest(key), self.assertRaises(ConfigError) as cm:
-                self.intent(**{key: ["{{nope}}"]})
-            self.assertEqual(str(cm.exception), f"unfilled placeholder {{{{nope}}}} in {key}")
+            for name in ("nope", "scripts"):
+                with self.subTest(key=key, name=name), self.assertRaises(ConfigError) as cm:
+                    self.intent(**{key: [f"{{{{{name}}}}}"]})
+                self.assertEqual(str(cm.exception), f"unfilled placeholder {{{{{name}}}}} in {key}")
 
 
 if __name__ == "__main__":

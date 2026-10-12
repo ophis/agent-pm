@@ -7,10 +7,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
-
 import linear  # noqa: E402
 import sessions  # noqa: E402
+from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
 from linear import (  # noqa: E402
     CONFIG_ERRORS,
     config_error,

@@ -1,16 +1,16 @@
 """utils/args.py: Once."""
 
-from new.tests import SRC  # noqa: F401
-
 import argparse
 import io
 import unittest
 from unittest import mock
 
-from utils.args import Once
+from agent_pm.utils.args import Once
+
+from new.tests.case import Case
 
 
-class OnceTest(unittest.TestCase):
+class OnceTest(Case):
     def parser(self):
         ap = argparse.ArgumentParser(prog="p")
         ap.add_argument("--dir", action=Once)

@@ -1,12 +1,10 @@
-from new.tests import hermetic  # noqa: F401
-
 import io
 import os
 import urllib.error
 from types import SimpleNamespace
 from unittest import mock
 
-import linear
+from agent_pm_orchestrator import linear
 
 FAILURES = {  # factories: a fresh exception per use
     "5xx": lambda: urllib.error.HTTPError(linear.URL, 503, "Service Unavailable", {}, io.BytesIO()),

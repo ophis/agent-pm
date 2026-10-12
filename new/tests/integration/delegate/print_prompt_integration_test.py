@@ -1,35 +1,37 @@
-"""delegate/cli.py as a subprocess in the command shape of new/core/skills/act-as/SKILL.md, over the real config with a
-HOME of the test's own: per built-in role, out (or stdout, --out -) holds the --dry-run prompt; headless and a resume
-exit 2."""
-
-from new.tests import SRC, hermetic
+"""The Delegate CLI as a subprocess run by step 3's command of new/core/skills/act-as/SKILL.md, over the real config with
+a HOME of the test's own: per built-in role, out (or stdout, --out -) holds the --dry-run prompt; headless and a resume
+exit 2. The engineer prompt's agent_pm commands run behind step 4's prefix, and fail bare."""
 
 import json
 import os
+import re
+import shlex
 import subprocess
-import sys
 import tempfile
 import unittest
 
-CLI = os.path.join(SRC, "delegate", "cli.py")
+from new.tests.case import Case
+from new.tests.unit.skills.act_as_test import argv, head, prefix
+
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")
 INPUT = "Compare A and B."
 STARTED = "Progress (start): the composed prompt is handed to the caller"
+AGENT_PM = re.compile(r"python3 -P -m agent_pm\.[\w.]+ \w+")
+REPO = "python3 -P -m agent_pm.agent_tools.repo"
 
 
-class PrintPrompt(unittest.TestCase):
+class PrintPrompt(Case):
     """The cwd `proj`; per role, workdir ~/.agent-pm/adhoc/<date>-<role>-compare-a-b (not made), --sid SID."""
 
     def setUp(self):
-        agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.proj = os.path.realpath(tmp.name)
-        self.adhoc = os.path.join(agent_pm, "adhoc")
+        self.adhoc = os.path.join(self.agent_pm, "adhoc")
         self.env = {
             "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": os.path.dirname(agent_pm),
+            "HOME": self.home,
             "PYTHONUTF8": "1",
         }
 
@@ -38,10 +40,10 @@ class PrintPrompt(unittest.TestCase):
 
     def cli(self, role, *extra, mode="in_process", out=None) -> subprocess.CompletedProcess:
         work = self.work(role)
-        argv = [CLI, "--runtime", "print_prompt", "--mode", mode, "--role", role, "--workdir", work]
-        argv += ["--out", out or os.path.join(work, "prompt.md"), "--input", INPUT, "--sid", SID]
+        args = ["--runtime", "print_prompt", "--mode", mode, "--role", role, "--workdir", work]
+        args += ["--out", out or os.path.join(work, "prompt.md"), "--input", INPUT, "--sid", SID]
         return subprocess.run(
-            [sys.executable, *argv, *extra],
+            [*argv(head()), *args, *extra],
             cwd=self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
@@ -85,6 +87,32 @@ class PrintPrompt(unittest.TestCase):
                 self.assertEqual((res.returncode, res.stdout), (0, want), res.stderr)
                 self.assertIn(STARTED, res.stderr.splitlines())
                 self.assertNotIn("delegate: deliverable", res.stderr)
+
+    def test_the_engineer_prompts_agent_pm_commands_run_behind_step_4s_prefix_only(self):
+        commands = sorted(set(AGENT_PM.findall(self.dry_run("engineer"))))
+        self.assertEqual(commands, [f"{REPO} status", f"{REPO} worktree"])
+        env = {"PATH": self.env["PATH"], "HOME": self.home}
+        for command in commands:
+            with self.subTest(command=command):
+                ok, bare = (
+                    subprocess.run(
+                        args,
+                        cwd=self.proj,
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        encoding="utf-8",
+                        timeout=60,
+                    )
+                    for args in (
+                        argv(f"{prefix()} {command} --help"),
+                        shlex.split(f"{command} --help"),
+                    )
+                )
+                self.assertEqual(ok.returncode, 0, ok.stderr)
+                self.assertTrue(ok.stdout.startswith(f"usage: repo.py {command.split()[-1]} "))
+                self.assertNotEqual(bare.returncode, 0)
+                self.assertIn("No module named 'agent_pm'", bare.stderr)
 
     def test_headless_exits_2_stdout_empty_nothing_started(self):
         res = self.cli("researcher", mode="headless", out="-")

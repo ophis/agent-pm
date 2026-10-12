@@ -1,21 +1,17 @@
-"""Run-side fixtures: ids, the hermetic config files config.load() reads, a Linear fake recording each call's identity,
-and the orchestrator log's readers."""
-
-from new.tests import hermetic
-from new.tests.unit.orchestrator.board_ids import HEADER, STATES, role
+"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear fake recording each
+call's identity, and the orchestrator log's readers."""
 
 import json
 import os
 import shutil
 import tempfile
-import unittest
 from datetime import datetime
 from unittest import mock
 
-import issues
-import linear
-import sessions
-import writeback
+from agent_pm_orchestrator import issues, linear, sessions, writeback
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator.board_ids import HEADER, STATES, role
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -161,13 +157,12 @@ class Gql:
         return {FIELDS[name]: {"success": True}}
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        home = hermetic.home(self)
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.local = os.path.join(home, "orchestrator-new.local.toml")
-        self.write(os.path.join(home, "core-new.local.toml"), CORE_LOCAL)
+        self.local = os.path.join(self.agent_pm, "orchestrator-new.local.toml")
+        self.write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
         self.write(self.local, local(self.work))
         self.rd = os.path.join(self.work, "work", ID)
         self.logs = os.path.join(self.work, "logs")

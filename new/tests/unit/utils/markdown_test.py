@@ -1,14 +1,14 @@
 """utils/markdown.py: unfenced lines and fenced blocks."""
 
-from new.tests import SRC  # noqa: F401
-
 import unittest
 
-from composer import base
-from utils.markdown import fenced, unfenced
+from agent_pm.composer import base
+from agent_pm.utils.markdown import fenced, unfenced
+
+from new.tests.case import Case
 
 
-class Unfenced(unittest.TestCase):
+class Unfenced(Case):
     def test_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
         for text, want in (
             (
@@ -24,7 +24,7 @@ class Unfenced(unittest.TestCase):
         self.assertFalse(hasattr(base, "unfenced"))
 
 
-class Fenced(unittest.TestCase):
+class Fenced(Case):
     def test_backtick_and_tilde_blocks_in_order_with_their_info_strings_stripped(self):
         text = "a\n```  agent-pm-outcome  \n{}\n```\nb\n~~~ js\nx\ny\n~~~\n```\n```\n"
         self.assertEqual(fenced(text), [("agent-pm-outcome", "{}"), ("js", "x\ny"), ("", "")])

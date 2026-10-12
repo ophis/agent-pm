@@ -1,14 +1,14 @@
-"""new/core/src/utils/repos.py: repo specs, origin URLs and the checkout path."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/repos.py: repo specs, origin URLs and the checkout path."""
 
 import os
 import unittest
 
-from utils import repos
+from agent_pm.utils import repos
+
+from new.tests.case import Case
 
 
-class Parse(unittest.TestCase):
+class Parse(Case):
     def test_forms(self):
         for spec, want in (
             ("o/n", ("github.com", "o", "n")),
@@ -50,7 +50,7 @@ class Parse(unittest.TestCase):
                 self.assertEqual((repos.url_slug(url), repos.origin(url)), (None, None))
 
 
-class Checkout(unittest.TestCase):
+class Checkout(Case):
     def test_checkout_is_the_path_rule(self):
         self.assertEqual(repos.checkout("/b", "o", "n", "TASK-1"), "/b/o/n-TASK-1")
         self.assertEqual(
