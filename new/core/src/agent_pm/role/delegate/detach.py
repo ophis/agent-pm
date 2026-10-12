@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 
 from agent_pm.role.delegate.plan import ConfigError, Plan
-from agent_pm.session import Events, api
+from agent_pm.session import SessionStatusLog, api
 from agent_pm.utils.files import append_line
 from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.text import printable
@@ -101,6 +101,6 @@ def detach(
 def outcome(events: str, driver: str, status: str | None) -> None:
     """Appends `HH:MM:SS <driver> outcome <status>`, None as `error`; an OSError is printed, never raised."""
     try:
-        Events(events).write(driver, "outcome", status or "error")
+        SessionStatusLog(events).write(driver, "outcome", status or "error")
     except OSError as e:
         print(printable(f"delegate: {e}"), file=sys.stderr, flush=True)

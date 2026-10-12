@@ -1,4 +1,4 @@
-"""Event v1, the callback line: one JSON line per harness event on a callback's stdin, holding only its kind's fields.
+"""DelegateEvent v1, the callback line: one JSON line per harness event on a callback's stdin, holding only its kind's fields.
 A wire object: outcome and limit stay plain dicts (an Outcome's and a Limit's fields)."""
 
 import json
@@ -14,13 +14,13 @@ _FIELDS = {
 _KIND = f"kind: want one of {', '.join(KINDS)}"
 
 
-class EventError(ValueError):
+class DelegateEventError(ValueError):
     pass
 
 
 def _check(ok: bool, message: str) -> None:
     if not ok:
-        raise EventError(message)
+        raise DelegateEventError(message)
 
 
 def _number(value) -> bool:
@@ -28,7 +28,7 @@ def _number(value) -> bool:
 
 
 @dataclass(frozen=True)
-class Event:
+class DelegateEvent:
     kind: str
     sid: str | None = None
     name: str | None = None
@@ -76,12 +76,12 @@ class Event:
 
     @classmethod
     def parse(cls, line: str) -> Self:
-        _check(isinstance(line, str), "Event line: want a str")
+        _check(isinstance(line, str), "DelegateEvent line: want a str")
         try:
             data = json.loads(line.removesuffix("\n"))
         except (ValueError, RecursionError) as e:
-            raise EventError(f"Event line: not JSON ({e})") from None
-        _check(isinstance(data, dict), "Event line: want a JSON object")
+            raise DelegateEventError(f"DelegateEvent line: not JSON ({e})") from None
+        _check(isinstance(data, dict), "DelegateEvent line: want a JSON object")
         _check(type(data.get("v")) is int and data["v"] == 1, "v: want 1")
         kind = data.get("kind")
         _check(kind in KINDS, _KIND)

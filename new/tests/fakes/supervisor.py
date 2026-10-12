@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-from agent_pm.session.events import Events
+from agent_pm.session.status_log import SessionStatusLog
 from agent_pm.utils.files import save
 
 
@@ -30,7 +30,7 @@ def main(folder: str, events: str) -> None:
         name = os.path.basename(folder)
         word = ("exited", rc) if meta["kind"] == "detach" else ("dead",)
         try:
-            Events(events).write(name, *word)
+            SessionStatusLog(events).write(name, *word)
         except OSError:
             pass
     save(os.path.join(folder, "rc"), str(rc))

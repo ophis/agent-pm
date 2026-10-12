@@ -1,24 +1,24 @@
-"""role/contract/event.py: the callback line, round trips and refusals; its exports."""
+"""role/contract/delegate_event.py: the callback line, round trips and refusals; its exports."""
 
 import json
 import unittest
 
 from agent_pm.role import contract, delegate
-from agent_pm.role.contract import KINDS, Event, EventError
+from agent_pm.role.contract import KINDS, DelegateEvent, DelegateEventError
 
 from new.tests.case import Case
 
 SID = "1234abcd-0000-4000-8000-000000000000"
-BEGUN = Event("begun", sid=SID)
-PROGRESS = Event("progress", name="start", text="planning: 修复\nthe work")
-FINISHED = Event(
+BEGUN = DelegateEvent("begun", sid=SID)
+PROGRESS = DelegateEvent("progress", name="start", text="planning: 修复\nthe work")
+FINISHED = DelegateEvent(
     "finished",
     returncode=0,
     outcome={"status": "done", "title": "T", "summary": "S", "questions": [], "files": ["a"]},
     limit={"resets_at": 1760000000.5},
 )
-FAILED = Event("finished", returncode=1, error="boom", limit={"resets_at": None})
-BARE = Event("finished", returncode=2)
+FAILED = DelegateEvent("finished", returncode=1, error="boom", limit={"resets_at": None})
+BARE = DelegateEvent("finished", returncode=2)
 LIMIT = 'limit: want null or {"resets_at": a number or null}'
 OUTCOME = "outcome: want null or an object with a str status"
 
@@ -29,8 +29,8 @@ def line(**data) -> str:
 
 class EventLine(Case):
     def refused(self, text, message):
-        with self.assertRaises(EventError) as caught:
-            Event.parse(text)
+        with self.assertRaises(DelegateEventError) as caught:
+            DelegateEvent.parse(text)
         self.assertEqual(str(caught.exception), message)
 
     def test_each_kind_round_trips(self):
@@ -38,8 +38,8 @@ class EventLine(Case):
             with self.subTest(event=event):
                 text = event.to_line()
                 self.assertEqual(text.splitlines(), [text])
-                self.assertEqual(Event.parse(text), event)
-                self.assertEqual(Event.parse(text + "\n"), event)
+                self.assertEqual(DelegateEvent.parse(text), event)
+                self.assertEqual(DelegateEvent.parse(text + "\n"), event)
 
     def test_the_line_holds_v_kind_and_only_the_kinds_fields(self):
         self.assertEqual(BEGUN.to_line(), f'{{"v":1,"kind":"begun","sid":"{SID}"}}')
@@ -51,7 +51,7 @@ class EventLine(Case):
         self.assertEqual(KINDS, ("begun", "progress", "finished"))
 
     def test_a_finished_line_without_the_optional_fields_takes_their_defaults(self):
-        self.assertEqual(Event.parse(line(v=1, kind="finished", returncode=2)), BARE)
+        self.assertEqual(DelegateEvent.parse(line(v=1, kind="finished", returncode=2)), BARE)
 
     def test_kind_must_be_known(self):
         for kind in ("started", None, ["begun"]):
@@ -80,8 +80,8 @@ class EventLine(Case):
             ({"error": "x"}, "error"),
             ({"outcome": {}}, "outcome"),
         ):
-            with self.subTest(field=field), self.assertRaises(EventError) as caught:
-                Event("begun", sid=SID, **kwargs)
+            with self.subTest(field=field), self.assertRaises(DelegateEventError) as caught:
+                DelegateEvent("begun", sid=SID, **kwargs)
             self.assertEqual(str(caught.exception), f"{field}: not a begun field")
 
     def test_each_kinds_fields_are_checked(self):
@@ -107,20 +107,20 @@ class EventLine(Case):
                 self.refused(line(v=1, **data), message)
 
     def test_not_a_json_object_is_refused(self):
-        self.refused("[1]", "Event line: want a JSON object")
-        with self.assertRaises(EventError) as caught:
-            Event.parse("{nope")
-        self.assertTrue(str(caught.exception).startswith("Event line: not JSON ("))
-        self.refused(b"{}", "Event line: want a str")
+        self.refused("[1]", "DelegateEvent line: want a JSON object")
+        with self.assertRaises(DelegateEventError) as caught:
+            DelegateEvent.parse("{nope")
+        self.assertTrue(str(caught.exception).startswith("DelegateEvent line: not JSON ("))
+        self.refused(b"{}", "DelegateEvent line: want a str")
 
 
 class Exports(Case):
     def test_contract_and_delegate_export_the_callback_event(self):
-        for name in ("Event", "EventError", "KINDS"):
+        for name in ("DelegateEvent", "DelegateEventError", "KINDS"):
             with self.subTest(name=name):
                 self.assertIn(name, contract.__all__)
-        self.assertIn("Event", delegate.__all__)
-        self.assertIs(delegate.Event, Event)
+        self.assertIn("DelegateEvent", delegate.__all__)
+        self.assertIs(delegate.DelegateEvent, DelegateEvent)
 
 
 if __name__ == "__main__":

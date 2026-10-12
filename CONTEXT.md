@@ -54,6 +54,14 @@ Where the session layer runs processes by name (e.g. in tmux sessions), keeping 
 **Record**:
 One JSON line naming a started thing (a worker, a role run, a pipeline) by its outermost starter: how to query it (its `ctl` command) and resume it (its `resume` command). In code: `new/core/src/agent_pm/utils/record.py`.
 
+**Session status log**:
+The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`. In code: `new/core/src/agent_pm/session/status_log.py`.
+_Avoid_: event
+
+**Delegate event**:
+The callback line a Delegate run emits: begun, progress, finished. In code: `new/core/src/agent_pm/role/contract/delegate_event.py`.
+_Avoid_: event
+
 **Attended run**:
 An agent run started by hand in tui mode so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
 

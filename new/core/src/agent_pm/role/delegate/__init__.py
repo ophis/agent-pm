@@ -1,9 +1,9 @@
 """The Delegate: runs one role as an agent session, its prompt and access from the Composer, its session from the
 Driver, read from its replies' progress marks and outcome block. Every check runs first (plan): a refusal is
-ConfigError, nothing started or written. Event: the callback line, not an adapter's or runner's event."""
+ConfigError, nothing started or written. DelegateEvent: the callback line, not an adapter's or runner's event."""
 
 from agent_pm.role.composer import RunConfig
-from agent_pm.role.contract import Event
+from agent_pm.role.contract import DelegateEvent
 from agent_pm.role.delegate.base import Delegate
 from agent_pm.role.delegate.outcome import STATUSES, InvalidOutcome, Outcome
 from agent_pm.role.delegate.plan import ConfigError, Plan, plan
@@ -33,5 +33,5 @@ __all__ = [
     "STATUSES",
     "Delegate",
     "RunConfig",
-    "Event",
+    "DelegateEvent",
 ]

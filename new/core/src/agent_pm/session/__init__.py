@@ -3,8 +3,8 @@ the ABCs Session and Host; `__all__` is its public API."""
 
 from agent_pm.session import api
 from agent_pm.session.base import Session
-from agent_pm.session.events import Events
 from agent_pm.session.host import Displayable, Host, HostProcess, NotDisplayable, Terminal
+from agent_pm.session.status_log import SessionStatusLog
 from agent_pm.session.types import ConfigError, DriverError, Usage
 
 __all__ = [
@@ -15,7 +15,7 @@ __all__ = [
     "Terminal",
     "Displayable",
     "NotDisplayable",
-    "Events",
+    "SessionStatusLog",
     "Usage",
     "DriverError",
     "ConfigError",

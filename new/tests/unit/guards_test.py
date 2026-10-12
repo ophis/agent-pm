@@ -1014,11 +1014,11 @@ class OrchestratorAbsent(Sample):
                     self.assertEqual(guard(root), [])
 
 
-class EventsFormat(Sample):
+class StatusLogFormat(Sample):
     CLOCK = 'CLOCK = "%H:%M:%S"\n'
 
     def test_the_real_tree_is_clean(self):
-        self.assertEqual(guards.events_format(NEW), [])
+        self.assertEqual(guards.status_log_format(NEW), [])
 
     def test_the_clock_in_a_core_or_linear_module_or_an_f_string(self):
         root = self.tree(
@@ -1030,9 +1030,9 @@ class EventsFormat(Sample):
                 f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
             }
         )
-        outside = "event line format outside session/events.py"
+        outside = "status log line format outside session/status_log.py"
         self.assertEqual(
-            guards.events_format(root),
+            guards.status_log_format(root),
             [
                 f"core/{PKG}/manager/y.py:3: {outside}",
                 f"core/{PKG}/manager/y.py:4: {outside}",
@@ -1041,16 +1041,16 @@ class EventsFormat(Sample):
             ],
         )
 
-    def test_events_py_tmux_host_and_files_outside_src_are_clean(self):
+    def test_status_log_py_tmux_host_and_files_outside_src_are_clean(self):
         root = self.tree(
             {
-                f"core/{PKG}/session/events.py": self.CLOCK,
+                f"core/{PKG}/session/status_log.py": self.CLOCK,
                 f"core/{PKG}/session/hosts/tmux/tmux_host.py": self.CLOCK,
                 "core/tests/x_test.py": self.CLOCK,
                 "tests/y_test.py": self.CLOCK,
             }
         )
-        self.assertEqual(guards.events_format(root), [])
+        self.assertEqual(guards.status_log_format(root), [])
 
 
 if __name__ == "__main__":

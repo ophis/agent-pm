@@ -1,5 +1,5 @@
-"""session/events.py: Events.line's format, clock and refusals; write's appends and refusals; a Roster rotation
-between writes loses no line."""
+"""session/status_log.py: SessionStatusLog.line's format, clock and refusals; write's appends and refusals; a Roster
+rotation between writes loses no line."""
 
 import os
 import stat
@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.manager import roster
-from agent_pm.session import Events
+from agent_pm.session import SessionStatusLog
 
 from new.tests.case import Case
 
@@ -17,16 +17,17 @@ AT = "12:00:00"
 
 class Line(Case):
     def test_a_fixed_at_joins_name_word_and_fields(self):
-        self.assertEqual(Events.line("w1", "dead", at=AT), "12:00:00 w1 dead")
+        self.assertEqual(SessionStatusLog.line("w1", "dead", at=AT), "12:00:00 w1 dead")
         self.assertEqual(
-            Events.line("w1", "exited", 7, "two words", at=AT), "12:00:00 w1 exited 7 two words"
+            SessionStatusLog.line("w1", "exited", 7, "two words", at=AT),
+            "12:00:00 w1 exited 7 two words",
         )
 
     def test_without_at_the_clock_is_read_once(self):
         with mock.patch.object(time, "strftime", return_value="12:34:56") as clock:
-            self.assertEqual(Events.line("w1", "done"), "12:34:56 w1 done")
-        clock.assert_called_once_with(Events.CLOCK)
-        self.assertEqual(Events.CLOCK, "%H:%M:%S")
+            self.assertEqual(SessionStatusLog.line("w1", "done"), "12:34:56 w1 done")
+        clock.assert_called_once_with(SessionStatusLog.CLOCK)
+        self.assertEqual(SessionStatusLog.CLOCK, "%H:%M:%S")
 
     def test_refuses_a_bad_name_word_field_or_at(self):
         cases = [
@@ -44,19 +45,19 @@ class Line(Case):
         for name, word, fields, at in cases:
             with self.subTest(name=name, word=word, fields=fields, at=at):
                 with self.assertRaises(ValueError):
-                    Events.line(name, word, *fields, at=at)
+                    SessionStatusLog.line(name, word, *fields, at=at)
 
     def test_refuses_an_empty_field_naming_it(self):
         for fields in (("",), ("ok", "")):
             with self.subTest(fields=fields), self.assertRaises(ValueError) as caught:
-                Events.line("w1", "done", *fields, at=AT)
+                SessionStatusLog.line("w1", "done", *fields, at=AT)
             self.assertIn("event field:", str(caught.exception))
 
 
 class Write(Case):
     def setUp(self):
         self.path = os.path.join(self.home, "events")
-        self.events = Events(self.path)
+        self.events = SessionStatusLog(self.path)
 
     def read(self, path=None):
         with open(path or self.path) as f:
@@ -87,9 +88,9 @@ class Rotation(Case):
     def test_a_roster_rotation_between_writes_loses_no_line(self):
         directory = os.path.join(self.agent_pm, "managers", "m1")
         roster.ensure(directory)
-        events = Events(roster.events(directory))
+        events = SessionStatusLog(roster.events(directory))
         lines = [
-            f"{Events.line('w1', 'done', f'{i:08d}', at=AT)}\n"
+            f"{SessionStatusLog.line('w1', 'done', f'{i:08d}', at=AT)}\n"
             for i in range(roster.EVENTS_MAX // 26 + 4)
         ]
         with open(events.path, "a") as f:

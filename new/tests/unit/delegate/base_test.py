@@ -52,12 +52,12 @@ CLASS_METHODS = {"attach", "usage", "roles", "resolve", "trusted_dirs"}
 
 class Exports(Case):
     def test_all_holds_the_new_names_each_bound(self):
-        for name in ("Delegate", "RunConfig", "Event"):
+        for name in ("Delegate", "RunConfig", "DelegateEvent"):
             with self.subTest(name=name):
                 self.assertIn(name, delegate.__all__)
         self.assertEqual([n for n in delegate.__all__ if not hasattr(delegate, n)], [])
         self.assertIs(delegate.RunConfig, composer.RunConfig)
-        self.assertIs(delegate.Event, contract.Event)
+        self.assertIs(delegate.DelegateEvent, contract.DelegateEvent)
 
     def test_no_concrete_implementation_is_exported(self):
         exported = [getattr(module, n) for module in (session, delegate) for n in module.__all__]

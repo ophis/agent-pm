@@ -15,7 +15,7 @@ pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
 modes_import_api(core) MODES never imports SESSION_API
 tmux_calls(core)      "tmux" only in TMUX_HOST
-events_format(new)    EVENT_CLOCK only in EVENTS_HOME
+status_log_format(new) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
                       src/ hold only their package
@@ -102,10 +102,10 @@ ORCH_SRC = f"src/{ORCH}/"
 ROOTS = (("core", CORE_PKG), ("linear-orchestrator", ORCH))
 CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
 SESSION_SRC = f"{CORE_TOP}{SESSION}/"
-EVENTS_HOME = f"{CORE_TOP}session/events.py"
-EVENT_CLOCK = "%H:%M:%S"
+STATUS_LOG_HOME = f"{CORE_TOP}session/status_log.py"
+STATUS_LOG_CLOCK = "%H:%M:%S"
 # until TASK-368
-EVENT_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
+STATUS_LOG_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
 COMMAND_SRC = (SESSION_SRC, f"{CORE_TOP}role/", f"{ROOTS[1][0]}/{ORCH_SRC}")
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
@@ -292,16 +292,16 @@ def tmux_calls(core: str) -> list[str]:
     return sorted(found)
 
 
-def events_format(new: str) -> list[str]:
+def status_log_format(new: str) -> list[str]:
     found = set()
     for top, _ in ROOTS:
         for rel, text in _files(os.path.join(new, top, "src"), ".py"):
             rel = f"{top}/src/{rel}"
-            if rel != EVENTS_HOME and rel not in EVENT_WRITERS:
+            if rel != STATUS_LOG_HOME and rel not in STATUS_LOG_WRITERS:
                 found.update(
-                    f"{rel}:{line}: event line format outside session/events.py"
+                    f"{rel}:{line}: status log line format outside session/status_log.py"
                     for line, s in _strings(ast.parse(text, rel))
-                    if EVENT_CLOCK in s
+                    if STATUS_LOG_CLOCK in s
                 )
     return sorted(found)
 

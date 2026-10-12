@@ -8,11 +8,11 @@ from agent_pm import session
 from agent_pm.session import (
     Displayable,
     DriverError,
-    Events,
     Host,
     HostProcess,
     NotDisplayable,
     Session,
+    SessionStatusLog,
     Terminal,
     Usage,
     api,
@@ -27,12 +27,12 @@ NAMES = (
     "Terminal",
     "Displayable",
     "NotDisplayable",
-    "Events",
+    "SessionStatusLog",
     "Usage",
     "DriverError",
     "ConfigError",
 )
-ALLOWED_CONCRETE = {Events, Usage}
+ALLOWED_CONCRETE = {SessionStatusLog, Usage}
 PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 ABSTRACT = {
     Session: {
