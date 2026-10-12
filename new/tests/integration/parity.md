@@ -5,7 +5,6 @@ Baseline: `origin/main` at `f1d0c595f03063034f77944332615dca2c082cfa`, `tests/in
 The new identity is one of:
 
 - new tests (aliases below) asserting the old behavior; the row names what changed on purpose and what they leave out;
-- `to port` (until TASK-357 ports it): the new code has the behavior, but only a unit test, or no test, asserts it;
 - `not ported: (a)`, `(b)`, `(c)` or `deleted`: its entry under [Not ported](#not-ported).
 
 | Alias | Module or class |
@@ -27,7 +26,6 @@ The new identity is one of:
 | F | `new.tests.integration.fake_claude_integration_test` |
 | L | `new.tests.integration.live_tmux_integration_test` |
 | C | `new.tests.integration.tmux.crew_integration_test` |
-| UR | `new.tests.unit.delegate.runner_test` |
 | OGH | `new.tests.integration.orchestrator.fake_gh_integration_test` |
 | OFL | `new.tests.integration.orchestrator.fake_linear_integration_test` |
 | OPE | `new.tests.integration.orchestrator.pm_engineer_integration_test.PmToEngineer` |
@@ -99,13 +97,13 @@ The new identity is one of:
 | `tests.integration.core.fake_claude_integration_test.PrintMode.test_stop_runs_once_before_the_result` | `not ported: deleted` ([entry](#deleted)) | |
 | `tests.integration.core.fake_claude_integration_test.PrintMode.test_hang_runs_no_stop` | `DCL.RunTest.test_a_silent_session_yields_idle_timeouts_until_stop_ends_it`; `CLI.Interrupt.test_interrupt_kills_a_hung_agent` | `hang`: the process lives on after its steps, no `result` line. Print mode's hooks: dropped (`PrintMode.test_stop_runs_once_before_the_result` under `Deleted`). |
 | `tests.integration.core.fake_claude_integration_test.PrintMode.test_a_read_is_an_assistant_line` | `not ported: deleted` ([entry](#deleted)) | |
-| `tests.integration.core.fake_claude_integration_test.Gate.test_interactive_parks_until_the_file_appears` | `to port` | The new fake gates any `--session-id` or `--resume` run, interactive too; `F.Gate.test_a_session_waits_for_its_gate_after_its_log_line` runs print mode only. Port into `F.Gate`: an interactive run parks after its log line, no transcript, until the gate file appears, then its turn runs. |
+| `tests.integration.core.fake_claude_integration_test.Gate.test_interactive_parks_until_the_file_appears` | `not ported: deleted` ([entry](#deleted)) | |
 | `tests.integration.core.fake_claude_integration_test.Gate.test_print_mode_parks_before_anything_is_said` | `F.Gate.test_a_session_waits_for_its_gate_after_its_log_line` | Parks after its log line with no transcript until the file appears, then runs; also a resume. |
-| `tests.integration.core.fake_claude_integration_test.Gate.test_no_hook_or_report_before_the_gate` | `to port` | Port into `F.Gate`: an interactive run with a UserPromptSubmit hook fires none before its gate opens, one after. The report half went with `report.py` (`Reports.*` under `Deleted`). |
-| `tests.integration.core.fake_claude_integration_test.Gate.test_an_existing_file_does_not_hold` | `to port` | Port into `F.Gate`: a gate file that exists before the start does not hold the run. |
+| `tests.integration.core.fake_claude_integration_test.Gate.test_no_hook_or_report_before_the_gate` | `not ported: deleted` ([entry](#deleted)) | |
+| `tests.integration.core.fake_claude_integration_test.Gate.test_an_existing_file_does_not_hold` | `not ported: deleted` ([entry](#deleted)) | |
 | `tests.integration.core.fake_claude_integration_test.Gate.test_no_gate_or_a_null_one_does_not_hold` | `F.Interactive.test_turns_from_stdin` | No gate: every F test without one runs at once. An explicit null is the scenario default (`fake_claude.DEFAULTS`), the same path. |
-| `tests.integration.core.fake_claude_integration_test.Gate.test_a_resume_without_its_transcript_fails_without_waiting` | `to port` | The new fake checks the transcript before the gate; `F.Interactive.test_resume_needs_the_transcript` sets no gate. Port into `F.Gate`: with a gate set, `--resume` without a transcript exits 1 at once with `No conversation found`. |
-| `tests.integration.core.fake_claude_integration_test.Gate.test_orphaned_at_the_gate_exits_1` | `to port` | `F.Interactive.test_orphaned_it_ends` covers an orphan waiting on stdin only. Port into `F.Gate`: orphaned at its gate, the fake exits 1 with `fake_claude.py: gate`, no transcript. |
+| `tests.integration.core.fake_claude_integration_test.Gate.test_a_resume_without_its_transcript_fails_without_waiting` | `not ported: deleted` ([entry](#deleted)) | |
+| `tests.integration.core.fake_claude_integration_test.Gate.test_orphaned_at_the_gate_exits_1` | `not ported: deleted` ([entry](#deleted)) | |
 | `tests.integration.core.fake_claude_integration_test.BadScenario.test_bad_turns_and_steps_exit_1` | `F.BadScenario.test_a_bad_step_or_value_exits_1_before_the_session`; `F.BadScenario.test_a_bad_interactive_step_exits_1_before_the_session` | Exit 1 before any session file. Its read-step cases went with the read step. |
 | `tests.integration.core.fake_claude_integration_test.BadScenario.test_a_gate_that_is_no_string_exits_1` | `F.BadScenario.test_a_bad_step_or_value_exits_1_before_the_session` | `{"gate": 5}`; one check covers every non-string (`fake_claude.CHECKS`). |
 | `tests.integration.core.fake_claude_integration_test.BadScenario.test_valid_hook_steps` | `F.Hooks.test_settings_without_usable_hooks`; `F.Hooks.test_payloads_and_order` | Hook steps in interactive turns, an empty later turn among them, are valid and exit 0. |
@@ -172,7 +170,7 @@ The `Interactive` and `AppServer` classes tested the old fake; their native beha
 |---|---|---|
 | `tests.integration.core.resume_integration_test.NeedsInput.test_the_answer_resumes_the_session` | `CLI.NeedsInput.test_the_answer_resumes_the_session` | Complete. |
 | `tests.integration.core.resume_integration_test.RolePicks.test_the_role_picks_and_a_resume_keeps_the_session` | `CLI.RolePicks.test_the_role_picks_and_a_resume_keeps_the_session`; `CR.RolePicks.test_the_role_picks_and_its_resume_prompt_too` | The run, its pick as progress, the resume in the same session, no missing mark, out (CLI); the task index in the prompt, no task's steps, the resume prompt (CR). |
-| `tests.integration.core.resume_integration_test.Draft.test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it` | `to port` | Only `UR.Start.test_a_resume_keeps_the_draft_its_session_wrote_to_out` keeps a draft at out through a resume; parts: the same deliverable file named on resume (`CR.Draft.test_a_new_run_and_its_resume_name_the_same_deliverable_file`), a killed session resumes (`DCL.RunTest.test_a_session_killed_outside_the_driver_ends_with_its_signal_and_resumes`). Port into `CLI`: the fake writes a draft to out and hangs; killing it exits 3 with `the client exited -9` and leaves the draft; the resume's deliverable replaces it. The resumed fake reading the draft (old read step) is gone. |
+| `tests.integration.core.resume_integration_test.Draft.test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it` | `CLI.Draft.test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it` | The fake writes a draft to out and hangs; killing it exits 3 with `the client exited -9` and leaves the draft; the resume's deliverable replaces it. Changed: the resumed fake read the draft first (the read step is gone); now the draft is still at out once the resume recorded its input, its client held at a gate. |
 
 ## tests.integration.core.team_dirs_integration_test
 
@@ -383,6 +381,7 @@ C runs crew's CLI as subprocesses on a private tmux server, the real Adapters ov
 - `tests.integration.core.fake_claude_integration_test.Files.test_a_failing_write_or_read_goes_on`: PR #166 dropped the fake's write and read steps (they served only the out-draft case); PR #171 re-added only `write`, for `deliverable_file`, without going on after a failure, and no read step ("the new fake has no read step").
 - `tests.integration.core.fake_claude_integration_test.PrintMode.test_stop_runs_once_before_the_result`: headless runs install no hooks (PR #172: "Headless installs no hooks"); `F.PrintMode.test_valid_steps` asserts print mode fires none.
 - `tests.integration.core.fake_claude_integration_test.PrintMode.test_a_read_is_an_assistant_line`: the read step (PR #166: it served only the out-draft case; PR #171: "the new fake has no read step").
+- `tests.integration.core.fake_claude_integration_test.Gate.test_interactive_parks_until_the_file_appears`, `Gate.test_no_hook_or_report_before_the_gate`, `Gate.test_an_existing_file_does_not_hold`, `Gate.test_a_resume_without_its_transcript_fails_without_waiting`, `Gate.test_orphaned_at_the_gate_exits_1`: the gate on an interactive run. The gate is orchestrator-only (PR #172: "the gate is orchestrator-only"), and no new test or flow gates an interactive run: `new/tests/integration/orchestrator/segments.py` gates router.py's headless runs (router `--tui`: TASK-332). Print mode's gate: `F.Gate.test_a_session_waits_for_its_gate_after_its_log_line`; the report half went with `report.py` (`Reports.*` above).
 - `tests.integration.core.fake_codex_integration_test.Interactive.test_unknown_option_or_resume_without_an_id_exits_2`: the old fake's parser; callers give the Driver a Spec, not CLI arguments (TASK-320, PR #181: "Legacy fake parser; the new entry point accepts Spec").
 - `tests.integration.core.fake_codex_integration_test.AppServer.test_only_config_and_feature_options`: the old fake's app-server parser (TASK-320, PR #181: "there is no public raw-argv catalog entry point"); K checks the generated app-server argv.
 - `tests.integration.tmux.crew_integration_test.Retile.test_restart_keeps_a_dragged_layout`: `crew restart` is close, `start(resume)`, `show`, so it opens a new pane that re-tiles (PR #187, Intentional behaviour changes: "`restart` opens a new pane, re-tiled into the grid, instead of reusing the same pane").
