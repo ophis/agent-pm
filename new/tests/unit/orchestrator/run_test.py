@@ -283,7 +283,7 @@ class Inner(Case):
         self.assertEqual(researcher, config.load().roles["researcher"].run)
         self.assertEqual(
             researcher.gate,
-            f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake",
+            f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake researcher",
         )
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 

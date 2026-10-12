@@ -20,11 +20,14 @@ Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes no
 """
 
 import argparse
+import contextlib
+import fcntl
 import functools
 import os
 import re
 import sys
-from datetime import timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
@@ -34,7 +37,10 @@ import sessions  # noqa: E402
 from driver import api  # noqa: E402
 from linear import (  # noqa: E402
     ISSUE_ID,
+    config_error,
     humans,
+    linear_error,
+    linear_gql,
     log,
     one_line,
     parse_time,
@@ -42,7 +48,7 @@ from linear import (  # noqa: E402
     task_group,
     team,
 )
-from runs import limits, note, runtime_of  # noqa: E402
+from runs import limits, note, parse_log, runtime_of, trim  # noqa: E402
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -54,6 +60,8 @@ MAX_WEEK = 100
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
+USAGE = "usage: router.py [--now] [--dry-run] [--issue ID] | --brake ROLE"
+FLAGS = {"--dry-run": "dry", "--now": "now"}
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 SESSIONS = "agent-pm-"
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
@@ -460,3 +468,188 @@ def begin(mode, issue, sid, role, task, runtime, runs):
         mode=mode,
         runtime=runtime,
     )
+
+
+@contextlib.contextmanager
+def lock(runs, dry):
+    if dry:
+        yield True
+        return
+    os.makedirs(os.path.dirname(runs), exist_ok=True)
+    with open(
+        os.path.join(os.path.dirname(runs), "router.lock"), "a"
+    ) as f:  # not inherited by children (PEP 446)
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            free = True
+        except BlockingIOError:
+            free = False
+        yield free
+
+
+def choose(board, gate, live_ids, full, counts):
+    for issue, sid in board.recover(live_ids):
+        if not board.available(issue, full):
+            continue
+        runtime = runtime_of(board.entries, sid)
+        if not gate.blocked(runtime, issue["identifier"]):
+            board.plan(("resume", issue, sid), counts)
+            return "resume", issue, sid, board.role(issue), None, runtime
+    if not (queue := board.queue(full)):
+        return None
+    board.plan(("new", len(queue)), counts)
+    if not (taken := board.take(full=full)):
+        board.say("skip", reason="nothing claimed")
+        return None
+    issue, task, role, runtime = taken
+    return "new", issue, str(uuid.uuid4()), role, task, runtime
+
+
+def tick(opts, cfg, gql, now, hour, start):
+    dry, runs = opts["dry"], cfg.runs_log
+    say = functools.partial(log, "router", dry=dry)
+    if not opts["now"] and not 1 <= hour <= 6:
+        if not dry:
+            return 0
+        say("skip", reason="outside hours")
+    with lock(runs, dry) as free:
+        if not free:
+            say("skip", reason=BUSY)
+            return 0
+        live = live_sessions(cfg.roles)
+        if live is None:
+            say("skip", reason="agent runs unknown")
+            return 0
+        full = full_roles(cfg.roles, live)
+        counts = {
+            r: f"{len(ids)}/{cfg.roles[r].max_runs}" for r, ids in sorted(live.items()) if ids
+        } or None
+        if len(full) == len(cfg.roles):
+            if dry:
+                say("skip", reason="all roles full", live=counts)
+            return 0
+        if not dry:
+            try:
+                trim(runs, now)
+            except Exception as e:
+                say("skip", reason="prune failed", error=one_line(e))
+        gate = Gate(runs, now, dry)
+        board = Board(gql, parse_log(runs), now, dry, cfg, gate)
+        live_ids = {i for ids in live.values() for i in ids}
+        run = choose(board, gate, live_ids, full, counts)
+        if run is None or dry:
+            return 0
+        a = begin(*run, runs)
+        try:
+            rc = start(a)
+        except (Exception, SystemExit) as e:
+            say("launch-error", a.issue, error=one_line(e))
+            return 0
+        say("launch", a.issue, exit=rc)
+        return 0
+
+
+def run_issue(opts, cfg, gql, now, start):
+    ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
+    stop = 0 if dry else 1
+    with lock(runs, dry) as free:
+        if not free:
+            log("router", "skip", ident, reason=BUSY)
+            print(f"router.py: {BUSY}; try again", file=sys.stderr)
+            return stop
+        live = live_sessions(cfg.roles)
+        if live is None:
+            print("router.py: agent runs unknown; try again", file=sys.stderr)
+            return stop
+        if role := next((r for r, ids in live.items() if ident in ids), None):
+            attach = api.attach_command(config.session(role, ident))
+            print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
+            return stop
+        entries = parse_log(runs)
+        board = Board(gql, entries, now, dry, cfg, None)
+        if issue := next(
+            (i for i in board.issues("in_progress") if i["identifier"] == ident), None
+        ):
+            sid = board.current_sid(issue)
+            if not board.settle(issue, sid, wait=False):
+                return stop
+            board.plan(("resume", issue, sid))
+            run = ("resume", issue, sid, board.role(issue), None, runtime_of(entries, sid))
+        elif board.is_blocked(ident) or not (taken := board.take(ident)):
+            return stop
+        else:
+            issue, task, role, runtime = taken
+            run = ("new", issue, str(uuid.uuid4()), role, task, runtime)
+        return 0 if dry else start(begin(*run, runs))
+
+
+def brake(role, cfg):
+    usage = read_usage(cfg.roles[role].run.runtime)
+    print(summary(usage))
+    return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
+
+
+def options(argv):
+    if "--brake" in argv:
+        ok = len(argv) == 2 and argv[0] == "--brake" and not argv[1].startswith("-")
+        return {"brake": argv[1], "dry": False, "now": False, "issue": None} if ok else None
+    opts = {"brake": None, "dry": False, "now": False, "issue": None}
+    i = 0
+    while i < len(argv):
+        a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
+        if a in FLAGS:
+            opts[FLAGS[a]] = True
+        elif a == "--issue" and opts["issue"] is None and value not in (None, "--issue", *FLAGS):
+            opts["issue"] = value
+            i += 1
+        else:
+            return None
+        i += 1
+    return None if opts["issue"] is not None and opts["now"] else opts
+
+
+def main(
+    argv,
+    *,
+    gql=linear_gql,
+    now=None,
+    config_path=config.CONFIG,
+    hour=None,
+    run=config.sh_run,
+    keychain=linear.has_key,
+    start=None,
+):
+    opts = options(argv)
+    if opts is None:
+        print(USAGE, file=sys.stderr)
+        return 2
+    if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
+        print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
+        return 2
+    os.environ["PATH"] = config.PATH
+    try:
+        cfg = config.load(path=config_path)
+    except config.ConfigError as e:
+        if not e.logs_dir:
+            print(e.msg, file=sys.stderr)
+            return 1
+        linear.use_logs(e.logs_dir)
+        return config_error("router", e, opts["dry"])
+    linear.use_logs(cfg.logs_dir)
+    if opts["brake"] is not None:
+        if opts["brake"] not in cfg.roles:
+            print(f"router.py: no role {opts['brake']}", file=sys.stderr)
+            return 2
+        return brake(opts["brake"], cfg)
+    gql = functools.partial(gql, service=cfg.harness_key)
+    now = now or datetime.now(UTC)
+    try:
+        if opts["issue"]:
+            return run_issue(opts, cfg, gql, now, start)
+        return tick(opts, cfg, gql, now, datetime.now().hour if hour is None else hour, start)
+    except linear.Unavailable as e:
+        return linear_error("router", e, opts["dry"])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
