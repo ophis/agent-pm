@@ -2,6 +2,8 @@
 adapter's package copied into it as src/adapters/fake/ and its table appended to the copy's config.toml, nothing else
 changed, runs a headless session through driver.api.start in an isolated child Python that sees only the copy. A table
 without its package, or a package without its table, fails there before anything starts."""
+from new.tests import CORE, fake_adapter
+
 import json
 import os
 import shutil
@@ -9,8 +11,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-
-from new.tests import CORE, fake_adapter
 
 TIMEOUT = 60   # seconds
 SKIP = shutil.ignore_patterns("__pycache__")

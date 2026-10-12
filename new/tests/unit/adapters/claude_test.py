@@ -1,6 +1,8 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadlessRun's launch and parse; ClaudeAdapter's hooks; the committed [adapters.claude] table. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+from new.tests import hermetic
+
 import json
 import os
 import shlex
@@ -25,8 +27,6 @@ from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless_run import ClaudeHeadlessRun
 from driver import registry
-
-from new.tests import hermetic
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'

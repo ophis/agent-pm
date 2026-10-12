@@ -1,4 +1,6 @@
 """new/core/src/driver/records.py: run.jsonl writes, reads and attempt completeness."""
+from new.tests import hermetic  # noqa: F401
+
 import errno
 import io
 import json
@@ -12,8 +14,6 @@ from contextlib import redirect_stderr
 from datetime import datetime
 
 from driver import records
-
-from new.tests import hermetic  # noqa: F401
 
 SID = "4f1c2b9e-0d6a-4c1e-9b7a-2e5f8a3d6c10"
 

@@ -1,3 +1,22 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.attended_test import Tmux
+from tests.unit.orchestrator.board_ids import STATES
+from tests.unit.orchestrator.run_fixtures import (
+    CONFIG,
+    ENGINEER,
+    ID,
+    KEY,
+    RESEARCHER,
+    SID,
+    UUID,
+    Gql,
+    forwarded,
+    node,
+)
+from tests.unit.orchestrator.run_fixtures import Base as RunBase
+
+import config
+
 import dataclasses
 import io
 import json
@@ -9,20 +28,14 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import STATES
-from tests.unit.orchestrator.run_fixtures import (CONFIG, ENGINEER, ID, KEY, RESEARCHER, SID, UUID, Base as RunBase,
-                                                  Gql, forwarded, node)
-from tests.unit.orchestrator.attended_test import Tmux
-import config
 import attended
+import compose
+import drive
 import router
 import run
 import sessions
 import writeback
 from clients import claude as claude_client
-import compose
-import drive
 
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
 DONE = {"status": "done", "title": "TASK-7: Session registry", "summary": "Opened the PR.", "url": PR}

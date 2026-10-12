@@ -1,12 +1,12 @@
+from tests import hermetic
+from tests.integration.core import live_tmux
+
 import os
 import shutil
 import stat
 import subprocess
 import unittest
 from unittest import mock
-
-from tests import hermetic
-from tests.integration.core import live_tmux
 
 
 class Live(unittest.TestCase):

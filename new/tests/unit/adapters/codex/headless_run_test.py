@@ -1,9 +1,9 @@
+from new.tests.unit.adapters.codex.support import NATIVE, Base
+
 import json
 from datetime import UTC, datetime
 
 from adapters.base import Activity, ConfigError, LimitHit, Reply, SessionBound, Stderr, TurnEnd
-
-from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 
 class HeadlessRunTest(Base):

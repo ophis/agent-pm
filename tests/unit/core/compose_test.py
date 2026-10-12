@@ -1,3 +1,5 @@
+from tests import ROOT, hermetic
+
 import glob
 import io
 import os
@@ -12,12 +14,12 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from unittest import mock
 
-from tests import ROOT, hermetic
 import clients
-from clients.claude import ClaudeClient
-from clients.skill import SkillClient
 import compose
 import drive
+from clients.claude import ClaudeClient
+from clients.skill import SkillClient
+
 
 class Plain(clients.Client):
     def __init__(self, handover="", methods=None, tasks=None, inline_workdir="", inline_input=""):

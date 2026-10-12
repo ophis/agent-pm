@@ -1,9 +1,9 @@
+from new.tests import CORE, NEW, guards
+
 import os
 import tempfile
 import unittest
 from pathlib import Path
-
-from new.tests import CORE, NEW, guards
 
 
 class UtilsImportsTest(unittest.TestCase):

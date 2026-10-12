@@ -1,3 +1,8 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import HEADER, STATES, role
+
+import config
+
 import json
 import os
 import subprocess
@@ -6,9 +11,6 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import HEADER, STATES, role
-import config
 import inputs
 import issues
 import linear

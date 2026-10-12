@@ -1,3 +1,20 @@
+from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests.integration.orchestrator.flow_fixtures import (
+    ACCOUNTS,
+    HARNESS_EMAIL,
+    HUMAN,
+    MANAGER,
+    PRD_DIR,
+    PROJECT,
+    RESEARCH_DIR,
+    TIMEOUT,
+    Flow,
+    fake_linear,
+    live_tmux,
+)
+
+import config
+
 import contextlib
 import copy
 import json
@@ -6,19 +23,15 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
-import config
 import attended
 import drive
 import linear
 import roster
 import router
 import sessions
-from tests.integration.orchestrator.flow_fixtures import (ACCOUNTS, HARNESS_EMAIL, HUMAN, MANAGER, PRD_DIR, PROJECT,
-                                                          RESEARCH_DIR, TIMEOUT, Flow, fake_linear, live_tmux)
 
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}

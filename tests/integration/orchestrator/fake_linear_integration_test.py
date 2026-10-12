@@ -1,3 +1,7 @@
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator import fake_linear
+from tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
+
 import functools
 import os
 import time
@@ -5,19 +9,16 @@ import unittest
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
-import linear
 import issues
+import linear
 import promote
 import prune
 import router
 import sessions
 import writeback
-from tests.integration.orchestrator import fake_linear
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"

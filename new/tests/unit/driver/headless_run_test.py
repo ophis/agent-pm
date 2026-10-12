@@ -1,5 +1,7 @@
 """new/core/src/driver/modes/headless_run.py: a HeadlessRun's command on pipes, its process group's kill, bounded waits
 and probe(), over real Python children."""
+from new.tests import hermetic  # noqa: F401
+
 import json
 import os
 import signal
@@ -15,8 +17,6 @@ from unittest import mock
 from adapters.base import Adapter, HeadlessRun, Launch, Reply, Stderr
 from driver.modes import headless_run
 from driver.modes.headless_run import HeadlessMode
-
-from new.tests import hermetic  # noqa: F401
 
 WAIT = 10           # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2   # probe()'s timeout where it must pass, in seconds

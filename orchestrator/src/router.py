@@ -27,23 +27,51 @@ import re
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import (LOCAL, PATH, PROJECTS, ROOT, RUNS_LOG, RUNS_DIR, TASKS, UUID_RE, load_config, role_for,  # noqa: E402
-                    run_dir, runnable, session, sh_run, stage_order, transcript)
+from config import (  # noqa: E402
+    LOCAL,
+    PATH,
+    PROJECTS,
+    ROOT,
+    RUNS_DIR,
+    RUNS_LOG,
+    TASKS,
+    UUID_RE,
+    load_config,
+    role_for,
+    run_dir,
+    runnable,
+    session,
+    sh_run,
+    stage_order,
+    transcript,
+)
+
 import attended  # noqa: E402
+import drive  # noqa: E402
 import inputs  # noqa: E402
 import issues  # noqa: E402
 import linear  # noqa: E402
-import target  # noqa: E402
-import writeback  # noqa: E402
-from linear import (CONFIG_ERRORS, ISSUE_ID, config_error, humans, linear_gql, log, one_line, parse_time,  # noqa: E402
-                    role_ids, task_group, team)
-import drive  # noqa: E402
 import roster  # noqa: E402
+import target  # noqa: E402
 import tmux_host  # noqa: E402
+import writeback  # noqa: E402
+from linear import (  # noqa: E402
+    CONFIG_ERRORS,
+    ISSUE_ID,
+    config_error,
+    humans,
+    linear_gql,
+    log,
+    one_line,
+    parse_time,
+    role_ids,
+    task_group,
+    team,
+)
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)

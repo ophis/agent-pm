@@ -1,3 +1,5 @@
+from tests.integration.core import fake_claude
+
 import glob
 import json
 import os
@@ -7,8 +9,6 @@ import sys
 import tempfile
 import time
 import unittest
-
-from tests.integration.core import fake_claude
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

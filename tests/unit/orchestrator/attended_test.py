@@ -1,8 +1,10 @@
+from tests import hermetic  # noqa: F401
+
 import os
 import subprocess
 import unittest
 from unittest import mock
-from tests import hermetic  # noqa: F401
+
 import attended
 import drive
 import tmux_host

@@ -1,3 +1,8 @@
+from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests.unit.orchestrator.board_ids import STATES, TEAM
+
+import config
+
 import functools
 import hashlib
 import io
@@ -10,13 +15,10 @@ import time
 import urllib.error
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
-from tests.unit.orchestrator.board_ids import STATES, TEAM
-import config
 import issues
 import linear
 import promote

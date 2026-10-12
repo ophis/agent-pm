@@ -9,15 +9,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-import attended  # noqa: E402
-import router  # noqa: E402
-import sessions  # noqa: E402
-import writeback  # noqa: E402
 from config import PATH, ROOT, UUID_RE, repo_slug, run_dir  # noqa: E402
-from linear import ISSUE_ID, linear_gql, log, one_line  # noqa: E402
+
+import attended  # noqa: E402
 import clients  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
+import router  # noqa: E402
+import sessions  # noqa: E402
+import writeback  # noqa: E402
+from linear import ISSUE_ID, linear_gql, log, one_line  # noqa: E402
 
 
 def inner(a, *, layout, gql, popen, root):

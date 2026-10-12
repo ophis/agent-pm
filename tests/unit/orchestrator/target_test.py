@@ -1,3 +1,7 @@
+from tests import hermetic  # noqa: F401
+
+import config
+
 import json
 import os
 import shutil
@@ -5,11 +9,11 @@ import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
-from tests import hermetic  # noqa: F401
+
 import issues
-import config
 import repo
 import target
+
 
 def ok(stdout="", code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)

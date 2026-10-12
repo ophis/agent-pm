@@ -1,3 +1,6 @@
+from new.tests import NEW
+from new.tests.integration.adapters.codex import fake_codex
+
 import dataclasses
 import json
 import os
@@ -24,9 +27,6 @@ from adapters.base import (
 )
 from adapters.codex import CodexAdapter
 from driver import api, records, registry
-
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_codex
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

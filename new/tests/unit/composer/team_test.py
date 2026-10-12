@@ -1,5 +1,7 @@
 """composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
 TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
+from new.tests import hermetic
+
 import os
 import re
 import tempfile
@@ -19,8 +21,6 @@ from composer.teams import (
     team_dirs,
     team_paths,
 )
-
-from new.tests import hermetic
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +

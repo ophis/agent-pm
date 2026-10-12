@@ -1,3 +1,13 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator import promote_test as tp
+from tests.unit.orchestrator.attended_test import Tmux
+from tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
+from tests.unit.orchestrator.board_ids import TEAM, team_node
+from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
+from tests.unit.orchestrator.run_fixtures import logged, show
+
+import config
+
 import ast
 import io
 import json
@@ -11,17 +21,10 @@ from datetime import timedelta
 from functools import partial
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY, TEAM, team_node
-import config
 import linear
 import promote
 import prune
 import repo
-from tests.unit.orchestrator import promote_test as tp
-from tests.unit.orchestrator.attended_test import Tmux
-from tests.unit.orchestrator.run_fixtures import logged, show
-from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
 
 NOW = tp.NOW
 STATE_IDS = {"Done": IDS_BY_KEY["done"], "Canceled": IDS_BY_KEY["canceled"], "In Progress": IDS_BY_KEY["in_progress"]}

@@ -1,3 +1,5 @@
+from new.tests import NEW
+
 import os
 import subprocess
 import tempfile
@@ -6,8 +8,6 @@ from pathlib import Path
 from unittest import mock
 
 from utils.paths import real_dirs, temp_dirs, under
-
-from new.tests import NEW
 
 
 class PathsTest(unittest.TestCase):

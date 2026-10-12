@@ -1,3 +1,5 @@
+from tests import ROOT, hermetic
+
 import dataclasses
 import errno
 import io
@@ -20,17 +22,16 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 
-from tests import ROOT, hermetic
 import clients
-from clients.claude import ClaudeClient
-from clients.skill import SkillClient
-from clients import claude as claude_client
 import compose
 import drive
 import report
 import roster
 import tmux_host
+from clients import claude as claude_client
 from clients import codex
+from clients.claude import ClaudeClient
+from clients.skill import SkillClient
 
 CORE = os.path.join(ROOT, "core")
 SID = "11111111-2222-3333-4444-555555555555"

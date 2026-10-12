@@ -1,3 +1,5 @@
+from tests import hermetic
+
 import contextlib
 import datetime
 import errno
@@ -14,7 +16,6 @@ import types
 import unittest
 import unittest.mock
 
-from tests import hermetic
 import roster
 
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3"}

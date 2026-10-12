@@ -1,12 +1,12 @@
 """A headless run's prompt and access intent, composed in a child process (child.Case) as its caller would for a new run
 and a resume."""
+from new.tests import NEW
+from new.tests.integration.composer import child
+
 import os
 import unittest
 
 from composer.prompt import RESUME
-
-from new.tests import NEW
-from new.tests.integration.composer import child
 
 TASKS = os.path.join(NEW, "core", "team", "tasks")
 

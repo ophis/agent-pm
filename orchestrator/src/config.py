@@ -18,10 +18,10 @@ if os.environ.get("AGENT_PM_PATH"):
 # Module names this reserves: CLAUDE.md › Architecture (Imports).
 sys.path.insert(0, os.path.join(CORE, "src"))
 import clients  # noqa: E402
-from clients import claude as claude_client  # noqa: E402
 import compose  # noqa: E402
 import drive  # noqa: E402
 import repo  # noqa: E402
+from clients import claude as claude_client  # noqa: E402
 
 
 def _overlap(a, b):

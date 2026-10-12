@@ -1,3 +1,6 @@
+from tests.integration.core import fake_claude, fake_codex, live_tmux
+from tests.integration.tmux.crew_integration_test import CREW, MANAGER, Live, has_pair, is_event
+
 import json
 import os
 import re
@@ -6,9 +9,7 @@ import stat
 import sys
 import unittest
 
-from tests.integration.core import fake_claude, fake_codex, live_tmux
-from tests.integration.tmux.crew_integration_test import CREW, MANAGER, Live, has_pair, is_event
-import crew   # after crew_integration_test, which imports tests/hermetic.py first
+import crew  # after crew_integration_test, which imports tests/hermetic.py first
 
 NOTIFY = 'tui.notification_method="bel"'
 HOOKED = ("SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt")

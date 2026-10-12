@@ -1,7 +1,7 @@
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 PATH = Path(__file__).resolve().parents[3] / ".github" / "tmux_shards.py"
 spec = importlib.util.spec_from_file_location("tmux_shards", PATH)

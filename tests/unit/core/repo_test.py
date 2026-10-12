@@ -1,3 +1,5 @@
+from tests import hermetic
+
 import io
 import json
 import os
@@ -8,7 +10,6 @@ import threading
 import unittest
 import unittest.mock
 
-from tests import hermetic
 import repo
 import tmux_host
 

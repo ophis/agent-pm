@@ -1,14 +1,14 @@
 """The Composer in a child process: `python3 -I` with only new/core/src on its sys.path, the test's own HOME (its
 ~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
 agent run as its caller (the Delegate) would."""
+from new.tests import SRC, hermetic
+
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-
-from new.tests import SRC, hermetic
 
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nsys.path.insert(0, sys.argv[1])\nimport composer\n"

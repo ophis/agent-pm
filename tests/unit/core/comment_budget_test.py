@@ -2,10 +2,10 @@ import contextlib
 import importlib.util
 import io
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 PATH = Path(__file__).resolve().parents[3] / ".github" / "comment_budget.py"

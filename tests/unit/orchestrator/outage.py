@@ -1,10 +1,11 @@
+from tests import hermetic  # noqa: F401
+
 import io
 import os
 import urllib.error
 from types import SimpleNamespace
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
 import linear
 
 FAILURES = {  # factories: a fresh exception per use

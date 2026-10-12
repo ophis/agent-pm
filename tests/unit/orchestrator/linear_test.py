@@ -1,3 +1,9 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
+from tests.unit.orchestrator.outage import FAILURES, failing
+
+import config
+
 import http.client
 import io
 import json
@@ -12,11 +18,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
-import config
 import linear
-from tests.unit.orchestrator.outage import FAILURES, failing
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"

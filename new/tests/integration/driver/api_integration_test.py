@@ -3,6 +3,8 @@ streamed to the Driver's Exited and the run records (acceptance), the idle timer
 the launch's environment; then stop() of a process group and a process that outlives its pipes. The fake adapter, a
 subclass whose launch takes env, unset and cwd from its config, and one whose runtime is this Python running its
 config's script are registered in-process (sys.modules) with their tables given to registry.configure."""
+from new.tests import fake_adapter, hermetic
+
 import dataclasses
 import io
 import json
@@ -30,8 +32,6 @@ from adapters.base import (
     TurnEnd,
 )
 from driver import api, records, registry
-
-from new.tests import fake_adapter, hermetic
 
 WAIT = 20      # upper bound on any wait, in seconds
 IDLE = 0.3     # idle_timeout, in seconds

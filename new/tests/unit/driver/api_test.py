@@ -2,6 +2,8 @@
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
 usage()'s probe is headless_run.probe patched, but for a spawn error."""
+from new.tests import fake_adapter, hermetic
+
 import json
 import os
 import stat
@@ -16,8 +18,6 @@ from unittest import mock
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, records, registry
-
-from new.tests import fake_adapter, hermetic
 
 WAIT = 10   # upper bound on any wait, in seconds
 

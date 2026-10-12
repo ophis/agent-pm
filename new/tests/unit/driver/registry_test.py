@@ -1,6 +1,8 @@
 """new/core/src/driver/registry.py: config merge, the [adapters.<name>] tables, their per-process cache and Adapter
 loading. Adapter packages are registered in sys.modules or the import system only for the test's span; the registry
 itself is never patched, except a wrap counting its file reads. Each test drops the cache at its end."""
+from new.tests import CORE, SRC, fake_adapter, hermetic
+
 import importlib.abc
 import importlib.util
 import os
@@ -13,8 +15,6 @@ from unittest import mock
 
 from adapters.base import Adapter, ConfigError
 from driver import registry
-
-from new.tests import CORE, SRC, fake_adapter, hermetic
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"

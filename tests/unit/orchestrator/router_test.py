@@ -1,3 +1,37 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.attended_test import Tmux
+from tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
+from tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
+from tests.unit.orchestrator.board_ids import role as role_table
+from tests.unit.orchestrator.linear_test import Stderr
+from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
+from tests.unit.orchestrator.run_fixtures import CONFIG as RUN_CONFIG
+from tests.unit.orchestrator.run_fixtures import (
+    DESIGN_LISTING,
+    ENG_RUN,
+    ENGINEER,
+    ID,
+    INPUT,
+    KEY,
+    LISTING,
+    LS_REMOTE,
+    PM,
+    PROJECT,
+    RESEARCHER,
+    SID,
+    USER_NOTE,
+    UUID,
+    Gql,
+    forwarded,
+    logged,
+    node,
+    res,
+    show,
+)
+from tests.unit.orchestrator.run_fixtures import Base as RunBase
+
+import config
+
 import argparse
 import contextlib
 import fcntl
@@ -12,29 +46,19 @@ import tempfile
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator.board_ids import (ACCOUNTS, HEADER, STATES as IDS_BY_KEY, TASK_GROUP, TEAM,
-                                               role as role_table, team_node)
-from tests.unit.orchestrator.run_fixtures import (CONFIG as RUN_CONFIG, DESIGN_LISTING, ENG_RUN, ENGINEER, ID, INPUT,
-                                                  KEY, LISTING, LS_REMOTE, PM, PROJECT, RESEARCHER, SID, USER_NOTE,
-                                                  UUID, Base as RunBase, Gql, forwarded, logged, node, res, show)
-from tests.unit.orchestrator.attended_test import Tmux
-from tests.unit.orchestrator.linear_test import Stderr
-from tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
-import config
 import attended
+import compose
+import drive
 import inputs
 import issues
 import linear
-import router
-import target
-import compose
-import drive
 import repo
 import roster
+import router
+import target
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 AGENT, USER = "agent", "user"

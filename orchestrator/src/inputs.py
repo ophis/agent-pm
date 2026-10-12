@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import issues  # noqa: E402
 from config import TASKS, sh_run  # noqa: E402
+
+import issues  # noqa: E402
 from linear import parse_time  # noqa: E402
 from repo import SHORT, err_text  # noqa: E402
 from target import pr_title  # noqa: E402

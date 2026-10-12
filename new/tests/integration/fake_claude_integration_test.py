@@ -1,13 +1,13 @@
 """new/tests/fake_claude.py run as a process in print mode (its docstring: the format): a bad scenario exits 1 before
 any session file or output; valid steps print their stream-json lines."""
+from new.tests import fake_claude
+
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-
-from new.tests import fake_claude
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

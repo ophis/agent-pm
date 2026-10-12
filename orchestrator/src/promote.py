@@ -4,13 +4,24 @@ import hashlib
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
+
 import linear  # noqa: E402
-from linear import CONFIG_ERRORS, config_error, linear_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
+from linear import (  # noqa: E402
+    CONFIG_ERRORS,
+    config_error,
+    linear_error,
+    linear_gql,
+    log,
+    one_line,
+    parse_time,
+    role_ids,
+    team,
+)
 
 HELP = """Promote issues in Handoff to the next role.
 

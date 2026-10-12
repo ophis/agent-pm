@@ -1,3 +1,9 @@
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator import board_ids
+from tests.unit.orchestrator.run_fixtures import logged, show
+
+import config
+
 import hashlib
 import json
 import os
@@ -6,14 +12,11 @@ import tempfile
 import unittest
 from dataclasses import replace
 from unittest import mock
-from tests import hermetic  # noqa: F401
-from tests.unit.orchestrator import board_ids
+
+import drive
 import issues
-import config
 import linear
 import writeback
-import drive
-from tests.unit.orchestrator.run_fixtures import logged, show
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

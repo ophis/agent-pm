@@ -1,3 +1,6 @@
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
+
 import contextlib
 import fcntl
 import hashlib
@@ -14,11 +17,9 @@ import time
 import unittest
 from unittest import mock
 
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
 from clients import _codex_worker, codex
-from clients.claude import ClaudeClient
 from clients.base import Client, SessionInfo, WorkerSpec
+from clients.claude import ClaudeClient
 from compose import ConfigError
 
 

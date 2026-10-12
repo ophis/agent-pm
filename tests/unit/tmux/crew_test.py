@@ -1,3 +1,6 @@
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
+
 import contextlib
 import errno
 import fcntl
@@ -17,8 +20,6 @@ import uuid
 from types import MappingProxyType
 from unittest import mock
 
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
 import crew
 from clients.claude import ClaudeClient
 from clients.codex import CodexClient

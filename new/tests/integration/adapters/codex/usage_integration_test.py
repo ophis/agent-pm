@@ -1,3 +1,6 @@
+from new.tests.integration.adapters.codex import fake_app_server
+from new.tests.unit.adapters.codex.support import Base
+
 import json
 import os
 import shlex
@@ -7,9 +10,6 @@ from unittest import mock
 
 from adapters.base import Usage
 from driver import api, registry
-
-from new.tests.integration.adapters.codex import fake_app_server
-from new.tests.unit.adapters.codex.support import Base
 
 
 class UsageIntegrationTest(Base):

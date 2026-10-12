@@ -1,14 +1,17 @@
+from tests import hermetic  # noqa: F401
+
+import config
+
 import json
 import os
 import re
 import unittest
 from types import SimpleNamespace
-from tests import hermetic  # noqa: F401
-import inputs
-import issues
-import config
+
 import clients
 import compose
+import inputs
+import issues
 import repo
 import target
 

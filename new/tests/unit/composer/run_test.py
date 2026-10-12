@@ -1,6 +1,9 @@
 """composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and Validate tests, less
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
+from new.tests import SRC, hermetic
+from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
+
 import inspect
 import os
 import tempfile
@@ -22,9 +25,6 @@ from composer.run import (
     trusted_dirs,
 )
 from composer.teams import team
-
-from new.tests import SRC, hermetic
-from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 
 CONFIG = """\
 tier = 2

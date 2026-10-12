@@ -1,5 +1,7 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage and SessionStatus, Adapter,
 HeadlessRun and TuiRun, through stub subclasses; nothing starts a process."""
+from new.tests import hermetic  # noqa: F401
+
 import dataclasses
 import typing
 import unittest
@@ -28,8 +30,6 @@ from adapters.base import (
     TurnEnd,
     Usage,
 )
-
-from new.tests import hermetic  # noqa: F401
 
 
 class StubAdapter(Adapter):

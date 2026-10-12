@@ -1,4 +1,6 @@
 """new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped)."""
+from new.tests import CORE, hermetic
+
 import io
 import json
 import os
@@ -10,8 +12,6 @@ import unittest
 import unittest.mock
 
 import repo
-
-from new.tests import CORE, hermetic
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40

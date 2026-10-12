@@ -6,10 +6,10 @@ per-file-target-version = { "core/src/tmux_host.py" = "py39" }
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
 
-[tool.ruff.lint.per-file-ignores]
-# tests/hermetic.py must import before the code under test: it sets HOME and patches at import
-"tests/**" = ["I001"]
-# root CLAUDE.md: config imports before any core module (it puts core/src on sys.path)
-"orchestrator/src/**" = ["I001"]
+[tool.ruff.lint.isort]
+# Import side effects order these first: hermetic (tests/, new/tests/) sets HOME before code under test,
+# config puts core/src on sys.path (root CLAUDE.md); the ticket removing import side effects drops them
+sections = { hermetic = ["tests", "new.tests"], config = ["config"] }
+section-order = ["future", "hermetic", "config", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.format]

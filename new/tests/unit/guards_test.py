@@ -1,11 +1,11 @@
 """new/tests/guards.py: each guard on the real tree, and on violating samples written to temp trees."""
+from new.tests import CORE, NEW, SRC, guards
+
 import importlib
 import os
 import sys
 import tempfile
 import unittest
-
-from new.tests import CORE, NEW, SRC, guards
 
 OLD = "/".join(("core", "src"))
 

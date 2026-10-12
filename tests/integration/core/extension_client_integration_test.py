@@ -1,3 +1,5 @@
+from tests.integration.core import live_tmux
+
 import json
 import os
 import shutil
@@ -6,8 +8,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-from tests.integration.core import live_tmux
 
 CORE = Path(__file__).resolve().parents[3] / "core"
 MANAGER = "mgr"

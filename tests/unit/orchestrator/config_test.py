@@ -1,3 +1,8 @@
+from tests import ROOT, hermetic
+from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+
+import config
+
 import json
 import os
 import re
@@ -10,14 +15,11 @@ import tomllib
 import unittest
 from unittest import mock
 
-from tests import ROOT, hermetic
-from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
-import config
 import clients
-from clients.claude import ClaudeClient
-from clients import claude as claude_client
 import drive
 import repo
+from clients import claude as claude_client
+from clients.claude import ClaudeClient
 
 BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
 

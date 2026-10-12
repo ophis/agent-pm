@@ -1,11 +1,11 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
+from new.tests import SRC
+
 import os
 import unittest
 
 import repo
 from composer import base
-
-from new.tests import SRC
 
 
 class Paths(unittest.TestCase):
