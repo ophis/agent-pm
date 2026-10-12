@@ -1048,10 +1048,10 @@ class Checkout(Case):
                     "`Checkout:`",
                     prompt,
                 )
-                for cmd, base in (("worktree", ""), ("status", "[--base <Base:>] ")):
+                for cmd in ("worktree", "status"):
                     self.assertIn(
                         f"python3 -P -m agent_pm.agent_tools.repo {cmd} --dir <Workdir>/src --branch <branch> "
-                        f"[--name <checkout>] {base}<repo>`",
+                        "[--name <checkout>] [--base <Base:>] <repo>`",
                         prompt,
                     )
 

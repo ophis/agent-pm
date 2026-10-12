@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's branch.
 
-repo.py worktree --dir DIR --branch B [--name SLUG] REPO
+repo.py worktree --dir DIR --branch B [--name SLUG] [--base BASE] REPO
     prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
     no error
 repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
@@ -13,11 +13,11 @@ SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
 blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else tracking origin/B, else new from
-origin/<default>.
+origin/BASE (origin/<default> when BASE is omitted).
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
-Exits 2 when REPO, B, SLUG or status's `base` is invalid or unusable (B the default branch or checked out elsewhere), 1
-on any other failure.
+Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), or BASE syntax
+is invalid. Exits 1 on other failures, including a missing origin/BASE.
 Errors mask URL userinfo.
 """
 
@@ -158,6 +158,7 @@ def worktree(
     run: Runner = sh,
     temp=None,
     links=frozenset(),
+    base_branch: str | None = None,
 ) -> dict:
     # a local clone in a temp dir is refused: prune treats clones there as untrusted
     check_branch(branch)
@@ -186,6 +187,9 @@ def worktree(
         raise Invalid(f"{repo.slug}: unsafe default branch name")
     if branch == default:
         raise Invalid(f"{branch} is the default branch; build on another")
+    onto = base_branch if base_branch is not None else default
+    if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
+        raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     add = clone is not None and not exists
     # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move local branches.
     if exists:
@@ -205,7 +209,7 @@ def worktree(
         elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
             opts, start = ["--track", "-b", branch], f"origin/{branch}"
         else:
-            opts, start = ["--no-track", "-b", branch], f"origin/{default}"
+            opts, start = ["--no-track", "-b", branch], f"origin/{onto}"
         if add:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
             # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds our own path
@@ -394,15 +398,21 @@ def main(
         p.add_argument("--dir", required=True, action=Once)
         p.add_argument("--branch", required=True, action=Once)
         p.add_argument("--name", action=Once)
-        if cmd == "status":
-            p.add_argument("--base", action=Once)
+        p.add_argument("--base", action=Once)
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
         cfg = read_config(config, local)
         if a.cmd == "worktree":
             r = worktree(
-                a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg)
+                a.repo,
+                a.branch,
+                a.dir,
+                slug=a.name,
+                run=run,
+                temp=temp,
+                links=trusted_dirs(cfg),
+                base_branch=a.base,
             )
         else:
             r = status(
