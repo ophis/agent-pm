@@ -4,7 +4,7 @@ Launch, and the runtime's output into the frozen event set (Event) plus Stderr. 
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
 environ, signals), applying spec.access.cwd itself. Access.dirs are granted write, Access.reads only read. Times are
 epoch seconds. Starts no process. Spec.role_policy=False (plain session): no role-run policy, flags and env unchanged;
-it and Adapter's session_env, identity_env and child_defaults are temporary (TASK-356)."""
+temporary (TASK-356), as are session_env, identity_env and child_defaults."""
 
 import json
 import re
@@ -65,7 +65,7 @@ class Spec:
     env: Mapping[str, str] = field(default_factory=dict)
     role_policy: bool = True
     name: str | None = None
-    protect: tuple[str, ...] = ()
+    protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -290,7 +290,6 @@ class Tui(ABC):
         return ""
 
     def blocked_reason(self, payload: dict) -> str:
-        """A BLOCKED hook's reason."""
         return ""
 
     def session_id(self, payload: dict) -> str:
