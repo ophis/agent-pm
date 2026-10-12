@@ -464,7 +464,6 @@ class Start(unittest.TestCase):
                 for call in (lambda: self.start(fake, session=name), lambda: tmux_host.status(name, proc=fake),
                              lambda: tmux_host.detach(name, ["tool"], cwd=self.cwd, env={"PATH": self.bin},
                                                       proc=fake, sleep=self.sleep),
-                             lambda: tmux_host.decorate(name, proc=fake),
                              lambda: tmux_host.kill(name, proc=fake),
                              lambda: tmux_host.send(name, "x", proc=fake, sleep=self.sleep),
                              lambda: tmux_host.paste(name, "x", proc=fake),
@@ -838,27 +837,6 @@ class EventsFile(unittest.TestCase):
                     self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: tmux would misread"):
                 tmux_host.events_file(path)
             self.assertFalse(os.path.exists(path))
-
-
-class Decorate(unittest.TestCase):
-    def test_tmux_calls(self):
-        for events in (None, "/a b/e"):
-            with self.subTest(events=events):
-                fake = Tmux()
-                tmux_host.decorate("s", events, proc=fake)
-                self.assertEqual(fake.calls, decorations("s", events))
-                self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
-        fake = Tmux()
-        tmux_host.decorate("s", status_line=True, proc=fake)
-        self.assertEqual(fake.calls, decorations("s", status="on"))
-
-    def test_failure(self):
-        for events, step in ((None, "set-hook"), ("/e", "set-option")):
-            with self.subTest(events=events):
-                fake = Tmux(fail={step})
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
-                    tmux_host.decorate("s", events, proc=fake)
-                self.assertEqual(len(fake.calls), 1)
 
 
 class Status(unittest.TestCase):

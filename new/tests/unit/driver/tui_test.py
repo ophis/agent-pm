@@ -135,6 +135,19 @@ class Base(unittest.TestCase):
     def assertNoSessionDir(self):
         self.assertFalse(os.path.lexists(self.dir))
 
+    def locked(self, name: str = NAME) -> bool:
+        try:
+            fd = os.open(os.path.join(self.root, f"{name}.lock"), os.O_RDONLY)
+        except FileNotFoundError:
+            return False
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)
+        return False
+
 
 class PathsTest(Base):
     def test_session_dir_is_under_tui_dir_in_home(self):
@@ -276,16 +289,6 @@ class PrepareTest(Base):
 
 
 class LockTest(Base):
-    def locked(self, name: str = NAME) -> bool:
-        fd = os.open(os.path.join(self.root, f"{name}.lock"), os.O_RDONLY)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        finally:
-            os.close(fd)
-        return False
-
     def test_a_0600_lock_file_per_name_in_tui_dir_held_till_the_block_ends(self):
         os.rmdir(self.agent_pm)
         with tui.lock(NAME):
@@ -365,6 +368,23 @@ class BeginTest(Base):
         with self.assertRaises(DriverError) as caught:
             mode.begin(("/bin/run",), cwd=self.tmp, env={})
         self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
+        self.host.kill.assert_called_once_with(NAME)
+        self.assertNoSessionDir()
+
+    def test_a_pane_it_cannot_take_under_the_names_lock_closes_without_waiting_for_the_lock(self):
+        mode, caught = self.prepare(), []
+        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
+
+        def begin():
+            with tui.lock(NAME):
+                try:
+                    mode.begin(("/bin/run",), cwd=self.tmp, env={})
+                except DriverError as e:
+                    caught.append(str(e))
+        thread = threading.Thread(target=begin, daemon=True)
+        thread.start()
+        thread.join(5)
+        self.assertEqual(caught, ["cannot start tui session w1: tmux: boom"])
         self.host.kill.assert_called_once_with(NAME)
         self.assertNoSessionDir()
 
@@ -652,6 +672,15 @@ class CloseStopTest(Base):
         self.assertNoSessionDir()
         self.assertTrue(os.path.isdir(self.root))
 
+    def test_close_kills_and_removes_under_the_names_lock(self):
+        self.started()
+        held, remove = [], tui._remove
+        self.host.kill.side_effect = lambda name: held.append(self.locked())
+        with mock.patch.object(tui, "_remove", lambda path: (held.append(self.locked()), remove(path))):
+            tui.close(NAME)
+        self.assertEqual((held, self.locked()), ([True, True], False))
+        self.assertNoSessionDir()
+
     def test_close_of_an_absent_session_removes_its_dir(self):
         self.started()
         self.host.kill.side_effect = tmux_host.TuiError("tmux: can't find session: w1")
@@ -748,6 +777,18 @@ class BoundTest(Base):
                 self.assertEqual((self.host.kill.called, os.path.isdir(self.dir)), (closed, not closed))
                 self.assertEqual(mode.poll(0), ([], True))
                 self.host.pane.side_effect = None
+
+    def test_stop_checks_the_holder_and_closes_under_the_names_lock(self):
+        held = []
+        for holder, closed in (("%1", True), ("%2", False)):
+            with self.subTest(holder=holder):
+                self.host.pane.side_effect = self.host.kill.side_effect = None
+                mode = self.started()
+                held.clear()
+                self.host.pane.side_effect = lambda name: held.append(self.locked()) or holder
+                self.host.kill.side_effect = lambda name: held.append(self.locked())
+                mode.stop()
+                self.assertEqual((held, self.locked()), ([True] * (1 + closed), False))
 
     def test_another_pane_under_the_name_is_absent_to_state_send_and_screen(self):
         mode = self.started()

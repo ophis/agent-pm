@@ -41,7 +41,12 @@ def read_state(name: str) -> dict:
 
 
 def close(name: str) -> None:
-    """Kills the session (absent is fine), then removes its dir if a real directory."""
+    """Kills the session (absent is fine), then removes its dir if a real directory; under the name's lock."""
+    with lock(name):
+        _close(name)
+
+
+def _close(name: str) -> None:
     try:
         tmux_host.kill(name)
     except tmux_host.TuiError as e:
@@ -167,7 +172,7 @@ class TuiMode:
         try:
             self._pane = tmux_host.pane(self.name)
         except tmux_host.TuiError as e:
-            close(self.name)
+            _close(self.name)   # start() holds the name's lock
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         self._live = True
 
@@ -316,8 +321,11 @@ class TuiMode:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """close() unless another pane holds the name; then ends (returncode: the code seen, else -SIGHUP)."""
-        if self._live and self._holder() in (self._pane, None, tmux_host.UNKNOWN):
-            close(self.name)
+        """Under the name's lock, close() unless another pane holds the name; then ends (returncode: the code seen,
+        else -SIGHUP)."""
+        if self._live:
+            with lock(self.name):
+                if self._holder() in (self._pane, None, tmux_host.UNKNOWN):
+                    _close(self.name)
         self._live = False
         self._end()

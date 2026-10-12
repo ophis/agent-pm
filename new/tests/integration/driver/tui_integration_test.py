@@ -1,7 +1,8 @@
 """driver.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
 the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
-while tmux's state is unknown, an old Handle once its name is another session's, and two starts of one name at once."""
+while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
+a start while another process closes the name."""
 import json
 import os
 import queue
@@ -41,6 +42,18 @@ event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
 CLOSE = "import sys; sys.path.insert(0, sys.argv[1]); from driver import api; api.close(sys.argv[2])"
+SLOW_CLOSE = """import sys, time
+sys.path.insert(0, sys.argv[1])
+from driver import api
+from driver.modes import tui
+remove = tui._remove
+def slow(*args):
+    open(sys.argv[3], "w").close()
+    time.sleep(1)
+    remove(*args)
+tui._remove = slow
+api.close(sys.argv[2])
+"""
 DIALOG = "Pick one: 1. this 2. that"
 
 
@@ -273,6 +286,16 @@ class SameNameTest(Live):
                              stdin=subprocess.DEVNULL, timeout=WAIT)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.renewed("w5", old, events)
+
+    def test_a_close_from_another_process_then_a_start_of_its_name_keeps_the_new_sessions_dir(self):
+        self.start("w7", {"read": True})
+        killed = os.path.join(self.dir, "killed")
+        closer = subprocess.Popen([sys.executable, "-I", "-c", SLOW_CLOSE, SRC, "w7", killed], text=True,
+                                  stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
+        new = self.start("w7", {"read": True})
+        self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
+        self.assertEqual((new.state(), tui.read_state("w7")["sid"]), ("live", new.sid))
 
 
 if __name__ == "__main__":

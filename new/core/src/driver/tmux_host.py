@@ -162,9 +162,10 @@ class Slot(NamedTuple):
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           status_line: bool = False, tags: dict[str, str] | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its terminal keys the
-    pane's, PWD cwd), tags and decorate's options set in the same tmux call (an instant death still gets its dead
-    line); opens no pane. A running session is refused, a dead one replaced; argv reaches the pane through a 0600
-    handover file. Raising, it leaves no session of its own."""
+    pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>`
+    border and the status line set in the same tmux call (an instant death still gets its dead line); opens no pane.
+    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Raising, it
+    leaves no session of its own."""
     _name(session)
     options = _tags(session, tags or {})
     argv = _command(argv, env)
@@ -373,13 +374,6 @@ def events_file(path: str) -> str:
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         raise TuiError(f"events file {path}: not a regular file owned by you")
     return path
-
-
-def decorate(session: str, events: str | None = None, *, status_line: bool = False, proc=subprocess.run) -> None:
-    """Sets @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>` border and the
-    status line."""
-    for args in _decorations(_name(session), events, status_line):
-        _tmux_ok(args, proc)
 
 
 def _decorations(session: str, events: str | None, status_line: bool) -> list[list[str]]:
