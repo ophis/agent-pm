@@ -1,4 +1,4 @@
-"""new/core/src/driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
+"""driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
 start (no pane), detach, respawn, status, sessions, paste/keys/send, read, option, pane, mark, the events file, the
 show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 

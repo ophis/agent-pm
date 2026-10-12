@@ -1,4 +1,4 @@
-"""new/core/src/utils/files.py: read_regular."""
+"""utils/files.py: read_regular."""
 
 import errno
 import os

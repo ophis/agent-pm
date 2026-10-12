@@ -1,4 +1,4 @@
-"""new/core/src/driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
+"""driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
 
 import signal

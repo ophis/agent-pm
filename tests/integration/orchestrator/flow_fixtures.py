@@ -13,7 +13,7 @@ import config
 import linear
 from clients import claude as claude_client
 
-from tests import hermetic  # first: config reads HOME at import
+from tests import hermetic
 from tests.integration.core import fake_claude, live_tmux
 from tests.integration.orchestrator import fake_gh, fake_linear
 from tests.unit.orchestrator import board_ids, run_fixtures

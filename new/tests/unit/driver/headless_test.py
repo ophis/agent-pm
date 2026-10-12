@@ -1,4 +1,4 @@
-"""new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
+"""driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
 
 import json

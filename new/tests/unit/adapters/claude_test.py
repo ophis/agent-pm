@@ -1,4 +1,4 @@
-"""new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
+"""adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
 committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 

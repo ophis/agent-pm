@@ -1,4 +1,4 @@
-"""new/core/src/utils/config_file.py: merge, read_config and the core config's pair (CONFIG, LOCAL)."""
+"""utils/config_file.py: merge, read_config and the core config's pair (CONFIG, LOCAL)."""
 
 import copy
 import os

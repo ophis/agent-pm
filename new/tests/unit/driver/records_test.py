@@ -1,4 +1,4 @@
-"""new/core/src/driver/records.py: run.jsonl writes, reads and attempt completeness."""
+"""driver/records.py: run.jsonl writes, reads and attempt completeness."""
 
 import errno
 import io

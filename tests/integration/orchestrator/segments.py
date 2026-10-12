@@ -17,7 +17,7 @@ import roster
 import router
 import sessions
 
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,

@@ -6,7 +6,7 @@ import stat
 import sys
 import unittest
 
-import crew  # after crew_integration_test, which imports tests/hermetic.py first
+import crew
 
 from tests.integration.core import fake_claude, fake_codex, live_tmux
 from tests.integration.tmux.crew_integration_test import CREW, MANAGER, Live, has_pair, is_event

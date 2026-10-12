@@ -1,4 +1,4 @@
-"""new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
+"""driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
 usage() and session_info(), the session env (Access.env) reaching a session but not its usage probe, over the fake
 adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
 registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe

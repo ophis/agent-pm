@@ -1,4 +1,4 @@
-"""new/core/src/driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
+"""driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""

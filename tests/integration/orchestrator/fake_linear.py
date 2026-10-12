@@ -23,7 +23,7 @@ import router
 import sessions
 import writeback
 
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+from tests import hermetic  # noqa: F401
 from tests.unit.orchestrator.board_ids import STATES, TEAM
 
 KEY = "TASK"
