@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 
-from agent_pm.role.contract import OUTCOME, PROGRESS
+from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session.adapters.base import ConfigError, InProcess, Reply, TurnEnd
 
 

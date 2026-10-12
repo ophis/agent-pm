@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import dataclass
 
-from agent_pm.role.delegate.plan import ConfigError, Plan
+from agent_pm.delegate.plan import ConfigError, Plan
 from agent_pm.session import SessionStatusLog, api
 from agent_pm.utils.files import append_line
 from agent_pm.utils.paths import IMPORT_ROOT
@@ -80,7 +80,7 @@ def detach(
         sys.executable,
         "-P",
         "-m",
-        "agent_pm.role.delegate.cli",
+        "agent_pm.delegate.cli",
         *(f"--{k}={v}" for k, v in given.items()),
         *(f"--{k}={v}" for k, v in optional.items() if v),
         *(["--resume"] if p.resume else []),

@@ -1,9 +1,9 @@
-"""new/core/src/agent_pm/role/repos/shell.py: err_text and redact."""
+"""new/core/src/agent_pm/utils/repos/shell.py: err_text and redact."""
 
 import subprocess
 import unittest
 
-from agent_pm.role.repos import shell
+from agent_pm.utils.repos import shell
 
 from new.tests.case import Case
 

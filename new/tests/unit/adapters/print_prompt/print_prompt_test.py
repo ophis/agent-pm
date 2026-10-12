@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.role.delegate.reply import marks, outcome_block
+from agent_pm.delegate.event.reply import marks, outcome_block
 from agent_pm.session.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess

@@ -2,8 +2,8 @@
 
 import unittest
 
-from agent_pm.role.composer import PROGRESS
-from agent_pm.role.delegate.reply import MARK, marks, outcome_block
+from agent_pm.delegate.composer import PROGRESS
+from agent_pm.delegate.event.reply import MARK, marks, outcome_block
 
 from new.tests.case import Case
 

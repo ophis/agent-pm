@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.role.delegate.runner import FIX
+from agent_pm.delegate.runner import FIX
 
 from new.tests.case import NEW, Case, child_env
 from new.tests.integration.adapters.codex import fake_codex

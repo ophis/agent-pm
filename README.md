@@ -31,13 +31,12 @@ flowchart TB
     subgraph MG[manager/]
       W[crew.py] --> RS[roster.py]
     end
-    subgraph RO[role/]
-      D["delegate/<br>API · CLI · outcome check"]
+    subgraph DL[delegate/]
+      D["API · CLI · run"]
       C["composer/<br>prompt · run spec"]
-      CT[contract/]
-      RP[repos/]
-      AT[agent_tools/]
+      EV["event/<br>reply · outcome check · callback line"]
     end
+    AT[agent_tools/]
     subgraph SE[session/]
       DR["api.py · types.py · records.py<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
       subgraph AD[adapters/]
@@ -46,7 +45,7 @@ flowchart TB
         PR[print_prompt]
       end
     end
-    U[utils/]
+    U["utils/<br>repos/"]
     CF["config.py<br>config paths"]
   end
   T["core/team/<br>roles · tasks · templates"]
@@ -71,7 +70,7 @@ flowchart TB
   CX -.-> P2
   RT -.-> AT
   classDef shared stroke-dasharray: 4 3
-  class CT,RP,U,CF shared
+  class EV,U,CF shared
 ```
 
 Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `new/README.md`'s import paragraph, checked by `new/tests/guards.py`.

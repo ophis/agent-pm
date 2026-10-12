@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import unittest
 
-from agent_pm.role.composer.prompt import RESUME, RETURN
+from agent_pm.delegate.composer.prompt import RESUME, RETURN
 from agent_pm.utils.paths import temp_dirs, under
 
 from new.tests.case import NEW

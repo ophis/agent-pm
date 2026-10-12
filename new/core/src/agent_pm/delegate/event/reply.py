@@ -1,10 +1,11 @@
-"""A reply's progress mark lines outside code fences (marks) and its outcome block (outcome_block)."""
+"""The reply protocol's progress mark tag (PROGRESS) and outcome fence info (OUTCOME); a reply's progress mark lines outside code fences (marks) and its outcome block (outcome_block)."""
 
 import re
 
-from agent_pm.role.composer import OUTCOME, PROGRESS
 from agent_pm.utils.markdown import fenced, unfenced
 
+PROGRESS = "agent-pm-progress"
+OUTCOME = "agent-pm-outcome"
 MARK = re.compile(rf"^\s*(?:[-*] )?\[{PROGRESS}:(?P<name>[^\]\s]*)\](?P<text>.*)$")
 NAME = re.compile(r"[\w-]+")
 

@@ -9,9 +9,9 @@ import unittest
 from types import SimpleNamespace
 
 import agent_pm.config
-import agent_pm.role.repos
-from agent_pm.role import composer
-from agent_pm.role.repos.shell import SHORT
+import agent_pm.utils.repos
+from agent_pm.delegate import composer
+from agent_pm.utils.repos.shell import SHORT
 from agent_pm_linear import config, issues, target
 
 from new.tests.case import Case
@@ -586,7 +586,7 @@ class WithClone(Case):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
     def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = agent_pm.role.repos.checkout(
+        want = agent_pm.utils.repos.checkout(
             os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26"
         )
         self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)

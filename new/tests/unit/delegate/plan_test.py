@@ -15,11 +15,10 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.role import composer
-from agent_pm.role.composer import RunConfig, RunParams
-from agent_pm.role.composer.prompt import RESUME
-from agent_pm.role.delegate import ConfigError, plan
-from agent_pm.role.delegate.plan import place
+from agent_pm.delegate import ConfigError, composer, plan
+from agent_pm.delegate.composer import RunConfig, RunParams
+from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.plan import place
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under

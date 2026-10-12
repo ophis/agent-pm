@@ -1,11 +1,10 @@
-"""role/delegate/base.py: the Delegate ABC, its constructor convention and delegate/__init__.py's new exports."""
+"""delegate/base.py: the Delegate ABC, its constructor convention and delegate/__init__.py's new exports."""
 
 import inspect
 import unittest
 
-from agent_pm import session
-from agent_pm.role import composer, contract, delegate
-from agent_pm.role.delegate import Delegate
+from agent_pm import delegate, session
+from agent_pm.delegate import Delegate, composer, event
 from agent_pm.session import Host, Session
 
 from new.tests.case import Case
@@ -57,7 +56,7 @@ class Exports(Case):
                 self.assertIn(name, delegate.__all__)
         self.assertEqual([n for n in delegate.__all__ if not hasattr(delegate, n)], [])
         self.assertIs(delegate.RunConfig, composer.RunConfig)
-        self.assertIs(delegate.DelegateEvent, contract.DelegateEvent)
+        self.assertIs(delegate.DelegateEvent, event.DelegateEvent)
 
     def test_no_concrete_implementation_is_exported(self):
         exported = [getattr(module, n) for module in (session, delegate) for n in module.__all__]

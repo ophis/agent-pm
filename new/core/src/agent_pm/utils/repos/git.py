@@ -5,7 +5,7 @@ import os
 import re
 import time
 
-from agent_pm.role.repos.shell import SHORT, Runner, err_text
+from agent_pm.utils.repos.shell import SHORT, Runner, err_text
 
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)

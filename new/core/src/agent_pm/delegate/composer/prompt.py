@@ -14,7 +14,7 @@ import os
 import re
 from collections.abc import Mapping
 
-from agent_pm.role.composer.base import (
+from agent_pm.delegate.composer.base import (
     CODE_SPAN,
     FILE_REF,
     LINK,
@@ -28,9 +28,9 @@ from agent_pm.role.composer.base import (
     outline,
     read_text,
 )
-from agent_pm.role.composer.run import RunConfig, RunParams
-from agent_pm.role.composer.teams import Team, index, tasks_path, team_or_default
-from agent_pm.role.contract import OUTCOME, PROGRESS
+from agent_pm.delegate.composer.run import RunConfig, RunParams
+from agent_pm.delegate.composer.teams import Team, index, tasks_path, team_or_default
+from agent_pm.delegate.event import OUTCOME, PROGRESS
 from agent_pm.utils.markdown import unfenced
 
 RESUME = (

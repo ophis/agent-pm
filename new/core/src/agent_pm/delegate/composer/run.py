@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Literal, get_args
 
 from agent_pm.config import LOCAL
-from agent_pm.role.composer.base import CONFIG, ConfigError, fill, title_of
-from agent_pm.role.composer.teams import (
+from agent_pm.delegate.composer.base import CONFIG, ConfigError, fill, title_of
+from agent_pm.delegate.composer.teams import (
     Team,
     index,
     no_charter,

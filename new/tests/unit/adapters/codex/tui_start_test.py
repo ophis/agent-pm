@@ -22,6 +22,7 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 SCRIPTS = ("tui_hook.py", "tui_start.py")
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
 SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
+ROOTS = ("agent_pm", "session", "delegate", "manager", "agent_tools", "adapters", "utils", "core")
 LOADED = """import json, runpy, sys
 before = list(sys.path)
 runpy.run_path(sys.argv[1])
@@ -188,20 +189,9 @@ class StartTest(Base):
                 tree = ast.parse((directory / name).read_text(), feature_version=(3, 9))
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
-                        self.assertFalse(
-                            (node.module or "").startswith(
-                                ("agent_pm", "adapters", "driver", "utils", "core")
-                            )
-                        )
+                        self.assertFalse((node.module or "").startswith(ROOTS))
                     if isinstance(node, ast.Import):
-                        self.assertFalse(
-                            any(
-                                n.name.startswith(
-                                    ("agent_pm", "adapters", "driver", "utils", "core")
-                                )
-                                for n in node.names
-                            )
-                        )
+                        self.assertFalse(any(n.name.startswith(ROOTS) for n in node.names))
 
     def test_start_adds_transient_trust_and_execs_saved_home_without_config_write(self):
         run = self.adapter.tui()

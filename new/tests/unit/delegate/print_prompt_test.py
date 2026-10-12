@@ -8,9 +8,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 
-from agent_pm.role import composer
-from agent_pm.role.delegate import Begun, ConfigError, Finished, Progress, plan, run
-from agent_pm.role.delegate.reply import marks
+from agent_pm.delegate import Begun, ConfigError, Finished, Progress, composer, plan, run
+from agent_pm.delegate.event.reply import marks
 
 from new.tests.case import Case
 from new.tests.unit.delegate.runner_test import no_child

@@ -31,7 +31,7 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the driver, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `new/core/src/agent_pm/role/delegate/`.
+The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the driver, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `new/core/src/agent_pm/delegate/`.
 
 **Composer**:
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
@@ -59,7 +59,7 @@ The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`.
 _Avoid_: event
 
 **Delegate event**:
-The callback line a Delegate run emits: begun, progress, finished. In code: `new/core/src/agent_pm/role/contract/delegate_event.py`.
+The callback line a Delegate run emits: begun, progress, finished. In code: `new/core/src/agent_pm/delegate/event/delegate_event.py`.
 _Avoid_: event
 
 **Attended run**:

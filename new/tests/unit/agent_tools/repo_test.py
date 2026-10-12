@@ -1,4 +1,4 @@
-"""new/core/src/agent_pm/role/agent_tools/repo.py, ported from the old core's tests (its tmux display helpers dropped; its
+"""new/core/src/agent_pm/agent_tools/repo.py, ported from the old core's tests (its tmux display helpers dropped; its
 config, path, shell, git and repo spec helpers' cases: unit/utils/)."""
 
 import io
@@ -11,10 +11,10 @@ import threading
 import unittest
 import unittest.mock
 
-from agent_pm.role import repos
-from agent_pm.role.agent_tools import repo
-from agent_pm.role.repos import git as git_utils
-from agent_pm.role.repos import shell
+from agent_pm.agent_tools import repo
+from agent_pm.utils import repos
+from agent_pm.utils.repos import git as git_utils
+from agent_pm.utils.repos import shell
 
 from new.tests.case import Case
 

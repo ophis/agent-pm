@@ -19,10 +19,9 @@ import sys
 from collections.abc import Sequence
 from dataclasses import replace
 
-from agent_pm.role import composer
-from agent_pm.role.composer import RunParams, Team
-from agent_pm.role.delegate import Begun, ConfigError, Plan, detach, plan, run
-from agent_pm.role.delegate.runner import printable
+from agent_pm.delegate import Begun, ConfigError, Plan, composer, detach, plan, run
+from agent_pm.delegate.composer import RunParams, Team
+from agent_pm.delegate.runner import printable
 from agent_pm.session import api
 from agent_pm.utils.args import Once
 

@@ -10,7 +10,7 @@ import re
 import signal
 import sys
 
-from agent_pm.role import delegate
+from agent_pm import delegate
 from agent_pm.session import api
 from agent_pm.utils.text import printable
 

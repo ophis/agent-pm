@@ -19,10 +19,9 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.role import composer
-from agent_pm.role.composer.prompt import RESUME
-from agent_pm.role.delegate import Begun, Outcome, Result, cli, runner
-from agent_pm.role.delegate.runner import STOP_LIMIT
+from agent_pm.delegate import Begun, Outcome, Result, cli, composer, runner
+from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.runner import STOP_LIMIT
 from agent_pm.session import api
 from agent_pm.session.adapters import base, registry
 
@@ -210,7 +209,7 @@ class List(Base):
 
     def test_it_runs_as_a_module_from_the_import_root(self):
         done = subprocess.run(
-            [*PY, "-m", "agent_pm.role.delegate.cli", "--list"],
+            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
             capture_output=True,
             text=True,
             env=child_env(),

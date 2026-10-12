@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.role.composer.base import TEAM, ConfigError
-from agent_pm.role.composer.teams import (
+from agent_pm.delegate.composer.base import TEAM, ConfigError
+from agent_pm.delegate.composer.teams import (
     catalog,
     check_overlap,
     check_team_dirs,

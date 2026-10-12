@@ -1,10 +1,11 @@
-"""role/contract/delegate_event.py: the callback line, round trips and refusals; its exports."""
+"""delegate/event/delegate_event.py: the callback line, round trips and refusals; its exports."""
 
 import json
 import unittest
 
-from agent_pm.role import contract, delegate
-from agent_pm.role.contract import KINDS, DelegateEvent, DelegateEventError
+from agent_pm import delegate
+from agent_pm.delegate import event as event_package
+from agent_pm.delegate.event import KINDS, DelegateEvent, DelegateEventError
 
 from new.tests.case import Case
 
@@ -115,10 +116,10 @@ class EventLine(Case):
 
 
 class Exports(Case):
-    def test_contract_and_delegate_export_the_callback_event(self):
+    def test_event_and_delegate_export_the_callback_event(self):
         for name in ("DelegateEvent", "DelegateEventError", "KINDS"):
             with self.subTest(name=name):
-                self.assertIn(name, contract.__all__)
+                self.assertIn(name, event_package.__all__)
         self.assertIn("DelegateEvent", delegate.__all__)
         self.assertIs(delegate.DelegateEvent, DelegateEvent)
 

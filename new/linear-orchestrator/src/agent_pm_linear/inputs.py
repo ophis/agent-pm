@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
-from agent_pm.role.repos.shell import SHORT, err_text
+from agent_pm.utils.repos.shell import SHORT, err_text
 
 from agent_pm_linear import issues
 from agent_pm_linear.config import TASKS, sh_run

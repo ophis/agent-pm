@@ -1,9 +1,9 @@
-"""role/contract/__init__.py: the reply protocol's names, the objects composer exports."""
+"""delegate/event/__init__.py: the reply protocol's names, the objects composer exports."""
 
 import unittest
 
-from agent_pm.role import composer
-from agent_pm.role import contract as protocol
+from agent_pm.delegate import composer
+from agent_pm.delegate import event as protocol
 
 from new.tests.case import Case
 

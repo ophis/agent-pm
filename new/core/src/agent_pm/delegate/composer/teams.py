@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_pm.config import LOCAL
-from agent_pm.role.composer.base import (
+from agent_pm.delegate.composer.base import (
     CONFIG,
     METHOD,
     PLACEHOLDER,
@@ -19,7 +19,7 @@ from agent_pm.role.composer.base import (
     read_text,
     title_of,
 )
-from agent_pm.role.contract import PROGRESS
+from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils.config_file import read_config
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import temp_dirs, under

@@ -9,8 +9,8 @@ import unittest
 from dataclasses import fields, replace
 
 import agent_pm.config
-from agent_pm.role.composer.base import ConfigError
-from agent_pm.role.composer.run import (
+from agent_pm.delegate.composer.base import ConfigError
+from agent_pm.delegate.composer.run import (
     RUN_KEYS,
     Intent,
     RunConfig,
@@ -21,7 +21,7 @@ from agent_pm.role.composer.run import (
     resolve,
     trusted_dirs,
 )
-from agent_pm.role.composer.teams import team
+from agent_pm.delegate.composer.teams import team
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests.case import Case

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 import agent_pm.utils.files
-from agent_pm.role.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
+from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
 from agent_pm_linear import config, issues, linear, runs, writeback
 
 from new.tests.case import Case

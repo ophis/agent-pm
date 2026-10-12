@@ -19,10 +19,10 @@ import shutil
 import subprocess
 from datetime import timedelta
 
-from agent_pm.role.repos.git import GUARD, common_dir, git
-from agent_pm.role.repos.shell import SHORT
 from agent_pm.session import api
 from agent_pm.utils.paths import under
+from agent_pm.utils.repos.git import GUARD, common_dir, git
+from agent_pm.utils.repos.shell import SHORT
 
 from agent_pm_linear import config
 from agent_pm_linear.config import CLONES

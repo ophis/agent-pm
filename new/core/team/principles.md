@@ -8,7 +8,7 @@
 - **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own command (no `cd`, pipe, redirect or `&&`).
 - **Id**: `<id>`, `[Reference]` and `<Reference>` are the id the input gives (e.g. `TASK-142`); none → drop it and the separator after it, unless a stand-in is named.
 - **Target repo**: the input's `Repo:` lines, else the `<owner>/<name>`, `<host>/<owner>/<name>`, repo URLs or local clone paths in its text.
-- **Worktree**: check out a target repo `<repo>` with `python3 -P -m agent_pm.role.agent_tools.repo worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<repo>` verbatim, `<branch>` as your role or task names it, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`); use that repo only inside the JSON's `worktree`.
+- **Worktree**: check out a target repo `<repo>` with `python3 -P -m agent_pm.agent_tools.repo worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<repo>` verbatim, `<branch>` as your role or task names it, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`); use that repo only inside the JSON's `worktree`.
 - **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's `Checkout:`; no `Checkout:` → drop it.
 - Temp files go in `<Workdir>/tmp/`.
 

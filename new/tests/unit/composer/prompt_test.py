@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from agent_pm.role.composer.base import METHOD, TEAM, ConfigError, outline
-from agent_pm.role.composer.prompt import (
+from agent_pm.delegate.composer.base import METHOD, TEAM, ConfigError, outline
+from agent_pm.delegate.composer.prompt import (
     OUTCOME,
     PARAMETERS,
     RESUME,
@@ -19,8 +19,8 @@ from agent_pm.role.composer.prompt import (
     reference_errors,
     render,
 )
-from agent_pm.role.composer.run import RunParams, resolve
-from agent_pm.role.composer.teams import index, team
+from agent_pm.delegate.composer.run import RunParams, resolve
+from agent_pm.delegate.composer.teams import index, team
 
 from new.tests.case import Case
 from new.tests.unit.composer.run_test import CONFIG

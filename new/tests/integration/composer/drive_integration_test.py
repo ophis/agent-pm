@@ -4,7 +4,7 @@ run and a resume."""
 import os
 import unittest
 
-from agent_pm.role.composer.prompt import RESUME
+from agent_pm.delegate.composer.prompt import RESUME
 
 from new.tests.case import NEW
 from new.tests.integration.composer import child

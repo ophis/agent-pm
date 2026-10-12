@@ -11,7 +11,7 @@ from new.tests import case
 from new.tests.case import PY, child_env
 
 TIMEOUT = 60
-PRELUDE = "import json, os, sys\nfrom agent_pm.role import composer\n"
+PRELUDE = "import json, os, sys\nfrom agent_pm.delegate import composer\n"
 COMPOSE = """import dataclasses
 req = json.loads(sys.argv[1])
 try:
@@ -27,7 +27,7 @@ try:
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
                       "files": [composer.__file__, sys.modules["agent_pm.utils.config_file"].__file__,
                                 sys.modules["agent_pm.utils.paths"].__file__],
-                      "repo_imported": "agent_pm.role.agent_tools.repo" in sys.modules}))
+                      "repo_imported": "agent_pm.agent_tools.repo" in sys.modules}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

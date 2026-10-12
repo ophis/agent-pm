@@ -6,11 +6,11 @@ import os
 import re
 from dataclasses import dataclass, replace
 
-import agent_pm.role.repos
-from agent_pm.role.repos import NAME, OWNER
-from agent_pm.role.repos.git import GUARD, common_dir
-from agent_pm.role.repos.shell import SHORT, err_text
+import agent_pm.utils.repos
 from agent_pm.utils.paths import under
+from agent_pm.utils.repos import NAME, OWNER
+from agent_pm.utils.repos.git import GUARD, common_dir
+from agent_pm.utils.repos.shell import SHORT, err_text
 
 from agent_pm_linear import config, issues
 from agent_pm_linear.config import CLONES, REF, TASKS, repo_slug, sh_run
@@ -114,7 +114,7 @@ def _repo_info(o, n, run):
 
 
 def checkout(ident, owner, name, *, work) -> str:
-    return agent_pm.role.repos.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+    return agent_pm.utils.repos.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
 def _branches(ident, o, n, run, work, roles):

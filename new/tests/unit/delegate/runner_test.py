@@ -23,19 +23,19 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.role import composer
-from agent_pm.role.delegate import (
+from agent_pm.delegate import (
     Begun,
     ConfigError,
     Finished,
     Limit,
     Progress,
     Result,
+    composer,
     run,
     runner,
 )
-from agent_pm.role.delegate.outcome import save
-from agent_pm.role.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.delegate.event.outcome import save
+from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils

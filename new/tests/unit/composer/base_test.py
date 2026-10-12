@@ -4,7 +4,7 @@ import os
 import unittest
 
 import agent_pm.config
-from agent_pm.role.composer import base
+from agent_pm.delegate.composer import base
 
 from new.tests.case import CORE, Case
 

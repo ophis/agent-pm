@@ -7,7 +7,7 @@ import inspect
 import os
 import uuid
 
-from agent_pm.role.delegate import Begun, ConfigError, Delegate, Finished
+from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
 from agent_pm.session import NotDisplayable, Usage
 from agent_pm.utils.record import Record, Status
 

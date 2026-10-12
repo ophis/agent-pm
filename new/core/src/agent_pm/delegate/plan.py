@@ -8,8 +8,8 @@ import uuid
 from dataclasses import dataclass, replace
 
 from agent_pm.config import CONFIG, LOCAL
-from agent_pm.role import composer
-from agent_pm.role.composer import RunConfig, RunParams, Team
+from agent_pm.delegate import composer
+from agent_pm.delegate.composer import RunConfig, RunParams, Team
 from agent_pm.session import api
 from agent_pm.utils.config_file import read_config
 from agent_pm.utils.paths import under

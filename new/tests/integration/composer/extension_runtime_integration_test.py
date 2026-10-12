@@ -4,7 +4,7 @@ for it, resolve, compose and list the catalog in a child process (child.Case); n
 import os
 import unittest
 
-from agent_pm.role.composer.prompt import RETURN
+from agent_pm.delegate.composer.prompt import RETURN
 
 from new.tests.case import ROOT
 from new.tests.integration.composer import child

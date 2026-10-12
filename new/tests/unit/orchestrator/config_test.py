@@ -13,10 +13,11 @@ import unittest
 from unittest import mock
 
 import agent_pm.config
-from agent_pm.role import composer, delegate
-from agent_pm.role.repos.git import GUARD
-from agent_pm.role.repos.shell import SHORT
+from agent_pm import delegate
+from agent_pm.delegate import composer
 from agent_pm.utils import config_file
+from agent_pm.utils.repos.git import GUARD
+from agent_pm.utils.repos.shell import SHORT
 from agent_pm_linear import config
 
 from new.tests.case import ORCH_ROOT, PY, Case, child_env

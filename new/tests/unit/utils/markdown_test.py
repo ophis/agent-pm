@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_pm.role.composer import base
+from agent_pm.delegate.composer import base
 from agent_pm.utils.markdown import fenced, unfenced
 
 from new.tests.case import Case

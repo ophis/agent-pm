@@ -12,11 +12,11 @@ from types import MappingProxyType
 from typing import Literal
 
 import agent_pm.config
-from agent_pm.role import composer, repos
-from agent_pm.role.repos import NAME, OWNER
-from agent_pm.role.repos.git import GUARD
-from agent_pm.utils import config_file
+from agent_pm.delegate import composer
+from agent_pm.utils import config_file, repos
 from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.repos import NAME, OWNER
+from agent_pm.utils.repos.git import GUARD
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")

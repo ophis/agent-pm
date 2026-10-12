@@ -1,9 +1,9 @@
 """The new tree's rules: each guard takes a root and returns its sorted violations; str constants include docstrings.
 
 layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS, SESSION
-                      and SHARED, a session layer no role module but UPWARD, none imports TOOLS, ORCH or a BARE name,
-                      nested, relative or import_module'd
-role_session(core)    role/ imports SESSION only by an __all__ name
+                      and SHARED, a session layer no delegate module but UPWARD, none imports TOOLS, ORCH or a BARE
+                      name, nested, relative or import_module'd
+delegate_session(core) delegate/ imports SESSION only by an __all__ name
 layer_commands(new)   COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
                       but SESSION_COMMAND
 core_standalone(core) no file names LINEAR
@@ -33,7 +33,7 @@ import re
 import sys
 import tokenize
 
-GROUPS = ("session", "role", "manager")
+GROUPS = ("session", "delegate", "manager")
 SESSION_API = "session.api"
 SESSION_TYPES = "session.types"
 MODES = "session.modes"
@@ -48,15 +48,16 @@ LAYERS = (
     RECORDS,
     HOSTS,
     SELECTION,
-    "role.composer",
-    "role.delegate",
+    "delegate.composer",
+    "delegate",
 )
 SESSION = "session"
 OUTSIDE = "outside the layers"
 ALLOWED = {
-    ("role.delegate", "role.composer"),
-    ("role.delegate", SESSION),
-    ("role.delegate", SESSION_API),
+    ("delegate", "delegate.composer"),
+    ("delegate", SESSION),
+    ("delegate", SESSION_API),
+    ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
     *(
         (SESSION_API, unit)
         for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS, SELECTION)
@@ -70,16 +71,17 @@ ALLOWED = {
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
 }
-SHARED = ("utils", "config", "role.contract", "role.repos")
+SHARED = ("utils", "config", "delegate.event")
 # until TASK-366 (356-5) deletes print_prompt
-UPWARD = {("session.adapters.print_prompt.in_process", "role.contract")}
-TOOLS = "role.agent_tools"
+UPWARD = {("session.adapters.print_prompt.in_process", "delegate.event")}
+TOOLS = "agent_tools"
+UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
     "config": ("utils", "config"),
-    "role.contract": SHARED,
-    "role.repos": SHARED,
-    TOOLS: ("utils", "config", "role.repos"),
+    "delegate.event": SHARED,
+    "delegate.event.outcome": (*SHARED, "delegate.composer"),
+    TOOLS: ("utils", "config"),
 }
 BARE = (
     *GROUPS,
@@ -113,13 +115,18 @@ STATUS_LOG_HOME = f"{CORE_TOP}session/status_log.py"
 STATUS_LOG_CLOCK = "%H:%M:%S"
 # until TASK-368
 STATUS_LOG_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
-COMMAND_SRC = (SESSION_SRC, f"{CORE_TOP}role/", f"{ROOTS[1][0]}/{ORCH_SRC}")
+COMMAND_SRC = (
+    SESSION_SRC,
+    f"{CORE_TOP}delegate/",
+    f"{CORE_TOP}{TOOLS}/",
+    f"{ROOTS[1][0]}/{ORCH_SRC}",
+)
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
 SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
 LINEAR = re.compile(f"{ROOTS[1][0]}|{ORCH}")
-COMPOSER = f"{CORE_PKG}.role.composer"
-EXPORTERS = (f"{CORE_PKG}.role.delegate", COMPOSER)
+COMPOSER = f"{CORE_PKG}.delegate.composer"
+EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
 CONFIG_PY = f"{ORCH_SRC}config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
@@ -138,7 +145,8 @@ def layer_imports(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
         name = ".".join(names or ())
-        layer = next((each for each in LAYERS if _within(name, each)), OUTSIDE)
+        layer = _unit(name)
+        layer = layer if layer in LAYERS else OUTSIDE
         for module, inner in imports:
             unit = _unit(inner) if inner else module.split(".")[0]
             if module.split(".")[0] in BARE:
@@ -148,7 +156,7 @@ def layer_imports(core: str) -> list[str]:
                 or (layer != OUTSIDE and inner and unit not in (*LAYERS, SESSION, *SHARED))
                 or (
                     _within(layer, "session")
-                    and _within(unit, "role")
+                    and _within(unit, "delegate")
                     and (name, unit) not in UPWARD
                 )
                 or (
@@ -162,11 +170,11 @@ def layer_imports(core: str) -> list[str]:
     return sorted(found)
 
 
-def role_session(core: str) -> list[str]:
+def delegate_session(core: str) -> list[str]:
     found = set()
     exported = _all(os.path.join(core, "src", _top(core) or "", SESSION, "__init__.py"))
     for rel, names, imports in _modules(core):
-        if names and names[0] == "role":
+        if names and names[0] == "delegate":
             found.update(
                 f"{rel}: imports {m} outside session.__all__"
                 for m, inner in imports
@@ -213,7 +221,7 @@ def core_standalone(core: str) -> list[str]:
 def pure_utils(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        package = next((p for p in PURE if _within(".".join(names or ()), p)), None)
+        package = max((p for p in PURE if _within(".".join(names or ()), p)), key=len, default=None)
         if package:
             found.update(
                 f"{rel}: {package} imports {m}"
@@ -527,7 +535,11 @@ def _denied(rel, module, name, exported):
     if top in sys.stdlib_module_names or top == ORCH:
         return False
     packages = (CORE_PKG, *(f"{CORE_PKG}.{g}" for g in GROUPS))
-    target = f"{module}.{name}" if module in packages and name else module
+    joined = f"{module}.{name}" if name else module
+    target = next(
+        (t for t in (joined, module) if t in exported or _shared(t)),
+        joined if module in packages else module,
+    )
     if target in exported:
         return (
             module == target
@@ -535,10 +547,11 @@ def _denied(rel, module, name, exported):
             and name not in exported[target]
             or (target == COMPOSER and rel != CONFIG_PY)
         )
-    return not (
-        any(_within(target, f"{CORE_PKG}.{s}") for s in SHARED)
-        or (module, name) == (f"{CORE_PKG}.{SESSION}", "api")
-    )
+    return not (_shared(target) or (module, name) == (f"{CORE_PKG}.{SESSION}", "api"))
+
+
+def _shared(module):
+    return any(_within(module, f"{CORE_PKG}.{s}") for s in SHARED)
 
 
 def _exported(package):
@@ -622,7 +635,7 @@ def _modules(core):
 
 
 def _unit(inner):
-    return next((u for u in (*LAYERS, *SHARED, TOOLS) if _within(inner, u)), inner.split(".")[0])
+    return max((u for u in UNITS if _within(inner, u)), key=len, default=inner.split(".")[0])
 
 
 def _within(name, unit):

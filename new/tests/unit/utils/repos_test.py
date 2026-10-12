@@ -1,9 +1,9 @@
-"""new/core/src/agent_pm/role/repos/__init__.py: repo specs, origin URLs and the checkout path."""
+"""new/core/src/agent_pm/utils/repos/__init__.py: repo specs, origin URLs and the checkout path."""
 
 import os
 import unittest
 
-from agent_pm.role import repos
+from agent_pm.utils import repos
 
 from new.tests.case import Case
 

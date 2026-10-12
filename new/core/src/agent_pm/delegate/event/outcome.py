@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal, get_args
 from urllib.parse import unquote, urlsplit
 
-from agent_pm.role.composer import SCHEMA, RunConfig
+from agent_pm.delegate.composer import SCHEMA, RunConfig
 from agent_pm.utils.files import save  # noqa: F401
 
 Status = Literal["done", "needs_input", "failed"]

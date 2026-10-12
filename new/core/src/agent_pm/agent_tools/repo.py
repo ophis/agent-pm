@@ -30,7 +30,10 @@ import sys
 from datetime import datetime
 
 from agent_pm.config import CONFIG, LOCAL
-from agent_pm.role.repos import (  # noqa: F401
+from agent_pm.utils.args import Once
+from agent_pm.utils.config_file import read_config
+from agent_pm.utils.paths import real_dirs, temp_dirs, under
+from agent_pm.utils.repos import (  # noqa: F401
     HOST,
     NAME,
     OWNER,
@@ -45,8 +48,8 @@ from agent_pm.role.repos import (  # noqa: F401
     resolve,
     url_slug,
 )
-from agent_pm.role.repos.git import GUARD, LOCK, common_dir, git  # noqa: F401
-from agent_pm.role.repos.shell import (  # noqa: F401
+from agent_pm.utils.repos.git import GUARD, LOCK, common_dir, git  # noqa: F401
+from agent_pm.utils.repos.shell import (  # noqa: F401
     LONG,
     SHORT,
     USERINFO,
@@ -55,9 +58,6 @@ from agent_pm.role.repos.shell import (  # noqa: F401
     redact,
     sh,
 )
-from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import read_config
-from agent_pm.utils.paths import real_dirs, temp_dirs, under
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")

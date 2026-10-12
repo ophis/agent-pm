@@ -7,8 +7,7 @@ import os
 import uuid
 from dataclasses import asdict
 
-from agent_pm.role.composer import RunConfig
-from agent_pm.role.delegate import (
+from agent_pm.delegate import (
     Begun,
     ConfigError,
     Delegate,
@@ -17,6 +16,7 @@ from agent_pm.role.delegate import (
     Progress,
     Result,
 )
+from agent_pm.delegate.composer import RunConfig
 from agent_pm.session import NotDisplayable, api
 from agent_pm.utils import files
 from agent_pm.utils.record import Record, Status

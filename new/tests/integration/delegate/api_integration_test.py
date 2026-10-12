@@ -10,9 +10,8 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.role import composer
-from agent_pm.role.delegate import Begun, Finished, Limit, Progress, run
-from agent_pm.role.delegate.runner import FIX
+from agent_pm.delegate import Begun, Finished, Limit, Progress, composer, run
+from agent_pm.delegate.runner import FIX
 from agent_pm.session.adapters import registry
 
 from new.tests.case import Case
