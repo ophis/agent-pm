@@ -15,6 +15,7 @@ from agent_pm.composer.teams import (
     check_overlap,
     check_team_dirs,
     index,
+    role_tables,
     roles,
     tasks_path,
     team,
@@ -77,7 +78,7 @@ FRONT = '---\ncommands: ["rm *"]\n---\n'
 
 
 class Fake(unittest.TestCase):
-    """A team root and config file in a temp dir; a HOME of the test's own for the local config and team dirs."""
+    """A team root, config and local file in a temp dir; a HOME of the test's own for team dirs."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -85,6 +86,7 @@ class Fake(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(tmp.name, "team")
         self.config = os.path.join(tmp.name, "config.toml")
+        self.local_file = os.path.join(tmp.name, "local.toml")
         self.write(self.root, FILES)
         self.configure(CONFIG)
         self.home = hermetic.home(self)
@@ -103,15 +105,17 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(self.local_file, "w") as f:
             f.write(text)
 
     def cfg(self):
-        return config_file.read_config(self.config)
+        return config_file.read_config(self.config, self.local_file)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""
-        return index(role, found if found is not None else team(self.root), self.config)
+        return index(
+            role, found if found is not None else team(self.root), self.config, self.local_file
+        )
 
     def refused(self, call, *args, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -208,7 +212,7 @@ class Index(Fake):
 
 class Catalog(Fake):
     def test_configured_roles_in_config_order_with_their_tasks(self):
-        found = catalog(team(self.root), self.config)
+        found = catalog(team(self.root), self.config, self.local_file)
         self.assertEqual(found, BUILT_IN)
         self.assertEqual(list(found), ["writer", "editor"])
 
@@ -234,10 +238,13 @@ class Catalog(Fake):
         ):
             with self.subTest(config=config):
                 self.configure(config)
-                self.assertEqual(self.refused(catalog, team(self.root), self.config), msg)
+                self.assertEqual(
+                    self.refused(catalog, team(self.root), self.config, self.local_file), msg
+                )
         os.remove(self.config)
         self.assertEqual(
-            self.refused(catalog, team(self.root), self.config), f"no core config {self.config}"
+            self.refused(catalog, team(self.root), self.config, self.local_file),
+            f"no core config {self.config}",
         )
 
     def test_the_defaults_are_the_real_team_root_and_config(self):
@@ -246,14 +253,44 @@ class Catalog(Fake):
         self.assertIn("light-research", index("researcher"))
 
 
+class ExplicitPaths(Fake):
+    """Each function reads only the config and local passed, never the HOME one (malformed here)."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+            f.write("malformed = [\n")
+
+    def test_team_dirs(self):
+        top = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
+        self.local(f'team_dirs = ["{top}"]\n')
+        self.assertEqual(team_dirs(self.config, self.local_file), (top,))
+        self.assertEqual(team_dirs(self.config, os.devnull), ())
+
+    def test_role_tables_index_and_catalog(self):
+        self.local("[roles.writer]\ntier = 3\n[roles.ghost]\ntier = 3\n")
+        self.assertEqual(
+            role_tables(self.config, self.local_file)["writer"], {"effort": "medium", "tier": 3}
+        )
+        self.assertEqual(role_tables(self.config, os.devnull)["writer"], {"effort": "medium"})
+        ghost = "roles.ghost: no charter roles/ghost.md in core or team_dirs"
+        found = team(self.root)
+        self.assertEqual(self.refused(index, "ghost", found, self.config, self.local_file), ghost)
+        self.assertEqual(
+            self.refused(index, "ghost", found, self.config, os.devnull), "unknown role 'ghost'"
+        )
+        self.assertEqual(self.refused(catalog, found, self.config, self.local_file), ghost)
+        self.assertEqual(catalog(found, self.config, os.devnull), BUILT_IN)
+
+
 class TeamDirs(Fake):
     """Team dirs under the test's HOME, passed as a Team."""
 
     def test_team_dirs_values(self):
-        self.assertEqual(team_dirs(self.config), ())
+        self.assertEqual(team_dirs(self.config, self.local_file), ())
         top = self.team_dir({"roles/poet.md": POET})
         self.local('team_dirs = ["~/.agent-pm/team"]\n')
-        self.assertEqual(team_dirs(self.config), (top,))
+        self.assertEqual(team_dirs(self.config, self.local_file), (top,))
         for value, msg in (
             ('"x"', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
             ('["rel"]', "team_dirs: 'rel' is not an absolute or ~ path"),
@@ -264,17 +301,17 @@ class TeamDirs(Fake):
         ):
             with self.subTest(value=value):
                 self.local(f"team_dirs = {value}\n")
-                self.assertEqual(self.refused(team_dirs, self.config), msg)
+                self.assertEqual(self.refused(team_dirs, self.config, self.local_file), msg)
 
     def test_team_dirs_in_the_core_config(self):
         self.configure('team_dirs = ["/x"]\n' + CONFIG)
         self.assertEqual(
-            self.refused(team_dirs, self.config),
-            "team_dirs: set it in ~/.agent-pm/core-new.local.toml, not config.toml",
+            self.refused(team_dirs, self.config, self.local_file),
+            f"team_dirs: set it in {self.local_file}, not config.toml",
         )
         self.configure(CONFIG)
         self.local("team_dirs = []\n")
-        self.assertEqual(team_dirs(self.config), ())
+        self.assertEqual(team_dirs(self.config, self.local_file), ())
 
     def test_no_team_dir_is_found_from_the_cwd(self):
         cwd = os.path.join(self.home, "cwd")
@@ -282,18 +319,20 @@ class TeamDirs(Fake):
         here = os.getcwd()
         os.chdir(cwd)
         self.addCleanup(os.chdir, here)
-        self.assertEqual(team_dirs(self.config), ())
-        self.assertIsNone(team(self.root, team_dirs(self.config)).lookup("roles", "poet"))
+        self.assertEqual(team_dirs(self.config, self.local_file), ())
+        self.assertIsNone(
+            team(self.root, team_dirs(self.config, self.local_file)).lookup("roles", "poet")
+        )
         self.assertEqual(self.refused(self.tasks_of, "poet"), "unknown role 'poet'")
 
     def test_a_new_role_and_the_catalog(self):
         found = self.with_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
         self.assertEqual(self.tasks_of("poet", found), {"verse": "a verse; always; light."})
         self.assertEqual(found.charter("poet"), (POET, self.path("roles/poet.md")))
-        listed = catalog(found, self.config)
+        listed = catalog(found, self.config, self.local_file)
         self.assertEqual(listed, BUILT_IN | {"poet": {"verse": "a verse; always; light."}})
         self.assertEqual(list(listed), ["writer", "editor", "poet"])
-        self.assertNotIn("poet", catalog(team(self.root), self.config))
+        self.assertNotIn("poet", catalog(team(self.root), self.config, self.local_file))
 
     def test_a_role_runs_only_tasks_from_its_own_dir(self):
         a = self.team_dir({"roles/poet.md": POET.replace("verse", "long-note")}, "a")

@@ -98,19 +98,31 @@ class Base(unittest.TestCase):
 
 class TablesTest(Base):
     def test_committed_config_has_the_claude_table(self):
-        self.assertEqual(list(registry.tables()), ["claude", "codex"])
+        self.assertEqual(list(registry.tables(registry.CONFIG, os.devnull)), ["claude", "codex"])
         self.assertEqual(registry.configured(), ["claude", "codex"])
 
     def test_the_merged_tables_and_their_sorted_names(self):
         path = self.write("config.toml", "[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n")
-        self.local("[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
-        self.assertEqual(registry.tables(path), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}})
+        local = self.write("local.toml", "[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
+        self.assertEqual(
+            registry.tables(path, local), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}}
+        )
+
+    def test_read_takes_both_paths_and_reads_only_those(self):
+        self.local("x = \n")
+        path = self.write("config.toml", "[adapters.a]\nk = 1\n")
+        local = self.write("local.toml", "[adapters.a]\nk = 2\n")
+        self.assertEqual(registry.read(path, local)["adapters"], {"a": {"k": 2}})
+        self.assertEqual(registry.read(path, os.devnull)["adapters"], {"a": {"k": 1}})
+        for args in ((), (path,)):
+            with self.subTest(args=args), self.assertRaises(TypeError):
+                registry.read(*args)
 
     def test_no_tables_when_absent_or_not_a_table(self):
         for text in ("x = 1\n", "adapters = 1\n", 'adapters = ["fake"]\n'):
             with self.subTest(text=text):
                 path = self.write("config.toml", text)
-                self.assertEqual(registry.tables(path), {})
+                self.assertEqual(registry.tables(path, os.devnull), {})
 
     def config_error(self, path, local):
         with self.assertRaises(ConfigError) as caught:

@@ -128,9 +128,11 @@ class Base(unittest.TestCase):
         os.makedirs(os.path.join(self.wt, ".git"), exist_ok=True)
         return (lambda a: a[3:] == ["remote", "get-url", "origin"], ok(url + "\n"))
 
-    def main(self, argv, run, config=None):
+    def main(self, argv, run, config=None, local=None):
         out, err = io.StringIO(), io.StringIO()
-        code = repo.main(argv, run=run, out=out, err=err, config=config or self.none)
+        code = repo.main(
+            argv, run=run, out=out, err=err, config=config or self.none, local=local or self.none
+        )
         return code, out.getvalue(), err.getvalue()
 
     def config(self, text):
@@ -454,7 +456,7 @@ class Worktree(Base):
         """argparse's stderr for `argv`, which it must refuse."""
         err = io.StringIO()
         with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
-            repo.main(argv, run=Fake([]), config=self.none)
+            repo.main(argv, run=Fake([]), config=self.none, local=self.none)
         return err.getvalue()
 
     def test_an_option_given_twice_is_refused(self):
@@ -614,6 +616,7 @@ class Local(Clone):
             out=out,
             err=err,
             config=config or self.none,
+            local=self.none,
             temp=(),
         )
         return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
@@ -765,6 +768,7 @@ class Local(Clone):
             out=out,
             err=err,
             config=self.none,
+            local=self.none,
             temp=(),
         )
         self.assertEqual((code, json.loads(out.getvalue())["worktree"]), (0, wt), err.getvalue())
@@ -779,6 +783,7 @@ class Local(Clone):
                     out=out,
                     err=err,
                     config=self.none,
+                    local=self.none,
                 )
                 self.assertEqual(code, want, err.getvalue())
                 if want == 0:  # status with a local path
@@ -790,7 +795,7 @@ class Local(Clone):
 
 
 class LocalSafety(Clone):
-    def worktree(self, fail_on=None, temp=(), config=None, spec=None):
+    def worktree(self, fail_on=None, temp=(), config=None, spec=None, local=None):
         run, out, err = (
             Real([info(), *([(fail_on, fail("boom"))] if fail_on else [])]),
             io.StringIO(),
@@ -802,6 +807,7 @@ class LocalSafety(Clone):
             out=out,
             err=err,
             config=config or self.none,
+            local=local or self.none,
             temp=temp,
         )
         return code, err.getvalue()
@@ -911,7 +917,7 @@ class LocalSafety(Clone):
         other, alias = os.path.join(self.tmp, "clone2"), os.path.join(self.tmp, "alias")
         git("clone", "-q", self.bare, other)
         os.symlink(self.clone, alias)
-        local = os.path.join(hermetic.home(self), LOCAL)
+        local = os.path.join(self.tmp, "local.toml")
         for case, listed, in_local, spec, on in (
             ("none listed", None, False, None, False),
             ("listed", [self.clone], False, None, True),
@@ -926,7 +932,7 @@ class LocalSafety(Clone):
                         f.write(f"trusted_dirs = {json.dumps([self.clone])}\n")
                 try:
                     config = None if listed is None else self.listing(*listed)
-                    self.assertEqual(self.worktree(config=config, spec=spec), (0, ""))
+                    self.assertEqual(self.worktree(config=config, spec=spec, local=local), (0, ""))
                     if on:
                         self.assertEqual(os.readlink(link), "/etc/passwd")
                     else:
@@ -1101,11 +1107,11 @@ class Status(Base):
             f.write(f"# Plan\n\nRESUME: phase={phase} branch={branch}\n")
         return path
 
-    def status(self, *answers, argv=(), config=None):
+    def status(self, *answers, argv=(), config=None, local=None):
         """(exit code, the output or stderr, run) of status on a checkout of o/n; `answers` after the gh login's."""
         run = Fake([self.existing(), LOGIN, *answers])
         code, out, err = self.main(
-            ["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir, *argv], run, config
+            ["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir, *argv], run, config, local
         )
         return code, json.loads(out) if code == 0 else err, run
 
@@ -1159,6 +1165,7 @@ class Status(Base):
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
 
     def test_configured_users_replace_the_gh_login(self):
+        """From the config and local passed only, never the HOME one (malformed here)."""
         comments = [
             [
                 {
@@ -1169,20 +1176,19 @@ class Status(Base):
                 {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "Alice"}, "body": "do Y"},
             ]
         ]
-        local = os.path.join(hermetic.home(self), LOCAL)
-        for text, local_text in (
-            ('users = ["alice"]\n', None),
-            ('users = ["bob"]\n', 'users = ["alice"]\n'),
-        ):
-            with self.subTest(local=local_text):
-                if local_text:
-                    with open(local, "w") as f:
-                        f.write(local_text)
+        with open(os.path.join(hermetic.home(self), LOCAL), "w") as f:
+            f.write("malformed = [\n")
+        local = os.path.join(self.dir, "local.toml")
+        with open(local, "w") as f:
+            f.write('users = ["alice"]\n')
+        for text, given in (('users = ["alice"]\n', os.devnull), ('users = ["bob"]\n', local)):
+            with self.subTest(local=given):
                 code, r, _ = self.status(
                     pr_list([pr()]),
                     (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
                     NO_FEEDBACK,
                     config=self.config(text),
+                    local=given,
                 )
                 self.assertEqual((code, r["pr"]["number"]), (0, 7), r)
                 self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
@@ -1218,6 +1224,17 @@ class Status(Base):
             self.config("users = [\n"),
         )
         self.assertEqual(code, 1)
+
+    def test_the_defaults_are_the_core_config_pair(self):
+        with unittest.mock.patch.object(repo, "read_config", return_value={}) as read:
+            code = repo.main(
+                ["status", "o/n", "--branch", "b", "--dir", self.dir],
+                run=Fake([]),
+                out=io.StringIO(),
+                err=io.StringIO(),
+            )
+        self.assertEqual(code, 2)
+        read.assert_called_once_with(repo.CONFIG, repo.LOCAL)
 
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))

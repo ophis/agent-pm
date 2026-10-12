@@ -101,7 +101,7 @@ def item(text, name):
 
 
 class Fake(unittest.TestCase):
-    """A team root and config file in a temp dir; a HOME of the test's own for the local config and team dirs."""
+    """A team root, config and local file in a temp dir; a HOME of the test's own for team dirs."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -109,6 +109,7 @@ class Fake(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "team")
         self.config = os.path.join(self.tmp, "config.toml")
+        self.local_file = os.path.join(self.tmp, "local.toml")
         self.write(FILES | TEXTS)
         with open(self.config, "w") as f:
             f.write(CONFIG)
@@ -126,11 +127,18 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(self.local_file, "w") as f:
             f.write(text)
 
     def run_of(self, role="writer", task=None, overlays=(), found=None):
-        return resolve(role, task, overlays=overlays, team=self.found(found), config=self.config)
+        return resolve(
+            role,
+            task,
+            overlays=overlays,
+            team=self.found(found),
+            config=self.config,
+            local=self.local_file,
+        )
 
     def found(self, given=None):
         return given if given is not None else team(self.root)
@@ -648,7 +656,7 @@ class TeamDirs(Fake):
             {"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"}
         )
         for role in ("writer", "editor"):
-            for task in (None, *index(role, team(self.root), self.config)):
+            for task in (None, *index(role, team(self.root), self.config, self.local_file)):
                 with self.subTest(role=role, task=task):
                     self.assertEqual(
                         self.compose(role, task, found=other)[0], self.compose(role, task)[0]

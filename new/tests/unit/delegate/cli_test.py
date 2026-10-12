@@ -482,7 +482,7 @@ class InProcess(Base):
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_claude_and_codex_refuse_it_with_exit_2(self):
-        registry.configure({"adapters": registry.tables()})
+        registry.configure({"adapters": registry.tables(registry.CONFIG, os.devnull)})
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 code, out, err = self.runs("--mode", "in_process", runtime=runtime)

@@ -17,7 +17,7 @@ def merge(base: dict, over: dict) -> dict:
     return out
 
 
-def read_config(path: str = CONFIG, local: str = LOCAL) -> dict:
+def read_config(path: str, local: str) -> dict:
     """`path`, with `local` (~ expanded) merged on top when it exists."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)

@@ -53,7 +53,7 @@ RUNTIME = "runtime must be a non-empty one-line name, got "
 
 
 class Fake(unittest.TestCase):
-    """A team root and config file in a temp dir; a HOME of the test's own for the local config."""
+    """A team root, config and local file in a temp dir; a HOME of the test's own."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -61,6 +61,7 @@ class Fake(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "team")
         self.config = os.path.join(self.tmp, "config.toml")
+        self.local_file = os.path.join(self.tmp, "local.toml")
         self.write(FILES)
         self.configure(CONFIG)
         hermetic.home(self)
@@ -77,7 +78,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+        with open(self.local_file, "w") as f:
             f.write(text)
 
     def team_dir(self, files):
@@ -87,7 +88,8 @@ class Fake(unittest.TestCase):
         return team(self.root, (top,)), top
 
     def resolved(self, role="writer", task=None, found=None, **kw):
-        return resolve(role, task, team=found or team(self.root), config=self.config, **kw)
+        kw = {"config": self.config, "local": self.local_file, **kw}
+        return resolve(role, task, team=found or team(self.root), **kw)
 
     def refused(self, role="writer", task=None, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -402,7 +404,7 @@ class Runtime(Fake):
     def test_resolve_takes_no_runtime_client_or_trust(self):
         self.assertEqual(
             list(inspect.signature(resolve).parameters),
-            ["role", "task", "overlays", "label", "team", "config"],
+            ["role", "task", "overlays", "label", "team", "config", "local"],
         )
 
 
@@ -465,10 +467,10 @@ class Params(unittest.TestCase):
 
 class TrustedDirs(Fake):
     def test_unset_none_else_the_local_files_real_paths(self):
-        self.assertEqual((trusted_dirs(), trusted_dirs(self.config)), (frozenset(), frozenset()))
+        self.assertEqual(trusted_dirs(self.config, self.local_file), frozenset())
         self.local('trusted_dirs = ["~/data", "/x/../y"]\n')
         self.assertEqual(
-            trusted_dirs(self.config),
+            trusted_dirs(self.config, self.local_file),
             frozenset({os.path.realpath(os.path.expanduser("~/data")), os.path.realpath("/y")}),
         )
 
@@ -480,8 +482,29 @@ class TrustedDirs(Fake):
             with self.subTest(value=value):
                 self.local(f"trusted_dirs = {value}\n")
                 with self.assertRaises(ConfigError) as cm:
-                    trusted_dirs(self.config)
+                    trusted_dirs(self.config, self.local_file)
                 self.assertEqual(str(cm.exception), msg)
+
+
+class ExplicitPaths(Fake):
+    """resolve and trusted_dirs read only the config and local passed, never the HOME one (malformed here)."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+            f.write("malformed = [\n")
+
+    def test_resolve(self):
+        self.local('[roles.writer]\neffort = "low"\n')
+        self.assertEqual(self.resolved().effort, "low")
+        self.assertEqual(self.resolved(local=os.devnull).effort, "medium")
+
+    def test_trusted_dirs(self):
+        self.local('trusted_dirs = ["/x/../y"]\n')
+        self.assertEqual(
+            trusted_dirs(self.config, self.local_file), frozenset({os.path.realpath("/y")})
+        )
+        self.assertEqual(trusted_dirs(self.config, os.devnull), frozenset())
 
 
 class Bind(unittest.TestCase):

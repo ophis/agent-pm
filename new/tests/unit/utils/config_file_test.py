@@ -97,16 +97,23 @@ class Defaults(unittest.TestCase):
         self.assertEqual(CONFIG, os.path.join(CORE, "config.toml"))
         self.assertEqual(LOCAL, LOCAL_SHOWN)
 
-    def test_defaults_to_the_committed_config_and_the_home_local_file(self):
+    def test_both_paths_are_required_and_devnull_merges_nothing(self):
         self.local('extra = "x"\n')
-        self.assertEqual(read_config()["extra"], "x")
+        for args in ((), (CONFIG,), (self.path,)):
+            with self.subTest(args=args), self.assertRaises(TypeError):
+                read_config(*args)
+        self.assertEqual(
+            read_config(self.path, os.devnull), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
+        )
 
     def test_the_home_local_file_goes_on_top_and_the_old_cores_is_not_read(self):
         self.local('users = ["old"]\n', "core.local.toml")
-        self.assertEqual(read_config(self.path), {"users": ["a", "b"], "t": {"x": 1, "y": 1}})
+        self.assertEqual(
+            read_config(self.path, LOCAL), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
+        )
         self.local('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
         self.assertEqual(
-            read_config(self.path), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
+            read_config(self.path, LOCAL), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
         )
 
 

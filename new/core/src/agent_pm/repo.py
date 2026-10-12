@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import CONFIG, read_config
+from agent_pm.utils.config_file import CONFIG, LOCAL, read_config
 from agent_pm.utils.paths import real_dirs, temp_dirs, under
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
@@ -504,6 +504,7 @@ def main(
     out=sys.stdout,
     err=sys.stderr,
     config: str = CONFIG,
+    local: str = LOCAL,
     temp=None,
 ) -> int:
     ap = argparse.ArgumentParser(prog="repo.py")
@@ -518,7 +519,7 @@ def main(
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_config(config)
+        cfg = read_config(config, local)
         if a.cmd == "worktree":
             r = worktree(
                 a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg)

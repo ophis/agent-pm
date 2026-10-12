@@ -594,7 +594,7 @@ class InProcessTest(Base):
                 )
 
     def test_claude_and_codex_do_not_support_it(self):
-        registry.configure({"adapters": registry.tables()})
+        registry.configure({"adapters": registry.tables(registry.CONFIG, os.devnull)})
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 self.refused(

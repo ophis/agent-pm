@@ -32,11 +32,11 @@ class TuiSettings:
     retile: str | None = None
 
 
-def read(path: str = CONFIG, local: str = LOCAL) -> dict:
+def read(config: str, local: str) -> dict:
     try:
-        return _kept(read_config(path, local))
+        return _kept(read_config(config, local))
     except (OSError, ValueError) as e:
-        raise ConfigError(f"core config {path}: {e}") from e
+        raise ConfigError(f"core config {config}: {e}") from e
 
 
 def _kept(config: Mapping) -> dict:
@@ -47,8 +47,8 @@ def _kept(config: Mapping) -> dict:
     }
 
 
-def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
-    return read(path, local)["adapters"]
+def tables(config: str, local: str) -> dict[str, dict]:
+    return read(config, local)["adapters"]
 
 
 def configure(config: Mapping) -> None:

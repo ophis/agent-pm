@@ -120,16 +120,16 @@ class Team:
         roles(self, cfg)
 
 
-def team_dirs(config: str = CONFIG) -> tuple[str, ...]:
+def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
     try:
         own, value = (
             "team_dirs" in read_config(config, os.devnull),
-            read_config(config, LOCAL).get("team_dirs"),
+            read_config(config, local).get("team_dirs"),
         )
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
-        raise ConfigError(f"team_dirs: set it in {LOCAL}, not {os.path.basename(config)}")
+        raise ConfigError(f"team_dirs: set it in {local}, not {os.path.basename(config)}")
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -198,10 +198,12 @@ def roles(team: Team, cfg: Mapping) -> list[str]:
     return out
 
 
-def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str, str]:
+def index(
+    role: str, team: Team | None = None, config: str = CONFIG, local: str = LOCAL
+) -> dict[str, str]:
     team = team_or_default(team)
     if not (charter := team.charter(role)):
-        raise no_charter(role, read_config(config, LOCAL), team)
+        raise no_charter(role, read_config(config, local), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -233,16 +235,20 @@ def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str
     return tasks
 
 
-def catalog(team: Team | None = None, config: str = CONFIG) -> dict[str, dict[str, str]]:
+def catalog(
+    team: Team | None = None, config: str = CONFIG, local: str = LOCAL
+) -> dict[str, dict[str, str]]:
     team = team_or_default(team)
-    role_tables(config)
-    return {role: index(role, team, config) for role in roles(team, read_config(config, LOCAL))}
+    role_tables(config, local)
+    return {
+        role: index(role, team, config, local) for role in roles(team, read_config(config, local))
+    }
 
 
-def role_tables(config: str) -> Mapping:
+def role_tables(config: str, local: str) -> Mapping:
     if not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = read_config(config, LOCAL).get("roles")
+    roles = read_config(config, local).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():
