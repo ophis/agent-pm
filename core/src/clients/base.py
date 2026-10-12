@@ -5,7 +5,16 @@ from types import MappingProxyType
 from typing import Literal
 
 import repo
-from compose import CONFIG, PROGRESS, RUN_KEYS, TEXT, ConfigError, RunConfig, RunParams, lookup  # noqa: F401
+from compose import (  # noqa: F401
+    CONFIG,
+    PROGRESS,
+    RUN_KEYS,
+    TEXT,
+    ConfigError,
+    RunConfig,
+    RunParams,
+    lookup,
+)
 
 BLOCK = 1 << 16
 

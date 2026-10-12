@@ -1,8 +1,18 @@
-import functools, json, os, shlex, subprocess, tempfile, threading, time, unittest
+import functools
+import json
+import os
+import shlex
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
 from datetime import datetime
 from unittest import mock
-from tests import hermetic  # noqa: F401
+
 import sessions
+
+from tests import hermetic  # noqa: F401
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
@@ -10,11 +20,14 @@ ISSUE = "TASK-12"
 T1, T2 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00"
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 
+
 def record(started_at=T1, workdir="/w/TASK-12"):
     return sessions.base(sid=SID, workdir=workdir, started_at=started_at)
 
+
 def comment(id, created_at, body, mine=True):
     return {"id": id, "createdAt": created_at, "body": body, "mine": mine}
+
 
 class FakeLinear:
     def __init__(self, *comments, fail=None):
@@ -31,7 +44,15 @@ class FakeLinear:
             assert "isMe: { eq: true }" in query and "startsWith: $p" in query, query
             assert v["i"] == ISSUE, v
             hits = [c for c in self.comments if c["mine"] and c["body"].startswith(v["p"])]
-            return {"issue": {"comments": {"nodes": [{"id": c["id"], "createdAt": c["createdAt"]} for c in reversed(hits)]}}}
+            return {
+                "issue": {
+                    "comments": {
+                        "nodes": [
+                            {"id": c["id"], "createdAt": c["createdAt"]} for c in reversed(hits)
+                        ]
+                    }
+                }
+            }
         if op == "commentCreate":
             assert v["i"] == ISSUE, v
             n = len(self.comments)
@@ -44,8 +65,10 @@ class FakeLinear:
         assert len(self.comments) == 1, self.comments
         return self.comments[0]
 
+
 def start(gql, rec):
     return sessions.post(ISSUE, rec, gql=gql)
+
 
 def end(gql, rec, rc, ended_at=T2):
     return sessions.post(ISSUE, rec, rc, gql=gql, ended_at=ended_at)
@@ -53,8 +76,11 @@ def end(gql, rec, rc, ended_at=T2):
 
 class Record(unittest.TestCase):
     def test_post_writes_one_comment_per_status(self):
-        for rc, line in ((None, f"running · {T1}"), (0, f"done · {T1} → {T2} · exit 0"),
-                         (3, f"interrupted · {T1} → {T2} · exit 3")):
+        for rc, line in (
+            (None, f"running · {T1}"),
+            (0, f"done · {T1} → {T2} · exit 0"),
+            (3, f"interrupted · {T1} → {T2} · exit 3"),
+        ):
             with self.subTest(rc=rc):
                 linear = FakeLinear()
                 self.assertIsNone(start(linear, record()))
@@ -68,8 +94,16 @@ class Record(unittest.TestCase):
         for status in ("done", "needs_input", "failed"):
             with self.subTest(status=status):
                 linear = FakeLinear()
-                self.assertIsNone(sessions.post(ISSUE, record(), 3, gql=linear, ended_at=T2,
-                                               outcome=sessions.drive.Outcome(status, "title", "summary")))
+                self.assertIsNone(
+                    sessions.post(
+                        ISSUE,
+                        record(),
+                        3,
+                        gql=linear,
+                        ended_at=T2,
+                        outcome=sessions.drive.Outcome(status, "title", "summary"),
+                    )
+                )
                 line = linear.only()["body"].splitlines()[0]
                 self.assertEqual(line, f"Run {SID} · {status} · {T1} → {T2} · exit 3")
                 self.assertNotIn("interrupted", line)
@@ -78,11 +112,24 @@ class Record(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cwd = "/data/my repo"
             with open(os.path.join(tmp, "run.jsonl"), "w") as f:
-                f.write(json.dumps({"ts": "t", "kind": "session", "sid": SID, "cwd": cwd, "project": True,
-                                    "resume": "rm -rf ~"}) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": "t",
+                            "kind": "session",
+                            "sid": SID,
+                            "cwd": cwd,
+                            "project": True,
+                            "resume": "rm -rf ~",
+                        }
+                    )
+                    + "\n"
+                )
             quoted = "/Users/x/my work/it's/TASK-12"
-            for workdir, want in ((quoted, ["cd", quoted, "&&", "claude", "--resume", SID]),
-                                  (tmp, ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", tmp])):
+            for workdir, want in (
+                (quoted, ["cd", quoted, "&&", "claude", "--resume", SID]),
+                (tmp, ["cd", cwd, "&&", "claude", "--resume", SID, "--add-dir", tmp]),
+            ):
                 with self.subTest(workdir=workdir):
                     self.assertEqual(shlex.split(sessions.command(record(workdir=workdir))), want)
 
@@ -119,26 +166,37 @@ class Record(unittest.TestCase):
 
     def test_updates_the_earliest_match_only(self):
         mine = f"Run {SID} · running · {T1}"
-        others = [comment("other-sid", "2026-09-29T00:00:00.000Z", f"Run {OTHER} · running · {T1}"),
-                  comment("human", "2026-09-29T00:00:01.000Z", mine, mine=False)]
-        matches = [comment("b", "2026-09-30T02:00:00.000Z", mine + " b"),
-                   comment("a", "2026-09-30T01:00:00.000Z", mine + " a"),
-                   comment("c", "2026-09-30T03:00:00.000Z", mine + " c")]
+        others = [
+            comment("other-sid", "2026-09-29T00:00:00.000Z", f"Run {OTHER} · running · {T1}"),
+            comment("human", "2026-09-29T00:00:01.000Z", mine, mine=False),
+        ]
+        matches = [
+            comment("b", "2026-09-30T02:00:00.000Z", mine + " b"),
+            comment("a", "2026-09-30T01:00:00.000Z", mine + " a"),
+            comment("c", "2026-09-30T03:00:00.000Z", mine + " c"),
+        ]
         linear = FakeLinear(*others, *matches)
         self.assertIsNone(start(linear, record(started_at=T2)))
         self.assertEqual(linear.calls, ["comments", "commentUpdate"])
         updated = [c for c in linear.comments if c["body"] == sessions.body(record(started_at=T2))]
         self.assertEqual([c["id"] for c in updated], ["a"])
-        self.assertEqual([c for c in linear.comments if c["id"] != "a"], [*others, matches[0], matches[2]])
+        self.assertEqual(
+            [c for c in linear.comments if c["id"] != "a"], [*others, matches[0], matches[2]]
+        )
 
     def test_is_comment(self):
         body = sessions.body(record())
         self.assertTrue(sessions.is_comment({"user": {"isMe": True}, "body": body}))
-        for name, c in (("human, same body", {"user": {"isMe": False}, "body": body}),
-                        ("harness, no prefix", {"user": {"isMe": True}, "body": "Repo check failed: no Repo: line"}),
-                        ("sid not a uuid", {"user": {"isMe": True}, "body": "Run s-1 · x"}),
-                        ("no user", {"user": None, "body": body}),
-                        ("prefix not at the start", {"user": {"isMe": True}, "body": "see " + body})):
+        for name, c in (
+            ("human, same body", {"user": {"isMe": False}, "body": body}),
+            (
+                "harness, no prefix",
+                {"user": {"isMe": True}, "body": "Repo check failed: no Repo: line"},
+            ),
+            ("sid not a uuid", {"user": {"isMe": True}, "body": "Run s-1 · x"}),
+            ("no user", {"user": None, "body": body}),
+            ("prefix not at the start", {"user": {"isMe": True}, "body": "see " + body}),
+        ):
             with self.subTest(name):
                 self.assertFalse(sessions.is_comment(c))
 
@@ -161,6 +219,7 @@ class Failure(unittest.TestCase):
     def failing(self, exc):
         def gql(query, **v):
             raise exc
+
         return gql
 
     def test_find_failure_never_writes(self):
@@ -172,6 +231,7 @@ class Failure(unittest.TestCase):
         def no_issue(query, **v):
             calls.append(query)
             return {"issue": None}
+
         out = end(no_issue, record(), 0)
         self.assertRegex(out, r"\ATypeError: [^\n]+\Z")
         self.assertEqual(len(calls), 1)
@@ -179,10 +239,15 @@ class Failure(unittest.TestCase):
     def test_write_failure_logs_one_line(self):
         existing = comment("a", "2026-09-30T01:00:00.000Z", f"Run {SID} · running · {T1}")
         for op, seed in (("commentCreate", ()), ("commentUpdate", (existing,))):
-            for exc, reason in ((RuntimeError("boom"), "RuntimeError: boom"),
-                                (SystemExit("linear api error: [{'message': 'nope'}]"),
-                                 "SystemExit: linear api error: [{'message': 'nope'}]"),
-                                (RuntimeError("two\nlines"), "RuntimeError: two lines"), (False, "success: false")):
+            for exc, reason in (
+                (RuntimeError("boom"), "RuntimeError: boom"),
+                (
+                    SystemExit("linear api error: [{'message': 'nope'}]"),
+                    "SystemExit: linear api error: [{'message': 'nope'}]",
+                ),
+                (RuntimeError("two\nlines"), "RuntimeError: two lines"),
+                (False, "success: false"),
+            ):
                 with self.subTest(op=op, reason=reason):
                     linear = FakeLinear(*seed, fail={op: exc})
                     self.error(start(linear, record()), reason)
@@ -198,8 +263,12 @@ class Failure(unittest.TestCase):
         self.error(out, "timed out after 0.1s")
 
     def test_secret_outside_the_message_does_not_leak(self):
-        exc = subprocess.CalledProcessError(1, ["security", "find-generic-password", "-s", "svc", "-w"],
-                                            output="lin_api_SECRET", stderr="lin_api_SECRET")
+        exc = subprocess.CalledProcessError(
+            1,
+            ["security", "find-generic-password", "-s", "svc", "-w"],
+            output="lin_api_SECRET",
+            stderr="lin_api_SECRET",
+        )
         exc.headers = {"Authorization": "lin_api_SECRET"}
         out = start(self.failing(exc), record())
         self.assertTrue(out.startswith("CalledProcessError: "), out)

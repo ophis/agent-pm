@@ -5,3 +5,4 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # core/src ahead of orchestrator/src, as orchestrator/src/config.py has it
 _SRC = [os.path.join(ROOT, d) for d in ("core/src", "orchestrator/src", "core/skills/tmux/scripts")]
 sys.path[:0] = [p for p in _SRC if p not in sys.path]
+from tests import hermetic  # noqa: E402,F401  (sets HOME before any test module loads)

@@ -25,51 +25,10 @@ jobs:
       - name: Comment budget
         run: python3 .github/comment_budget.py
 
-  unittest:
-    name: Unit tests (Python 3.11)
+  ruff:
+    name: Ruff (Python 3.11)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        id: python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Check tmux shard inventory
-        run: python3 .github/tmux_shards.py --check
-      - name: Unit tests
-        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
-
-  integration-core:
-    name: Core integration (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        id: python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Core integration tests
-        run: python3 -m unittest discover -v -s tests/integration/core -t . -p "*_test.py"
-
-  integration-orchestrator:
-    name: Orchestrator integration (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -79,21 +38,40 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Orchestrator integration tests
-        run: python3 -m unittest discover -v -s tests/integration/orchestrator -t . -p "*_test.py"
+      - name: Install Ruff
+        id: ruff
+        run: pip install ruff==0.16.9
+      - name: Ruff check
+        run: ruff check --output-format=github
+      - name: Ruff format
+        if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
+        run: ruff format --check
 
-  integration-tmux:
-    name: Tmux integration (${{ matrix.shard }}, Python 3.11)
+  new-unit:
+    name: New unit tests (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ["A", "B", "C", "D"]
+    env:
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # real_test compares the root core/team/ with main
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: New unit tests
+        run: python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
+
+  new-integration:
+    name: New integration (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -107,5 +85,5 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
-      - name: Tmux skill integration tests
-        run: python3 .github/tmux_shards.py '${{ matrix.shard }}'
+      - name: New integration tests
+        run: python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
