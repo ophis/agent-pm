@@ -1,8 +1,5 @@
 """Codex interactive Driver sessions and hook trust with private tmux and fake runtimes."""
 
-from new.tests import NEW, SRC, live_tmux
-from new.tests.integration.adapters.codex import fake_codex, fake_tui
-
 import concurrent.futures
 import dataclasses
 import json
@@ -15,13 +12,12 @@ import sys
 import tempfile
 import threading
 import time
-import unittest
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     Blocked,
@@ -32,19 +28,22 @@ from adapters.base import (
     Spec,
     TurnEnd,
 )
-from adapters.codex import tui_start
-from driver import api, records, registry
+from agent_pm.adapters.codex import tui_start
+from agent_pm.driver import api, records, registry
+
+from new.tests import live_tmux
+from new.tests.case import NEW, PY, ROOT, Case, child_env
+from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
-sys.path.insert(0, sys.argv[1])
-from driver import api, registry
-registry.configure(json.loads(sys.argv[2]))
-h = api.attach(sys.argv[3])
+from agent_pm.driver import api, registry
+registry.configure(json.loads(sys.argv[1]))
+h = api.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]
-if sys.argv[4]:
-    h.send(sys.argv[4])
+if sys.argv[3]:
+    h.send(sys.argv[3])
     turn = next(e for e in h.events() if isinstance(e, api.TurnEnd))
     print(json.dumps([before, [turn.reply, turn.pending], h.reply]))
 else:
@@ -100,7 +99,7 @@ class Stream:
             pass
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
         parent = os.environ.get("AGENT_PM_TEST_TMP", NEW)
         tmp = tempfile.TemporaryDirectory(dir=parent)
@@ -200,8 +199,8 @@ class Live(unittest.TestCase):
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
-            [sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(self.config), name, text],
-            env=dict(os.environ),
+            [*PY, "-c", ATTACH, json.dumps(self.config), name, text],
+            env=child_env(),
             text=True,
             capture_output=True,
             stdin=subprocess.DEVNULL,
@@ -563,7 +562,7 @@ class TuiIntegrationTest(Live):
         native.write_bytes(original)
 
     def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_runtime(self):
-        roots = (str(self.home), self.server.bin, SRC, sys.prefix)
+        roots = (str(self.home), self.server.bin, ROOT, sys.prefix)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
                 spec = dataclasses.replace(

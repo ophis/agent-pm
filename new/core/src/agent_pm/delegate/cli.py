@@ -9,6 +9,7 @@ non-zero (an in_process run that raised: 1) or failed to start without a valid o
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 

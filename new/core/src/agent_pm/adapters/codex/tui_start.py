@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -12,9 +13,30 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sessions
-from hook_schema import HOOKS
+DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+IMPORT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(DIRECTORY)))
+
+
+def _sibling(name):
+    key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
+    if key in sys.modules:
+        found = getattr(sys.modules[key], "__file__", None)
+        if found != path:
+            raise ImportError(f"{key} is {found}, not {path}")
+        return sys.modules[key]
+    spec = importlib.util.spec_from_file_location(key, path)
+    # registered before it runs: dataclasses with postponed annotations look up their module
+    module = sys.modules[key] = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[key]
+        raise
+    return module
+
+
+sessions = _sibling("sessions")
+HOOKS = _sibling("hook_schema").HOOKS
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 LOCK_WAIT = 30
@@ -370,12 +392,11 @@ def _start(argv, termination):
     state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
-    directory = os.path.dirname(os.path.abspath(__file__))
     env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
     sessions.protect(
         state,
         [
-            os.path.dirname(os.path.dirname(directory)),
+            IMPORT_ROOT,
             sys.prefix,
             sys.base_prefix,
             sys.executable,

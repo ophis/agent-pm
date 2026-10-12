@@ -1,8 +1,8 @@
 """act-as's Adapter, runtime `print_prompt`: in_process mode only (PrintPromptInProcess, in_process.py), which hands
 the composed prompt back as the deliverable and starts no process. No config keys, no runtime note."""
 
-from adapters.base import Adapter
-from adapters.print_prompt.in_process import PrintPromptInProcess
+from agent_pm.adapters.base import Adapter
+from agent_pm.adapters.print_prompt.in_process import PrintPromptInProcess
 
 
 class PrintPromptAdapter(Adapter):

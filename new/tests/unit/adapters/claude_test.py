@@ -387,7 +387,10 @@ class ReadRulesTest(Base):
         bad = ["", "r", "./r", "/r\n", "/r\0", *(f"/r{c}s" for c in "*?[]{}()\\,"), "/" + "*" * 99]
         for read in bad:
             for launch in self.modes(reads=("/ok", read)):
-                with self.subTest(read=read), mock.patch("adapters.claude.common.Launch") as made:
+                with (
+                    self.subTest(read=read),
+                    mock.patch("agent_pm.adapters.claude.common.Launch") as made,
+                ):
                     self.refused(
                         launch,
                         f"claude: read dir {read!r:.80} must be a printable absolute path "

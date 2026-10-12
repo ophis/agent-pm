@@ -5,7 +5,8 @@ import shlex
 import shutil
 import sys
 
-from adapters.base import ConfigError, Launch, LimitHit, Tui
+from agent_pm.adapters.base import ConfigError, Launch, LimitHit, Tui
+from agent_pm.utils.paths import IMPORT_ROOT
 
 from . import sessions
 from .common import LIMIT_PREFIXES, flags, native_id, reset_at
@@ -48,7 +49,7 @@ class CodexTui(Tui):
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Driver hook command")
         dependencies = [
-            os.path.dirname(os.path.dirname(DIRECTORY)),
+            IMPORT_ROOT,
             sys.prefix,
             sys.base_prefix,
             sys.executable,

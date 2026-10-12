@@ -354,7 +354,7 @@ class CodexCommon:
             **({} if interactive else self.DEFAULTS),
             **self.config.get("env", {}),
             "CODEX_HOME": snapshot["codex_home"],
-            **snapshot.get("env", {}),
+            **snapshot["env"],
         }
 
     def interactive_unset(self) -> tuple[str, ...]:
@@ -389,7 +389,7 @@ class CodexCommon:
         command = shlex.join(
             ["codex", "resume", *flags(snapshot, interactive=True), state.native_id]
         )
-        env = {"CODEX_HOME": snapshot["codex_home"], **snapshot.get("env", {})}
+        env = {"CODEX_HOME": snapshot["codex_home"], **snapshot["env"]}
         assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
         return f"cd {shlex.quote(snapshot['cwd'])} && {assign}{command}"
 

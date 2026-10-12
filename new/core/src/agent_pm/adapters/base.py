@@ -44,7 +44,7 @@ def sid_error(sid) -> str | None:
     return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Access:
     dirs: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()

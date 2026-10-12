@@ -1,5 +1,4 @@
-"""The import root (new/core/src) and core dir (new/core); shared path normalization, containment and writable
-temporary roots."""
+"""IMPORT_ROOT, CORE; path normalization, containment and writable temp roots."""
 
 import os
 import subprocess

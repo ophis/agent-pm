@@ -1,15 +1,17 @@
 """Codex standalone hook binding and opaque Driver forwarding."""
 
-from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
-
 import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import time
 from unittest import mock
 
-from adapters.codex import sessions, tui_hook
+from agent_pm.adapters.codex import sessions, tui_hook
+
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class HookTest(Base):
@@ -36,6 +38,15 @@ class HookTest(Base):
                     )
         self.assertFalse(tui_hook.bind("unknown", self.payload(), str(self.work), self.spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+
+    def test_run_by_path_isolated_it_loads_its_siblings_and_refuses_bad_arguments(self):
+        result = subprocess.run(
+            [sys.executable, "-I", tui_hook.__file__], input="", capture_output=True, text=True
+        )
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr),
+            (0, "", "codex hook: expected WORKDIR SID STORE HOOK_JSON LABEL\n"),
+        )
 
     def test_payload_drains_oversized_input_and_rejects_non_objects(self):
         for value in (None, [], "bad"):

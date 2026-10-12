@@ -183,7 +183,7 @@ max = "max"
 # Optional local env table supplies launch/probe variables, including CODEX_HOME; resume keeps the saved CODEX_HOME.
 [adapters.codex.env]
 
-# [adapters.print_prompt]  act-as's runtime (src/adapters/print_prompt/): in_process mode only; its run hands the
-#                          composed prompt back as the deliverable and starts no process; no other keys
+# [adapters.print_prompt]  act-as's runtime (src/agent_pm/adapters/print_prompt/): in_process mode only; its run hands
+#                          the composed prompt back as the deliverable and starts no process; no other keys
 [adapters.print_prompt]
 implementation = "adapters.print_prompt:PrintPromptAdapter"

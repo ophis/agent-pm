@@ -8,7 +8,7 @@ import stat
 import time
 from unittest import mock
 
-from agent_pm.adapters.base import Access, ConfigError
+from agent_pm.adapters.base import Access, ConfigError, SessionInfo
 from agent_pm.adapters.codex import CodexAdapter
 
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -96,7 +96,7 @@ class CommonTest(Base):
         self.assertEqual(record["snapshot"].pop("env"), {})
         self.edit_record(snapshot=record["snapshot"])
         state = self.common.load(str(self.work), self.spec.sid)
-        self.assertNotIn("env", state.snapshot)
+        self.assertEqual(state.snapshot["env"], {})
         with mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}):
             launch = self.adapter.headless().launch("again", self.spec, True)
         self.assertNotIn("PYTHONPATH", launch.env)
@@ -134,8 +134,6 @@ class CommonTest(Base):
                     self.assertIn(NATIVE, launch.resume)
 
     def test_metadata_resolves_only_the_matching_trusted_binding(self):
-        from agent_pm.adapters.base import SessionInfo
-
         info = SessionInfo(self.spec.sid, NATIVE, str(self.cwd), False, "", "")
         self.assertEqual(self.adapter.session_metadata(info), info)
         self.prepare()
@@ -156,6 +154,15 @@ class CommonTest(Base):
             self.assertEqual(self.adapter.session_metadata(resolved), resolved)
         with mock.patch("os.stat", side_effect=PermissionError("denied")):
             self.assertEqual(self.adapter.session_metadata(resolved), resolved)
+
+    def test_metadata_resume_carries_the_session_env(self):
+        access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
+        self.spec = dataclasses.replace(self.spec, access=access)
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        info = SessionInfo(self.spec.sid, NATIVE, str(self.cwd), False, "", "")
+        resume = self.adapter.session_metadata(info).resume
+        self.assertEqual(shlex.split(resume)[4], "PYTHONPATH=/a b;c")
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
@@ -438,6 +445,14 @@ class WritableDirsTest(Base):
         access = dataclasses.replace(self.spec.access, reads=(str(self.root),))
         spec = dataclasses.replace(self.spec, access=access)
         self.assertNotIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
+
+    def test_the_session_env_adds_no_writable_dir(self):
+        env = {"PYTHONPATH": str(self.root / "env-dir")}
+        spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, env=env))
+        fresh = self.adapter.writable_dirs(self.spec, False)
+        self.assertEqual(self.adapter.writable_dirs(spec, False), fresh)
+        self.common.prepare(spec, False)
+        self.assertEqual(self.adapter.writable_dirs(spec, True), fresh)
 
     def test_a_resume_without_saved_state_is_refused(self):
         with self.assertRaisesRegex(

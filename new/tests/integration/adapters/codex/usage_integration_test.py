@@ -6,7 +6,6 @@ import shlex
 import sys
 import tempfile
 import time
-import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -14,13 +13,13 @@ from agent_pm.adapters.base import Usage, Window
 from agent_pm.adapters.codex import CodexAdapter
 from agent_pm.driver import api, registry
 
-from new.tests.case import NEW
+from new.tests.case import NEW, Case
 from new.tests.integration.adapters.codex import fake_app_server
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
-class UsageIntegrationTest(unittest.TestCase):
+class UsageIntegrationTest(Case):
     def test_fixture_preserves_filesystem_checks_outside_its_scratch(self):
         self.assertTrue(os.path.lexists(__file__))
 

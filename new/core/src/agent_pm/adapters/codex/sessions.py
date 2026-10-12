@@ -5,12 +5,15 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class RecoveryError(Exception):
@@ -26,7 +29,7 @@ def absolute_path(path: str, label: str) -> str:
 def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    value = {"sandbox": "workspace-write", **value}
+    value = {"sandbox": "workspace-write", "env": {}, **value}
     if set(value) != {
         "cwd",
         "project",
@@ -37,8 +40,15 @@ def validate_snapshot(value: dict) -> dict:
         "network",
         "codex_home",
         "sandbox",
+        "env",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
+    env = value["env"]
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise RecoveryError("invalid Codex recovery snapshot env")
     if value["sandbox"] not in ("danger-full-access", "workspace-write"):
         raise RecoveryError("invalid Codex recovery snapshot sandbox")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
@@ -66,6 +76,7 @@ def validate_snapshot(value: dict) -> dict:
         "effort": value["effort"],
         "network": value["network"],
         "sandbox": value["sandbox"],
+        "env": dict(env),
     }
     if validated != value:
         raise RecoveryError("invalid Codex recovery snapshot path")

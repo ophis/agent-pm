@@ -5,9 +5,8 @@ import json
 import os
 import tempfile
 
-from utils.protocol import OUTCOME, PROGRESS
-
-from adapters.base import ConfigError, InProcess, Reply, TurnEnd
+from agent_pm.adapters.base import ConfigError, InProcess, Reply, TurnEnd
+from agent_pm.utils.protocol import OUTCOME, PROGRESS
 
 
 class PrintPromptInProcess(InProcess):

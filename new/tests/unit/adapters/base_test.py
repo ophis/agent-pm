@@ -114,11 +114,13 @@ class AccessTest(Refusals):
         access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",))
         self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
 
-    def test_reads_is_the_last_positional_field(self):
-        self.assertEqual(
-            Access(("/a",), ("git",), "/c", True, ("/r",)),
-            Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",)),
-        )
+    def test_keeps_reads_and_env_together(self):
+        access = Access(reads=("/r",), env={"A": "b"})
+        self.assertEqual((access.reads, access.env), (("/r",), {"A": "b"}))
+
+    def test_takes_keywords_only(self):
+        with self.assertRaises(TypeError):
+            Access(("/a",), ("git",), "/c", True, ("/r",))
 
     def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
