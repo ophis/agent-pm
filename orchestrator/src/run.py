@@ -8,16 +8,16 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
 import attended  # noqa: E402
+import clients  # noqa: E402
+import compose  # noqa: E402
+import config  # noqa: E402
+import drive  # noqa: E402
 import router  # noqa: E402
 import sessions  # noqa: E402
 import writeback  # noqa: E402
 from config import PATH, ROOT, UUID_RE, repo_slug, run_dir  # noqa: E402
 from linear import ISSUE_ID, linear_gql, log, one_line  # noqa: E402
-import clients  # noqa: E402
-import compose  # noqa: E402
-import drive  # noqa: E402
 
 
 def inner(a, *, layout, gql, popen, root):
@@ -25,13 +25,19 @@ def inner(a, *, layout, gql, popen, root):
 
     def stop(signum, frame):
         raise SystemExit(128 + signum)  # drive's `except BaseException` then kills claude
+
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, stop)
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, drive.SIGNALS)   # blocked by drive.detach until now
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, drive.SIGNALS)  # blocked by drive.detach until now
     try:
         cfg, roles, name, role = router.setup(a, root)
     except (Exception, SystemExit) as e:
-        log("run", "config-error", a.issue, reason=e.msg if isinstance(e, router.Setup) else one_line(e))
+        log(
+            "run",
+            "config-error",
+            a.issue,
+            reason=e.msg if isinstance(e, router.Setup) else one_line(e),
+        )
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     rd, harness = run_dir(a.issue), functools.partial(gql, timeout=sessions.LIMIT)
@@ -40,20 +46,40 @@ def inner(a, *, layout, gql, popen, root):
         log("run", f"tui-{c.status}", a.issue, session=c.name, msg=c.msg or None)
     rec = sessions.base(sid=a.sid, workdir=rd, started_at=sessions.now())
 
-    def post(rc=None, *, outcome=None):  # as begun: run.jsonl now names the session's cwd, which the comment's resume command needs
+    def post(
+        rc=None, *, outcome=None
+    ):  # as begun: run.jsonl now names the session's cwd, which the comment's resume command needs
         if error := sessions.post(a.issue, rec, rc, gql=harness, outcome=outcome):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
+
     ctx = router.context(a, cfg, name, role, gql, a.uuid, repo_slug(a.target) if a.target else None)
     rc, result = 1, None
     try:
         core = os.path.join(root, "core")
         client = clients.get("claude", core)
-        params = compose.RunParams(input=a.input, out=os.path.join(rd, "out.md"),
-                                   workdir=rd, sid=a.sid, resume=a.mode == "resume",
-                                   prefix=attended.prefix(name, a.issue) if layout else None)
-        launch, run = drive.plan(core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd)
-        result = drive.start(launch, run, params, client=client, runner=a.runner, layout=layout, events=a.events,
-                             sinks=[drive.terminal(sys.stderr), writeback.sink(ctx)], begun=post, popen=popen)
+        params = compose.RunParams(
+            input=a.input,
+            out=os.path.join(rd, "out.md"),
+            workdir=rd,
+            sid=a.sid,
+            resume=a.mode == "resume",
+            prefix=attended.prefix(name, a.issue) if layout else None,
+        )
+        launch, run = drive.plan(
+            core, client, name, a.task, params=params, layers=config.layers(root), cwd=rd
+        )
+        result = drive.start(
+            launch,
+            run,
+            params,
+            client=client,
+            runner=a.runner,
+            layout=layout,
+            events=a.events,
+            sinks=[drive.terminal(sys.stderr), writeback.sink(ctx)],
+            begun=post,
+            popen=popen,
+        )
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):
@@ -86,8 +112,13 @@ def main(argv, *, gql=linear_gql, popen=subprocess.Popen, root=ROOT):
     if not re.fullmatch(ISSUE_ID, a.issue) or not UUID_RE.fullmatch(a.sid):
         print(f"run.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
-    if a.runner != "tui" and any(v is not None for v in (a.split, a.split_from, a.opener, a.events)):
-        print("run.py: --split, --split-from, --opener and --events need --runner tui", file=sys.stderr)
+    if a.runner != "tui" and any(
+        v is not None for v in (a.split, a.split_from, a.opener, a.events)
+    ):
+        print(
+            "run.py: --split, --split-from, --opener and --events need --runner tui",
+            file=sys.stderr,
+        )
         return 2
     if not UUID_RE.fullmatch(a.uuid) or a.target is not None and not repo_slug(a.target):
         print(f"run.py: bad issue uuid or target: {a.uuid} {a.target}", file=sys.stderr)

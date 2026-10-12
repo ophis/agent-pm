@@ -10,6 +10,7 @@
 Each step is logged (linear.log, src prune); a failure is logged and the rest goes on (run returns 3), but
 linear.Unavailable is raised.
 """
+
 import functools
 import os
 import re
@@ -19,11 +20,11 @@ import sys
 from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
-from config import CLONES, RUNS_DIR  # noqa: E402
 import attended  # noqa: E402
+import config  # noqa: E402
 import repo  # noqa: E402
 import tmux_host  # noqa: E402
+from config import CLONES, RUNS_DIR  # noqa: E402
 from linear import HISTORY, ISSUE_ID, Unavailable, call, last_move, log, one_line  # noqa: E402
 
 QUARANTINE = timedelta(hours=24)
@@ -31,13 +32,17 @@ IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
-TMP = "tmp"   # core/team/principles.md: an agent run's temp files
+TMP = "tmp"  # core/team/principles.md: an agent run's temp files
 
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
-Q_FINISHED = """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
+Q_FINISHED = (
+    """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
-  nodes { id identifier """ + HISTORY + """ }
+  nodes { id identifier """
+    + HISTORY
+    + """ }
   pageInfo { hasNextPage endCursor } } }"""
+)
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 
 
@@ -46,7 +51,19 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work=RUNS_DIR, team, roles, proc=subprocess.run, run=repo.sh, writable=None):
+    def __init__(
+        self,
+        gql,
+        now,
+        dry,
+        *,
+        work=RUNS_DIR,
+        team,
+        roles,
+        proc=subprocess.run,
+        run=repo.sh,
+        writable=None,
+    ):
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.proc, self.run_git = team, roles, proc, run
         self.writable = config.writable(work) if writable is None else writable
@@ -71,11 +88,16 @@ class Pruner:
                     found.append((folder, n))
                     continue
                 try:
-                    found += [(folder, n, m) for m in sorted(os.listdir(entry))
-                              if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))]
+                    found += [
+                        (folder, n, m)
+                        for m in sorted(os.listdir(entry))
+                        if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))
+                    ]
                 except OSError:
                     pass
-        found += [(d,) for d in (PUBLISH, TMP) if os.path.lexists(os.path.join(self.work, ident, d))]
+        found += [
+            (d,) for d in (PUBLISH, TMP) if os.path.lexists(os.path.join(self.work, ident, d))
+        ]
         return found
 
     def prune(self, ident, parts):
@@ -84,7 +106,9 @@ class Pruner:
         key = "/".join((ident, *parts))
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip(f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch")
+                raise Skip(
+                    f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch"
+                )
             if parts == (TMP,):
                 self.delete(key, path, "temp files")
                 return None
@@ -92,7 +116,11 @@ class Pruner:
             if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
                 raise Skip("not a clone or worktree")
             common = repo.common_dir(path) if os.path.isfile(dotgit) else None
-            return common if self.delete(key, path, "worktree" if os.path.isfile(dotgit) else "clone") else None
+            return (
+                common
+                if self.delete(key, path, "worktree" if os.path.isfile(dotgit) else "clone")
+                else None
+            )
         except Skip as e:
             self.say("prune-skip", once=True, entry=key, reason=str(e))
 
@@ -111,27 +139,62 @@ class Pruner:
     def clean_clone(self, ident, common):
         clone = os.path.dirname(common)
         if root := repo.under(common, self.writable):
-            self.say("prune-skip", ident, once=True, reason=f"{clone} is under {root}, so no git runs there")
+            self.say(
+                "prune-skip",
+                ident,
+                once=True,
+                reason=f"{clone} is under {root}, so no git runs there",
+            )
             return
         if self.dry:
-            self.say("prune-plan", ident, what=f"prune {clone}'s worktree records and pushed {ident}-* branches")
+            self.say(
+                "prune-plan",
+                ident,
+                what=f"prune {clone}'s worktree records and pushed {ident}-* branches",
+            )
             return
         at = ["git", *repo.GUARD, "-C", clone, f"--git-dir={common}"]
         try:
             repo.git(self.run_git, clone, at[-1], "worktree", "prune", pre=repo.GUARD)
-            head = self.run_git([*at, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], repo.SHORT)
+            head = self.run_git(
+                [*at, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], repo.SHORT
+            )
             default = head.stdout.strip().removeprefix("origin/") if head.returncode == 0 else None
-            listed = repo.git(self.run_git, clone, at[-1], "for-each-ref", "--format=%(refname:short)",
-                              f"refs/heads/{ident}-*", pre=repo.GUARD)
+            listed = repo.git(
+                self.run_git,
+                clone,
+                at[-1],
+                "for-each-ref",
+                "--format=%(refname:short)",
+                f"refs/heads/{ident}-*",
+                pre=repo.GUARD,
+            )
             for branch in listed.split():
                 if branch == default:
                     continue
-                if any(self.run_git([*at, "merge-base", "--is-ancestor", f"refs/heads/{branch}", f"refs/remotes/origin/{b}"],
-                                    repo.SHORT).returncode == 0 for b in dict.fromkeys(filter(None, (branch, default)))):
+                if any(
+                    self.run_git(
+                        [
+                            *at,
+                            "merge-base",
+                            "--is-ancestor",
+                            f"refs/heads/{branch}",
+                            f"refs/remotes/origin/{b}",
+                        ],
+                        repo.SHORT,
+                    ).returncode
+                    == 0
+                    for b in dict.fromkeys(filter(None, (branch, default)))
+                ):
                     repo.git(self.run_git, clone, at[-1], "branch", "-D", branch, pre=repo.GUARD)
                     self.say("prune-removed", ident, what=f"branch {branch} in {clone}")
                 else:
-                    self.say("prune-skip", ident, once=True, reason=f"branch {branch} in {clone} kept: not pushed")
+                    self.say(
+                        "prune-skip",
+                        ident,
+                        once=True,
+                        reason=f"branch {branch} in {clone} kept: not pushed",
+                    )
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
             self.error(ident, error=one_line(e))
 
@@ -166,7 +229,9 @@ class Pruner:
             # Every page before any archive: archiving shifts the pages.
             nodes, cursor = [], None
             while True:
-                page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)["issues"]
+                page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)[
+                    "issues"
+                ]
                 nodes += page["nodes"]
                 end = page["pageInfo"]["endCursor"]
                 if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
@@ -199,8 +264,12 @@ class Pruner:
     def run(self):
         finished = {self.team.states["done"], self.team.states["canceled"]}
         try:
-            idents = [n for n in sorted(os.listdir(self.work))
-                      if IDENT_RE.fullmatch(n) and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))]
+            idents = [
+                n
+                for n in sorted(os.listdir(self.work))
+                if IDENT_RE.fullmatch(n)
+                and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))
+            ]
         except OSError:
             idents = []
         try:

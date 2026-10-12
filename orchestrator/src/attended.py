@@ -13,7 +13,9 @@ from linear import one_line  # noqa: E402
 
 ISSUE_TUI = re.compile(rf"([a-z][a-z0-9-]*)-({linear.ISSUE_ID})")
 # list-sessions' stderr when no server runs: a stale socket, or none (tmux's client.c)
-NO_SERVER = re.compile(r"no server running on .*|error connecting to .* \(No such file or directory\)")
+NO_SERVER = re.compile(
+    r"no server running on .*|error connecting to .* \(No such file or directory\)"
+)
 
 
 class Bad(Exception):
@@ -59,8 +61,12 @@ def issues(*, proc=subprocess.run):
 
 def _live(proc):
     try:
-        res = proc(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True,
-                   stdin=subprocess.DEVNULL)
+        res = proc(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
     except OSError as e:
         raise tmux_host.TuiError(f"tmux: {e}") from e
     if res.returncode:

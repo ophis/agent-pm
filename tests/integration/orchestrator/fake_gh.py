@@ -11,14 +11,20 @@ ENV = "FAKE_GH_SCENARIO"
 RAW = "Accept: application/vnd.github.raw+json"
 API = re.compile(r"repos/([^/]+)/([^/]+)(?:/contents/([^?]+)\?ref=([^?]+))?")
 TAIL = "/usr/bin:/bin"
-IDENTITY = {"GIT_AUTHOR_NAME": "fake gh", "GIT_AUTHOR_EMAIL": "fake-gh@agents.test",
-            "GIT_COMMITTER_NAME": "fake gh", "GIT_COMMITTER_EMAIL": "fake-gh@agents.test"}
+IDENTITY = {
+    "GIT_AUTHOR_NAME": "fake gh",
+    "GIT_AUTHOR_EMAIL": "fake-gh@agents.test",
+    "GIT_COMMITTER_NAME": "fake gh",
+    "GIT_COMMITTER_EMAIL": "fake-gh@agents.test",
+}
 
 
 def install(bin_dir: str) -> str:
     path = os.path.join(bin_dir, "gh")
     with open(path, "w") as f:
-        f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))} "$@"\n')
+        f.write(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))} "$@"\n'
+        )
     os.chmod(path, 0o755)
     return path
 
@@ -50,8 +56,11 @@ def gitconfig(home: str, root: str) -> None:
 
 
 def nested(value, depth: int) -> bool:
-    return isinstance(value, str) if depth == 0 else isinstance(value, dict) and all(
-        nested(v, depth - 1) for v in value.values())
+    return (
+        isinstance(value, str)
+        if depth == 0
+        else isinstance(value, dict) and all(nested(v, depth - 1) for v in value.values())
+    )
 
 
 def scenario() -> dict:
@@ -64,8 +73,12 @@ def scenario() -> dict:
     except (OSError, ValueError) as e:
         sys.exit(f"fake_gh.py: {ENV}: {e}")
     if not isinstance(data, dict) or not {"repos"} <= set(data) <= {"repos", "contents"}:
-        sys.exit('fake_gh.py: the scenario is no JSON object with the key "repos" and optionally "contents"')
-    if not isinstance(data["repos"], dict) or not all(isinstance(v, dict) for v in data["repos"].values()):
+        sys.exit(
+            'fake_gh.py: the scenario is no JSON object with the key "repos" and optionally "contents"'
+        )
+    if not isinstance(data["repos"], dict) or not all(
+        isinstance(v, dict) for v in data["repos"].values()
+    ):
         sys.exit('fake_gh.py: "repos" is no object of objects')
     if not nested(data.setdefault("contents", {}), 3):
         sys.exit('fake_gh.py: "contents" is no object of objects of objects of strings')
@@ -73,7 +86,7 @@ def scenario() -> dict:
 
 
 def entries(files: dict, path: str) -> list[dict] | None:
-    below = [f[len(path) + 1:] for f in files if f.startswith(path + "/")]
+    below = [f[len(path) + 1 :] for f in files if f.startswith(path + "/")]
     if not below:
         return None
     kinds = {rest.partition("/")[0]: "dir" if "/" in rest else "file" for rest in below}
@@ -85,7 +98,9 @@ def main(argv: list[str]) -> None:
     rest = argv[3:] if raw else argv[1:]
     m = API.fullmatch(rest[0]) if argv[:1] == ["api"] and len(rest) == 1 else None
     if not m or (raw and not m[3]):
-        sys.exit(f"fake_gh.py: usage: gh api [-H '{RAW}'] repos/<owner>/<name>[/contents/<path>?ref=<branch>]")
+        sys.exit(
+            f"fake_gh.py: usage: gh api [-H '{RAW}'] repos/<owner>/<name>[/contents/<path>?ref=<branch>]"
+        )
     data, repo = scenario(), f"{m[1]}/{m[2]}"
     if not m[3]:
         if repo not in data["repos"]:

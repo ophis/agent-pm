@@ -10,12 +10,10 @@ import time
 import urllib.error
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
-from tests.unit.orchestrator.board_ids import STATES, TEAM
 import config
 import issues
 import linear
@@ -25,18 +23,35 @@ import router
 import sessions
 import writeback
 
+from tests import hermetic  # noqa: F401
+from tests.unit.orchestrator.board_ids import STATES, TEAM
+
 KEY = "TASK"
 BACKLOG = "00000000-0000-4000-8000-000000000017"
 IDS = {**STATES, "backlog": BACKLOG}
-TYPES = {"todo": "unstarted", "in_progress": "started", "in_review": "started", "handoff": "started",
-         "done": "completed", "canceled": "canceled", "backlog": "backlog"}
+TYPES = {
+    "todo": "unstarted",
+    "in_progress": "started",
+    "in_review": "started",
+    "handoff": "started",
+    "done": "completed",
+    "canceled": "canceled",
+    "backlog": "backlog",
+}
 NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
 MODULES = {m.__name__: m for m in (linear, router, issues, sessions, writeback, promote, prune)}
-BUILT = {"router.issues": router.q_issues(), "router.issues+relations": router.q_issues(router.RELATIONS)}
+BUILT = {
+    "router.issues": router.q_issues(),
+    "router.issues+relations": router.q_issues(router.RELATIONS),
+}
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}
-COMPARATORS = {"eq": lambda x, a: x == a, "in": lambda x, a: x in a, "null": lambda x, a: (x is None) == a}
+COMPARATORS = {
+    "eq": lambda x, a: x == a,
+    "in": lambda x, a: x in a,
+    "null": lambda x, a: (x is None) == a,
+}
 
 
 class Problem(Exception):
@@ -62,10 +77,10 @@ class _Failure:
 
 def stamp(t=None):
     if t is None:
-        t = datetime.now(timezone.utc)
+        t = datetime.now(UTC)
     elif isinstance(t, str):
         t = datetime.fromisoformat(t.replace("Z", "+00:00"))
-    t = (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    t = (t if t.tzinfo else t.replace(tzinfo=UTC)).astimezone(UTC)
     return t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}Z"
 
 
@@ -110,7 +125,10 @@ def project(value, sel, op):
 
 
 def texts():
-    return {op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1]) for op in OPS}
+    return {
+        op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1])
+        for op in OPS
+    }
 
 
 def index(named):
@@ -143,8 +161,10 @@ class FakeLinear:
 
     def user(self, email, name, service=None):
         with self.lock:
-            if any(u["email"].lower() == email.lower() or (service and u["service"] == service)
-                   for u in self.users.values()):
+            if any(
+                u["email"].lower() == email.lower() or (service and u["service"] == service)
+                for u in self.users.values()
+            ):
                 raise ValueError(f"user {email} or service {service} seeded twice")
             uid = str(uuid.uuid4())
             self.users[uid] = {"id": uid, "email": email, "name": name, "service": service}
@@ -160,19 +180,43 @@ class FakeLinear:
             for lid, lname in labels.items():
                 self.labels[lid] = {"id": lid, "name": lname, "isGroup": False, "parent": id}
 
-    def issue(self, title="Issue", *, identifier=None, id=None, state="todo", assignee=None, project=None,
-              description="", priority=0, labels=(), created=None, updated=None):
+    def issue(
+        self,
+        title="Issue",
+        *,
+        identifier=None,
+        id=None,
+        state="todo",
+        assignee=None,
+        project=None,
+        description="",
+        priority=0,
+        labels=(),
+        created=None,
+        updated=None,
+    ):
         with self.lock:
-            if (assignee is not None and assignee not in self.users) or any(i not in self.labels for i in labels):
+            if (assignee is not None and assignee not in self.users) or any(
+                i not in self.labels for i in labels
+            ):
                 raise ValueError("assignee or a label not seeded")
             if project:
                 self.projects[project["id"]] = project["name"]
             at = stamp(created)
             try:
-                return self._add(id or str(uuid.uuid4()), identifier, title=title, description=description,
-                                 priority=priority, state=IDS[state], assignee=assignee,
-                                 project=project and dict(project), labels=list(labels), createdAt=at,
-                                 updatedAt=stamp(updated) if updated else at)
+                return self._add(
+                    id or str(uuid.uuid4()),
+                    identifier,
+                    title=title,
+                    description=description,
+                    priority=priority,
+                    state=IDS[state],
+                    assignee=assignee,
+                    project=project and dict(project),
+                    labels=list(labels),
+                    createdAt=at,
+                    updatedAt=stamp(updated) if updated else at,
+                )
             except Problem as e:
                 raise ValueError(str(e)) from None
 
@@ -195,33 +239,65 @@ class FakeLinear:
 
     def find(self, ref):
         with self.lock:
-            return self.issues.get(ref) or next((i for i in self.issues.values() if i["identifier"] == ref), None)
+            return self.issues.get(ref) or next(
+                (i for i in self.issues.values() if i["identifier"] == ref), None
+            )
 
     def fail(self, op, kind, *, account=None, times=1, seconds=3):
         with self.lock:
-            if (op not in OPS or kind not in KINDS or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
-                    or times < 1 or (account is not None and not any(
-                        u["service"] and u["email"].lower() == account.lower() for u in self.users.values()))):
-                raise ValueError(f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse")
+            if (
+                op not in OPS
+                or kind not in KINDS
+                or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
+                or times < 1
+                or (
+                    account is not None
+                    and not any(
+                        u["service"] and u["email"].lower() == account.lower()
+                        for u in self.users.values()
+                    )
+                )
+            ):
+                raise ValueError(
+                    f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse"
+                )
             self.failures.append(_Failure(op, kind, account, times, seconds))
 
     def answer(self, query, variables, key):
         with self.lock:
-            caller = next((u for u in self.users.values() if u["service"] and _key(u["service"]) == key), None)
+            caller = next(
+                (u for u in self.users.values() if u["service"] and _key(u["service"]) == key), None
+            )
             account = caller and caller["email"]
             if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
-                return self._log(None, account, {}, "error", 400,
-                                 _errors("fake: bad request: not a query string and a variables object"))
+                return self._log(
+                    None,
+                    account,
+                    {},
+                    "error",
+                    400,
+                    _errors("fake: bad request: not a query string and a variables object"),
+                )
             variables, op = variables or {}, self.ops.get(query)
             if caller is None:
-                return self._log(op or query, None, variables, "unauthorized", 401, _errors("fake: unauthorized"))
+                return self._log(
+                    op or query, None, variables, "unauthorized", 401, _errors("fake: unauthorized")
+                )
             if op is None:
-                return self._log(query, account, variables, "unknown", 200, _errors("fake: unknown query"))
+                return self._log(
+                    query, account, variables, "unknown", 200, _errors("fake: unknown query")
+                )
             failure = self._failure(op, account)
             kind = failure.kind if failure else "ok"
             if kind in ("error", "503"):
-                return self._log(op, account, variables, kind, int(kind) if kind == "503" else 200,
-                                 _errors(f"fake: {op}: injected {kind}"))
+                return self._log(
+                    op,
+                    account,
+                    variables,
+                    kind,
+                    int(kind) if kind == "503" else 200,
+                    _errors(f"fake: {op}: injected {kind}"),
+                )
             try:
                 sel = selection(query)
                 if kind == "unsuccessful":
@@ -230,9 +306,19 @@ class FakeLinear:
                 else:
                     data = project(OPS[op](self, caller, variables), sel, op)
             except Exception as e:
-                message = str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
+                message = (
+                    str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
+                )
                 return self._log(op, account, variables, "error", 200, _errors(message))
-            return self._log(op, account, variables, kind, 200, {"data": data}, failure.seconds if kind == "hang" else 0)
+            return self._log(
+                op,
+                account,
+                variables,
+                kind,
+                200,
+                {"data": data},
+                failure.seconds if kind == "hang" else 0,
+            )
 
     def __call__(self, query, *, timeout=30, service=None, **variables):
         service = service or self.harness
@@ -247,8 +333,13 @@ class FakeLinear:
         if status >= 500:
             raise linear.Unavailable(linear.operation(query), status=status)
         if status != 200:
-            raise urllib.error.HTTPError("fake_linear", status, HTTPStatus(status).phrase, None,
-                                         io.BytesIO(json.dumps(body).encode()))
+            raise urllib.error.HTTPError(
+                "fake_linear",
+                status,
+                HTTPStatus(status).phrase,
+                None,
+                io.BytesIO(json.dumps(body).encode()),
+            )
         if body.get("errors"):
             raise SystemExit(f"linear api error: {body['errors']}")
         return body["data"]
@@ -275,10 +366,20 @@ class FakeLinear:
         numbers = [int(i["identifier"].split("-")[1]) for i in self.issues.values()]
         identifier = identifier or f"{KEY}-{max(numbers, default=0) + 1}"
         if self.find(id) or self.find(identifier) or not re.fullmatch(rf"{KEY}-\d+", identifier):
-            raise Problem(f"fake: issue id {id} or identifier {identifier} in use, or not {KEY}-<n>")
-        self.issues[id] = {"id": id, "identifier": identifier, "url": f"https://linear.app/fake/issue/{identifier}",
-                           **fields, "comments": [], "attachments": [], "subscribers": [], "history": [],
-                           "archived": False}
+            raise Problem(
+                f"fake: issue id {id} or identifier {identifier} in use, or not {KEY}-<n>"
+            )
+        self.issues[id] = {
+            "id": id,
+            "identifier": identifier,
+            "url": f"https://linear.app/fake/issue/{identifier}",
+            **fields,
+            "comments": [],
+            "attachments": [],
+            "subscribers": [],
+            "history": [],
+            "archived": False,
+        }
         return self.issues[id]
 
     def _comment(self, rec, user, body, at):
@@ -288,52 +389,115 @@ class FakeLinear:
 
     def _move(self, rec, state, actor, at):
         if state != rec["state"]:
-            rec["history"].append({"createdAt": at, "actorId": actor, "fromStateId": rec["state"], "toStateId": state})
+            rec["history"].append(
+                {"createdAt": at, "actorId": actor, "fromStateId": rec["state"], "toStateId": state}
+            )
             rec["state"], rec["updatedAt"] = state, at
 
     def _state(self, sid):
         return {"id": sid, "name": TITLES[NAMES[sid]], "type": TYPES[NAMES[sid]]}
 
     def _team(self):
-        return {"id": TEAM, "name": "Team", "key": KEY, "states": {"nodes": [self._state(i) for i in IDS.values()]}}
+        return {
+            "id": TEAM,
+            "name": "Team",
+            "key": KEY,
+            "states": {"nodes": [self._state(i) for i in IDS.values()]},
+        }
 
     def _person(self, uid, caller):
         u = self.users.get(uid) if uid else None
-        return u and {"id": u["id"], "email": u["email"], "name": u["name"], "isMe": u["id"] == caller["id"]}
+        return u and {
+            "id": u["id"],
+            "email": u["email"],
+            "name": u["name"],
+            "isMe": u["id"] == caller["id"],
+        }
 
     def _label(self, lid):
         parent = self.labels[lid]["parent"]
-        return {**{k: self.labels[lid][k] for k in ("id", "name", "isGroup")}, "parent": parent and {"id": parent}}
+        return {
+            **{k: self.labels[lid][k] for k in ("id", "name", "isGroup")},
+            "parent": parent and {"id": parent},
+        }
 
     def _brief(self, iid):
         rec = self.issues[iid]
-        return {**{k: rec[k] for k in ("id", "identifier", "title", "url")}, "state": self._state(rec["state"])}
+        return {
+            **{k: rec[k] for k in ("id", "identifier", "title", "url")},
+            "state": self._state(rec["state"]),
+        }
 
     def _view(self, rec, caller):
-        out = {k: rec[k] for k in ("id", "identifier", "url", "title", "description", "priority", "createdAt",
-                                   "updatedAt", "project")}
-        return {**out, "state": self._state(rec["state"]), "team": self._team(),
-                "assignee": self._person(rec["assignee"], caller),
-                "labels": {"nodes": [self._label(i) for i in rec["labels"]]},
-                "comments": {"nodes": _newest([{**c, "user": self._person(c["user"], caller)} for c in rec["comments"]])},
-                "attachments": {"nodes": rec["attachments"]},
-                "history": {"nodes": _newest(rec["history"])},
-                "relations": {"nodes": [{"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
-                                        for t, a, b in self.relations if a == rec["id"]]},
-                "inverseRelations": {"nodes": [{"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
-                                               for t, a, b in self.relations if b == rec["id"]]}}
+        out = {
+            k: rec[k]
+            for k in (
+                "id",
+                "identifier",
+                "url",
+                "title",
+                "description",
+                "priority",
+                "createdAt",
+                "updatedAt",
+                "project",
+            )
+        }
+        return {
+            **out,
+            "state": self._state(rec["state"]),
+            "team": self._team(),
+            "assignee": self._person(rec["assignee"], caller),
+            "labels": {"nodes": [self._label(i) for i in rec["labels"]]},
+            "comments": {
+                "nodes": _newest(
+                    [{**c, "user": self._person(c["user"], caller)} for c in rec["comments"]]
+                )
+            },
+            "attachments": {"nodes": rec["attachments"]},
+            "history": {"nodes": _newest(rec["history"])},
+            "relations": {
+                "nodes": [
+                    {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
+                    for t, a, b in self.relations
+                    if a == rec["id"]
+                ]
+            },
+            "inverseRelations": {
+                "nodes": [
+                    {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
+                    for t, a, b in self.relations
+                    if b == rec["id"]
+                ]
+            },
+        }
 
     def _list(self, caller, flt, first, after=None, archived=False):
-        found = [i for i in self.issues.values() if (archived or not i["archived"]) and self._match(i, flt)]
+        found = [
+            i
+            for i in self.issues.values()
+            if (archived or not i["archived"]) and self._match(i, flt)
+        ]
         start = int(after or 0)
-        page = found[start:start + first]
-        return {"issues": {"nodes": [self._view(i, caller) for i in page],
-                           "pageInfo": {"hasNextPage": start + first < len(found),
-                                        "endCursor": str(start + len(page)) if page else None}}}
+        page = found[start : start + first]
+        return {
+            "issues": {
+                "nodes": [self._view(i, caller) for i in page],
+                "pageInfo": {
+                    "hasNextPage": start + first < len(found),
+                    "endCursor": str(start + len(page)) if page else None,
+                },
+            }
+        }
 
     def _match(self, rec, flt):
-        values = {"id": rec["id"], "team": TEAM, "state": rec["state"], "assignee": rec["assignee"],
-                  "project": rec["project"] and rec["project"]["id"]}
+        values = {
+            "id": rec["id"],
+            "team": TEAM,
+            "state": rec["state"],
+            "assignee": rec["assignee"],
+            "project": rec["project"] and rec["project"]["id"],
+        }
         for field, cond in flt.items():
             if field not in values:
                 raise Problem(f"fake: no issue filter {field}")
@@ -349,12 +513,28 @@ class FakeLinear:
 
     def _find(self, caller, v):
         nodes = self._view(self._get(v["i"]), caller)["comments"]["nodes"]
-        return {"issue": {"comments": {"nodes": [c for c in nodes if c["user"] and c["user"]["isMe"]
-                                                 and c["body"].startswith(v["p"])]}}}
+        return {
+            "issue": {
+                "comments": {
+                    "nodes": [
+                        c
+                        for c in nodes
+                        if c["user"] and c["user"]["isMe"] and c["body"].startswith(v["p"])
+                    ]
+                }
+            }
+        }
 
     def _users(self, caller, v):
-        return {"users": {"nodes": [self._person(i, caller) for i, u in self.users.items()
-                                    if u["email"].lower() == v["e"].lower()]}}
+        return {
+            "users": {
+                "nodes": [
+                    self._person(i, caller)
+                    for i, u in self.users.items()
+                    if u["email"].lower() == v["e"].lower()
+                ]
+            }
+        }
 
     def _teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
@@ -369,22 +549,40 @@ class FakeLinear:
         return self._list(caller, v.get("f") or {}, 100)
 
     def _handoff(self, caller, v):
-        return self._list(caller, {"team": {"id": {"eq": v.get("t")}}, "state": {"id": {"eq": v.get("s")}},
-                                   "project": {"null": False}, "assignee": {"id": {"in": v.get("a")}}}, 100)
+        return self._list(
+            caller,
+            {
+                "team": {"id": {"eq": v.get("t")}},
+                "state": {"id": {"eq": v.get("s")}},
+                "project": {"null": False},
+                "assignee": {"id": {"in": v.get("a")}},
+            },
+            100,
+        )
 
     def _child(self, caller, v):
         return self._list(caller, {"id": {"eq": v["c"]}}, 50, archived=True)
 
     def _finished(self, caller, v):
-        return self._list(caller, {"team": {"id": {"eq": v.get("t")}}, "state": {"id": {"in": v.get("s")}},
-                                   "assignee": {"id": {"in": v.get("a")}}}, 50, v.get("c"))
+        return self._list(
+            caller,
+            {
+                "team": {"id": {"eq": v.get("t")}},
+                "state": {"id": {"in": v.get("s")}},
+                "assignee": {"id": {"in": v.get("a")}},
+            },
+            50,
+            v.get("c"),
+        )
 
     def _comment_create(self, caller, v):
         self._comment(self._get(v["i"]), caller["id"], v["b"], stamp())
         return {"commentCreate": {"success": True}}
 
     def _comment_update(self, caller, v):
-        found = next((c for i in self.issues.values() for c in i["comments"] if c["id"] == v["c"]), None)
+        found = next(
+            (c for i in self.issues.values() for c in i["comments"] if c["id"] == v["c"]), None
+        )
         if found is None:
             raise Problem("Entity not found: Comment")
         if found["user"] != caller["id"]:
@@ -428,20 +626,40 @@ class FakeLinear:
 
     def _create(self, caller, v):
         new, now = v["in"], stamp()
-        pid, uid, sid = new.get("projectId"), new.get("assigneeId"), new.get("stateId", STATES["todo"])
+        pid, uid, sid = (
+            new.get("projectId"),
+            new.get("assigneeId"),
+            new.get("stateId", STATES["todo"]),
+        )
         if extra := sorted(set(new) - CREATE):
             raise Problem(f"fake: issueCreate has no input {extra[0]}")
-        if (new.get("teamId") != TEAM or (pid and pid not in self.projects) or (uid and uid not in self.users)
-                or sid not in NAMES):
+        if (
+            new.get("teamId") != TEAM
+            or (pid and pid not in self.projects)
+            or (uid and uid not in self.users)
+            or sid not in NAMES
+        ):
             raise Problem("Entity not found: Team, Project, User or WorkflowState")
-        rec = self._add(new.get("id") or str(uuid.uuid4()), None, title=new.get("title", ""),
-                        description=new.get("description"), priority=new.get("priority", 0), state=sid, assignee=uid,
-                        project=pid and {"id": pid, "name": self.projects[pid]}, labels=[], createdAt=now, updatedAt=now)
+        rec = self._add(
+            new.get("id") or str(uuid.uuid4()),
+            None,
+            title=new.get("title", ""),
+            description=new.get("description"),
+            priority=new.get("priority", 0),
+            state=sid,
+            assignee=uid,
+            project=pid and {"id": pid, "name": self.projects[pid]},
+            labels=[],
+            createdAt=now,
+            updatedAt=now,
+        )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
     def _relate(self, caller, v):
         new = v["in"]
-        self.relations.append((new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"]))
+        self.relations.append(
+            (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])
+        )
         return {"issueRelationCreate": {"success": True}}
 
 
@@ -493,8 +711,9 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             req = None
         req = req if isinstance(req, dict) else {}
-        status, body, delay = self.server.fake.answer(req.get("query"), req.get("variables"),
-                                                      self.headers.get("Authorization"))
+        status, body, delay = self.server.fake.answer(
+            req.get("query"), req.get("variables"), self.headers.get("Authorization")
+        )
         if delay and self.server.closing.wait(delay):
             return
         self._send(status, body)
@@ -522,7 +741,9 @@ class _Handler(BaseHTTPRequestHandler):
 def serve(case, fake):
     server = _Server(("127.0.0.1", 0), _Handler)
     server.fake, server.closing = fake, threading.Event()
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
 
     def stop():
@@ -530,6 +751,7 @@ def serve(case, fake):
         server.shutdown()
         server.server_close()
         thread.join()
+
     case.addCleanup(stop)
     return f"http://127.0.0.1:{server.server_address[1]}/graphql"
 
