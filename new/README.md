@@ -23,7 +23,7 @@ Imports go one way: delegate → composer or driver, driver → adapters, a modu
 
 ## Access
 
-A run's `read` dirs and its role's tasks dir are read-only: never `--add-dir`, so no runtime makes them a workspace or writable root. Each runtime's grant and the limits (Claude's auto mode, shell commands, a dir inside a writable one): `core/config.toml`'s `read` comment.
+A run's `read` dirs and its role's tasks dir are read-only: never `--add-dir`. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: its `workspace-write` sandbox reads the whole disk. Each runtime's grant and its limits: `core/config.toml`'s `read` comment.
 
 ## Tests
 

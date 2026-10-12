@@ -123,11 +123,11 @@ def plan(
     here, project = place(run, workdir, resume_sid=resume, cwd=cwd)
     intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=repo, team=team)
     access = api.Access(
-        intent.dirs,
-        intent.commands + ((intent.gate,) if intent.gate else ()),
-        here,
-        project,
-        intent.reads,
+        dirs=intent.dirs,
+        commands=intent.commands + ((intent.gate,) if intent.gate else ()),
+        cwd=here,
+        project=project,
+        reads=intent.reads,
     )
     spec = api.Spec(workdir=workdir, access=access, tier=run.tier, effort=run.effort)
     _check_team_dirs(team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
