@@ -10,9 +10,11 @@ permissions:
 
 jobs:
   comment-budget:
-    name: Comment budget (Python 3.11)
+    name: Comment budget v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -24,11 +26,13 @@ jobs:
           python-version: "3.11"
       - name: Comment budget
         run: python3 .github/comment_budget.py
-      - name: Comment budget tests
+      - name: Integration job assignment
+        run: python3 .github/integration_jobs.py --check
+      - name: .github tests
         run: python3 -m unittest discover -v -s .github -p "*_test.py"
 
   ruff:
-    name: Ruff (Python 3.11)
+    name: Ruff v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -49,8 +53,8 @@ jobs:
         if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
         run: ruff format --check
 
-  new-unit:
-    name: New unit tests (Python 3.11)
+  unit:
+    name: Unit tests v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -64,13 +68,17 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: New unit tests
+      - name: Unit tests
         run: python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
 
-  new-integration:
-    name: New integration (Python 3.11)
+  integration:
+    name: Integration ${{ matrix.job }} v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ["driver", "adapters", "delegate-composer", "orchestrator", "crew", "shared"]
     env:
       PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
     steps:
@@ -86,5 +94,5 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
-      - name: New integration tests
-        run: python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
+      - name: Integration tests
+        run: python3 .github/integration_jobs.py '${{ matrix.job }}'

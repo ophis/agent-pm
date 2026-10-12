@@ -46,7 +46,7 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 
 ```bash
 PYTHONPATH=new/core/src:new/orchestrator/src python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
-PYTHONPATH=new/core/src:new/orchestrator/src python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
+PYTHONPATH=new/core/src:new/orchestrator/src python3 .github/integration_jobs.py JOB  # one CI integration job, or --check
 ```
 
-CI (`.github/workflows/test.yml`) runs each in its own job, and Ruff over the whole repo (root `CLAUDE.md` › Commands).
+CI (`.github/workflows/test.yml`) runs the unit tests in one job, the integration tests in one job per package (`.github/integration_jobs.py`: a test file outside its `JOBS` fails `--check`), and Ruff over the whole repo (root `CLAUDE.md` › Commands).
