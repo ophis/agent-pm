@@ -4,8 +4,8 @@
 # cannot drop a key this file sets, so a local [output] or [adapters.<name>] keeps this file's other keys in that table.
 #
 # Each layer reads only its own keys: the Composer (src/agent_pm/composer/) the run keys, [output], [roles.<role>],
-# trusted_dirs and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; src/roster.py runtime (the
-# default of skills/tmux/scripts/crew.py's workers); the Driver (src/agent_pm/driver/registry.py) [adapters.<name>],
+# trusted_dirs and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; src/agent_pm/roster.py runtime
+# (the default of src/agent_pm/crew.py's workers); the Driver (src/agent_pm/driver/registry.py) [adapters.<name>],
 # status_line, workers_per_column and grid_retile.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:

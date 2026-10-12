@@ -1,14 +1,11 @@
-"""new/core/skills/tmux/scripts/crew.py, the old core's crew_test ported onto a fake driver.api (Api): argv, env, tmux
-and the tui settings are the Driver's now, and the worker record replaces the session options."""
-
-from new.tests import CORE, hermetic
+"""agent_pm.crew, the old core's crew_test ported onto a fake driver.api (Api): argv, env, tmux and the tui settings
+are the Driver's now, and the worker record replaces the session options."""
 
 import contextlib
 import dataclasses
 import errno
 import fcntl
 import functools
-import importlib.util
 import io
 import json
 import os
@@ -23,19 +20,13 @@ import unittest
 import uuid
 from unittest import mock
 
-import roster
-from driver import api
+from agent_pm import crew, roster
+from agent_pm.driver import api
 
+from new.tests.case import ROOT, Case
 
-def load(path):
-    spec = importlib.util.spec_from_file_location("crew", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-CREW = os.path.join(CORE, "skills", "tmux", "scripts", "crew.py")
-crew = load(CREW)
+CREW = os.path.join(ROOT, "agent_pm", "crew.py")
+MODULE = ["-P", "-m", "agent_pm.crew"]
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 SID2 = "1" + SID[1:]
 WHEN = "2026-10-09T12:00:00+00:00"
@@ -189,23 +180,38 @@ class Api:
         return [c[1] if len(c) == 2 else c[1:] for c in self.calls if c[0] == what]
 
 
+def started(name, *rest):
+    """A worker entry's resume: crew run as a module."""
+    return [PY, *MODULE, "start", name, *rest]
+
+
+def recovered(argv):
+    """A crew module's recovery as attach prints it."""
+    return f"PYTHONPATH={shlex.quote(ROOT)} {shlex.join(argv)}"
+
+
 class Runs:
+    """results by script, or by worker name for the crew module."""
+
     def __init__(self, results=None, lock=None):
         self.results, self.lock, self.recoveries = results or {}, lock, []
 
+    @staticmethod
+    def key(argv):
+        return argv[5] if argv[1:4] == MODULE else argv[1]
+
     def __call__(self, argv, **kw):
         self.recoveries.append((argv, kw, self.lock is None or lock_free(self.lock)))
-        result = self.results.get(argv[1], (0, ""))
+        result = self.results.get(self.key(argv), (0, ""))
         if isinstance(result, Exception):
             raise result
         return subprocess.CompletedProcess(argv, result[0], result[1])
 
 
-class Case(unittest.TestCase):
-    """A HOME of its own, driver.api faked by self.api (replaceable), sleep patched, stderr captured."""
+class CrewCase(Case):
+    """driver.api faked by self.api (replaceable), sleep patched, stderr captured."""
 
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -250,7 +256,7 @@ class Case(unittest.TestCase):
             return json.load(f)
 
 
-class WorkerCase(Case):
+class WorkerCase(CrewCase):
     def setUp(self):
         super().setUp()
         self.directory = roster.directory("m1")
@@ -696,7 +702,7 @@ class RuntimeTest(WorkerCase):
                 sid = self.started(client=client, own_runtime=own_runtime)
                 self.assertEqual(self.api.starts[0]["runtime"], want)
                 self.assertEqual(self.record_of(sid)["runtime"], want)
-                self.assertEqual(self.entries()["w1"]["resume"][6:8], ["--client", want])
+                self.assertEqual(self.entries()["w1"]["resume"][8:10], ["--client", want])
 
     def test_a_bad_config_runtime_starts_nothing(self):
         for text in ('runtime = ""\n', "runtime = 1\n"):
@@ -713,7 +719,7 @@ class RuntimeTest(WorkerCase):
         self.assertEqual(self.record_of(sid)["env"], {"B": "", "A": "1"})
 
 
-class ReplyTest(Case):
+class ReplyTest(CrewCase):
     def test_a_bad_name_touches_nothing(self):
         with self.assertRaisesRegex(crew.WorkersError, r"^bad name 'a b': use \[A-Za-z0-9_-\]\+$"):
             crew.reply("a b")
@@ -769,7 +775,7 @@ class MainTest(WorkerCase):
         sid = self.api.starts[0]["sid"]
         resume = [
             sys.executable,
-            CREW,
+            *MODULE,
             "start",
             "w1",
             "--manager",
@@ -823,7 +829,7 @@ class MainTest(WorkerCase):
             self.entries()["w1"]["resume"],
             [
                 sys.executable,
-                CREW,
+                *MODULE,
                 "start",
                 "w1",
                 "--manager",
@@ -960,7 +966,7 @@ class MainTest(WorkerCase):
             self.assertEqual(cm.exception.code, 2, argv)
 
 
-class ManagerDirTest(Case):
+class ManagerDirTest(CrewCase):
     CMDS = (["start", "w1"], ["next-event", "--after", "0", "--gen", "0"])
 
     def setUp(self):
@@ -1059,7 +1065,7 @@ class ManagerDirTest(Case):
                 )
 
 
-class NextEventTest(Case):
+class NextEventTest(CrewCase):
     A, B, C = "10:00:01 w1 done", "10:00:02 w2 blocked", "10:00:03 w1 outcome needs_input"
 
     def setUp(self):
@@ -1215,7 +1221,7 @@ class NextEventTest(Case):
             self.assertEqual(cm.exception.code, 2, argv)
 
 
-class NextEventContentTest(Case):
+class NextEventContentTest(CrewCase):
     PANE = [f"pane {i}" for i in range(40)]
     DEAD = [f"dead {i}" for i in range(45)]
 
@@ -1306,7 +1312,7 @@ def numbered(count, start=1):
 
 def tail(directory, n=0, gen=0, *backlog):
     me, events = (
-        shlex.quote(os.path.abspath(crew.__file__)),
+        f"PYTHONPATH={shlex.quote(ROOT)} python3 {' '.join(MODULE)}",
         shlex.quote(os.path.join(directory, "events")),
     )
     name = os.path.basename(directory)
@@ -1314,8 +1320,8 @@ def tail(directory, n=0, gen=0, *backlog):
         *backlog,
         f"N={n} GEN={gen}",
         f"monitor: tail -n +{n + 1} -F {events}",
-        f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
-        f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}",
+        f"monitor expired: {me} attach --manager {name} --after LINE --gen {gen} --resume",
+        f"next-event: {me} next-event --manager {name} --after {n} --gen {gen}",
     )
 
 
@@ -1341,7 +1347,7 @@ def result(**fields):
     return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
 
 
-class RosterCase(Case):
+class RosterCase(CrewCase):
     def setUp(self):
         super().setUp()
         self.mdir = os.path.join(self.agent_pm, "managers", "mgr")
@@ -1500,7 +1506,7 @@ class AttachTest(RosterCase):
         self.assertEqual(
             self.synced(self.server()),
             HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
-            f"resume w1: {PY} /x/crew.py --go\n" + tail(self.mdir),
+            f"resume w1: {recovered([PY, *MODULE, '--go'])}\n" + tail(self.mdir),
         )
         self.assertEqual(self.entries()["w1"]["state"], "gone")
         self.assertEqual(self.shows, [])
@@ -1755,14 +1761,15 @@ class AttachTest(RosterCase):
                 f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
                 f"resume B: {role}",
                 "resume C: none (no sid)",
-                f"resume a: {PY} /x/crew.py '; rm -rf ~'",
+                f"resume a: {recovered([PY, *MODULE, '; rm -rf ~'])}",
                 f"resume p1: {PY} /x/router.py --plan '/p q'",
             )
             + tail(self.mdir),
         )
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
         self.assertEqual(
-            shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/crew.py", "; rm -rf ~"]
+            shlex.split(out.splitlines()[-6].split(": ", 1)[1]),
+            [f"PYTHONPATH={ROOT}", PY, *MODULE, "; rm -rf ~"],
         )
 
     def test_a_worker_entry_without_a_client_recovers_with_the_configs_runtime(self):
@@ -1770,7 +1777,7 @@ class AttachTest(RosterCase):
         self.seed(w1=entry(resume=resume))
         out = self.synced(self.server())
         self.assertIn(
-            f"resume w1: {shlex.join([*resume[:4], '--client', 'rt0', *resume[4:]])}\n", out
+            f"resume w1: {recovered(started('w1', '--client', 'rt0', '--manager', 'mgr'))}\n", out
         )
         self.local('runtime = ""\n')
         self.assertEqual(
@@ -1915,7 +1922,7 @@ class StartEntryTest(RosterCase):
     def resume(self, sid, *rest):
         return [
             sys.executable,
-            CREW,
+            *MODULE,
             "start",
             "w1",
             "--manager",
@@ -1932,10 +1939,11 @@ class StartEntryTest(RosterCase):
     def lines(self, err):
         return [x for x in err.getvalue().splitlines() if not x.startswith("tui: ")]
 
-    def test_the_worker_entry_resumes_through_crew_py(self):
+    def test_the_worker_entry_resumes_through_the_crew_module(self):
         self.start()
-        self.assertEqual(self.entries()["w1"]["resume"][1], CREW)
-        self.assertEqual(os.path.realpath(CREW), os.path.realpath(roster.CREW))
+        self.assertEqual(self.entries()["w1"]["resume"][:4], [sys.executable, *MODULE])
+        self.assertEqual(roster.CREW, os.path.realpath(CREW))
+        self.assertEqual(os.path.realpath(crew.__file__), roster.CREW)
 
     def test_the_worker_entry(self):
         cases = (
@@ -2079,7 +2087,7 @@ class StartEntryTest(RosterCase):
         resume = self.resume(sid, "--", "--permission-mode", "auto")
         rc, out, err = self.main_with(Api(), "attach")
         self.assertEqual((rc, err), (0, ""))
-        self.assertTrue(out.endswith(f"resume w1: {shlex.join(resume)}\n{tail(self.mdir)}"), out)
+        self.assertTrue(out.endswith(f"resume w1: {recovered(resume)}\n{tail(self.mdir)}"), out)
 
 
 class RosterCommandsTest(RosterCase):
@@ -2263,12 +2271,10 @@ class StopTest(RosterCase):
                 self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
     def test_a_stopped_entry_is_not_resumed(self):
-        self.seed(MGR, w1=entry(), w2=entry(sid=SID2, resume=[PY, "/y/crew.py", "--go"]))
+        self.seed(MGR, w1=entry(resume=started("w1")), w2=entry(sid=SID2, resume=started("w2")))
         self.assertEqual(self.main_with(Api(rows=[row("w1", SID)]), "stop", "w1"), (0, "", ""))
         self.assertEqual(self.main_with(Api(), "attach", "--resume")[0], 0)
-        self.assertEqual(
-            [argv for argv, _, _ in self.runs.recoveries], [[PY, "/y/crew.py", "--go"]]
-        )
+        self.assertEqual([Runs.key(argv) for argv, _, _ in self.runs.recoveries], ["w2"])
 
 
 class StopAllTest(RosterCase):
@@ -2415,8 +2421,8 @@ class ResumeTest(RosterCase):
         with open(os.path.join(finished, "run.jsonl"), "w") as f:
             f.write(result(outcome={"status": "done"}))
         entries = {
-            "b": entry(cwd="/w/b", resume=[PY, "/x/b/crew.py", "start", "b", "--client", "rt1"]),
-            "a": entry(cwd=cwd, resume=[PY, "/x/a/crew.py", "; rm -rf ~"]),
+            "b": entry(cwd="/w/b", resume=started("b", "--client", "rt1")),
+            "a": entry(cwd=cwd, resume=started("a", "; rm -rf ~")),
             "B": entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
             "p1": entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--issue", "TASK-1"]),
             "f1": entry("pipeline", cwd=finished),
@@ -2428,8 +2434,8 @@ class ResumeTest(RosterCase):
         self.assertEqual((rc, err, self.runs.recoveries), (0, "", []))
         self.runs = Runs(
             {
-                "/x/b/crew.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
-                "/x/a/crew.py": (0, "  a \n\n  \n"),
+                "b": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
+                "a": (0, "  a \n\n  \n"),
                 "/x/drive.py": (0, "drive.py: session x\n"),
                 "/x/router.py": (0, ""),
             },
@@ -2450,9 +2456,17 @@ class ResumeTest(RosterCase):
             ),
         )
         ran = {name: roster.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
+        env = {n: {"PYTHONPATH": ROOT} if n in "ab" else {} for n in ran}
         self.assertEqual(
             self.runs.recoveries,
-            [(argv, {"cwd": entries[name]["cwd"], **self.RUN}, True) for name, argv in ran.items()],
+            [
+                (
+                    argv,
+                    {"cwd": entries[n]["cwd"], "env": {**os.environ, **env[n]}, **self.RUN},
+                    True,
+                )
+                for n, argv in ran.items()
+            ],
         )
         printed = dict(
             line.removeprefix("resume ").split(": ", 1)
@@ -2461,25 +2475,28 @@ class ResumeTest(RosterCase):
         )
         self.assertEqual(
             {n: shlex.split(cmd) for n, cmd in printed.items()},
-            {**ran, "B": ["cd", cwd, "&&", *ran["B"]]},
+            {
+                **{n: [*(f"{k}={v}" for k, v in env[n].items()), *argv] for n, argv in ran.items()},
+                "B": ["cd", cwd, "&&", *ran["B"]],
+            },
         )
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
         self.seed(
             MGR,
-            a1=entry(resume=[PY, "/x/a1/crew.py"]),
-            a2=entry(resume=[PY, "/x/a2/crew.py"]),
+            a1=entry(resume=started("a1")),
+            a2=entry(resume=started("a2")),
             a3=entry("role", sid=None),
-            a4=entry(resume=[PY, "/x/a4/crew.py"]),
+            a4=entry(resume=started("a4")),
             p1=entry("pipeline", resume=[PY, "/x/router.py"]),
-            w1=entry(resume=[PY, "/x/w1/crew.py"]),
+            w1=entry(resume=started("w1")),
         )
         self.runs = Runs(
             {
-                "/x/a1/crew.py": (1, "workers: a1: session ended at once\n"),
-                "/x/a2/crew.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
-                "/x/a4/crew.py": ValueError("embedded null byte"),
+                "a1": (1, "workers: a1: session ended at once\n"),
+                "a2": FileNotFoundError(errno.ENOENT, "No such file or directory"),
+                "a4": ValueError("embedded null byte"),
                 "/x/router.py": (1, refusal + "\n"),
             }
         )
@@ -2500,8 +2517,8 @@ class ResumeTest(RosterCase):
             out,
         )
         self.assertEqual(
-            [argv[1] for argv, _, _ in self.runs.recoveries],
-            ["/x/a1/crew.py", "/x/a2/crew.py", "/x/a4/crew.py", "/x/router.py", "/x/w1/crew.py"],
+            [Runs.key(argv) for argv, _, _ in self.runs.recoveries],
+            ["a1", "a2", "a4", "/x/router.py", "w1"],
         )
 
     def test_one_failed_recovery_of_any_kind_exits_1(self):
@@ -2518,13 +2535,9 @@ class ResumeTest(RosterCase):
         }
         for why, (failure, line) in cases.items():
             with self.subTest(why):
-                bad = (
-                    entry("role", sid=None)
-                    if failure is None
-                    else entry(resume=[PY, "/x/bad/crew.py"])
-                )
-                self.seed(MGR, bad=bad, ok=entry(resume=[PY, "/x/ok/crew.py"]))
-                self.runs = Runs({} if failure is None else {"/x/bad/crew.py": failure})
+                bad = entry("role", sid=None) if failure is None else entry(resume=started("bad"))
+                self.seed(MGR, bad=bad, ok=entry(resume=started("ok")))
+                self.runs = Runs({} if failure is None else {"bad": failure})
                 rc, out, err = self.main_with(Api(), "attach", "--resume")
                 self.assertEqual((rc, err), (1, ""))
                 self.assertTrue(
@@ -2543,7 +2556,7 @@ class ResumeTest(RosterCase):
             MGR,
             r1=entry("role", cwd=asking),
             p1=entry("pipeline", cwd=asking),
-            w1=entry(cwd=asking, resume=[PY, "/x/w1/crew.py"]),
+            w1=entry(cwd=asking, resume=started("w1")),
         )
         rc, out, err = self.main_with(Api(), "attach", "--resume")
         self.assertEqual((rc, err), (0, ""))
@@ -2554,12 +2567,14 @@ class ResumeTest(RosterCase):
                 f"p1\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
                 f"r1\trole\t{SID}\twaiting\t-\t{asking}\t-",
                 f"w1\tworker\t{SID}\tgone\t-\t{asking}\t-",
-                f"resume w1: {PY} /x/w1/crew.py",
+                f"resume w1: {recovered(started('w1', '--client', 'rt0'))}",
             )
             + tail(self.mdir)
             + "resumed w1: exit 0\n",
         )
-        self.assertEqual([argv for argv, _, _ in self.runs.recoveries], [[PY, "/x/w1/crew.py"]])
+        self.assertEqual(
+            [argv for argv, _, _ in self.runs.recoveries], [started("w1", "--client", "rt0")]
+        )
         self.assertEqual(
             {n: e["state"] for n, e in self.entries().items()},
             {"p1": "waiting", "r1": "waiting", "w1": "gone"},
@@ -2604,7 +2619,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = shlex.quote(os.path.abspath(crew.__file__))
+        me = f"PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew"
         self.assertEqual(
             self.attach(),
             (
@@ -2615,8 +2630,8 @@ class CursorTest(RosterCase):
                     f"5 {events[4]}",
                     "N=3 GEN=0",
                     f"monitor: tail -n +4 -F {self.mevents}",
-                    f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0 --resume",
-                    f"next-event: python3 {me} next-event --manager mgr --after 3 --gen 0",
+                    f"monitor expired: {me} attach --manager mgr --after LINE --gen 0 --resume",
+                    f"next-event: {me} next-event --manager mgr --after 3 --gen 0",
                 ),
                 "",
             ),
@@ -2637,22 +2652,25 @@ class CursorTest(RosterCase):
             ),
         )
 
-    def test_attach_names_crew_py(self):
+    def test_attach_names_the_crew_module_on_its_import_root(self):
         rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
         lines = out.splitlines()[-2:]
         self.assertEqual(
             [line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"]
         )
-        self.assertEqual([shlex.split(line.split(": ", 1)[1])[1] for line in lines], [CREW, CREW])
+        self.assertEqual(
+            [shlex.split(line.split(": ", 1)[1])[:5] for line in lines],
+            [[f"PYTHONPATH={ROOT}", "python3", *MODULE]] * 2,
+        )
 
     def test_attach_quotes_the_paths_it_prints(self):
         home = os.path.join(self.dir, "it's a home")
         os.mkdir(home)
-        script = os.path.join(self.dir, "my scripts", "crew.py")
+        root = os.path.join(self.dir, "my src")
         with (
             mock.patch.dict(os.environ, {"HOME": home}),
-            mock.patch.object(crew, "__file__", script),
+            mock.patch.object(crew, "IMPORT_ROOT", root),
         ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
@@ -2667,8 +2685,9 @@ class CursorTest(RosterCase):
                     os.path.join(home, ".agent-pm", "managers", "mgr", "events"),
                 ],
                 [
+                    f"PYTHONPATH={root}",
                     "python3",
-                    script,
+                    *MODULE,
                     "attach",
                     "--manager",
                     "mgr",
@@ -2678,7 +2697,18 @@ class CursorTest(RosterCase):
                     "0",
                     "--resume",
                 ],
-                ["python3", script, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0"],
+                [
+                    f"PYTHONPATH={root}",
+                    "python3",
+                    *MODULE,
+                    "next-event",
+                    "--manager",
+                    "mgr",
+                    "--after",
+                    "0",
+                    "--gen",
+                    "0",
+                ],
             ],
         )
 

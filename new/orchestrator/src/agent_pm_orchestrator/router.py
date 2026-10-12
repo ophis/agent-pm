@@ -97,8 +97,9 @@ def attempt_count(entries, issue, since=None):
 
 
 def live_sessions(roles):
-    names = api.sessions(SESSIONS).names
-    if names is None:
+    try:
+        names = [row.name for row in api.sessions(re.escape(SESSIONS) + ".*")]
+    except api.DriverError:
         return None
     live = {}
     for r in roles:

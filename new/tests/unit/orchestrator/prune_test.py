@@ -241,7 +241,7 @@ class PruneTest(Case):
         )
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertTrue(os.path.isdir(path) and os.path.isdir(busy))
-        self.assertEqual(self.api.order, [("sessions", "")])
+        self.assertEqual(self.api.order, [("sessions", None)])
 
     def test_unknown_finish_time_skipped(self):
         path = self.mkc("TASK-49", "src", "o", "repo")
@@ -822,7 +822,7 @@ class PruneTest(Case):
                 f"prune-plan TASK-7 session={A} what=close the tui session",
             ],
         )
-        self.assertEqual(self.api.order, [("sessions", "")])
+        self.assertEqual(self.api.order, [("sessions", None)])
 
     def test_sessions_unknown_prune_no_issue_but_archive(self):
         for dry, archived in (
@@ -843,7 +843,7 @@ class PruneTest(Case):
                 self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in kept))
                 self.assertNotIn(prune.Q_ISSUE, gql.calls)
                 self.assertEqual(gql.archived, [] if dry else ["id-TASK-49"])
-                self.assertEqual(self.api.order, [("sessions", "")])
+                self.assertEqual(self.api.order, [("sessions", None)])
 
     def test_close_failure_counted(self):
         for error in (api.DriverError("boom"), api.ConfigError("bad name")):

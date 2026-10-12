@@ -1,5 +1,6 @@
 """A fake Driver api for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) on driver.api."""
 
+import re
 from unittest import mock
 
 from agent_pm.driver import api
@@ -24,7 +25,7 @@ def _answer(value):
 
 
 class FakeApi:
-    """`live` None: the sessions unknown; `statuses` (per sid, default resumable yes), `usages` (per runtime, default
+    """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default resumable yes), `usages` (per runtime, default
     LOW) and `shown`: a value or an exception to raise; `records`: api.session's per sid; detach raises `detach_error`,
     else its name goes live. `order` logs the sessions, close, show and detach calls."""
 
@@ -35,12 +36,15 @@ class FakeApi:
         self.statuses, self.records, self.usages = {}, {}, {}
         self.usage_calls, self.detached, self.detach_error = [], [], None
 
-    def sessions(self, prefix=""):
-        self.order.append(("sessions", prefix))
-        live = self.live
-        return api.Sessions(
-            prefix, None if live is None else tuple(n for n in live if n.startswith(prefix))
-        )
+    def sessions(self, match=None):
+        self.order.append(("sessions", match))
+        if self.live is None:
+            raise api.DriverError("tmux sessions unknown: tmux failed")
+        return [
+            api.SessionRow(n, None, None, "working", None, None, None, None, False)
+            for n in self.live
+            if match is None or re.fullmatch(match, n)
+        ]
 
     def close(self, name):
         self.order.append(("close", name))

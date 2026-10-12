@@ -203,8 +203,9 @@ class Pruner:
                 pass
 
     def live_tuis(self):
-        names = api.sessions("").names
-        if names is None:
+        try:
+            names = [row.name for row in api.sessions()]
+        except api.DriverError:
             return None
         roles, found = set(self.roles.values()), {}
         for name in names:

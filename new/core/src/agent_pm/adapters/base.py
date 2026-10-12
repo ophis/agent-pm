@@ -3,7 +3,7 @@ Its Headless (a fresh one per session: launch may keep state for parse) or Tui t
 Launch whose env (last) and resume carry spec.access.env, and the runtime's output into the frozen event set (Event)
 plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at its next
 yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env. Access.dirs
-are granted write, Access.reads only read. Times are epoch seconds. Starts no process. Spec.role_policy=False (plain
+are granted write, Access.reads only read. Times are epoch seconds. Starts no process. role_policy=False (plain
 session): no role-run policy, flags and env unchanged; temporary (TASK-356), as are session_env, identity_env and
 child_defaults."""
 

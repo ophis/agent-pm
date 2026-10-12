@@ -1,7 +1,5 @@
-"""new/core/src/roster.py, the old core's roster_test ported onto a fake driver.api (Tmux): LEGACY_CLIENT's cases
-became FR-28's default runtime; worker_dir and default_runtime are new."""
-
-from new.tests import CORE, hermetic
+"""agent_pm.roster, the old core's roster_test ported onto a fake driver.api (Tmux): LEGACY_CLIENT's cases became
+FR-28's default runtime; worker_dir, default_runtime and the crew module's entries are new."""
 
 import contextlib
 import datetime
@@ -15,20 +13,21 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tomllib
 import types
 import unittest
 import unittest.mock
 
-import roster
-from driver import api
-from utils import config_file
+from agent_pm import roster
+from agent_pm.driver import api
+from agent_pm.utils import config_file
+
+from new.tests.case import PY, ROOT, Case, child_env
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
-SRC = os.path.dirname(os.path.abspath(roster.__file__))
+MODULE = ["-P", "-m", "agent_pm.crew"]
 NOT_REGULAR = "{}: not a regular file owned by you"
 NOT_A_DIR = "not a directory owned by you"
 NO_RUNTIME = "core config: runtime: want a runtime name"
@@ -76,9 +75,8 @@ class Tmux:
         self.alive.discard(name)
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         self.managers = os.path.join(self.agent_pm, "managers")
         self.dir = os.path.join(self.managers, "m1")
         self.tmux = Tmux()
@@ -315,19 +313,17 @@ class ManagerTest(Base):
 
 CHILD = """
 import sys
-sys.path.insert(0, sys.argv[1])
-import roster
+from agent_pm import roster
 for i in range(15):
-    roster.put(sys.argv[2], sys.argv[3] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
+    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
 """
 
 LEASE_CHILD = """
 import sys
 from unittest import mock
-sys.path.insert(0, sys.argv[1])
-import roster
-from driver import api
-d, own = sys.argv[2], sys.argv[3]
+from agent_pm import roster
+from agent_pm.driver import api
+d, own = sys.argv[1], sys.argv[2]
 live = [api.SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()
 try:
@@ -367,6 +363,8 @@ VALID = {
         ["/p", "/x/drive.py"],
         ["/p", "/x/router.py", "a", "b"],
         ["/p", "/x/workers.py", "start"],
+        ["/p", *MODULE],
+        ["/p", *MODULE, "start", "w1", "--", "-P"],
     ],
     "note": [None, "", "x" * 500, "n\xe9\xa0\u200b"],
     "opener": [None, "mgr", "w0t0p0:5E1B-C0FFEE", "w0t0p0:", "x" * 200],
@@ -378,7 +376,7 @@ VALID = {
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
-RESUME_1 = "an absolute path named crew.py, drive.py or router.py"
+RESUME_1 = "-P -m agent_pm.crew or an absolute path named crew.py, drive.py or router.py"
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 ID = "null or a printable string of 1–200 characters without whitespace"
@@ -408,6 +406,9 @@ INVALID = [
     ("resume", ["/p", "/x/other.py"], f"resume[1]: '/x/other.py': want {RESUME_1}"),
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
     ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
+    ("resume", ["/p", "-P", "-m"], f"resume[1]: '-P': want {RESUME_1}"),
+    ("resume", ["/p", "-P", "-m", "agent_pm.roster"], f"resume[1]: '-P': want {RESUME_1}"),
+    ("resume", ["/p", "-m", "agent_pm.crew"], f"resume[1]: '-m': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"),
     ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
     ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"),
@@ -781,7 +782,8 @@ class RosterTest(Base):
     def test_two_processes_put_concurrently_and_both_entries_land(self):
         procs = [
             subprocess.Popen(
-                [sys.executable, "-I", "-c", CHILD, SRC, self.dir, tag],
+                [*PY, "-c", CHILD, self.dir, tag],
+                env=child_env(),
                 stderr=subprocess.PIPE,
                 text=True,
             )
@@ -957,7 +959,7 @@ class RosterTest(Base):
         self.assertEqual(self.entries(), {})
 
     def test_recovery_forms_each_a_copy(self):
-        resume = ["/usr/bin/python3", "/x/crew.py", "start"]
+        resume = ["/usr/bin/python3", *MODULE, "start"]
         cases = [
             ("worker", SID, resume),
             ("pipeline", SID, resume),
@@ -978,32 +980,37 @@ class RosterTest(Base):
                     got.append("x")
                     self.assertEqual(e["resume"], resume)
 
-    def test_recovery_runs_the_new_crew_py_for_a_legacy_workers_py_entry(self):
-        self.assertEqual(roster.CREW, os.path.join(CORE, "skills", "tmux", "scripts", "crew.py"))
+    def test_recovery_runs_the_crew_module_for_a_crew_py_or_legacy_workers_py_entry(self):
+        self.assertEqual(roster.CREW, os.path.realpath(os.path.join(ROOT, "agent_pm", "crew.py")))
         self.assertTrue(os.path.isfile(roster.CREW))
-        resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
-        for kind in ("worker", "pipeline", "role"):
-            with self.subTest(kind=kind):
-                e = good(kind=kind, resume=list(resume))
-                got = roster.recovery(e)
-                self.assertEqual(got[:4], ["/usr/bin/python3", roster.CREW, "start", "w1"])
-                self.assertEqual(e["resume"], resume)
+        for script in ("/old/version/workers.py", "/old/skills/tmux/scripts/crew.py"):
+            resume = ["/usr/bin/python3", script, "start", "w1"]
+            for kind in ("worker", "pipeline", "role"):
+                with self.subTest(script=script, kind=kind):
+                    e = good(kind=kind, resume=list(resume))
+                    got = roster.recovery(e)
+                    self.assertEqual(got[:6], ["/usr/bin/python3", *MODULE, "start", "w1"])
+                    self.assertEqual(e["resume"], resume)
 
     def test_recovery_gives_a_worker_without_a_client_the_default_runtime(self):
         self.local('runtime = "rt9"\n')
-        head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
+        head = ["/usr/bin/python3", *MODULE, "start", "w1"]
+        legacy = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
+        script = ["/usr/bin/python3", "/x/drive.py", "start", "w1"]
         rest = ["--manager", "m", "--resume", SID, "--cwd", "/w"]
         default = [*head, "--client", "rt9", *rest]
         cases = [
             ("worker", [*head, *rest], default),
+            ("worker", [*legacy, *rest], default),
+            ("worker", [*script, *rest], [*script, "--client", "rt9", *rest]),
             ("worker", [*head, *rest, "--", "--client", "x"], [*default, "--", "--client", "x"]),
             ("worker", [*head, "--client", "other", *rest], [*head, "--client", "other", *rest]),
-            ("pipeline", [*head, *rest], [*head, *rest]),
+            ("pipeline", [*script, *rest], [*script, *rest]),
             (
                 "role",
-                [*head, *rest],
+                [*script, *rest],
                 [
-                    *head,
+                    *script,
                     *rest,
                     "--sid",
                     SID,
@@ -1021,15 +1028,17 @@ class RosterTest(Base):
 
     def test_recovery_reads_the_config_only_for_a_worker_without_a_client(self):
         self.local('runtime = ""\n')
-        head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
+        head = ["/usr/bin/python3", *MODULE, "start", "w1"]
+        script = ["/usr/bin/python3", "/x/router.py", "start", "w1"]
         for kind, resume in (
             ("worker", [*head, "--client", "other"]),
-            ("worker", head[:3]),
-            ("pipeline", head),
-            ("role", head),
+            ("worker", head[:5]),
+            ("pipeline", script),
+            ("role", script),
         ):
             with self.subTest(kind=kind, resume=resume):
-                self.assertEqual(roster.recovery(good(kind=kind, resume=resume))[:4], resume[:4])
+                got = roster.recovery(good(kind=kind, resume=resume))
+                self.assertEqual(got[: len(resume)], resume)
         with self.assertRaises(roster.RosterError) as cm:
             roster.recovery(good(resume=head))
         self.assertEqual(str(cm.exception), NO_RUNTIME)
@@ -1211,6 +1220,15 @@ class DefaultRuntimeTest(Base):
                     roster.default_runtime()
                 self.assertEqual(str(cm.exception), NO_RUNTIME)
 
+    def test_the_config_paths_given(self):
+        config = os.path.join(self.home, "core.toml")
+        with open(config, "w") as f:
+            f.write('runtime = "rt7"\n')
+        self.local('runtime = "rt9"\n')
+        self.assertEqual(roster.default_runtime(config, os.devnull), "rt7")
+        local = os.path.join(self.agent_pm, "core-new.local.toml")
+        self.assertEqual(roster.default_runtime(config, local), "rt9")
+
     def test_an_unreadable_local_file_refused(self):
         self.local("runtime = \n")
         with self.assertRaisesRegex(roster.RosterError, "^core config: .*line 1"):
@@ -1317,7 +1335,8 @@ class LeaseTest(Base):
     def test_two_processes_take_concurrently_and_exactly_one_holds(self):
         procs = [
             subprocess.Popen(
-                [sys.executable, "-I", "-c", LEASE_CHILD, SRC, self.dir, own],
+                [*PY, "-c", LEASE_CHILD, self.dir, own],
+                env=child_env(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

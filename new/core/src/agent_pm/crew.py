@@ -3,7 +3,8 @@ picks the runtime (--client, else the caller's own tui session's, else the core 
 with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (what restart replays), shows it, enters
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
 reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits 1 on an error, 2 on a usage
-error. Follow-ups go through the Driver's tmux_host.py send."""
+error. Follow-ups go through the Driver's tmux_host.py send. Run as `PYTHONPATH=new/core/src python3 -P -m
+agent_pm.crew …`; the commands it prints and runs (a worker entry's recovery) set PYTHONPATH to its import root."""
 
 import argparse
 import contextlib
@@ -18,14 +19,10 @@ import time
 import uuid
 from collections.abc import Iterator
 
-CORE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if __name__ == "__main__":
-    sys.path[0] = os.path.join(CORE, "src")
-
-import roster  # noqa: E402
-from driver import api  # noqa: E402
-from utils.files import save  # noqa: E402
-from utils.paths import printable_abs  # noqa: E402
+from agent_pm import roster
+from agent_pm.driver import api
+from agent_pm.utils.files import save
+from agent_pm.utils.paths import IMPORT_ROOT, printable_abs
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
@@ -160,7 +157,7 @@ def _enroll(record: dict, own: str | None, note: str | None) -> None:
     )
     resume = [
         sys.executable,
-        os.path.abspath(__file__),
+        *roster.CREW_MODULE,
         "start",
         name,
         "--manager",
@@ -500,14 +497,21 @@ def _reopen(panes: dict, entries: dict, live: dict[str, api.SessionRow]) -> tupl
     return shown, opened
 
 
+def _pythonpath(argv: list[str]) -> dict[str, str]:
+    return {"PYTHONPATH": IMPORT_ROOT} if tuple(argv[1:4]) == roster.CREW_MODULE else {}
+
+
+def _command(argv: list[str]) -> str:
+    env = "".join(f"{k}={shlex.quote(v)} " for k, v in _pythonpath(argv).items())
+    return env + shlex.join(argv)
+
+
 def _recovery(e: dict) -> str:
     argv = roster.recovery(e)
     if argv is None:
         return "none (no sid)"
     return (
-        f"cd {shlex.quote(e['cwd'])} && {shlex.join(argv)}"
-        if e["kind"] == "role"
-        else shlex.join(argv)
+        f"cd {shlex.quote(e['cwd'])} && {_command(argv)}" if e["kind"] == "role" else _command(argv)
     )
 
 
@@ -565,14 +569,14 @@ def attach(
     except roster.RosterError as e:
         raise WorkersError(str(e)) from e
     me, name = (
-        shlex.quote(os.path.abspath(__file__)),
+        _command(["python3", *roster.CREW_MODULE]),
         shlex.quote(os.path.basename(os.path.dirname(events))),
     )
     arm = [
         f"N={cursor} GEN={gen}",
         f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
-        f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
-        f"next-event: python3 {me} next-event --manager {name} --after {cursor} --gen {gen}",
+        f"monitor expired: {me} attach --manager {name} --after LINE --gen {gen} --resume",
+        f"next-event: {me} next-event --manager {name} --after {cursor} --gen {gen}",
     ]
     return table + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
 
@@ -593,6 +597,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             res = subprocess.run(
                 argv,
                 cwd=e["cwd"],
+                env={**os.environ, **_pythonpath(argv)},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

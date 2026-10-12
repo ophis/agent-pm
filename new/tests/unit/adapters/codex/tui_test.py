@@ -341,6 +341,11 @@ class PlainTest(Base):
         self.assertNotIn(str(self.extra), argv)
         self.assertFalse([w for w in argv if w.startswith(POLICY)])
 
+    def test_the_session_env_is_last_in_a_plain_launch_env(self):
+        access = dataclasses.replace(self.plain.access, env={"S": "s"})
+        launch, _ = self.launch(dataclasses.replace(self.plain, access=access))
+        self.assertEqual(launch.env, {"CODEX_HOME": str(self.codex_home), "S": "s"})
+
     def test_plain_launch_is_the_wiring_then_the_flags(self):
         (self.cwd / ".codex").mkdir()
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")

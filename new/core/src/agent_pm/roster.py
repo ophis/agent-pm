@@ -5,7 +5,9 @@ router.py --tui (a pipeline), keyed by the driver session (the new core's: TASK-
 its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled
 (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
 Sessions are reached only through driver.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
-default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client."""
+default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client. A worker entry runs
+crew as a module (CREW_MODULE, PYTHONPATH the import root); recovery rewrites an entry naming a crew.py or workers.py
+script to that form."""
 
 import contextlib
 import errno
@@ -21,8 +23,8 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from driver import api
-from utils.config_file import CONFIG, LOCAL, read_config
+from agent_pm.driver import api
+from agent_pm.utils.config_file import CONFIG, LOCAL, read_config
 
 ROOT = "~/.agent-pm/managers"
 WORKERS = "~/.agent-pm/workers"
@@ -33,11 +35,10 @@ KINDS = ("worker", "role", "pipeline")
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
-# crew.py's old name, so an entry an older plugin version wrote still validates (recovery runs CREW)
+# crew.py's old name, so an entry an older plugin version wrote still validates (recovery runs CREW_MODULE)
 LEGACY = "workers.py"
-CREW = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills/tmux/scripts/crew.py"
-)
+CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
+CREW_MODULE = ("-P", "-m", "agent_pm.crew")
 TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = (
     "kind",
@@ -139,9 +140,9 @@ def worker_dir(sid) -> str:
     return path
 
 
-def default_runtime() -> str:
+def default_runtime(config: str = CONFIG, local: str = LOCAL) -> str:
     try:
-        runtime = read_config(CONFIG, LOCAL).get("runtime")
+        runtime = read_config(config, local).get("runtime")
     except (OSError, ValueError) as e:
         raise RosterError(f"core config: {e}") from e
     if not (isinstance(runtime, str) and runtime):
@@ -246,8 +247,11 @@ def _resume_fault(resume) -> str | None:
         return _want("resume", resume, "a list of 2 or more printable strings")
     if not os.path.isabs(resume[0]):
         return _want("resume[0]", resume[0], "an absolute path")
+    if tuple(resume[1:4]) == CREW_MODULE:
+        return None
     if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
-        return _want("resume[1]", resume[1], f"an absolute path named {_or(SCRIPTS)}")
+        want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
+        return _want("resume[1]", resume[1], want)
     return None
 
 
@@ -540,11 +544,12 @@ def stop(r: dict, name: str) -> str:
 
 def recovery(entry: dict) -> list[str] | None:
     resume = list(entry["resume"])
-    if os.path.basename(resume[1]) == LEGACY:
-        resume[1] = CREW
+    if os.path.basename(resume[1]) in ("crew.py", LEGACY):
+        resume[1:2] = CREW_MODULE
     options = resume[: resume.index("--")] if "--" in resume else resume
-    if entry["kind"] == "worker" and len(resume) > 3 and "--client" not in options:
-        resume[4:4] = ["--client", default_runtime()]
+    start = 1 + (len(CREW_MODULE) if tuple(resume[1:4]) == CREW_MODULE else 1)
+    if entry["kind"] == "worker" and len(resume) > start + 1 and "--client" not in options:
+        resume[start + 2 : start + 2] = ["--client", default_runtime()]
     if entry["kind"] != "role":
         return resume
     if entry["sid"] is None:
