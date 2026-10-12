@@ -58,6 +58,13 @@ def _table(value, keys=None) -> bool:
     )
 
 
+def _environment(value) -> bool:
+    return _table(value) and all(
+        key and "=" not in key and "\0" not in key and "\0" not in item
+        for key, item in value.items()
+    )
+
+
 CHECKS = (
     ("flags", _strings, "a list of strings"),
     ("allow", _strings, "a list of strings"),
@@ -67,7 +74,7 @@ CHECKS = (
         lambda v: _table(v, EFFORTS),
         f"a table from effort ({', '.join(EFFORTS)}) to a string",
     ),
-    ("env", _table, "a table of strings to strings"),
+    ("env", _environment, "a table of environment names to strings without NUL"),
 )
 
 

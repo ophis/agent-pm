@@ -51,7 +51,6 @@ class HeadlessTest(Base):
         )
 
     def test_source_usage_errors_without_reset_emit_limit(self):
-        run = self.adapter.headless()
         messages = (
             "You’ve hit your usage limit. Try again later.",
             "You’ve hit your usage limit for GPT-5. Switch to another model now, or try again later.",
@@ -61,12 +60,48 @@ class HeadlessTest(Base):
         for kind in ("error", "turn.failed"):
             for message in messages:
                 with self.subTest(kind=kind, message=message):
+                    run = self.adapter.headless()
                     record = (
                         {"type": kind, "message": message}
                         if kind == "error"
                         else {"type": kind, "error": {"message": message}}
                     )
                     self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit(None)])
+
+    def test_paired_and_repeated_limit_errors_keep_stderr_once_per_run(self):
+        message = "Quota exceeded. Check your plan and billing details."
+        records = (
+            {"type": "error", "message": message},
+            {"type": "turn.failed", "error": {"message": message}},
+            {"type": "error", "message": message},
+        )
+        run = self.run_instance()
+        self.assertEqual(
+            list(run.events(map(json.dumps, records))),
+            [Stderr(message), LimitHit(), Stderr(message), Stderr(message)],
+        )
+
+    def test_non_limit_error_does_not_suppress_later_limit(self):
+        run = self.run_instance()
+        message = "Quota exceeded. Check your plan and billing details."
+        self.assertEqual(
+            list(run.parse({"type": "error", "message": "network error"})),
+            [Stderr("network error")],
+        )
+        self.assertEqual(
+            list(run.parse({"type": "turn.failed", "error": {"message": message}})),
+            [Stderr(message), LimitHit()],
+        )
+
+    def test_fresh_launch_resets_limit_guard(self):
+        run = self.run_instance()
+        message = "Quota exceeded. Check your plan and billing details."
+        record = {"type": "error", "message": message}
+        self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        run.launch("again", self.spec, True)
+        self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
 
     def test_source_quota_error_emits_limit(self):
         run = self.adapter.headless()
@@ -86,7 +121,6 @@ class HeadlessTest(Base):
 
     def test_source_local_reset_formats_become_unix_seconds(self):
         self.adapter.common.config["env"] = {"TZ": "UTC"}
-        run = self.adapter.headless()
         today = datetime.now(UTC)
         expected_today = today.replace(hour=16, minute=30, second=0, microsecond=0).timestamp()
         cases = (
@@ -98,6 +132,7 @@ class HeadlessTest(Base):
         )
         for message, expected in cases:
             with self.subTest(message=message):
+                run = self.adapter.headless()
                 self.assertEqual(
                     list(run.parse({"type": "error", "message": message})),
                     [Stderr(message), LimitHit(expected)],
@@ -105,7 +140,6 @@ class HeadlessTest(Base):
 
     def test_ambiguous_invalid_or_unrecognized_reset_remains_unknown(self):
         self.adapter.common.config["env"] = {"TZ": "America/New_York"}
-        run = self.adapter.headless()
         for value in (
             "Nov 1st, 2026 1:30 AM",
             "Mar 8th, 2026 2:30 AM",
@@ -114,6 +148,7 @@ class HeadlessTest(Base):
         ):
             message = f"You’ve hit your usage limit. Try again at {value}."
             with self.subTest(value=value):
+                run = self.adapter.headless()
                 self.assertEqual(
                     list(run.parse({"type": "error", "message": message})),
                     [Stderr(message), LimitHit(None)],

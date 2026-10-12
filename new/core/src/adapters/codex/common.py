@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass, replace
 from functools import wraps
 
-from adapters.base import ConfigError, Launch, SessionInfo, Usage, Window
+from adapters.base import EFFORTS, ConfigError, Launch, SessionInfo, Usage, Window
 
 from .sessions import (
     RecoveryError,
@@ -34,6 +34,9 @@ from .sessions import (
     store_root,
     validate_snapshot,
 )
+
+TABLE = "[adapters.codex]"
+TIERS = ("1", "2", "3", "4")
 
 
 def _recover(method):
@@ -196,16 +199,17 @@ class CodexCommon:
         self.config["sandbox"] = sandbox
         if type(config.get("shell_network")) is not bool:
             raise ConfigError("Codex shell_network must be a boolean")
-        for name in ("tiers", "efforts"):
+        for name, keys in (("tiers", TIERS), ("efforts", EFFORTS)):
             values = config.get(name, {})
             if not isinstance(values, dict) or any(
                 not isinstance(key, str)
+                or key not in keys
                 or not isinstance(value, str)
                 or not value.strip()
                 or not value.isprintable()
                 for key, value in values.items()
             ):
-                raise ConfigError(f"Codex {name} must map strings to printable text")
+                raise ConfigError(f"{TABLE}.{name} must map {', '.join(keys)} to printable text")
         env = config.get("env", {})
         if not isinstance(env, dict) or any(
             not isinstance(key, str)
@@ -216,14 +220,14 @@ class CodexCommon:
             or "\0" in value
             for key, value in env.items()
         ):
-            raise ConfigError("Codex env must map environment names to strings without NUL")
+            raise ConfigError(f"{TABLE}.env must map environment names to strings without NUL")
 
     def _mapped(self, name, value):
         if value is None:
             return None
         result = self.config.get(name, {}).get(str(value))
         if result is None:
-            raise ConfigError(f"no Codex {name} mapping for {value!r}")
+            raise ConfigError(f"no mapping for {value!r} in {TABLE}.{name}")
         return result
 
     @_recover

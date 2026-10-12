@@ -60,9 +60,11 @@ class CodexHeadless(Headless):
         super().__init__(adapter)
         self.state = None
         self.last_reply = ""
+        self.limit_sent = False
 
     def launch(self, prompt, spec, resume):
         self.state = self.adapter.common.prepare(spec, resume)
+        self.limit_sent = False
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]
         if resume:
@@ -116,7 +118,8 @@ class CodexHeadless(Headless):
                 error = error.get("message")
             if isinstance(error, str) and error.strip():
                 yield Stderr(error)
-                if error.replace("’", "'").startswith(LIMIT_PREFIXES):
+                if not self.limit_sent and error.replace("’", "'").startswith(LIMIT_PREFIXES):
+                    self.limit_sent = True
                     yield LimitHit(reset_at(error, self.adapter.common.config.get("env", {})))
         elif isinstance(kind, str):
             yield Activity(kind)
