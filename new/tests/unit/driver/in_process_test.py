@@ -1,5 +1,6 @@
 """new/core/src/driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
+
 from new.tests import hermetic  # noqa: F401
 
 import signal
@@ -12,7 +13,7 @@ from adapters.base import Adapter, InProcess, Reply, Spec, Stderr
 from driver.errors import DriverError
 from driver.modes.in_process import InProcessMode
 
-WAIT = 10    # upper bound on any wait, in seconds
+WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
 SPEC = Spec(workdir="/tmp/in-process-test")
 
@@ -61,6 +62,7 @@ class Base(unittest.TestCase):
                 yield Reply("late")
             finally:
                 closed.set()
+
         return script, reached, release, closed
 
     def drain(self) -> list:
@@ -94,6 +96,7 @@ class Run(Base):
         def script(*args):
             calls.append((args, threading.get_ident(), threading.current_thread().daemon))
             return []
+
         self.begin(script, resume=True)
         self.assertEqual(self.drain(), [])
         self.assertEqual(calls, [(("hi", SPEC, True), mock.ANY, True)])
@@ -103,7 +106,10 @@ class Run(Base):
         script, reached, release, _ = self.held()
         self.begin(script)
         self.assertTrue(reached.wait(WAIT))
-        self.assertEqual([self.mode.poll(WAIT) for _ in range(2)], [([Reply("one")], False), ([Stderr("two")], False)])
+        self.assertEqual(
+            [self.mode.poll(WAIT) for _ in range(2)],
+            [([Reply("one")], False), ([Stderr("two")], False)],
+        )
         self.assertEqual(self.mode.state(), "live")
         self.assert_lapses(self.mode.poll, ([], False))
         self.assert_lapses(self.mode.returncode, None)
@@ -122,14 +128,20 @@ class Raises(Base):
 
         def plain(*_):
             raise RuntimeError("boom")
+
         for script, before in ((generator, [Reply("first")]), (plain, [])):
             with self.subTest(script=script.__name__):
                 self.begin(script)
                 found = self.drain()
-                self.assertEqual(found[:len(before)], before)
-                lines = found[len(before):]
-                self.assertTrue(all(isinstance(e, Stderr) and e.text == e.text.rstrip() and "\n" not in e.text
-                                    for e in lines), lines)
+                self.assertEqual(found[: len(before)], before)
+                lines = found[len(before) :]
+                self.assertTrue(
+                    all(
+                        isinstance(e, Stderr) and e.text == e.text.rstrip() and "\n" not in e.text
+                        for e in lines
+                    ),
+                    lines,
+                )
                 self.assertEqual(lines[0], Stderr("Traceback (most recent call last):"))
                 self.assertTrue(any(script.__name__ in e.text for e in lines), lines)
                 self.assertEqual(lines[-1], Stderr("RuntimeError: boom"))
@@ -138,13 +150,16 @@ class Raises(Base):
     def test_a_keyboard_interrupt_is_code_1(self):
         def script(*_):
             raise KeyboardInterrupt
+
         self.begin(script)
         self.assertEqual(self.drain()[-1], Stderr("KeyboardInterrupt"))
         self.assertEqual(self.mode.returncode(WAIT), 1)
 
 
 class Stop(Base):
-    def test_while_live_drains_what_came_ends_at_once_minus_sigkill_and_closes_the_run_at_its_next_yield(self):
+    def test_while_live_drains_what_came_ends_at_once_minus_sigkill_and_closes_the_run_at_its_next_yield(
+        self,
+    ):
         script, reached, release, closed = self.held()
         self.begin(script)
         self.assertTrue(reached.wait(WAIT))
@@ -193,10 +208,16 @@ class Begin(Base):
     def test_a_thread_that_cannot_start_is_a_driver_error(self):
         calls = []
         mode = InProcessMode(StubRun(lambda *args: calls.append(args) or []))
-        with (mock.patch("threading.Thread.start", side_effect=RuntimeError("can't start new thread")),
-              self.assertRaises(DriverError) as caught):
+        with (
+            mock.patch(
+                "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
+            ),
+            self.assertRaises(DriverError) as caught,
+        ):
             mode.begin("hi", SPEC, False)
-        self.assertEqual(str(caught.exception), "cannot start the in_process run: can't start new thread")
+        self.assertEqual(
+            str(caught.exception), "cannot start the in_process run: can't start new thread"
+        )
         self.assertEqual(calls, [])
         self.assertEqual(mode.state(), "absent")
         mode.stop()
@@ -206,10 +227,15 @@ class Begin(Base):
         for when in ("before", "after"):
             if when == "after":
                 self.mode.begin("hi", SPEC, False)
-            for call, message in ((lambda: self.mode.send("x"), "send: tui mode only"),
-                                  (self.mode.screen, "screen: tui mode only"),
-                                  (lambda: self.mode.screen(5), "screen: tui mode only")):
-                with self.subTest(when=when, message=message), self.assertRaises(DriverError) as caught:
+            for call, message in (
+                (lambda: self.mode.send("x"), "send: tui mode only"),
+                (self.mode.screen, "screen: tui mode only"),
+                (lambda: self.mode.screen(5), "screen: tui mode only"),
+            ):
+                with (
+                    self.subTest(when=when, message=message),
+                    self.assertRaises(DriverError) as caught,
+                ):
                     call()
                 self.assertEqual(str(caught.exception), message)
 

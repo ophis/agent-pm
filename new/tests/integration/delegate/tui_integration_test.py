@@ -3,6 +3,7 @@ ClaudeAdapter running new/tests/fake_claude.py interactively (a Stop hook step: 
 The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle
 give-up on a clock ahead (driver.api's `time` only), the fix send; the session left open. Main's
 tests/integration/core/drive_tui_integration_test.py, its tui run."""
+
 from new.tests import fake_claude
 from new.tests.integration.delegate.cli_integration_test import (
     DONE,
@@ -31,17 +32,23 @@ from driver import api, registry
 
 NAME = f"claude-{SID[:8]}"
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
-WAIT = 60   # seconds: a run
+WAIT = 60  # seconds: a run
 START = mark("start", "echoing")
 TURN_1 = ["session", "input", "client_session", "progress"]
 
 
 def stop(text: str, pending: int = 0) -> dict:
-    return {"kind": "hook", "event": "Stop", "last_assistant_message": text, "background_tasks": [{}] * pending}
+    return {
+        "kind": "hook",
+        "event": "Stop",
+        "last_assistant_message": text,
+        "background_tasks": [{}] * pending,
+    }
 
 
 class Ahead:
     """driver.api's `time`: monotonic() `by` s ahead of the real clock."""
+
     def __init__(self):
         self.by = 0.0
 
@@ -51,12 +58,23 @@ class Ahead:
 
 class TuiRun(tui_live.Live):
     """dummy-tester's echo as session SID in workdir `work`, out `out.md`, events file self.events."""
+
     def setUp(self):
         super().setUp()
-        self.scenario, self.log = os.path.join(self.dir, "claude.json"), os.path.join(self.dir, "claude.log")
+        self.scenario, self.log = (
+            os.path.join(self.dir, "claude.json"),
+            os.path.join(self.dir, "claude.log"),
+        )
         self.out = os.path.join(self.workdir, "out.md")
-        self.enterContext(mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"),
-                                                       fake_claude.ENV: self.scenario}))
+        self.enterContext(
+            mock.patch.dict(
+                os.environ,
+                {
+                    "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"),
+                    fake_claude.ENV: self.scenario,
+                },
+            )
+        )
         registry.reset()
 
     def go(self, on_event=None, **scenario):
@@ -73,10 +91,24 @@ class TuiRun(tui_live.Live):
 
         def target():
             try:
-                ended.append(run(config, "echo", "Hello.", self.workdir, runtime="claude", mode="tui", sid=SID,
-                                 events=self.events, out=self.out, cwd=self.workdir, on_event=on))
+                ended.append(
+                    run(
+                        config,
+                        "echo",
+                        "Hello.",
+                        self.workdir,
+                        runtime="claude",
+                        mode="tui",
+                        sid=SID,
+                        events=self.events,
+                        out=self.out,
+                        cwd=self.workdir,
+                        on_event=on,
+                    )
+                )
             except BaseException as e:
                 ended.append(e)
+
         thread = threading.Thread(target=target, daemon=True)
         with redirect_stderr(err):
             thread.start()
@@ -108,14 +140,18 @@ class TuiRun(tui_live.Live):
         return found[1:]
 
     def left_open(self) -> None:
-        shown = self.server.tmux("display-message", "-p", "-t", f"={NAME}:", "#{session_name} #{pane_dead}")
+        shown = self.server.tmux(
+            "display-message", "-p", "-t", f"={NAME}:", "#{session_name} #{pane_dead}"
+        )
         self.assertEqual(shown.stdout, f"{NAME} 0\n", shown.stderr)
 
 
 class TurnEnds(TuiRun):
     def test_the_nudges_turn_ends_done_the_deliverable_saved_the_session_left_open(self):
         result = self.go(steps=[START], turns=[[block(DONE)]])
-        self.assertEqual((result.returncode, result.outcome.status, result.error), (0, "done", ""), self.err)
+        self.assertEqual(
+            (result.returncode, result.outcome.status, result.error), (0, "done", ""), self.err
+        )
         self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
         self.assertEqual(self.users(), [NUDGE])
         self.assertEqual(self.kinds(), [*TURN_1, "nudge", "result", "end"])
@@ -124,8 +160,12 @@ class TurnEnds(TuiRun):
         self.left_open()
         self.lines(f"{NAME} done", f"{NAME} done")
 
-    def test_after_the_nudge_stop_limit_turn_ends_without_an_outcome_give_up_the_session_left_open(self):
-        result = self.go(steps=[START], turns=[[*[stop("Working.")] * (STOP_LIMIT - 1), "Working."]])
+    def test_after_the_nudge_stop_limit_turn_ends_without_an_outcome_give_up_the_session_left_open(
+        self,
+    ):
+        result = self.go(
+            steps=[START], turns=[[*[stop("Working.")] * (STOP_LIMIT - 1), "Working."]]
+        )
         self.assertEqual(result, GAVE_UP)
         self.assertIn(f"delegate: no outcome after {STOP_LIMIT} turn ends; {LEFT_OPEN}", self.err)
         self.assertEqual(self.users(), [NUDGE])
@@ -135,8 +175,10 @@ class TurnEnds(TuiRun):
 
     def test_turn_ends_with_work_pending_neither_nudge_nor_count(self):
         waiting = stop("Waiting for the build.", pending=1)
-        result = self.go(steps=[waiting, waiting, START],
-                         turns=[[*[waiting, stop("Working.")] * (STOP_LIMIT - 1), waiting, block(DONE)]])
+        result = self.go(
+            steps=[waiting, waiting, START],
+            turns=[[*[waiting, stop("Working.")] * (STOP_LIMIT - 1), waiting, block(DONE)]],
+        )
         self.assertEqual((result.outcome.status, self.users()), ("done", [NUDGE]), self.err)
 
     def test_a_progress_mark_resets_the_count(self):
@@ -153,14 +195,17 @@ class Idle(TuiRun):
         self.enterContext(mock.patch.object(api, "time", clock))
 
         def later(event):
-            if isinstance(event, Progress):   # read at turn 1's end, the last event
+            if isinstance(event, Progress):  # read at turn 1's end, the last event
                 clock.by += IDLE_TIMEOUT + 1
+
         result = self.go(later, steps=[START], background=1)
         self.assertEqual(result, GAVE_UP)
         self.assertIn(f"delegate: no event for 2 h; {LEFT_OPEN}", self.err)
         self.assertEqual(self.kinds(), [*TURN_1, "idle", "give_up", "result", "end"])
-        self.assertEqual((self.last("idle")["seconds"], self.last("give_up")["reason"]),
-                         (IDLE_TIMEOUT, "no event for 2 h"))
+        self.assertEqual(
+            (self.last("idle")["seconds"], self.last("give_up")["reason"]),
+            (IDLE_TIMEOUT, "no event for 2 h"),
+        )
         self.assertEqual(self.users(), [])
         self.left_open()
 
