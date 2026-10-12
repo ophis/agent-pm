@@ -129,6 +129,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
     for opt in (
         "--session-id",
         "--resume",
+        "--name",
         "--model",
         "--effort",
         "--permission-mode",
