@@ -1,14 +1,17 @@
+""".github/comment_budget.py: measure, rule, and main over temp git repos."""
+
 import contextlib
 import importlib.util
 import io
 import os
 import subprocess
 import tempfile
-import unittest
 from pathlib import Path
 from unittest import mock
 
-PATH = Path(__file__).resolve().parents[3] / ".github" / "comment_budget.py"
+from new.tests.case import NEW, Case
+
+PATH = os.path.join(os.path.dirname(NEW), ".github", "comment_budget.py")
 spec = importlib.util.spec_from_file_location("comment_budget", PATH)
 budget = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(budget)
@@ -37,7 +40,7 @@ def over(folder, n, code, limit):
     )
 
 
-class Measure(unittest.TestCase):
+class Measure(Case):
     def test_comments_count_with_their_hash_but_a_shebang_does_not(self):
         self.assertEqual(
             budget.measure("x = 1  # a note\n"), (chars("# a note"), 0, chars("x = 1"))
@@ -68,8 +71,8 @@ class Measure(unittest.TestCase):
 
     def test_ordinary_strings_are_code(self):
         text = (
-            'x = "an error message"\nprint("help text", x)\ny = f"{x} more"\nDOC = """assigned, not bare"""\n'
-            'def f():\n    return "a value"\n'
+            'x = "an error message"\nprint("help text", x)\ny = f"{x} more"\n'
+            'DOC = """assigned, not bare"""\ndef f():\n    return "a value"\n'
         )
         self.assertEqual(budget.measure(text), (0, 0, chars(text)))
 
@@ -82,17 +85,17 @@ class Measure(unittest.TestCase):
         )
 
 
-class Rules(unittest.TestCase):
+class Rules(Case):
     def test_paths_pick_their_rule(self):
         for path in ("tests/a.py", "x/tests/b.py", "new/tests/c.py", "core/d_test.py"):
             with self.subTest(path=path):
                 self.assertIs(budget.rule(path), budget.TESTS)
-        for path in ("core/src/e.py", ".github/comment_budget.py", "contests/f.py", "tests.py"):
+        for path in ("new/core/src/e.py", ".github/comment_budget.py", "contests/f.py", "tests.py"):
             with self.subTest(path=path):
                 self.assertIs(budget.rule(path), budget.SOURCE)
 
 
-class Main(unittest.TestCase):
+class Main(Case):
     def run_in(self, tracked, untracked=()):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

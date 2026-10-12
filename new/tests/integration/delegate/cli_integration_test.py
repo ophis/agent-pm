@@ -1,6 +1,6 @@
 """delegate/cli.py as a subprocess over new/tests/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
-a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, an interrupt, a usage limit, config errors.
-Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
+a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an
+interrupt, a usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
 
 import json
 import os
@@ -35,6 +35,7 @@ ASKING = {
 UNSAVED = {k: v for k, v in DONE.items() if k != "deliverable"}
 UNSAVED_ERROR = "done with a local destination must carry the deliverable"
 ANSWER = "Say hello."
+DRAFT = "Draft.\n"
 
 
 def mark(name: str, text: str) -> str:
@@ -152,6 +153,38 @@ class Integration(Case):
     def read(self, path: str) -> str:
         with open(path) as f:
             return f.read()
+
+    def popen(self, *extra) -> subprocess.Popen:
+        # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of its own.
+        proc = subprocess.Popen(
+            self.argv(*extra),
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+        )
+        self.addCleanup(self.reap, proc)
+        return proc
+
+    def reap(self, proc: subprocess.Popen) -> None:
+        targets = [(os.killpg, proc.pid)] + [(os.kill, call["pid"]) for call in self.calls()]
+        for kill, target in targets:
+            try:
+                kill(target, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        proc.communicate()
+
+    def until(self, proc: subprocess.Popen, done, what: str) -> None:
+        deadline = time.monotonic() + WAIT
+        while not done():
+            if proc.poll() is not None or time.monotonic() > deadline:
+                self.fail(f"the CLI never {what} (rc {proc.poll()})")
+            time.sleep(0.05)
 
 
 class NewRun(Integration):
@@ -514,32 +547,46 @@ class ConfigErrors(Integration):
                 self.assertEqual(os.listdir(self.work), [])
 
 
-class Interrupt(Integration):
-    def popen(self) -> subprocess.Popen:
-        # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of its own.
-        proc = subprocess.Popen(
-            self.argv(),
-            cwd=self.proj,
-            env=self.env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+class Draft(Integration):
+    def holds(self, text: str) -> bool:
+        try:
+            return self.read(self.out) == text
+        except OSError:
+            return False
+
+    def inputs(self) -> int:
+        try:
+            return self.kinds().count("input")
+        except ValueError:  # a line half appended
+            return 0
+
+    def test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it(self):
+        self.scene(
+            [mark("start", "echoing"), {"kind": "write", "path": self.out, "text": DRAFT}],
+            hang=True,
         )
-        self.addCleanup(self.reap, proc)
-        return proc
+        proc = self.popen()
+        self.until(proc, lambda: self.holds(DRAFT), "saw the draft at --out")
+        (call,) = self.calls()
+        os.kill(call["pid"], signal.SIGKILL)
+        out, err = proc.communicate(timeout=WAIT)
+        self.assertEqual(proc.returncode, 3, out + err)
+        self.assertEqual(self.last("result")["error"], "the client exited -9")
+        self.assertTrue(self.holds(DRAFT), "the draft after the kill")
+        gate = os.path.join(self.root, "gate")
+        self.scene([block(DONE)], gate=gate)
+        proc = self.popen("--resume")
+        self.until(proc, lambda: self.inputs() == 2, "recorded the resume's input")
+        self.assertTrue(self.holds(DRAFT), "the draft as the resumed client starts")
+        open(gate, "w").close()
+        out, err = proc.communicate(timeout=WAIT)
+        self.assertEqual(proc.returncode, 0, out + err)
+        self.assertEqual(option(self.calls()[1], "--resume"), SID)
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
+        self.assertEqual(self.read(self.out), DONE["deliverable"])
 
-    def reap(self, proc: subprocess.Popen) -> None:
-        targets = [(os.killpg, proc.pid)] + [(os.kill, call["pid"]) for call in self.calls()]
-        for kill, target in targets:
-            try:
-                kill(target, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        proc.communicate()
 
+class Interrupt(Integration):
     def started(self) -> bool:
         try:
             return "start" in [e.get("name") for e in self.records() if e["kind"] == "progress"]
@@ -549,11 +596,7 @@ class Interrupt(Integration):
     def test_interrupt_kills_a_hung_agent(self):
         self.scene([mark("start", "waiting")], hang=True)
         proc = self.popen()
-        deadline = time.monotonic() + WAIT
-        while not self.started():
-            if proc.poll() is not None or time.monotonic() > deadline:
-                self.fail(f"the CLI never reported the start (rc {proc.poll()})")
-            time.sleep(0.05)
+        self.until(proc, self.started, "reported the start")
         (call,) = self.calls()
         os.kill(proc.pid, signal.SIGINT)
         proc.wait(timeout=WAIT)
