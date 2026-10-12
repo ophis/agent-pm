@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass, replace
 from functools import wraps
 
-from adapters.base import ConfigError, Launch, Usage, Window
+from adapters.base import ConfigError, Launch, SessionInfo, Usage, Window
 
 from .sessions import (
     RecoveryError,
@@ -387,6 +387,25 @@ class CodexCommon:
                 raise ConfigError("duplicate Codex descendant session files")
             related.update(added)
             newest = max([newest, *(stamp for identifier, stamp in children)])
+
+    def session_metadata(self, info: SessionInfo) -> SessionInfo:
+        try:
+            state = self.lookup(info.sid, info.cwd)
+            if state is None or not state.native_id or state.native_id != info.native_id:
+                return info
+            found = session_file(state.snapshot, state.native_id)
+            return replace(
+                info,
+                transcript=found.path if found is not None else info.transcript,
+                resume=self.resume_command(state),
+            )
+        except (ConfigError, RecoveryError, OSError):
+            return info
+
+    @_recover
+    def transcript(self, state: SessionState) -> str:
+        found = session_file(state.snapshot, state.native_id) if state.native_id else None
+        return found.path if found is not None else ""
 
     def inspect(self, sid: str, cwd: str) -> Inspection:
         result = Inspection(sid, cwd=cwd)

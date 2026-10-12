@@ -233,6 +233,14 @@ class LaunchTest(Refusals):
             (("x",), {}, (), "", "", ""),
         )
 
+    def test_project_override_is_optional_and_boolean(self):
+        self.assertIsNone(Launch(("x",)).project)
+        for value in (False, True):
+            self.assertIs(Launch(("x",), project=value).project, value)
+        for value in (0, 1, "yes", []):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "launch: project"):
+                Launch(("x",), project=value)
+
     def test_accepts_strings(self):
         launch = Launch(
             ("x", "-y"),
@@ -326,6 +334,10 @@ class AdapterTest(Refusals):
             with self.subTest(output=output):
                 self.assertIsNone(adapter.usage(output))
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
+
+    def test_session_metadata_preserves_info_by_default(self):
+        info = base.SessionInfo("s", "n", "/c", False, "/t", "resume n")
+        self.assertIs(StubAdapter({}).session_metadata(info), info)
 
     def test_writable_dirs_are_none_unless_overridden(self):
         spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")

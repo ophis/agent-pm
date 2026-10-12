@@ -132,6 +132,8 @@ class CodexTuiRun(Tui):
             env=env,
             unset=unset,
             cwd=snapshot["cwd"],
+            project=snapshot["project"],
+            transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
 

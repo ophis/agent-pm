@@ -83,7 +83,11 @@ class Launch:
     transcript: str = ""
     resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
+    project: bool | None = None
+
     def __post_init__(self):
+        if self.project is not None and not isinstance(self.project, bool):
+            raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
             ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
@@ -209,6 +213,10 @@ class Adapter(ABC):
     def usage(self, output: str) -> Usage | None:
         """None only when the probe failed."""
         return None
+
+    def session_metadata(self, info: SessionInfo) -> SessionInfo:
+        """Resolve available metadata without changing session identity."""
+        return info
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")

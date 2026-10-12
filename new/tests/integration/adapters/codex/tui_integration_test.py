@@ -291,7 +291,11 @@ class TuiIntegrationTest(Live):
             [call["argv"][-1], "more", "last"],
         )
         kinds = [r["kind"] for r in records.read(records.path(str(self.work)))]
-        self.assertEqual(kinds, ["session", "client_session"])
+        self.assertEqual(
+            [kind for kind in kinds if kind != "session_metadata"], ["session", "client_session"]
+        )
+        self.assertTrue(handle.info().transcript)
+        self.assertIn(self.bound().native_id, handle.info().resume)
         handle.stop()
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
         self.assertEqual(api.sessions().state("w1"), "absent")
@@ -453,6 +457,9 @@ class TuiIntegrationTest(Live):
         )
         self.scene([["resumed"]])
         resumed = self.start(resume=self.sid, spec=spec)
+        self.assertTrue(resumed.info().project)
+        self.assertTrue(resumed.info().transcript)
+        self.assertIn(native, resumed.info().resume)
         found = Stream(self, resumed).until(TurnEnd)
         self.assertEqual(found, [SessionBound(native), Activity(), Activity(), TurnEnd("resumed")])
         first, second = self.calls()

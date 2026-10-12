@@ -29,6 +29,9 @@ class CodexAdapter(Adapter):
     def usage(self, output):
         return self.common.parse_usage(output)
 
+    def session_metadata(self, info):
+        return self.common.session_metadata(info)
+
     def session_status(self, sid, cwd):
         found = self.common.inspect(sid, cwd)
         return SessionStatus(found.resumable, found.last_active, found.resume)

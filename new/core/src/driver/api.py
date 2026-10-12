@@ -156,9 +156,11 @@ class Handle:
         name: str | None = None,
         reply: str | None = None,
         blocked: bool = False,
+        adapter: Adapter | None = None,
     ):
         self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
+        self._adapter = adapter
         self._channel = records.path(workdir)
         self._reply = reply
         self._queue: deque = deque()
@@ -212,6 +214,7 @@ class Handle:
                 durable=True,
             )
             self._info = replace(self._info, native_id=event.native_id)
+            self._refresh_metadata()
         elif isinstance(event, Stderr):
             records.note(self._channel, "stderr", best_effort=True, text=event.text)
         elif isinstance(event, Reply):
@@ -231,7 +234,27 @@ class Handle:
     def stop(self) -> None:
         self._host.stop()
 
+    def _refresh_metadata(self) -> None:
+        if self._adapter is None or not self._info.native_id:
+            return
+        try:
+            resolved = self._adapter.session_metadata(self._info)
+            info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
+        except Exception:
+            return
+        if info != self._info:
+            self._info = info
+            records.note(
+                self._channel,
+                "session_metadata",
+                best_effort=True,
+                sid=self.sid,
+                transcript=info.transcript,
+                resume=info.resume,
+            )
+
     def info(self) -> SessionInfo:
+        self._refresh_metadata()
         return self._info
 
     @property
@@ -303,6 +326,7 @@ def start(
         idle_timeout=idle_timeout,
         info=info,
         name=steps.name,
+        adapter=adapter,
     )
 
 
@@ -321,7 +345,12 @@ class _LaunchSteps:
             raise ConfigError(f"runtime {self.runtime!r} gave no command")
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
         return SessionInfo(
-            spec.sid, "", self.cwd, spec.access.project, launch.transcript, launch.resume
+            spec.sid,
+            "",
+            self.cwd,
+            spec.access.project if launch.project is None else launch.project,
+            launch.transcript,
+            launch.resume,
         )
 
 
@@ -446,7 +475,8 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
     _idle(idle_timeout)
     state = tui.read_state(name)
     try:
-        run = registry.adapter(state["runtime"]).tui()
+        adapter = registry.adapter(state["runtime"])
+        run = adapter.tui()
     except ConfigError as e:
         raise DriverError(f"no tui session {name}: {e}") from None
     if run is None:
@@ -460,7 +490,7 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         state["transcript"],
         state["resume"],
     )
-    return Handle(
+    handle = Handle(
         state["sid"],
         state["runtime"],
         "tui",
@@ -471,7 +501,10 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         name=name,
         reply=host.reply,
         blocked=host.blocked,
+        adapter=adapter,
     )
+    handle.info()
+    return handle
 
 
 def sessions(prefix: str = "") -> Sessions:

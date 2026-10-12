@@ -73,6 +73,8 @@ class CodexHeadless(Headless):
             env=self.adapter.common.environment(snapshot),
             unset=self.adapter.common.unset,
             cwd=snapshot["cwd"],
+            project=snapshot["project"],
+            transcript=self.adapter.common.transcript(self.state) if resume else "",
             resume=self.adapter.common.resume_command(self.state) if resume else "",
         )
 

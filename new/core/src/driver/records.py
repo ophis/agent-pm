@@ -67,6 +67,11 @@ def session(workdir: str, sid: str) -> dict | None:
             and isinstance(e.get("project"), bool)
         ):
             found = e
+        elif e.get("kind") == "session_metadata" and e.get("sid") == sid and found is not None:
+            found = {
+                **found,
+                **{key: e[key] for key in ("transcript", "resume") if isinstance(e.get(key), str)},
+            }
     return found
 
 

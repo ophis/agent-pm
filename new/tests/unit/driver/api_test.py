@@ -698,6 +698,45 @@ class HandleOverAModeTest(unittest.TestCase):
         self.assertLess(len(found), 50, found)
         return found
 
+    def test_binding_and_late_metadata_preserve_completion(self):
+        adapter = fake_adapter.FakeAdapter({})
+        resolver = mock.Mock(side_effect=lambda info: dataclasses.replace(info, resume="resume n1"))
+        adapter.session_metadata = resolver
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        records.note(records.path(self.dir), "session", sid="s1", cwd=self.dir, project=False)
+        self.assertEqual(self.events(handle), [api.SessionBound("n1"), api.Exited(0)])
+        self.assertEqual(handle.info().resume, "resume n1")
+        self.assertEqual(records.session(self.dir, "s1")["resume"], "resume n1")
+        records.note(records.path(self.dir), "result", outcome={"status": "done"})
+        resolver.side_effect = lambda info: dataclasses.replace(info, transcript="/late")
+        self.assertEqual(handle.info().transcript, "/late")
+        self.assertEqual(records.session(self.dir, "s1")["transcript"], "/late")
+        self.assertTrue(records.complete(self.dir))
+        self.assertEqual(
+            sum(e["kind"] == "session" for e in records.read(records.path(self.dir))), 1
+        )
+        previous = handle.info()
+        resolver.side_effect = OSError("metadata unavailable")
+        self.assertEqual(handle.info(), previous)
+
+    def test_binding_record_failure_remains_fatal(self):
+        adapter = fake_adapter.FakeAdapter({})
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        with mock.patch.object(records, "note", side_effect=OSError("binding failed")):
+            with self.assertRaisesRegex(OSError, "binding failed"):
+                self.events(handle)
+        self.assertIn(("stop",), self.mode.calls)
+        self.assertEqual(handle.info().native_id, "")
+
+    def test_metadata_resolver_cannot_replace_session_identity_or_effective_project(self):
+        adapter = fake_adapter.FakeAdapter({})
+        adapter.session_metadata = lambda info: dataclasses.replace(
+            info, sid="other", native_id="other", cwd="/other", project=True, transcript="/t"
+        )
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        self.events(handle)
+        self.assertEqual(handle.info(), api.SessionInfo("s1", "n1", self.dir, False, "/t", ""))
+
     def test_events_in_order_the_modes_exited_dropped_exited_last_in_poll_slices(self):
         handle = self.handle(
             (0, [api.Activity("a"), api.Exited(9)], False),
@@ -999,6 +1038,24 @@ class TuiBase(Base):
 
 
 class TuiStartTest(TuiBase):
+    def test_effective_project_override_reaches_info_record_and_tui_state(self):
+        original = fake_adapter.FakeTui.launch
+        for project in (True, False):
+
+            def launch(run, *args):
+                return dataclasses.replace(original(run, *args), project=project)
+
+            with (
+                self.subTest(project=project),
+                mock.patch.object(fake_adapter.FakeTui, "launch", launch),
+            ):
+                handle = self.tui(
+                    name=f"project-{project}", spec=self.spec(access=Access(project=not project))
+                )
+            self.assertIs(handle.info().project, project)
+            self.assertIs(records.session(self.workdir, handle.sid)["project"], project)
+            self.assertIs(tui.read_state(handle.name)["project"], project)
+
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
 
@@ -1181,6 +1238,21 @@ class AttachTest(TuiBase):
             )
         self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))
         self.assertEqual(handle.reply, "r2")
+
+    def test_attach_refreshes_bound_metadata_without_starting_a_session(self):
+        self.started(("tool", {"session_id": "n1"}))
+        records.note(records.path(self.workdir), "result", outcome={"status": "done"})
+
+        def metadata(adapter, info):
+            self.assertEqual(info.native_id, "n1")
+            return dataclasses.replace(info, transcript="/attached", resume="resume n1")
+
+        with mock.patch.object(fake_adapter.FakeAdapter, "session_metadata", metadata):
+            handle = api.attach("w1")
+        self.assertEqual(handle.info().transcript, "/attached")
+        self.assertEqual(records.session(self.workdir, SID)["resume"], "resume n1")
+        self.assertTrue(records.complete(self.workdir))
+        self.assertEqual(sum(e["kind"] == "session" for e in self.written()), 1)
 
     def test_attached_while_blocked_no_idle_timeout_until_its_next_event(self):
         """On a fake clock (time.monotonic, time.sleep), a tool record comes at 10 s."""
