@@ -393,7 +393,7 @@ def _live(proc) -> dict[str, dict]:
             return {}
         raise WorkersError(f"tmux list-sessions: {err}")
     rows = (line.split("\t", 4) for line in res.stdout.split("\n"))
-    return {f[0]: dict(zip(("sid", "state", "pane", "opener"), f[1:]))
+    return {f[0]: dict(zip(("sid", "state", "pane", "opener"), f[1:], strict=False))
             for f in rows if len(f) == 5 and NAME.fullmatch(f[0])}
 
 

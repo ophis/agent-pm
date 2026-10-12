@@ -104,7 +104,7 @@ class Inner(Base):
         return sessions.base(sid=SID, workdir=self.rd, started_at=NOW)
 
     def harness(self, rc, outcome=None):
-        self.assertEqual({t for (_, service, _), t in zip(self.gql.calls, self.gql.timeouts) if service is None},
+        self.assertEqual({t for (_, service, _), t in zip(self.gql.calls, self.gql.timeouts, strict=False) if service is None},
                          {sessions.LIMIT})
         find = ("find", None, {"i": ID, "p": f"Run {SID} · "})
         return [find, ("comment", None, {"i": ID, "b": sessions.body(self.rec())}),
@@ -290,7 +290,7 @@ class Inner(Base):
         gate = f"python3 {shlex.quote(self.root)}/orchestrator/src/router.py --brake"
         self.assertIn(f"Bash({gate})", argv)
         self.assertIn(f"\n- `<gate>`: `{gate}`\n", argv[2])
-        dirs = [d for flag, d in zip(argv, argv[1:]) if flag == "--add-dir"]
+        dirs = [d for flag, d in zip(argv, argv[1:], strict=False) if flag == "--add-dir"]
         self.assertIn(os.path.join(self.root, "core", "team", "tasks"), dirs)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 

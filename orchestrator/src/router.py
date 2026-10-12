@@ -422,7 +422,7 @@ def load(root):
         cfg = load_config(os.path.join(root, "orchestrator", "config.toml"))
         return cfg, runnable(cfg, root)
     except SystemExit as e:
-        raise Setup(one_line(e.code), 1)
+        raise Setup(one_line(e.code), 1) from e
 
 
 def setup(a, root):

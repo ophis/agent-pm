@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shlex
-import sys
 import tomllib
 import uuid
 from collections.abc import Mapping, Sequence

@@ -10,7 +10,7 @@ import threading
 from collections.abc import Mapping
 
 from adapters.base import Adapter, ConfigError
-from utils.config_file import merge
+from utils.config_file import merge as merge
 from utils.config_file import read_config as _read_config
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

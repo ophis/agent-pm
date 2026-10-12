@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from utils.config_file import merge
+from utils.config_file import merge as merge
 from utils.config_file import read_config as _read_config
 from utils.paths import real_dirs, temp_dirs, under
 

@@ -541,7 +541,7 @@ class References(unittest.TestCase):
 class Methods(unittest.TestCase):
     def test_voting_has_its_home_in_ultracode_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
-        for m, text in zip(METHOD_NAMES, (deep, ultra)):
+        for m, text in zip(METHOD_NAMES, (deep, ultra), strict=False):
             for name in ("Voting", "Pipeline"):
                 self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
             self.assertTrue(rule(text, "Pipeline")[0].startswith(

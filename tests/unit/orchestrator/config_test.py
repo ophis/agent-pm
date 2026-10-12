@@ -696,8 +696,13 @@ class WorkDir(ConfigFile, unittest.TestCase):
         os.makedirs(os.path.join(d, "c"))
         os.symlink(os.path.join(d, "c"), clink)
         repo = f"work_dir must neither lie in nor contain the repo {real}: "
-        clone = lambda path: f'[local_clones]\n"ophis/x" = "{path}"\n'
-        in_clone = lambda path: f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "
+
+        def clone(path):
+            return f'[local_clones]\n"ophis/x" = "{path}"\n'
+
+        def in_clone(path):
+            return f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "
+
         cases = [(f'work_dir = "{real}"\n', "", f"{repo}{real!r}"),
                  (f'work_dir = "{real}/w"\n', "", f"{repo}{real + '/w'!r}"),
                  (f'work_dir = "{link}/w"\n', "", f"{repo}{link + '/w'!r}"),

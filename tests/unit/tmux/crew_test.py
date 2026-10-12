@@ -2025,7 +2025,7 @@ class StartEntryTest(RosterCase):
         return [x for x in err.getvalue().splitlines() if not x.startswith("tui: ")]
 
     def test_the_worker_entry_resumes_through_crew_py(self):
-        sid = self.start()
+        self.start()
         self.assertEqual(self.entries()["w1"]["resume"][1], CREW)
 
     def test_the_worker_entry(self):

@@ -257,7 +257,7 @@ class PublicResolution(Fake):
                ({"roles": {"writer": {"tasks": {}}}}, "[{t}.roles.writer] has 'tasks': task-level config and "
                 "default_task are gone; set run keys in [{t}.roles.writer] (a run without a task picks one)"))
         labels = (({}, "run overlay", "overlay"), ({"label": ("my.toml", "core")}, "my.toml", "core"))
-        for (overlay, message), (kwargs, source, table) in ((b, l) for b in bad for l in labels):
+        for (overlay, message), (kwargs, source, table) in ((b, label) for b in bad for label in labels):
             with self.subTest(overlay=overlay, table=table):
                 with self.assertRaises(compose.ConfigError) as cm:
                     compose.resolve(self.root, clients.Client({}), "writer", overlays=(overlay,), trusted=True, **kwargs)
@@ -512,7 +512,7 @@ class Prompt(Fake):
         self.assertEqual(compose.report_command("/s", PARAMS),
                          "python3 /s/report.py --to /w/run.jsonl")
         spaced = replace(PARAMS, workdir="/my w")
-        with mock.patch.object(compose.sys, "executable", "/my Python/bin/python 3"):
+        with mock.patch.object(sys, "executable", "/my Python/bin/python 3"):
             self.assertEqual(compose.report_command("/s s", spaced, sys.executable),
                              "'/my Python/bin/python 3' '/s s/report.py' --to '/my w/run.jsonl'")
         self.assertEqual(spaced.channel, "/my w/run.jsonl")
@@ -1867,7 +1867,7 @@ def item(text, name):
 class Methods(unittest.TestCase):
     def test_voting_has_its_home_in_ultracode_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
-        for m, text in zip(METHOD_NAMES, (deep, ultra)):
+        for m, text in zip(METHOD_NAMES, (deep, ultra), strict=False):
             for name in ("Voting", "Pipeline"):
                 self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
             self.assertTrue(rule(text, "Pipeline")[0].startswith(

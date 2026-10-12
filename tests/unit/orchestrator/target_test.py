@@ -227,7 +227,9 @@ class Check(unittest.TestCase):
                 self.assertNotIn(("gh", "api", "repos/ophis/other"), self.argvs())
 
     def test_access_and_response_failures(self):
-        default = lambda name: api(default=name, push=True)
+        def default(name):
+            return api(default=name, push=True)
+
         unsafe = target.Invalid("ophis/agent-pm: unsafe default branch name")
         for label, res, want, tagged in (
                 ("HTTP 404", ok(code=1, stderr="gh: Not Found (HTTP 404)"), target.Invalid("ophis/agent-pm: not found or no access (HTTP 404)"), True),
@@ -249,7 +251,10 @@ class Check(unittest.TestCase):
 
     def test_unusable_response_is_transient(self):
         good = {"full_name": "ophis/agent-pm", "default_branch": "main", "permissions": {"push": True}}
-        without = lambda key: json.dumps({k: v for k, v in good.items() if k != key})
+
+        def without(key):
+            return json.dumps({k: v for k, v in good.items() if k != key})
+
         for label, out in (("not JSON", "<html>"), ("empty", ""), ("a list", "[]"), ("null", "null"),
                            ("no permissions", without("permissions")), ("no default_branch", without("default_branch")),
                            ("no full_name", without("full_name")), ("permissions null", json.dumps({**good, "permissions": None})),

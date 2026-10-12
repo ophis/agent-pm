@@ -285,7 +285,7 @@ def user_id(gql, email):
 def humans(gql, cfg):
     emails = cfg.get("human_members") or []
     ids = [user_id(gql, e) for e in emails]
-    if missing := [e for e, i in zip(emails, ids) if not i]:
+    if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
         raise SystemExit(f"orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}")
     return ids
 

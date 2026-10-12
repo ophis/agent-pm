@@ -68,7 +68,7 @@ def worker(spec: WorkerSpec) -> WorkerCommand:
                        "codex_home": home, "native": None})
         head = [exe, "--no-daemon", "-C", spec.cwd]
     commands = [shlex.join([python, "-I", hook, word, spec.events, path, tmux]) for _, _, word in HOOKS]
-    hooks = [w for (event, _, _), command in zip(HOOKS, commands) for w in (
+    hooks = [w for (event, _, _), command in zip(HOOKS, commands, strict=False) for w in (
         "-c", f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
               f'timeout={INTERRUPT_TIMEOUT if event == "Interrupt" else HOOK_TIMEOUT}}}]}}]')]
     passed = [w for name, value, _ in _options(spec.flags) if name in PASSED for w in (name, value)]
@@ -334,7 +334,7 @@ def _trusted(result, cwd: str, commands: list[str]) -> str:
         raise ConfigError("codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them")
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
     trusted = []
-    for (_, name, _), command in zip(HOOKS, commands):
+    for (_, name, _), command in zip(HOOKS, commands, strict=False):
         rows = [h for h in ours if h.get("eventName") == name]
         if len(rows) != 1:
             raise ConfigError(f"codex hooks/list: {len(rows) or 'no'} session-flags {name} hook"

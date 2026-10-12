@@ -782,10 +782,10 @@ class Claim(Base):
                   issue("TASK-2", "Todo", "engineer", priority=2, created="2026-09-03T00:00:00Z"),
                   issue("TASK-3", "Todo", "pm", priority=2, created="2026-09-02T00:00:00Z"),
                   issue("TASK-4", "Todo", "engineer", priority=2, created="2026-09-02T00:00:00Z")], ["TASK-4", "TASK-2", "TASK-3", "TASK-1"]))
-        for row, (issues, order) in enumerate(rows):
+        for row, (listed, order) in enumerate(rows):
             with self.subTest(row=row):
-                fake = FakeLinear(issues)
-                self.assertEqual([self.claim(fake).split()[0] for _ in issues], order)
+                fake = FakeLinear(listed)
+                self.assertEqual([self.claim(fake).split()[0] for _ in listed], order)
                 self.assertEqual({i["state"] for i in fake.issues.values()}, {"In Progress"})
 
     def test_queue_only_role_accounts_across_projects(self):
@@ -1030,9 +1030,9 @@ class Tick(Base):
         cases = [(12, FakeShell(), [issue("TASK-1", "Todo", "researcher")]),
                  (2, FakeShell(full), [issue("TASK-1", "Todo", "researcher")]),
                  (2, FakeShell(["agent-pm-engineer-TASK-2"]), [issue("TASK-2", "In Progress", "engineer")])]
-        for hour, shell, issues in cases:
+        for hour, shell, listed in cases:
             with self.subTest(hour=hour, live=shell.sessions):
-                self.assertEqual(self.tick(FakeLinear(issues), hour=hour, shell=shell), 0)
+                self.assertEqual(self.tick(FakeLinear(listed), hour=hour, shell=shell), 0)
                 self.assertEqual((self.said(), self.err, os.listdir(self.logs)), ([], "", []))
         blocked = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])]
         self.tick(FakeLinear(blocked))
@@ -1649,7 +1649,7 @@ class TuiTick(Base):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tui_tick(fake, *argv), 0)
-                self.assertEqual([l.events for l in self.sh.launches()], [] if "--dry-run" in argv else [None])
+                self.assertEqual([launch.events for launch in self.sh.launches()], [] if "--dry-run" in argv else [None])
                 self.assertEqual(self.err.splitlines().count(HINT), 1)
                 self.assertTrue(self.err.startswith(HINT + "\n"))
                 self.assertEqual(os.listdir(self.agent_pm), [])

@@ -405,7 +405,10 @@ class PruneTest(unittest.TestCase):
         with self.git_env():
             clone = self.real_clone()
             git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", os.path.join(self.work, "TASK-49", "src", "o", "n"))
-        failing = lambda argv, timeout: subprocess.CompletedProcess(argv, 1, "", "fatal: boom")
+
+        def failing(argv, timeout):
+            return subprocess.CompletedProcess(argv, 1, "", "fatal: boom")
+
         code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=failing, writable=(self.work,))
         self.assertEqual(code, 3)
         self.assertEqual(out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree")

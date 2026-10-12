@@ -216,7 +216,7 @@ class IdleTest(Base):
         self.assertEqual({e for _, e in idles}, {api.IdleTimeout(IDLE)})
         self.assertEqual(alive, [True] * len(idles))
         times = [marks[0][0]] + [at for at, _ in idles]
-        for before, after in zip(times, times[1:]):
+        for before, after in zip(times, times[1:], strict=False):
             self.assertGreaterEqual(after - before, IDLE - 0.01)
 
     def test_none_after_blocked(self):

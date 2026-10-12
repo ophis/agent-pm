@@ -188,7 +188,7 @@ class Overlays(Fake):
                ({"roles": {"writer": {"tasks": {}}}}, "[{t}.roles.writer] has 'tasks': task-level config and "
                 "default_task are gone; set run keys in [{t}.roles.writer] (a run without a task picks one)"))
         labels = (({}, "run overlay", "overlay"), ({"label": ("my.toml", "core")}, "my.toml", "core"))
-        for (overlay, message), (kwargs, source, table) in ((b, l) for b in bad for l in labels):
+        for (overlay, message), (kwargs, source, table) in ((b, label) for b in bad for label in labels):
             with self.subTest(overlay=overlay, table=table):
                 self.assertEqual(self.refused(overlays=(overlay,), **kwargs), f"{source}: {message.format(t=table)}")
 

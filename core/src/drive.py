@@ -468,9 +468,9 @@ def report_event(line: str) -> Event | None:
         pending = data.get("pending")
         return Event("stop", pending=pending if type(pending) is int and pending >= 0 else 0)
     name, text = data.get("name"), data.get("text")
-    if data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str):
-        if text := " ".join(text.split()):
-            return Event("progress", text, name=name)
+    if (data.get("kind") == "progress" and isinstance(name, str) and NAME.fullmatch(name) and isinstance(text, str)
+            and (text := " ".join(text.split()))):
+        return Event("progress", text, name=name)
     return None
 
 

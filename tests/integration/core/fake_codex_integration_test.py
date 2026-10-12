@@ -455,7 +455,7 @@ class AppServer(Fake):
         self.assertEqual([h["eventName"] for h in hooks],
                          ["sessionStart", "userPromptSubmit", "permissionRequest", "stop", "interrupt"])
         snakes = ["session_start", "user_prompt_submit", "permission_request", "stop", "interrupt"]
-        for h, snake in zip(hooks, snakes):
+        for h, snake in zip(hooks, snakes, strict=False):
             self.assertEqual(h["key"], f"/<session-flags>/config.toml:{snake}:0:0")
             self.assertEqual((h["source"], h["handlerType"], h["command"], h["enabled"], h["isManaged"],
                               h["trustStatus"]), ("sessionFlags", "command", self.record, True, False, "untrusted"))

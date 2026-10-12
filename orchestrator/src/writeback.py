@@ -6,6 +6,7 @@ import stat
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import LOCAL, TASKS  # noqa: E402
@@ -195,12 +196,12 @@ def _finish(ctx, o):
             posts.append(("Plan" if PLAN_MARK in text else "Spec", name, text, hashlib.sha256(data).hexdigest()[:12]))
         for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
             if err := _step(ctx, f"file:{name}:{digest}",
-                            lambda: comment(gql, issue, f"**{kind}** `{name}`\n\n---\n\n{text}")):
+                            partial(comment, gql, issue, f"**{kind}** `{name}`\n\n---\n\n{text}")):
                 body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
 
-    if task.retitle and o.status == "done":
-        if _step(ctx, "retitle", lambda: call(gql, M_TITLE, "issueUpdate", i=issue, t=f"{task.prefix}: {o.title}")):
-            return False
+    if (task.retitle and o.status == "done"
+            and _step(ctx, "retitle", lambda: call(gql, M_TITLE, "issueUpdate", i=issue, t=f"{task.prefix}: {o.title}"))):
+        return False
     if state == "in_review":
         body += subscribe(gql, issue, ctx.humans)
     if _step(ctx, "comment", lambda: comment(gql, issue, body)):

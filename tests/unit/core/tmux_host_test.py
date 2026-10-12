@@ -156,7 +156,7 @@ def decorations(session, events=None, status="off"):
 def panes(*rows):
     def result(argv):
         fmt = argv[argv.index("-F") + 1]
-        values = [dict(zip(("pane_dead", "pane_tty", "pane_id"), row)) for row in rows]
+        values = [dict(zip(("pane_dead", "pane_tty", "pane_id"), row, strict=False)) for row in rows]
         return 0, "".join(re.sub(r"#\{(\w+)\}", lambda m: v[m.group(1)], fmt) + "\n" for v in values)
     return result
 
@@ -651,7 +651,7 @@ class Hooks(unittest.TestCase):
             with open(events) as f:
                 lines = f.readlines()
             self.assertEqual(len(lines), 3)
-            for line, word in zip(lines, ("done", "blocked", "blocked")):
+            for line, word in zip(lines, ("done", "blocked", "blocked"), strict=False):
                 self.assertRegex(line, rf"^\d\d:\d\d:\d\d w1 {word}\n$")
         self.assertFalse(os.path.exists(os.path.join(self.root, "x")))
 

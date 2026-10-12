@@ -2072,7 +2072,7 @@ class Report(Base):
         self.assertEqual(drive.report_event('{"kind": "stop", "pending": 0}'), clients.Event("stop"))
         for pending in ("true", "-1", '"2"', "1.5"):
             with self.subTest(pending=pending):
-                self.assertEqual(drive.report_event('{"kind": "stop", "pending": %s}' % pending), clients.Event("stop"))
+                self.assertEqual(drive.report_event(f'{{"kind": "stop", "pending": {pending}}}'), clients.Event("stop"))
 
     def test_every_line_starts_with_an_iso_ts_with_offset_then_the_kind(self):
         doc = os.path.join(self.work, "doc.md")

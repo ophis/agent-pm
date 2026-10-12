@@ -911,10 +911,10 @@ class LeaseTest(unittest.TestCase):
             p.stdin.write("\n")
             p.stdin.flush()   # communicate closes it: on 3.11 it flushes stdin first, so a closed one raises
         out = {}
-        for own, p in zip("ab", procs):
+        for own, p in zip("ab", procs, strict=False):
             out[own] = p.communicate(timeout=60)
             self.assertIn(p.returncode, (0, 3), out[own][1])
-        winners = [own for own, p in zip("ab", procs) if p.returncode == 0]
+        winners = [own for own, p in zip("ab", procs, strict=False) if p.returncode == 0]
         self.assertEqual(len(winners), 1)
         loser = "b" if winners == ["a"] else "a"
         with open(self.path) as f:
