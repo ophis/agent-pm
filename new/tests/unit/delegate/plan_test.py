@@ -186,7 +186,6 @@ class Refusals(Base):
         tasks = ", ".join(composer.index("researcher"))
         nobody = RunConfig(role="nope", tier=2, effort="high", runtime="fake", output={"type": "local"})
         for kw, want in (({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),
-                         ({"mode": "tui"}, "tui mode is not available yet"),
                          ({"name": "n"}, "name: tui mode only"),
                          ({"events": "e"}, "events: tui mode only"),
                          ({"mode": "in_process", "name": "n"}, "name: tui mode only"),
@@ -251,6 +250,7 @@ class Planned(Base):
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
         self.assertEqual((got.runtime, got.mode, got.run.task), ("fake", "headless", "light-research"))
+        self.assertEqual((got.name, got.events), (None, None))
         self.assertEqual(got.params, RunParams(input="Research X.", out=self.out, workdir=self.work))
         self.assertEqual(self.planned(task=None)[0].run.task, "")
 
@@ -258,6 +258,13 @@ class Planned(Base):
         got = self.planned(mode="in_process", sid=SID)[0]
         self.assertEqual(got.mode, "in_process")
         self.assertEqual(replace(got, mode="headless"), self.planned(sid=SID)[0])
+
+    def test_tui_takes_name_and_events_unchecked_for_the_driver_to_check(self):
+        for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "rel\n")):
+            with self.subTest(name=name, events=events):
+                got = self.planned(mode="tui", name=name, events=events)[0]
+                self.assertEqual((got.mode, got.name, got.events), ("tui", name, events))
+                self.assertFalse(os.path.exists(self.work))
 
     def test_plan_creates_and_writes_nothing(self):
         for kw in ({}, {"resume": SID}, {"out": None}):

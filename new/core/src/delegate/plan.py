@@ -40,6 +40,8 @@ class Plan:
     run: RunConfig
     params: RunParams
     out: str | None
+    name: str | None
+    events: str | None
 
 
 @_own
@@ -72,11 +74,9 @@ def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime:
     """`team` None: the built-in team, the configured team dirs checked for overlap only."""
     if mode not in api.MODES:
         raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {mode!r}")
-    if mode == "tui":
-        raise ConfigError("tui mode is not available yet")
-    if name is not None:
+    if mode != "tui" and name is not None:
         raise ConfigError("name: tui mode only")
-    if events is not None:
+    if mode != "tui" and events is not None:
         raise ConfigError("events: tui mode only")
     if sid is not None and resume is not None and sid != resume:
         raise ConfigError(f"sid {sid!r:.80} differs from resume {resume!r:.80}")
@@ -101,7 +101,8 @@ def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime:
     _check_team_dirs(run, team, guarded, workdir, here, intent.writes, intent.dirs)
     params = RunParams(input=input, out=out or os.path.join(workdir, DELIVERABLE), workdir=workdir,
                        resume=resume is not None)
-    return Plan(runtime, mode, sid, resume is not None, composer.render(run, params, team=team), spec, run, params, out)
+    return Plan(runtime, mode, sid, resume is not None, composer.render(run, params, team=team), spec, run, params, out,
+                name, events)
 
 
 def _check_team_dirs(run: RunConfig, team: Team, guarded: tuple[str, ...], workdir: str, here: str,

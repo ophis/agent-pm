@@ -322,7 +322,8 @@ class ConfigErrors(Integration):
                  "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
                  "missing options": ([*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
                                      "--input, --out and --workdir are required"),
-                 "tui": (self.argv("--mode", "tui"), "tui mode is not available yet")}
+                 "a runtime without tui": (self.argv("--runtime", "codex", "--mode", "tui"),
+                                           "runtime 'codex' does not support tui mode")}
         for name, (argv, said) in cases.items():
             with self.subTest(name):
                 res = self.drive([block(DONE)], argv=argv)
