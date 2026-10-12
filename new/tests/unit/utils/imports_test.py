@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+PKG = "src/agent_pm"
+
 
 class UtilsImportsTest(unittest.TestCase):
     def tree(self, files):
@@ -21,21 +23,23 @@ class UtilsImportsTest(unittest.TestCase):
         self.assertEqual(guards.pure_utils(CORE), [])
 
     def test_no_layer_or_outer_module_imports_repo(self):
-        files = {f"src/{layer}/x.py": "import repo\n" for layer in guards.LAYERS}
-        files["src/x.py"] = "from repo import read_config\n"
-        files["src/composer/w.py"] = "from .. import repo\nimport repository\n"
-        files["src/utils/z.py"] = "def f():\n    __import__('repo')\n"
+        files = {f"{PKG}/{layer}/x.py": "import agent_pm.repo\n" for layer in guards.LAYERS}
+        files[f"{PKG}/x.py"] = "from agent_pm.repo import read_config\n"
+        files[f"{PKG}/composer/w.py"] = "from .. import repo\nimport repository\n"
+        files[f"{PKG}/utils/z.py"] = "def f():\n    __import__('agent_pm.repo')\n"
+        files[f"{PKG}/utils/y.py"] = "import repo\n"
         root = self.tree(files)
         self.assertEqual(
             guards.layer_imports(root),
             [
-                "src/adapters/x.py: adapters imports repo",
-                "src/composer/w.py: composer imports repo",
-                "src/composer/x.py: composer imports repo",
-                "src/delegate/x.py: delegate imports repo",
-                "src/driver/x.py: driver imports repo",
-                "src/utils/z.py: outside the layers imports repo",
-                "src/x.py: outside the layers imports repo.read_config",
+                f"{PKG}/adapters/x.py: adapters imports agent_pm.repo",
+                f"{PKG}/composer/w.py: composer imports agent_pm.repo",
+                f"{PKG}/composer/x.py: composer imports agent_pm.repo",
+                f"{PKG}/delegate/x.py: delegate imports agent_pm.repo",
+                f"{PKG}/driver/x.py: driver imports agent_pm.repo",
+                f"{PKG}/utils/y.py: bare import repo",
+                f"{PKG}/utils/z.py: outside the layers imports agent_pm.repo",
+                f"{PKG}/x.py: outside the layers imports agent_pm.repo.read_config",
             ],
         )
 
@@ -43,10 +47,13 @@ class UtilsImportsTest(unittest.TestCase):
         self.assertEqual(guards.layer_imports(CORE), [])
 
     def test_every_layer_may_import_utils(self):
-        files = {"src/utils/config_file.py": "import os\nimport tomllib\n"}
+        files = {
+            f"{PKG}/utils/config_file.py": "import os\nimport tomllib\n"
+            "from agent_pm.utils.paths import CORE\nfrom . import markdown\n"
+        }
         files.update(
             {
-                f"src/{layer}/x.py": "from utils.config_file import read_config\n"
+                f"{PKG}/{layer}/x.py": "from agent_pm.utils.config_file import read_config\n"
                 for layer in guards.LAYERS
             }
         )
@@ -57,21 +64,22 @@ class UtilsImportsTest(unittest.TestCase):
     def test_utils_reject_layer_external_and_literal_imports(self):
         root = self.tree(
             {
-                "src/utils/x.py": "import driver.api\nimport third_party\n"
-                "def f():\n    import importlib\n    importlib.import_module('adapters.base')\n"
-                "    __import__('composer')\n",
-                "src/utils/y.py": "from .. import driver\nimport repo\n",
-                "src/driver/x.py": "import third_party\n",
+                f"{PKG}/utils/x.py": "import agent_pm.driver.api\nimport third_party\n"
+                "def f():\n    import importlib\n    importlib.import_module('agent_pm.adapters.base')\n"
+                "    __import__('agent_pm.composer')\n",
+                f"{PKG}/utils/y.py": "from .. import driver\nimport agent_pm.repo\nimport utils.paths\n",
+                f"{PKG}/driver/x.py": "import third_party\n",
             }
         )
         self.assertEqual(
             guards.pure_utils(root),
             [
-                "src/utils/x.py: utils imports adapters.base",
-                "src/utils/x.py: utils imports composer",
-                "src/utils/x.py: utils imports driver.api",
-                "src/utils/x.py: utils imports third_party",
-                "src/utils/y.py: utils imports driver",
-                "src/utils/y.py: utils imports repo",
+                f"{PKG}/utils/x.py: utils imports agent_pm.adapters.base",
+                f"{PKG}/utils/x.py: utils imports agent_pm.composer",
+                f"{PKG}/utils/x.py: utils imports agent_pm.driver.api",
+                f"{PKG}/utils/x.py: utils imports third_party",
+                f"{PKG}/utils/y.py: utils imports agent_pm.driver",
+                f"{PKG}/utils/y.py: utils imports agent_pm.repo",
+                f"{PKG}/utils/y.py: utils imports utils.paths",
             ],
         )

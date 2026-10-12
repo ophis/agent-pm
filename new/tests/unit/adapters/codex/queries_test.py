@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import Launch, SessionStatus, Usage, Window
-from adapters.codex import CodexAdapter
+from agent_pm.adapters.base import Launch, SessionStatus, Usage, Window
+from agent_pm.adapters.codex import CodexAdapter
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 

@@ -27,12 +27,12 @@ import tomllib
 import types
 import unittest
 
-import composer
-from composer.base import CONFIG, SRC, anchor, fill, outline
-from composer.prompt import RETURN, RULE, reference_errors
-from composer.run import check_old_keys
-from composer.teams import START
-from utils.markdown import unfenced
+from agent_pm import composer
+from agent_pm.composer.base import CONFIG, SRC, anchor, fill, outline
+from agent_pm.composer.prompt import RETURN, RULE, reference_errors
+from agent_pm.composer.run import check_old_keys
+from agent_pm.composer.teams import START
+from agent_pm.utils.markdown import unfenced
 
 CATALOG = composer.catalog()
 ROLES = list(CATALOG)

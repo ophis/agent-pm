@@ -1,20 +1,22 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
 
-from new.tests import CORE, SRC
+from new.tests import CORE
+from new.tests.case import ROOT
 
 import os
 import unittest
 
-from composer import base
-from utils import config_file
+from agent_pm.composer import base
+from agent_pm.utils import config_file
 
 
 class Paths(unittest.TestCase):
     def test_team_root_schema_src_and_config(self):
+        self.assertEqual(base.TEAM, os.path.join(CORE, "team"))
         self.assertTrue(os.path.isfile(os.path.join(base.TEAM, "guide.md")))
         self.assertEqual(base.SCHEMA, os.path.join(base.TEAM, "output", "outcome.schema.json"))
         self.assertTrue(os.path.isfile(base.SCHEMA))
-        self.assertEqual(base.SRC, SRC)
+        self.assertEqual(base.SRC, os.path.join(ROOT, "agent_pm"))
         self.assertTrue(os.path.isdir(os.path.join(base.SRC, "composer")))
         self.assertEqual(base.CONFIG, config_file.CONFIG)
         self.assertEqual(base.CONFIG, os.path.join(CORE, "config.toml"))

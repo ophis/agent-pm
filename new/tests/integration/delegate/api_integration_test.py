@@ -24,10 +24,10 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-import composer
-from delegate import Begun, Finished, Limit, Progress, run
-from delegate.runner import FIX
-from driver import registry
+from agent_pm import composer
+from agent_pm.delegate import Begun, Finished, Limit, Progress, run
+from agent_pm.delegate.runner import FIX
+from agent_pm.driver import registry
 
 
 class Base(unittest.TestCase):

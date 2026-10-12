@@ -1,11 +1,9 @@
 """delegate/reply.py: progress mark lines and the outcome block of a reply (FR-18)."""
 
-from new.tests import SRC  # noqa: F401
-
 import unittest
 
-from composer import PROGRESS
-from delegate.reply import MARK, marks, outcome_block
+from agent_pm.composer import PROGRESS
+from agent_pm.delegate.reply import MARK, marks, outcome_block
 
 
 class Marks(unittest.TestCase):

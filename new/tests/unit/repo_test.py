@@ -13,7 +13,7 @@ import threading
 import unittest
 import unittest.mock
 
-import repo
+from agent_pm import repo
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40

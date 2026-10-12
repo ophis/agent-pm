@@ -2,7 +2,7 @@
 Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral Return, the resume prefix, and
 reference_errors and the method files on the real team (its References and Methods tests)."""
 
-from new.tests import SRC, hermetic
+from new.tests import hermetic
 from new.tests.unit.composer.run_test import CONFIG
 from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 
@@ -13,10 +13,18 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from composer.base import METHOD, TEAM, ConfigError, outline
-from composer.prompt import OUTCOME, PARAMETERS, RESUME, RETURN, RULE, reference_errors, render
-from composer.run import RunParams, resolve
-from composer.teams import index, team
+from agent_pm.composer.base import METHOD, SRC, TEAM, ConfigError, outline
+from agent_pm.composer.prompt import (
+    OUTCOME,
+    PARAMETERS,
+    RESUME,
+    RETURN,
+    RULE,
+    reference_errors,
+    render,
+)
+from agent_pm.composer.run import RunParams, resolve
+from agent_pm.composer.teams import index, team
 
 TEXTS = {
     "guide.md": (

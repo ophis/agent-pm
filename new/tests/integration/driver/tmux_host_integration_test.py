@@ -18,7 +18,7 @@ import time
 import unittest
 from unittest import mock
 
-from driver import api, registry, tmux_host
+from agent_pm.driver import api, registry, tmux_host
 
 MANAGER = "mgr"
 TIMEOUT = 60

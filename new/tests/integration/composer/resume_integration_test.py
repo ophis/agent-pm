@@ -8,7 +8,7 @@ import os
 import re
 import unittest
 
-from composer.prompt import RESUME
+from agent_pm.composer.prompt import RESUME
 
 TEAM = os.path.join(NEW, "core", "team")
 ANSWER = "Say hello."

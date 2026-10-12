@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from composer.base import TEAM, ConfigError
-from composer.teams import (
+from agent_pm.composer.base import TEAM, ConfigError
+from agent_pm.composer.teams import (
     catalog,
     check_overlap,
     check_team_dirs,
@@ -21,7 +21,7 @@ from composer.teams import (
     team_dirs,
     team_paths,
 )
-from utils import config_file
+from agent_pm.utils import config_file
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = (

@@ -7,8 +7,8 @@ import stat
 import time
 from unittest import mock
 
-from adapters.base import Access, ConfigError
-from adapters.codex import CodexAdapter
+from agent_pm.adapters.base import Access, ConfigError
+from agent_pm.adapters.codex import CodexAdapter
 
 
 class CommonTest(Base):

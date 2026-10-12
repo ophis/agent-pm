@@ -7,7 +7,7 @@ from new.tests.integration.composer import child
 import os
 import unittest
 
-from composer.prompt import RESUME
+from agent_pm.composer.prompt import RESUME
 
 TASKS = os.path.join(NEW, "core", "team", "tasks")
 

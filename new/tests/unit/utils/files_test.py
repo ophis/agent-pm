@@ -10,7 +10,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from utils import files
+from agent_pm.utils import files
 
 DATA = b"0123456789"
 

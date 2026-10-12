@@ -2,6 +2,7 @@
 drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake."""
 
 from new.tests import fake_adapter, hermetic
+from new.tests.case import PY, child_env
 from new.tests.unit.delegate.runner_test import (
     DONE,
     START,
@@ -28,12 +29,12 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from unittest import mock
 
-import composer
-from adapters import base
-from composer.prompt import RESUME
-from delegate import Outcome, Result, cli, runner
-from delegate.runner import STOP_LIMIT
-from driver import registry
+from agent_pm import composer
+from agent_pm.adapters import base
+from agent_pm.composer.prompt import RESUME
+from agent_pm.delegate import Outcome, Result, cli, runner
+from agent_pm.delegate.runner import STOP_LIMIT
+from agent_pm.driver import registry
 
 SID = "11111111-2222-3333-4444-555555555555"
 KEYS = {
@@ -81,7 +82,7 @@ class Base(unittest.TestCase):
         self.out = os.path.join(self.work, "out.md")
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
-        self.enterContext(mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter}))
+        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
         self.addCleanup(registry.reset)
         registry.configure(
             {
@@ -191,13 +192,12 @@ class List(Base):
                 self.local(local)
                 self.assertEqual(self.cli("--list"), (2, "", f"delegate: {want}\n"))
 
-    def test_the_script_puts_src_first_in_place_of_its_own_dir(self):
-        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    def test_it_runs_as_a_module_from_the_import_root(self):
         done = subprocess.run(
-            [sys.executable, cli.__file__, "--list"],
+            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
             capture_output=True,
             text=True,
-            env=env,
+            env=child_env(),
             cwd=self.tmp,
             timeout=60,
         )
@@ -434,9 +434,9 @@ class InProcess(Base):
 
     def setUp(self):
         super().setUp()
-        refusing = types.ModuleType("adapters.refusing")
+        refusing = types.ModuleType("agent_pm.adapters.refusing")
         refusing.RefusingAdapter = RefusingAdapter
-        self.enterContext(mock.patch.dict(sys.modules, {"adapters.refusing": refusing}))
+        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.refusing": refusing}))
         classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
         registry.configure(
             {

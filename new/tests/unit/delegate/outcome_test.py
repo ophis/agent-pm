@@ -1,8 +1,6 @@
 """delegate/outcome.py: main's drive.validate cases with the same results (FR-20), read with deliverable_file (FR-19),
 and main's save cases."""
 
-from new.tests import SRC  # noqa: F401
-
 import dataclasses
 import json
 import os
@@ -12,10 +10,10 @@ import threading
 import unittest
 import unittest.mock
 
-import composer
-from composer import RunConfig
-from delegate import outcome
-from delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, save, validate
+from agent_pm import composer
+from agent_pm.composer import RunConfig
+from agent_pm.delegate import outcome
+from agent_pm.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, save, validate
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}

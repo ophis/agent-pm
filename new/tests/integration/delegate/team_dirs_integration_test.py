@@ -8,7 +8,6 @@ from new.tests.unit.delegate.runner_test import block
 
 import json
 import os
-import sys
 import unittest
 
 DONE = {"status": "done", "title": "note", "summary": "A note.", "deliverable": "A note.\n"}
@@ -37,7 +36,7 @@ class TeamDirs(Integration):
         self.assertEqual(self.calls(), [])
 
     def test_list(self):
-        res = self.drive([], argv=[sys.executable, CLI, "--list"])
+        res = self.drive([], argv=[*CLI, "--list"])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(
             f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"

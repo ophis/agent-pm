@@ -15,9 +15,9 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Access, Spec
-from adapters.claude import ClaudeAdapter
-from adapters.claude.tui import ClaudeTui
+from agent_pm.adapters.base import Access, Spec
+from agent_pm.adapters.claude import ClaudeAdapter
+from agent_pm.adapters.claude.tui import ClaudeTui
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

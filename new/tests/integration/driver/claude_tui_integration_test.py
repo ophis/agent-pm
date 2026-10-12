@@ -3,7 +3,8 @@ the real ClaudeAdapter runs new/tests/fake_claude.py (on PATH as `claude`) inter
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
 
-from new.tests import SRC, fake_claude, live_tmux
+from new.tests import fake_claude, live_tmux
+from new.tests.case import PY, child_env
 from new.tests.integration.driver import detach_integration_test as detach_live
 from new.tests.integration.driver import tui_integration_test as tui_live
 
@@ -18,10 +19,10 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from adapters.base import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
-from adapters.claude.tui import ClaudeTui
-from driver import api, registry, tmux_host
-from driver.modes import tui
+from agent_pm.adapters.base import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
+from agent_pm.adapters.claude.tui import ClaudeTui
+from agent_pm.driver import api, registry, tmux_host
+from agent_pm.driver.modes import tui
 
 MANAGER, SID, IDLE, WAIT, Stream = (
     tui_live.MANAGER,
@@ -39,9 +40,8 @@ LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
 RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
 ATTACH = """import json, sys
-src, table, name, text = sys.argv[1:]
-sys.path.insert(0, src)
-from driver import api, registry
+table, name, text = sys.argv[1:]
+from agent_pm.driver import api, registry
 registry.configure({"adapters": {"claude": json.loads(table)}})
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]
@@ -280,7 +280,8 @@ class AttachTest(Live):
             [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)]
         )
         res = subprocess.run(
-            [sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(TABLE), "w1", "more"],
+            [*PY, "-c", ATTACH, json.dumps(TABLE), "w1", "more"],
+            env=child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,

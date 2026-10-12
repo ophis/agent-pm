@@ -2,7 +2,7 @@
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
 
-from new.tests import SRC, hermetic
+from new.tests import hermetic
 from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 
 import inspect
@@ -11,9 +11,8 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-import composer.run
-from composer.base import ConfigError
-from composer.run import (
+from agent_pm.composer.base import SRC, ConfigError
+from agent_pm.composer.run import (
     RUN_KEYS,
     Intent,
     RunConfig,
@@ -24,8 +23,8 @@ from composer.run import (
     resolve,
     trusted_dirs,
 )
-from composer.teams import team
-from utils import config_file
+from agent_pm.composer.teams import team
+from agent_pm.utils import config_file
 
 CONFIG = """\
 tier = 2
@@ -401,7 +400,7 @@ class Runtime(Fake):
 
     def test_resolve_takes_no_runtime_client_or_trust(self):
         self.assertEqual(
-            list(inspect.signature(composer.run.resolve).parameters),
+            list(inspect.signature(resolve).parameters),
             ["role", "task", "overlays", "label", "team", "config"],
         )
 

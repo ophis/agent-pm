@@ -1,32 +1,32 @@
-"""A new runtime is one package under src/adapters/ plus one [adapters.<name>] table: a temp copy of new/core, the fake
-adapter's package copied into it as src/adapters/fake/ and its table appended to the copy's config.toml, nothing else
-changed, runs a headless session through driver.api.start in an isolated child Python that sees only the copy. A table
-without its package, or a package without its table, fails there before anything starts."""
+"""A new runtime is one package under src/agent_pm/adapters/ plus one [adapters.<name>] table: a temp copy of new/core,
+the fake adapter's package copied into it as src/agent_pm/adapters/fake/ and its table appended to the copy's
+config.toml, nothing else changed, runs a headless session through driver.api.start in a child Python whose
+PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
+anything starts."""
 
 from new.tests import CORE, fake_adapter
+from new.tests.case import PY, child_env
 
 import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
-# The child: argv[1] goes first on sys.path; it starts runtime argv[3] headless in workdir argv[2] and prints its events;
-# a ConfigError exits 1, its text on stderr.
+# The child: starts runtime argv[2] headless in workdir argv[1] and prints its events; a ConfigError exits 1, its text
+# on stderr.
 CHILD = """import dataclasses, json, sys
-sys.path.insert(0, sys.argv[1])
-from driver import api
+from agent_pm.driver import api
 try:
-    handle = api.start(sys.argv[3], "headless", "hello", api.Spec(workdir=sys.argv[2]))
+    handle = api.start(sys.argv[2], "headless", "hello", api.Spec(workdir=sys.argv[1]))
 except api.ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
-                  "files": [api.__file__, sys.modules["adapters.fake"].__file__]}))
+                  "files": [api.__file__, sys.modules["agent_pm.adapters.fake"].__file__]}))
 """
 
 
@@ -59,10 +59,10 @@ class ExtensionAdapterIntegration(unittest.TestCase):
         )
 
     def package(self, name: str) -> None:
-        """The fake adapter's package copied in as src/adapters/<name>/."""
+        """The fake adapter's package copied in as src/agent_pm/adapters/<name>/."""
         shutil.copytree(
             os.path.dirname(fake_adapter.__file__),
-            os.path.join(self.src, "adapters", name),
+            os.path.join(self.src, "agent_pm", "adapters", name),
             ignore=SKIP,
         )
 
@@ -72,9 +72,9 @@ class ExtensionAdapterIntegration(unittest.TestCase):
 
     def child(self, runtime: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, "-I", "-c", CHILD, self.src, self.work, runtime],
+            [*PY, "-c", CHILD, self.work, runtime],
             cwd=self.root,
-            env={**os.environ, "HOME": self.home},
+            env={**child_env({**os.environ, "HOME": self.home}), "PYTHONPATH": self.src},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

@@ -1,13 +1,11 @@
 """utils/args.py: Once."""
 
-from new.tests import SRC  # noqa: F401
-
 import argparse
 import io
 import unittest
 from unittest import mock
 
-from utils.args import Once
+from agent_pm.utils.args import Once
 
 
 class OnceTest(unittest.TestCase):

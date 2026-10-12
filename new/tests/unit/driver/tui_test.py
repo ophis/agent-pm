@@ -3,7 +3,8 @@ time.sleep patched), with a temp HOME: the session dir and session.json, the nam
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
 
-from new.tests import SRC, fake_adapter, hermetic
+from new.tests import fake_adapter, hermetic
+from new.tests.case import ROOT
 
 import errno
 import fcntl
@@ -19,7 +20,7 @@ import threading
 import unittest
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -32,9 +33,9 @@ from adapters.base import (
     SessionInfo,
     TurnEnd,
 )
-from driver import api, tmux_host
-from driver.errors import DriverError
-from driver.modes import tui
+from agent_pm.driver import api, tmux_host
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes import tui
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -188,7 +189,7 @@ class PathsTest(Base):
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
-        hook = os.path.join(SRC, "driver", "modes", "tui_hook.py")
+        hook = os.path.join(ROOT, "agent_pm", "driver", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
         self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
         self.assertTrue(os.path.isabs(argv[2]))

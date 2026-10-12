@@ -25,10 +25,10 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-import composer
-from delegate import Progress, run
-from delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from driver import api, registry
+from agent_pm import composer
+from agent_pm.delegate import Progress, run
+from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
+from agent_pm.driver import api, registry
 
 NAME = f"claude-{SID[:8]}"
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"

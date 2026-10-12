@@ -3,6 +3,7 @@
 any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
 
 from new.tests import NEW
+from new.tests.case import child_env
 from new.tests.integration.adapters.codex import fake_codex
 from new.tests.integration.delegate.cli_integration_test import (
     CLI,
@@ -23,7 +24,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from delegate.runner import FIX
+from agent_pm.delegate.runner import FIX
 
 NATIVE = fake_codex.NATIVE
 END = {"out": {"type": "turn.completed"}}
@@ -56,6 +57,7 @@ class Integration(unittest.TestCase):
             os.path.join(root, "exec.jsonl"),
         )
         self.env = {
+            **child_env({}),
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "HOME": self.home,
             "PYTHONUTF8": "1",
@@ -68,8 +70,7 @@ class Integration(unittest.TestCase):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario}, f)
         argv = [
-            sys.executable,
-            CLI,
+            *CLI,
             "--runtime",
             "codex",
             "--role",

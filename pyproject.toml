@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-per-file-target-version = { "core/src/tmux_host.py" = "py39", "new/core/src/driver/tmux_host.py" = "py39", "new/core/src/driver/modes/tui_hook.py" = "py39" }
+per-file-target-version = { "core/src/tmux_host.py" = "py39", "new/core/src/agent_pm/driver/tmux_host.py" = "py39", "new/core/src/agent_pm/driver/modes/tui_hook.py" = "py39" }
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
@@ -18,7 +18,7 @@ ignore = [
 # SIM115: the open() spy hands its file to the code under test, which closes it
 "tests/unit/core/drive_test.py" = ["SIM115"]
 # B027: InProcess.check is an optional hook whose default does nothing
-"new/core/src/adapters/base.py" = ["B027"]
+"new/core/src/agent_pm/adapters/base.py" = ["B027"]
 
 [tool.ruff.lint.isort]
 # Import side effects order these first: hermetic (tests/, new/tests/) sets HOME before code under test,

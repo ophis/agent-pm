@@ -24,7 +24,7 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-from driver import tmux_host
+from agent_pm.driver import tmux_host
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"

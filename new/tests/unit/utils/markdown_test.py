@@ -1,11 +1,9 @@
 """utils/markdown.py: unfenced lines and fenced blocks."""
 
-from new.tests import SRC  # noqa: F401
-
 import unittest
 
-from composer import base
-from utils.markdown import fenced, unfenced
+from agent_pm.composer import base
+from agent_pm.utils.markdown import fenced, unfenced
 
 
 class Unfenced(unittest.TestCase):

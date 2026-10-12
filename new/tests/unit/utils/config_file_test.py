@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from utils.config_file import CONFIG, LOCAL, merge, read_config
+from agent_pm.utils.config_file import CONFIG, LOCAL, merge, read_config
 
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
 

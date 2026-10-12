@@ -8,8 +8,8 @@ import sys
 import time
 from unittest import mock
 
-from adapters.base import Usage, Window
-from driver import api, registry
+from agent_pm.adapters.base import Usage, Window
+from agent_pm.driver import api, registry
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 

@@ -25,10 +25,10 @@ import unittest
 import uuid
 from unittest import mock
 
-from adapters import base
-from adapters.base import Access, Launch
-from driver import api, errors, records, registry, tmux_host
-from driver.modes import headless, in_process, tui
+from agent_pm.adapters import base
+from agent_pm.adapters.base import Access, Launch
+from agent_pm.driver import api, errors, records, registry, tmux_host
+from agent_pm.driver.modes import headless, in_process, tui
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -102,8 +102,8 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
 
 
 def package(name, cls) -> types.ModuleType:
-    """An in-memory module adapters.<name> holding `cls`."""
-    module = types.ModuleType(f"adapters.{name}")
+    """An in-memory module agent_pm.adapters.<name> holding `cls`."""
+    module = types.ModuleType(f"agent_pm.adapters.{name}")
     setattr(module, cls.__name__, cls)
     return module
 
@@ -134,7 +134,7 @@ class Base(unittest.TestCase):
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
         patch = mock.patch.dict(
-            sys.modules, {f"adapters.{name}": m for name, m in PACKAGES.items()}
+            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in PACKAGES.items()}
         )
         patch.start()
         self.addCleanup(patch.stop)
@@ -415,7 +415,7 @@ class HandleTest(Base):
     def test_usage_is_its_runtimes(self):
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         handle = self.start(runtime="probe")
-        with mock.patch("driver.modes.headless.probe", return_value="7") as probe:
+        with mock.patch.object(headless, "probe", return_value="7") as probe:
             self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         probe.assert_called_once()
         self.assertEqual(self.drain(handle), [api.Exited(0)])
@@ -773,13 +773,11 @@ class UsageTest(Base):
         """api.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x") unless given) and
         headless.probe patched to give `out`; its result and the patch's mock."""
         self.configure("probe", probe={"argv": ("probe-cmd", "-x"), **launch})
-        with mock.patch("driver.modes.headless.probe", return_value=out) as probe:
+        with mock.patch.object(headless, "probe", return_value=out) as probe:
             return api.usage("probe"), probe
 
     def test_no_probe_is_none_and_runs_nothing(self):
-        with mock.patch(
-            "driver.modes.headless.probe", side_effect=AssertionError("probed")
-        ) as probe:
+        with mock.patch.object(headless, "probe", side_effect=AssertionError("probed")) as probe:
             self.assertIsNone(api.usage("fake"))
         probe.assert_not_called()
         self.assertFalse(os.path.exists(self.probe_dir))

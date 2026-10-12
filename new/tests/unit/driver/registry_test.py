@@ -3,7 +3,7 @@ Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
 
-from new.tests import SRC, fake_adapter, hermetic
+from new.tests import fake_adapter, hermetic
 
 import importlib.abc
 import importlib.util
@@ -15,8 +15,9 @@ import types
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, ConfigError
-from driver import registry
+import agent_pm
+from agent_pm.adapters.base import Adapter, ConfigError
+from agent_pm.driver import registry
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
@@ -36,8 +37,8 @@ def odd_adapter():
 
 
 def package(name, **names) -> types.ModuleType:
-    """An in-memory module adapters.<name> holding `names`."""
-    module = types.ModuleType(f"adapters.{name}")
+    """An in-memory module agent_pm.adapters.<name> holding `names`."""
+    module = types.ModuleType(f"agent_pm.adapters.{name}")
     vars(module).update(names)
     return module
 
@@ -82,8 +83,10 @@ class Base(unittest.TestCase):
         registry.configure(tomllib.loads(text))
 
     def register(self, **modules):
-        """Each name's module as sys.modules["adapters.<name>"] for the rest of the test."""
-        patch = mock.patch.dict(sys.modules, {f"adapters.{name}": m for name, m in modules.items()})
+        """Each name's module as sys.modules["agent_pm.adapters.<name>"] for the rest of the test."""
+        patch = mock.patch.dict(
+            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in modules.items()}
+        )
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -240,6 +243,7 @@ class AdapterTest(Base):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
         built = registry.adapter("fake")
+        self.assertEqual(registry.PACKAGE, agent_pm.__name__)
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
 
@@ -285,11 +289,8 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_parent_package(self):
         self.configure(FAKE)
-        with (
-            mock.patch.dict(sys.modules),
-            mock.patch.object(sys, "path", [p for p in sys.path if p != SRC]),
-        ):
-            del sys.modules[Adapter.__module__.partition(".")[0]]
+        with mock.patch.dict(sys.modules), mock.patch.object(agent_pm, "__path__", []):
+            del sys.modules[Adapter.__module__.rpartition(".")[0]]
             self.refused(
                 "adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake")
             )
@@ -298,7 +299,7 @@ class AdapterTest(Base):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
         for source, shown in (
             ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
-            ("from adapters.base import Absent\n", "cannot import name 'Absent'"),
+            ("from agent_pm.adapters.base import Absent\n", "cannot import name 'Absent'"),
             ("raise OSError('disk gone')\n", "disk gone"),
             ("def broken(:\n", "invalid syntax"),
         ):
@@ -306,7 +307,9 @@ class AdapterTest(Base):
                 self.subTest(source=source),
                 mock.patch.dict(sys.modules),
                 mock.patch.object(
-                    sys, "meta_path", [SourceFinder("adapters.broken", source), *sys.meta_path]
+                    sys,
+                    "meta_path",
+                    [SourceFinder("agent_pm.adapters.broken", source), *sys.meta_path],
                 ),
             ):
                 with self.assertRaises(ConfigError) as caught:

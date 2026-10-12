@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from driver import api, tmux_host
+from agent_pm.driver import api, tmux_host
 
 MANAGER = "mgr"
 # The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists, at most 30 s.

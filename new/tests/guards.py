@@ -1,13 +1,14 @@
 """The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), none imports repo, nested, relative or import_module'd
-runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/ but a .toml's comments and Adapter lines
+layer_imports(core)   imports go one way (new/README.md), none imports repo or a BARE name, nested, relative or
+                      import_module'd
+runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no string constant naming OLD
-adapters_key(core)    no string constant "adapters" outside src/driver/
+adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      src/utils/ imports only the standard library
+pure_utils(core)      utils imports only the standard library and itself
 private_imports(root) no other module's _name
-modes_import_api(core) src/driver/modes/ never imports driver.api
+modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
 syntax_39(core)       STANDALONE files parse as Python 3.9
 """
@@ -25,6 +26,7 @@ ALLOWED = {
     ("driver", "adapters"),
     (OUTSIDE, "driver"),
 }
+BARE = (*LAYERS, "utils", "repo")
 RUNTIME = re.compile(r"claude|codex", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -34,23 +36,23 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))  # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
-TMUX_HOST = "src/driver/tmux_host.py"
-TUI_HOOK = "src/driver/modes/tui_hook.py"
+TMUX_HOST = "src/agent_pm/driver/tmux_host.py"
+TUI_HOOK = "src/agent_pm/driver/modes/tui_hook.py"
 STANDALONE = (TMUX_HOST, TUI_HOOK)
 
 
 def layer_imports(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py"):
-        parts = rel[:-3].split("/")
-        names = parts[1:] if parts[0] == "src" else None
+    for rel, names, imports in _modules(core):
         layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
-        for module in _imports(ast.parse(text, rel), names[:-1] if names else None):
-            top = module.split(".")[0]
-            if top == "repo" or (
-                top in LAYERS
-                and top != layer
-                and ((layer, top) not in ALLOWED or top == "driver" and module != "driver.api")
+        for module, inner in imports:
+            first = inner.split(".")[0]
+            if module.split(".")[0] in BARE:
+                found.add(f"{rel}: bare import {module}")
+            elif first == "repo" or (
+                first in LAYERS
+                and first != layer
+                and ((layer, first) not in ALLOWED or first == "driver" and inner != "driver.api")
             ):
                 found.add(f"{rel}: {layer} imports {module}")
     return sorted(found)
@@ -58,18 +60,19 @@ def layer_imports(core: str) -> list[str]:
 
 def pure_utils(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py"):
-        if rel.startswith("src/utils/"):
-            package = rel[:-3].split("/")[1:-1]
-            for module in _imports(ast.parse(text, rel), package):
-                if module.split(".")[0] not in sys.stdlib_module_names:
-                    found.add(f"{rel}: utils imports {module}")
+    for rel, names, imports in _modules(core):
+        if names and names[0] == "utils":
+            found.update(
+                f"{rel}: utils imports {m}"
+                for m, inner in imports
+                if inner.split(".")[0] != "utils" and m.split(".")[0] not in sys.stdlib_module_names
+            )
     return sorted(found)
 
 
 def runtime_names(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, (".py", ".toml"), skip="src/adapters/"):
+    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/adapters/"):
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
@@ -101,7 +104,7 @@ def old_core(new: str) -> list[str]:
 
 def adapters_key(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/driver/"):
+    for rel, text in _files(core, ".py", skip="src/agent_pm/driver/"):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -122,12 +125,12 @@ def syntax_311(new: str) -> list[str]:
 
 def modes_import_api(core: str) -> list[str]:
     found = set()
-    for rel, names, tree in _src_modules(core):
-        if names[:2] == ["driver", "modes"]:
+    for rel, names, imports in _modules(core):
+        if names and names[:2] == ["driver", "modes"]:
             found.update(
                 f"{rel}: imports {m}"
-                for m in _imports(tree, names[:-1])
-                if m.split(".")[:2] == ["driver", "api"]
+                for m, inner in imports
+                if inner.split(".")[:2] == ["driver", "api"]
             )
     return sorted(found)
 
@@ -188,10 +191,20 @@ def _private(name):
     return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
-def _src_modules(core):
+def _modules(core):
+    src = os.path.join(core, "src")
+    dirs = sorted(os.listdir(src)) if os.path.isdir(src) else []
+    dirs = [d for d in dirs if d != "__pycache__" and os.path.isdir(os.path.join(src, d))]
+    top = dirs[0] if len(dirs) == 1 else None
     for rel, text in _files(core, ".py"):
-        if rel.startswith("src/"):
-            yield rel, rel[len("src/") : -3].split("/"), ast.parse(text, rel)
+        parts = rel[:-3].split("/")
+        names = parts[2:] if top and parts[:2] == ["src", top] else None
+        imports = _imports(ast.parse(text, rel), [top, *names[:-1]] if names else None, top)
+        yield rel, names, [(m, _inner(m, top)) for m in imports]
+
+
+def _inner(module, top):
+    return module[len(top) + 1 :] if top and module.startswith(f"{top}.") else ""
 
 
 def _files(root, suffixes, skip=None):
@@ -204,7 +217,7 @@ def _files(root, suffixes, skip=None):
                     yield rel, f.read()
 
 
-def _imports(tree, package):
+def _imports(tree, package, top=None):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             yield from (alias.name for alias in node.names)
@@ -217,7 +230,7 @@ def _imports(tree, package):
                 )
             else:
                 parts = node.module.split(".")
-            if len(parts) > 1:
+            if len(parts) > 1 + (parts[0] == top):
                 yield ".".join(parts)
             else:
                 yield from (

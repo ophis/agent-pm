@@ -22,7 +22,7 @@ import types
 import unittest
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     Blocked,
@@ -34,7 +34,7 @@ from adapters.base import (
     Stderr,
     TurnEnd,
 )
-from driver import api, records, registry
+from agent_pm.driver import api, records, registry
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds
@@ -63,7 +63,7 @@ class LaunchingRun(fake_adapter.FakeHeadless):
         )
 
 
-LAUNCHING = types.ModuleType("adapters.launching")
+LAUNCHING = types.ModuleType("agent_pm.adapters.launching")
 LAUNCHING.LaunchingAdapter = LaunchingAdapter
 
 
@@ -81,7 +81,7 @@ class ScriptRun(fake_adapter.FakeHeadless):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 
-SCRIPT = types.ModuleType("adapters.script")
+SCRIPT = types.ModuleType("agent_pm.adapters.script")
 SCRIPT.ScriptAdapter = ScriptAdapter
 
 
@@ -119,9 +119,9 @@ class Base(unittest.TestCase):
         patch = mock.patch.dict(
             sys.modules,
             {
-                "adapters.fake": fake_adapter,
-                "adapters.launching": LAUNCHING,
-                "adapters.script": SCRIPT,
+                "agent_pm.adapters.fake": fake_adapter,
+                "agent_pm.adapters.launching": LAUNCHING,
+                "agent_pm.adapters.script": SCRIPT,
             },
         )
         patch.start()

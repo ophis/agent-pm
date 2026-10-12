@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     ConfigError,
@@ -25,8 +25,8 @@ from adapters.base import (
     Stderr,
     TurnEnd,
 )
-from adapters.codex import CodexAdapter
-from driver import api, records, registry
+from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.driver import api, records, registry
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

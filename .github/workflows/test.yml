@@ -51,6 +51,8 @@ jobs:
     name: New core unit tests (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}/new/core/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -68,6 +70,8 @@ jobs:
     name: New core integration (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}/new/core/src
     steps:
       - name: Check out
         uses: actions/checkout@v7

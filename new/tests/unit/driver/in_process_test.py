@@ -9,9 +9,9 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, InProcess, Reply, Spec, Stderr
-from driver.errors import DriverError
-from driver.modes.in_process import InProcessMode
+from agent_pm.adapters.base import Adapter, InProcess, Reply, Spec, Stderr
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes.in_process import InProcessMode
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds

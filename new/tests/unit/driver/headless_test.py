@@ -15,10 +15,10 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, Headless, Launch, Reply, Stderr
-from driver.errors import DriverError
-from driver.modes import headless
-from driver.modes.headless import HeadlessMode
+from agent_pm.adapters.base import Adapter, Headless, Launch, Reply, Stderr
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes import headless
+from agent_pm.driver.modes.headless import HeadlessMode
 
 WAIT = 10  # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2  # probe()'s timeout where it must pass, in seconds

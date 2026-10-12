@@ -15,7 +15,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -33,11 +33,11 @@ from adapters.base import (
     Usage,
     Window,
 )
-from adapters.claude import ClaudeAdapter
-from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless import ClaudeHeadless
-from adapters.claude.tui import ClaudeTui
-from driver import registry
+from agent_pm.adapters.claude import ClaudeAdapter
+from agent_pm.adapters.claude.common import ClaudeCommon
+from agent_pm.adapters.claude.headless import ClaudeHeadless
+from agent_pm.adapters.claude.tui import ClaudeTui
+from agent_pm.driver import registry
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'

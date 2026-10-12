@@ -16,14 +16,14 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-import composer
-from composer import RunConfig, RunParams
-from composer.base import SRC
-from composer.prompt import RESUME
-from delegate import ConfigError, plan
-from delegate.plan import place
-from driver import api
-from utils.paths import temp_dirs, under
+from agent_pm import composer
+from agent_pm.composer import RunConfig, RunParams
+from agent_pm.composer.base import SRC
+from agent_pm.composer.prompt import RESUME
+from agent_pm.delegate import ConfigError, plan
+from agent_pm.delegate.plan import place
+from agent_pm.driver import api
+from agent_pm.utils.paths import temp_dirs, under
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")

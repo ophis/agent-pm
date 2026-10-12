@@ -3,7 +3,15 @@ from new.tests.unit.adapters.codex.support import NATIVE, Base
 import json
 from datetime import UTC, datetime
 
-from adapters.base import Activity, ConfigError, LimitHit, Reply, SessionBound, Stderr, TurnEnd
+from agent_pm.adapters.base import (
+    Activity,
+    ConfigError,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Stderr,
+    TurnEnd,
+)
 
 
 class HeadlessTest(Base):
