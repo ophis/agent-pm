@@ -1,9 +1,11 @@
 """new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
 usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
 [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
-usage()'s probe is headless.probe patched, but for a spawn error. The Mode protocol, and a Handle over a scripted
-Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout,
-attach_command, detach) over tmux_host autospecced (no tmux runs)."""
+usage()'s probe is headless.probe patched, but for a spawn error. An in_process start over the in_process-only fake,
+SPAWNS patched to fail during its run; claude and codex, from the committed config, refuse it. The Mode protocol, and
+a Handle over a scripted Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close,
+show, layout, attach_command, detach) over tmux_host autospecced (no tmux runs)."""
+import contextlib
 import dataclasses
 import fcntl
 import inspect
@@ -24,11 +26,12 @@ from new.tests import fake_adapter, hermetic
 from adapters import base
 from adapters.base import Access, Launch
 from driver import api, errors, records, registry, tmux_host
-from driver.modes import headless, tui
+from driver.modes import headless, in_process, tui
 
 WAIT = 10   # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
+SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 
 
 class BlankAdapter(fake_adapter.FakeAdapter):
@@ -55,6 +58,22 @@ class QuietAdapter(fake_adapter.FakeAdapter):
     runtime_note = ""
 
 
+class CheckedAdapter(fake_adapter.InProcessFakeAdapter):
+    def in_process(self):
+        return CheckedRun(self)
+
+
+class CheckedRun(fake_adapter.FakeInProcess):
+    """check: refuses tier 4, else logs its arguments and whether run.jsonl exists."""
+
+    def check(self, prompt, spec, resume):
+        if spec.tier == 4:
+            raise base.ConfigError("tier 4 is unmapped")
+        with open(self.adapter.config["log"], "a", encoding="utf-8") as f:
+            f.write(json.dumps({"check": prompt, "sid": spec.sid, "resume": resume,
+                                "recorded": os.path.exists(records.path(spec.workdir))}) + "\n")
+
+
 class ProbeAdapter(fake_adapter.FakeAdapter):
     """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is the 5-hour window's
     percent (anything else raises), and a session status naming its sid and cwd."""
@@ -79,7 +98,7 @@ def package(name, cls) -> types.ModuleType:
 
 PACKAGES = {"fake": fake_adapter, **{name: package(name, cls) for name, cls in
                                      (("blank", BlankAdapter), ("failing", FailingAdapter), ("quiet", QuietAdapter),
-                                      ("probe", ProbeAdapter))}}
+                                      ("probe", ProbeAdapter), ("checked", CheckedAdapter))}}
 
 
 class Base(unittest.TestCase):
@@ -163,7 +182,7 @@ class ChecksTest(Base):
     def test_refuses_an_unknown_mode(self):
         for bad in ("pane", "", "Headless", None):
             with self.subTest(bad=bad):
-                self.refused(api.ConfigError, f"mode must be headless or tui, got {bad!r}",
+                self.refused(api.ConfigError, f"mode must be one of headless, tui, in_process, got {bad!r}",
                              lambda: self.start(mode=bad))
 
     def test_refuses_an_idle_timeout_that_is_no_positive_number(self):
@@ -320,15 +339,131 @@ class HandleTest(Base):
         self.assertEqual(self.drain(handle), [api.Exited(0)])
 
 
+class InProcessTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.configure(implementation="adapters.fake:InProcessFakeAdapter")
+
+    def run_in_process(self, **kwargs) -> tuple[api.Handle, list]:
+        """An in_process session started and drained, each of SPAWNS failing meanwhile and never called."""
+        with contextlib.ExitStack() as stack:
+            spawns = [stack.enter_context(mock.patch(target, side_effect=AssertionError(target))) for target in SPAWNS]
+            handle = self.start(mode="in_process", **kwargs)
+            found = self.drain(handle)
+        for spawn in spawns:
+            spawn.assert_not_called()
+        return handle, found
+
+    def logged(self) -> list[dict]:
+        with open(self.log, encoding="utf-8") as f:
+            return [json.loads(line) for line in f]
+
+    def test_records_the_session_its_cwd_access_cwd_else_the_workdir_then_runs_it(self):
+        cwd = os.path.join(self.dir, "cwd")
+        os.mkdir(cwd)
+        for given, project in (("", False), (cwd, True)):
+            with self.subTest(cwd=given):
+                self.workdir = os.path.join(self.dir, f"work-{project}")
+                handle, found = self.run_in_process(spec=self.spec(access=Access(cwd=given, project=project)), sid=SID)
+                self.assertEqual(found, [api.Exited(0)])
+                self.assertEqual((handle.sid, handle.runtime, handle.mode, handle.name),
+                                 (SID, "fake", "in_process", None))
+                info = api.SessionInfo(SID, "", given or self.workdir, project, "", "")
+                self.assertEqual(handle.info(), info)
+                (session,) = self.written()
+                self.assertEqual({k: v for k, v in session.items() if k != "ts"},
+                                 {"kind": "session", "sid": SID, "cwd": info.cwd, "project": project,
+                                  "transcript": "", "resume": ""})
+
+    def test_runs_in_this_process_on_another_thread_with_no_child_process(self):
+        self.steps({"out": {"type": "message", "text": "hi"}})
+        _, found = self.run_in_process()
+        self.assertEqual(found, [api.Reply("hi"), api.Exited(0)])
+        (entry,) = self.logged()
+        self.assertEqual(entry["pid"], os.getpid())
+        self.assertNotEqual(entry["thread"], threading.get_ident())
+
+    def test_its_events_then_exited_recording_client_session_and_stderr_a_yielded_exited_dropped(self):
+        self.steps({"out": {"type": "session", "id": "n1"}}, {"out": {"type": "message", "text": "hi"}},
+                   {"err": "warn"}, {"out": {"type": "exit"}}, {"out": {"type": "result", "text": "done"}})
+        handle, found = self.run_in_process()
+        self.assertEqual(found, [api.SessionBound("n1"), api.Reply("hi"), api.Stderr("warn"), api.TurnEnd("done", 0),
+                                 api.Exited(0)])
+        self.assertEqual([(e["kind"], e.get("client_id"), e.get("text")) for e in self.written()],
+                         [("session", None, None), ("client_session", "n1", None), ("stderr", None, "warn")])
+        self.assertEqual((handle.info().native_id, handle.reply), ("n1", "done"))
+
+    def test_the_runtime_note_follows_the_prompt_only_with_commands(self):
+        for commands, prompt in (((), "hello"), (("git",), "hello\n\nFAKE NOTE")):
+            with self.subTest(commands=commands):
+                self.run_in_process(spec=self.spec(access=Access(commands=commands)))
+                self.assertEqual(self.logged()[-1]["prompt"], prompt)
+
+    def test_resume_continues_that_session(self):
+        handle, _ = self.run_in_process(resume=SID)
+        (entry,) = self.logged()
+        self.assertEqual((handle.sid, entry["sid"], entry["resume"]), (SID, SID, True))
+        self.assertEqual(self.written()[0]["sid"], SID)
+
+    def test_check_gets_the_noted_prompt_the_spec_with_its_sid_and_resume_before_the_record(self):
+        for kwargs, resume in (({"sid": SID}, False), ({"resume": SID}, True)):
+            with self.subTest(kwargs=kwargs):
+                self.workdir = os.path.join(self.dir, f"work-{resume}")
+                self.run_in_process(runtime="checked", spec=self.spec(access=Access(commands=("git",))), **kwargs)
+                check, run = self.logged()[-2:]
+                self.assertEqual(check, {"check": "hello\n\nFAKE NOTE", "sid": SID, "resume": resume,
+                                         "recorded": False})
+                self.assertEqual((run["prompt"], run["sid"], run["resume"]), (check["check"], SID, resume))
+
+    def test_a_config_error_from_check_refuses_with_no_record_and_no_run(self):
+        with mock.patch("threading.Thread.start", side_effect=AssertionError("run started")) as thread:
+            self.refused(api.ConfigError, "tier 4 is unmapped",
+                         lambda: self.start(runtime="checked", mode="in_process", spec=self.spec(tier=4)))
+        thread.assert_not_called()
+
+    def test_takes_no_name_or_events(self):
+        self.refused(api.ConfigError, "name: tui mode only", lambda: self.start(mode="in_process", name="w1"))
+        self.refused(api.ConfigError, "events: tui mode only",
+                     lambda: self.start(mode="in_process", events=self.scenario))
+
+    def test_the_in_process_fake_supports_no_other_mode(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                self.refused(api.ConfigError, f"runtime 'fake' does not support {mode} mode",
+                             lambda: self.start(mode=mode))
+
+    def test_claude_and_codex_do_not_support_it(self):
+        registry.configure({"adapters": registry.tables()})
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                self.refused(api.ConfigError, f"runtime {runtime!r} does not support in_process mode",
+                             lambda: self.start(runtime=runtime, mode="in_process"))
+
+    def test_a_run_idle_past_idle_timeout_yields_idle_timeout_and_goes_on(self):
+        self.steps({"out": {"type": "message", "text": "a"}}, {"sleep": 0.5}, {"out": {"type": "message", "text": "b"}})
+        _, found = self.run_in_process(idle_timeout=0.1)
+        self.assertEqual(found[0], api.Reply("a"))
+        self.assertEqual(set(found[1:-2]), {api.IdleTimeout(0.1)})
+        self.assertEqual(found[-2:], [api.Reply("b"), api.Exited(0)])
+
+    def test_a_failed_run_start_is_a_driver_error_after_the_session_record(self):
+        with mock.patch("threading.Thread.start", side_effect=RuntimeError("can't start new thread")):
+            with self.assertRaises(api.DriverError) as caught:
+                self.start(mode="in_process")
+        self.assertEqual(str(caught.exception), "cannot start the in_process run: can't start new thread")
+        self.assertEqual([e["kind"] for e in self.written()], ["session"])
+        self.assertFalse(os.path.exists(self.log))
+
+
 class ModeTest(unittest.TestCase):
-    def test_the_protocols_methods_and_headless_mode_has_each_with_its_parameters(self):
+    def test_the_protocols_methods_and_the_headless_and_in_process_modes_have_each_with_its_parameters(self):
         def params(function):
             return [(p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()]
         members = sorted(n for n, v in vars(api.Mode).items() if callable(v) and not n.startswith("_"))
         self.assertEqual(members, ["poll", "returncode", "screen", "send", "state", "stop"])
-        for name in members:
-            with self.subTest(name=name):
-                self.assertEqual(params(getattr(headless.HeadlessMode, name)), params(getattr(api.Mode, name)))
+        for mode, name in itertools.product((headless.HeadlessMode, in_process.InProcessMode), members):
+            with self.subTest(mode=mode.__name__, name=name):
+                self.assertEqual(params(getattr(mode, name)), params(getattr(api.Mode, name)))
 
 
 class Clock:
@@ -952,7 +1087,8 @@ class ExportsTest(unittest.TestCase):
                 self.assertIn(name, api.__all__)
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
         self.assertFalse(hasattr(api, "NO_TUI"))
-        self.assertEqual((api.MODES, api.STATES, api.POLL), (("headless", "tui"), ("live", "absent", "unknown"), 0.5))
+        self.assertEqual((api.MODES, api.STATES, api.POLL),
+                         (("headless", "tui", "in_process"), ("live", "absent", "unknown"), 0.5))
         self.assertEqual((api.PROBE_DIR, api.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
         self.assertEqual(api.IdleTimeout(0.3).seconds, 0.3)
         self.assertEqual(api.SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
