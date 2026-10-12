@@ -571,6 +571,20 @@ class Limits(Case):
                     },
                 )
 
+    def test_a_failed_runs_note_is_a_run_error_and_the_session_comment_still_ends(self):
+        os.makedirs(self.runs)
+        self.done(result=Result(-9, None, "usage limit", Limit(T)))
+        self.assertEqual(self.main(), 0)
+        self.assertEqual(
+            self.said()[1:],
+            [
+                f"run end TASK-7 sid={SID} exit=-9",
+                f"writeback step TASK-7 sid={SID} step=limit",
+                f"run run-error TASK-7 error=IsADirectoryError: [Errno 21] Is a directory: '{self.runs}'",
+            ],
+        )
+        self.assertEqual(self.gql.calls[-2:], [*updated(ended("interrupted", -9)), REPAIR])
+
 
 class Cli(Case):
     def test_tui_is_off_by_default_and_main_hands_inner_the_config_and_its_fakes(self):

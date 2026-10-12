@@ -134,14 +134,17 @@ def inner(a, cfg, *, gql, run=delegate.run):
         if result and result.limit:
             at = result.limit.resets_at
             writeback.limit(ctx, at)
-            runs.note(
-                cfg.runs_log,
-                "limit",
-                issue=a.issue,
-                sid=a.sid,
-                runtime=a.runtime,
-                resets_at=writeback.local_time(at),
-            )
+            try:
+                runs.note(
+                    cfg.runs_log,
+                    "limit",
+                    issue=a.issue,
+                    sid=a.sid,
+                    runtime=a.runtime,
+                    resets_at=writeback.local_time(at),
+                )
+            except OSError as e:
+                log("run", "run-error", a.issue, error=one_line(e))
         elif not (result and result.outcome):
             log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
         post(rc, outcome=result.outcome if result else None)
