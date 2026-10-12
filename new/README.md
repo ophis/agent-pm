@@ -21,6 +21,10 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 
 Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; any module → `utils/`, which imports only the standard library. `tests/guards.py` (`layer_imports`, `pure_utils`) enforces it, with the other rules in its docstring.
 
+## Access
+
+A run's `read` dirs and its role's tasks dir are read-only: never `--add-dir`, so no runtime makes them a workspace or writable root. Each runtime's grant and the limits (Claude's auto mode, shell commands, a dir inside a writable one): `core/config.toml`'s `read` comment.
+
 ## Tests
 
 ```bash
