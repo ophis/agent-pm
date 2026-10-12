@@ -1,6 +1,6 @@
-"""run.py as a subprocess over the Delegate, headless: fake_claude as runtime `claude`, FakeLinear over HTTP, a hermetic
-config. Done runs write back as writeback_test pins them, plus the session comment by its session id; a run with no
-outcome; a usage limit (FR-59) and its resume; a resume after a lost ledger write (FR-54)."""
+"""run.py as a subprocess over the Delegate, headless: fake_claude as runtime `claude`, FakeLinear over HTTP, the local
+files in the test's HOME. Done runs write back as writeback_test pins them, plus the session comment by its session id;
+a run with no outcome; a usage limit (FR-59) and its resume; a resume after a lost ledger write (FR-54)."""
 
 import os
 import re
