@@ -24,8 +24,9 @@ import composer
 from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run
 from delegate import runner
 from delegate.outcome import save
-from delegate.runner import FIX, IDLE_TIMEOUT, printable
+from delegate.runner import FIX, IDLE_TIMEOUT
 from driver import registry
+from utils import text
 
 SID = "11111111-2222-3333-4444-555555555555"
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
@@ -460,8 +461,8 @@ class Stops(Base):
 
 class Terminal(Base):
     """Main's Sinks case: what reaches the terminal is printable."""
-    def test_printable_drops_control_characters_but_tabs(self):
-        self.assertEqual(printable("a\x1b]52;c;ZXZpbA==\x07b\tc\r\n"), "a]52;c;ZXZpbA==b\tc")
+    def test_printable_is_the_utils_one(self):
+        self.assertIs(runner.printable, text.printable)
 
     def test_replies_progress_and_stderr_lines_are_printed_printable(self):
         self.go({"err": "w\x1b[2Jarn"},

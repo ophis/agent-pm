@@ -45,6 +45,10 @@ class UtilsImportsTest(unittest.TestCase):
         self.assertEqual(guards.layer_imports(root), [])
         self.assertEqual(guards.pure_utils(root), [])
 
+    def test_utils_may_import_utils(self):
+        root = self.tree({"src/utils/x.py": "from utils.shell import SHORT\nfrom . import git\nimport utils.text\n"})
+        self.assertEqual(guards.pure_utils(root), [])
+
     def test_utils_reject_layer_external_and_literal_imports(self):
         root = self.tree({"src/utils/x.py": "import driver.api\nimport third_party\n"
                          "def f():\n    import importlib\n    importlib.import_module('adapters.base')\n"

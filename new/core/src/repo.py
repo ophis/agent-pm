@@ -27,77 +27,20 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 
 from utils.args import Once
 from utils.config_file import CONFIG, read_config
+from utils.git import GUARD, common_dir  # noqa: F401
 from utils.paths import real_dirs, temp_dirs, under
+from utils.repos import (HOST, NAME, OWNER, SLUG, SPEC, URL, Invalid, Repo, check_slug, checkout,  # noqa: F401
+                         origin, resolve, url_slug)
+from utils.shell import LONG, SHORT, USERINFO, Runner, err_text, redact, sh  # noqa: F401
 
-OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
-NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
-HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
-SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
 SHA = re.compile(r"[0-9a-f]{40}")
-URL = re.compile(r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
-USERINFO = re.compile(r"//[^@/\s]+@")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
-SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
-SHORT, LONG = 60, 600
-GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
-
-Runner = Callable[[list[str], int], subprocess.CompletedProcess]
-
-
-class Invalid(Exception):
-    pass
-
-
-def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-
-
-@dataclass(frozen=True)
-class Repo:
-    host: str
-    owner: str
-    name: str
-
-    @classmethod
-    def parse(cls, spec: str) -> "Repo":
-        m = SPEC.fullmatch(spec.strip())
-        if not m or m.group(3) in (".", "..") or (m.group(1) is None and spec.strip().startswith("https://")):
-            raise Invalid(f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name")
-        return cls((m.group(1) or "github.com").lower(), m.group(2), m.group(3))
-
-    @property
-    def slug(self) -> str:
-        return f"{self.host}/{self.owner}/{self.name}"
-
-
-def url_slug(url: str) -> str | None:
-    # an ssh port is no part of the web host
-    m = URL.fullmatch(url.strip())
-    if not m:
-        return None
-    scheme, host, port, owner, name = m.groups()
-    return f"{host}:{port}/{owner}/{name}" if port and scheme in ("http", "https") else f"{host}/{owner}/{name}"
-
-
-def origin(url: str) -> str | None:
-    slug = url_slug(url)
-    return slug.lower() if slug else None
-
-
-def redact(text: str) -> str:
-    return USERINFO.sub("//***@", text)
-
-
-def err_text(res: subprocess.CompletedProcess) -> str:
-    return redact((res.stderr or "").strip())[:200]
 
 
 def trusted_dirs(cfg: dict) -> frozenset[str]:
@@ -138,31 +81,6 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         return data["permissions"]["push"] is True, data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
         raise RuntimeError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
-
-
-def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
-    if not spec.startswith(("/", "~")):
-        return Repo.parse(spec), None
-    clone = os.path.realpath(os.path.expanduser(spec))
-    dotgit = os.path.join(clone, ".git")
-    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
-        raise Invalid(f"{clone} is not a git clone")
-    res = run(["git", "-C", clone, "remote", "get-url", "origin"], SHORT)
-    slug = url_slug(res.stdout) if res.returncode == 0 else None
-    if slug is None:
-        raise Invalid(f"{clone}: no origin URL naming host/owner/name")
-    return Repo.parse(slug), clone
-
-
-def check_slug(slug: str | None, branch: str = "") -> str:
-    slug = branch.replace("/", "-") if slug is None else slug
-    if not SLUG.fullmatch(slug):
-        raise Invalid(f"unsafe checkout name {slug[:80]!r}")
-    return slug
-
-
-def checkout(base: str, owner: str, name: str, slug: str) -> str:
-    return os.path.join(os.path.abspath(base), owner, f"{name}-{check_slug(slug)}")
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
@@ -272,26 +190,6 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
         raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
     return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "default": default, "branch": branch, "commit": commit,
             "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
-
-
-def common_dir(wt: str) -> str | None:
-    # never runs git: reads the files as git does (whole file, trailing CR/LF dropped)
-    def read(path):
-        if not os.path.isfile(path):   # a FIFO would block open()
-            return None
-        with open(path, "rb") as f:
-            return f.read(4096).decode().rstrip("\r\n")
-    try:
-        dotgit = os.path.join(wt, ".git")
-        text = None if os.path.islink(dotgit) else read(dotgit)
-        if not text or not text.startswith("gitdir: "):
-            return None
-        gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: "):]))
-        rel = read(os.path.join(gitdir, "commondir"))
-        common = os.path.realpath(os.path.join(gitdir, rel)) if rel else None
-    except (OSError, ValueError):   # UnicodeDecodeError and a NUL in a path are ValueErrors
-        return None
-    return common if common and os.path.basename(common) == ".git" and os.path.isdir(common) else None
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:

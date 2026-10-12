@@ -5,7 +5,7 @@ runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/ but a .tom
 old_core(new)         no `core` import, no string constant naming OLD
 adapters_key(core)    no string constant "adapters" outside src/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      src/utils/ imports only the standard library
+pure_utils(core)      src/utils/ imports only the standard library and utils
 private_imports(root) no other module's _name
 modes_import_api(core) src/driver/modes/ never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
@@ -52,7 +52,7 @@ def pure_utils(core: str) -> list[str]:
         if rel.startswith("src/utils/"):
             package = rel[:-3].split("/")[1:-1]
             for module in _imports(ast.parse(text, rel), package):
-                if module.split(".")[0] not in sys.stdlib_module_names:
+                if module.split(".")[0] not in sys.stdlib_module_names | {"utils"}:
                     found.add(f"{rel}: utils imports {module}")
     return sorted(found)
 

@@ -9,11 +9,13 @@ from datetime import datetime
 from pathlib import Path
 
 from composer import OUTCOME, RunConfig, Team
-from delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome, save
+from delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from delegate.outcome import read as read_outcome
 from delegate.plan import ConfigError, Plan, plan
 from delegate.reply import marks, outcome_block
 from driver import api
+from utils.files import save
+from utils.text import printable
 
 IDLE_TIMEOUT = 2 * 60 * 60   # seconds
 FIX = ("The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
@@ -63,11 +65,6 @@ class Headless:
 
 
 POLICIES = {"headless": Headless}
-
-
-def printable(text: str) -> str:
-    """Without control characters but tabs: an agent run's output can't steer the terminal."""
-    return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
 def _say(text: str) -> None:
