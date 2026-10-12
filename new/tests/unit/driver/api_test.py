@@ -954,7 +954,7 @@ class WritableDirsTest(Base):
 
 def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), sessions [], option None."""
+    (absent), sessions [], option None, pane %1."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -964,6 +964,7 @@ def fake_host() -> mock.Mock:
     host.status.return_value = None
     host.sessions.return_value = []
     host.option.return_value = None
+    host.pane.return_value = "%1"
     return host
 
 
@@ -1136,25 +1137,25 @@ class TuiStartTest(TuiBase):
         self.host.read.return_value = "pane text"
         self.assertEqual((handle.state(), handle.screen()), ("live", "pane text"))
         handle.send("hi")
-        self.host.paste.assert_called_once_with("w1", "hi")
-        self.host.keys.assert_called_once_with("w1", "Enter")
+        self.host.paste.assert_called_once_with("%1", "hi")
+        self.host.keys.assert_called_once_with("%1", "Enter")
         handle.stop()
-        self.host.kill.assert_called_once_with("w1")
+        self.host.kill.assert_called_once_with("%1")
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
 
 class AttachTest(TuiBase):
     def started(self, *hooked) -> None:
-        """Tui session w1 started (sid SID), then a hooks.jsonl record per (label, payload) in `hooked`, its @sid SID;
-        the host's calls cleared."""
+        """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label, payload) in `hooked`,
+        its @sid SID; the host's calls cleared."""
         self.tui(name="w1", sid=SID, events=self.events)
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "w") as f:
             f.writelines(
                 json.dumps({"ts": "", "label": label, "payload": payload}) + "\n"
                 for label, payload in hooked
             )
-        self.host.option.side_effect = lambda name, key: (
-            SID if (name, key) == ("w1", "@sid") else None
+        self.host.option.side_effect = lambda target, key: (
+            SID if (target, key) == ("%1", "@sid") else None
         )
         self.host.reset_mock()
 
@@ -1167,7 +1168,12 @@ class AttachTest(TuiBase):
         )
         self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
         self.assertEqual(
-            self.host.mock_calls, [mock.call.option("w1", "@sid"), mock.call.pane("w1")]
+            self.host.mock_calls,
+            [
+                mock.call.pane("w1"),
+                mock.call.option("%1", "@sid"),
+                mock.call.option("%1", "@state"),
+            ],
         )
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(
@@ -1175,6 +1181,38 @@ class AttachTest(TuiBase):
             )
         self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))
         self.assertEqual(handle.reply, "r2")
+
+    def test_attached_while_blocked_no_idle_timeout_until_its_next_event(self):
+        """On a fake clock (time.monotonic, time.sleep), a tool record comes at 10 s."""
+        hooks = os.path.join(self.root, "w1", "hooks.jsonl")
+        for hooked, state, first in (
+            ((("tool", {}), ("ask", {})), None, (api.Activity(""), 10)),
+            ((), "blocked", (api.Activity(""), 10)),
+            ((("ask", {}), ("tool", {})), None, (api.IdleTimeout(1), 1)),
+            ((("ask", {}), ("stop", {})), "working", (api.IdleTimeout(1), 1)),
+        ):
+            with self.subTest(hooked=hooked, state=state):
+                self.host.status.return_value = None
+                self.started(*hooked)
+                options = {"@sid": SID, "@state": state}
+                self.host.option.side_effect = lambda target, key: options[key]
+                self.host.status.return_value, self.host.read.return_value = tmux_host.RUNNING, ""
+                now = [0.0]
+
+                def sleep(seconds):
+                    if now[0] > 60:
+                        raise AssertionError("no event")
+                    now[0] += seconds
+                    if now[0] - seconds < 10 <= now[0]:
+                        with open(hooks, "a") as f:
+                            f.write(json.dumps({"ts": "", "label": "tool", "payload": {}}) + "\n")
+
+                with (
+                    mock.patch("time.monotonic", lambda: now[0]),
+                    mock.patch("time.sleep", sleep),
+                ):
+                    event = next(api.attach("w1", idle_timeout=1).events())
+                self.assertEqual((event, round(now[0])), first)
 
     def test_a_bad_name_or_idle_timeout_is_refused_before_tmux_or_a_path(self):
         self.name_refused(api.attach)

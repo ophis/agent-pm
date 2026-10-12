@@ -285,12 +285,16 @@ class Tmux:
     """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command or another program to its
     (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what display-message
     prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv (after
-    EXEC), then unlinks it as the wrapper would, unless `hand_over` is False."""
+    EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
+    then per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang",
+    fd `writer`)."""
 
-    def __init__(self, pane=None, fail=(), hand_over=True, results=None):
+    def __init__(self, pane=None, fail=(), hand_over=True, results=None, wrapper="exec"):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
+        self.wrapper = wrapper
         self.calls, self.kwargs = [], []
         self.path = self.handover = self.mode = self.dir_mode = self.dir_at_kill = None
+        self.fifo = self.fifo_mode = self.writer = None
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
@@ -314,13 +318,21 @@ class Tmux:
                 else done(argv, 0, self.pane + "\n")
             )
         if argv[1] == "new-session" or "respawn-pane" in argv:
-            self.path = argv[argv.index(tmux_host.EXEC) + 1]
+            at = argv.index(tmux_host.EXEC)
+            self.path, self.fifo = argv[at + 1 : at + 3]
             self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
             self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
+            self.fifo_mode = os.stat(self.fifo).st_mode
             with open(self.path) as f:
                 self.handover = json.load(f)
             if self.hand_over:
+                self.writer = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
                 os.unlink(self.path)
+                if self.wrapper != "hang":
+                    if self.wrapper != "exec":
+                        data = self.wrapper
+                        os.write(self.writer, data if isinstance(data, bytes) else b"%d" % data)
+                    os.close(self.writer)
         return done(argv)
 
     def commands(self):
@@ -385,6 +397,7 @@ class Start(unittest.TestCase):
                         "-c",
                         tmux_host.EXEC,
                         fake.path,
+                        fake.fifo,
                         ";",
                         "set-option",
                         "-p",
@@ -430,6 +443,9 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.mode, 0o600)
                 self.assertEqual(fake.dir_mode, 0o700)
                 self.assertEqual(os.path.dirname(os.path.dirname(fake.path)), self.temp)
+                self.assertEqual(os.path.dirname(fake.fifo), os.path.dirname(fake.path))
+                self.assertTrue(stat.S_ISFIFO(fake.fifo_mode))
+                self.assertEqual(stat.S_IMODE(fake.fifo_mode), 0o600)
                 self.assertEqual(os.listdir(self.temp), [])
 
     def test_terminal_keys(self):
@@ -554,7 +570,7 @@ class Start(unittest.TestCase):
         fake = Tmux()
         self.start(fake, tags={"@sid": "0123abcd-x", "@k": "a b#{x}"})
         self.assertEqual(
-            fake.calls[1][fake.calls[1].index(fake.path) + 1 :],
+            fake.calls[1][fake.calls[1].index(fake.fifo) + 1 :],
             [
                 ";",
                 "set-option",
@@ -671,6 +687,72 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(os.listdir(self.temp), [])
 
+    def test_waits_for_a_late_exec(self):
+        fake, slept = Tmux(wrapper="hang"), []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            if len(slept) == 3:
+                os.close(fake.writer)
+
+        self.sleep = sleep
+        self.start(fake)
+        self.assertEqual(len(slept), 3)
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+
+    def test_an_exec_failure_raises_its_error_and_kills_the_session(self):
+        fake = Tmux(wrapper=errno.ENOEXEC)
+        with self.assertRaisesRegex(
+            tmux_host.TuiError,
+            "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.ENOEXEC)}") + "$",
+        ):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+        self.sleep.assert_not_called()
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_a_handover_at_its_last_poll_still_gets_the_whole_exec_wait(self):
+        fake, slept = Tmux(hand_over=False), []
+        last = round(tmux_host.HANDOVER_TIMEOUT / tmux_host.POLL)
+
+        def sleep(seconds):
+            slept.append(seconds)
+            if len(slept) == last:
+                fake.writer = os.open(fake.fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.unlink(fake.path)
+            elif len(slept) == last + 3:
+                os.close(fake.writer)
+
+        self.sleep = sleep
+        self.start(fake)
+        self.assertEqual(len(slept), last + 3)
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
+
+    def test_bad_errpipe_data_is_an_error_and_kills_the_session(self):
+        for data in (b"x", b"9" * 20):
+            with self.subTest(data=data):
+                fake = Tmux(wrapper=data)
+                with self.assertRaisesRegex(
+                    tmux_host.TuiError,
+                    "^" + re.escape(f"cannot run {self.tool}: bad errpipe data") + "$",
+                ):
+                    self.start(fake)
+                self.assertEqual(
+                    fake.commands(), ["display-message", "new-session", "kill-session"]
+                )
+                self.assertEqual(os.listdir(self.temp), [])
+
+    def test_never_execd_is_not_started(self):
+        fake = Tmux(wrapper="hang")
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^the session did not start$"):
+            self.start(fake)
+        os.close(fake.writer)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+        self.assertAlmostEqual(
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+        )
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_unsafe_tmux_argument(self):
         for exe in ("/opt/py#3/bin/python3", "/opt/bin/python3;"):
             with self.subTest(exe=exe), unittest.mock.patch.object(sys, "executable", exe):
@@ -735,7 +817,7 @@ class Start(unittest.TestCase):
                 self.assertEqual(fake.handover["env"], {"PATH": self.bin, "PWD": self.cwd})
                 self.assertEqual(fake.commands(), ["display-message", "new-session"])
                 self.assertEqual(
-                    fake.calls[1][fake.calls[1].index(fake.path) + 8 :],
+                    fake.calls[1][fake.calls[1].index(fake.fifo) + 8 :],
                     chained(decorations("s", path, status)),
                 )
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
@@ -752,7 +834,7 @@ class Detach(unittest.TestCase):
             session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep, **kw
         )
 
-    def test_new_session_runs_the_wrapper_and_returns_once_it_took_the_handover(self):
+    def test_new_session_runs_the_wrapper_and_returns_once_argv_execd(self):
         fake = Tmux()
         self.assertIsNone(self.detach(fake))
         self.assertEqual(
@@ -769,6 +851,7 @@ class Detach(unittest.TestCase):
                     "-c",
                     tmux_host.EXEC,
                     fake.path,
+                    fake.fifo,
                 ]
             ],
         )
@@ -854,6 +937,7 @@ class Detach(unittest.TestCase):
                             "-c",
                             tmux_host.EXEC,
                             fake.path,
+                            fake.fifo,
                             ";",
                             "set-option",
                             "-t",
@@ -884,6 +968,28 @@ class Detach(unittest.TestCase):
                     sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
                 )
                 self.assertEqual(os.listdir(self.temp), [])
+
+    def test_an_exec_failure_raises_its_error_and_kills_the_session(self):
+        fake = Tmux(wrapper=errno.ENOENT)
+        with self.assertRaisesRegex(
+            tmux_host.TuiError,
+            "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.ENOENT)}") + "$",
+        ):
+            self.detach(fake)
+        self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
+        self.sleep.assert_not_called()
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_never_execd_kills_it(self):
+        fake = Tmux(wrapper="hang")
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^session d did not start$"):
+            self.detach(fake)
+        os.close(fake.writer)
+        self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
+        self.assertAlmostEqual(
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+        )
+        self.assertEqual(os.listdir(self.temp), [])
 
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
         fake = Tmux(
@@ -978,6 +1084,7 @@ class Respawn(unittest.TestCase):
                     "-c",
                     tmux_host.EXEC,
                     fake.path,
+                    fake.fifo,
                 ],
             ],
         )
@@ -1059,6 +1166,33 @@ class Respawn(unittest.TestCase):
             sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
         )
         self.assertEqual(os.listdir(self.temp), [])
+
+    def test_an_exec_failure_raises_its_error(self):
+        fake = Tmux(pane=OLD_PID, wrapper=errno.EACCES)
+        with self.assertRaisesRegex(
+            tmux_host.TuiError,
+            "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.EACCES)}") + "$",
+        ):
+            self.respawn(fake)
+        self.assertEqual(fake.commands(), ["display-message", "clear-history"])
+        self.sleep.assert_not_called()
+        self.assertEqual(os.listdir(self.temp), [])
+
+    def test_never_execd_is_not_respawned_after_the_deadline(self):
+        """HANDOVER_TIMEOUT s, plus RESPAWN_WAIT s while the wrapper may wait for the old process (`after`)."""
+        for pid, wait in (
+            (OLD_PID, tmux_host.HANDOVER_TIMEOUT + tmux_host.RESPAWN_WAIT),
+            ("", tmux_host.HANDOVER_TIMEOUT),
+        ):
+            with self.subTest(pid=pid):
+                self.sleep.reset_mock()
+                fake = Tmux(results={"display-message": (0, pid + "\n", "")}, wrapper="hang")
+                with self.assertRaisesRegex(tmux_host.TuiError, r"^the pane did not respawn$"):
+                    self.respawn(fake)
+                os.close(fake.writer)
+                self.assertEqual(fake.commands(), ["display-message", "clear-history"])
+                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), wait)
+                self.assertEqual(os.listdir(self.temp), [])
 
 
 MARK_KW = {**TMUX_KW, "timeout": 5}
@@ -1506,6 +1640,56 @@ class PaneId(unittest.TestCase):
         ):
             with self.subTest(result=result), self.assertRaisesRegex(tmux_host.TuiError, error):
                 tmux_host.pane("s", proc=Tmux(results={"display-message": result}))
+
+
+class PaneTarget(unittest.TestCase):
+    """status, kill, paste, keys, option and read take a pane id (%N) as their target."""
+
+    def calls(self, target, fake):
+        return [
+            lambda: tmux_host.status(target, proc=fake),
+            lambda: tmux_host.kill(target, proc=fake),
+            lambda: tmux_host.paste(target, "hi", proc=fake),
+            lambda: tmux_host.keys(target, "Enter", proc=fake),
+            lambda: tmux_host.option(target, "@sid", proc=fake),
+            lambda: tmux_host.read(target, proc=fake),
+        ]
+
+    def test_a_pane_id_is_the_target_as_is(self):
+        fake = Tmux(pane="0  ")
+        for call in self.calls("%12", fake):
+            call()
+        buffer = fake.calls[2][3]
+        self.assertEqual(
+            fake.calls,
+            [
+                ["tmux", "display-message", "-p", "-t", "%12", FORMAT],
+                ["tmux", "kill-session", "-t", "%12"],
+                ["tmux", "load-buffer", "-b", buffer, "-"],
+                ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "%12"],
+                ["tmux", "send-keys", "-t", "%12", "Enter"],
+                ["tmux", "show-options", "-v", "-t", "%12", "@sid"],
+                ["tmux", "capture-pane", "-p", "-J", "-t", "%12"],
+            ],
+        )
+
+    def test_a_gone_pane_is_absent(self):
+        gone = (1, "", "can't find pane: %12\n")
+        self.assertIsNone(tmux_host.status("%12", proc=Tmux(results={"display-message": gone})))
+        self.assertIsNone(
+            tmux_host.option("%12", "@sid", proc=Tmux(results={"show-options": gone}))
+        )
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: can't find pane: %12$"):
+            tmux_host.kill("%12", proc=Tmux(results={"kill-session": gone}))
+
+    def test_a_bad_target_is_refused_before_tmux(self):
+        for target in ("%", "%x", "%1;", "%1 ", "%1:", "%1.0", "=%1", "%-1", "a b"):
+            with self.subTest(target=target):
+                fake = Tmux()
+                for call in self.calls(target, fake):
+                    with self.assertRaisesRegex(tmux_host.TuiError, "^invalid target "):
+                        call()
+                self.assertEqual(fake.calls, [])
 
 
 class Read(unittest.TestCase):
@@ -4554,6 +4738,11 @@ ALIVE = """import os, sys
 try: os.kill(int(sys.argv[1]), 0)
 except OSError: print('gone')
 else: print('alive')"""
+# a program waiting up to 30 s for file argv[1]
+WAIT = """import os, sys, time
+for _ in range(3000):
+    if os.path.exists(sys.argv[1]): break
+    time.sleep(0.01)"""
 # time.sleep and time.monotonic of a process faked: a nap advances the clock, printing its seconds on stderr
 FAKE_CLOCK = """import os, time
 now = [time.monotonic()]
@@ -4580,20 +4769,33 @@ class Exec(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        self.path = os.path.join(self.root, "handover.json")
+        self.path, self.fifo = (os.path.join(self.root, n) for n in ("handover.json", "errpipe"))
+        os.mkfifo(self.fifo, 0o600)
+        self.reader = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, self.reader)
 
     def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
-        """The wrapper as tmux runs it, given a handover file naming argv; `prelude` runs before it."""
+        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude` runs before it."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
         return subprocess.run(
-            [sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path],
+            self.wrapper(prelude),
             env=pane,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
             timeout=30,
         )
+
+    def wrapper(self, prelude=""):
+        return [sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path, self.fifo]
+
+    def piped(self):
+        """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds it open."""
+        out = b""
+        while chunk := os.read(self.reader, 64):
+            out += chunk
+        return out
 
     def child(self, seconds):
         """A process of ours that sleeps `seconds`, reaped by a thread as it ends (a zombie still answers kill 0);
@@ -4624,6 +4826,55 @@ class Exec(unittest.TestCase):
         self.assertNotIn("PATH", got_env)
         self.assertEqual(got_argv, ["-c", "x", "y z"])
         self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.piped(), b"")
+
+    def test_execve_closes_the_errpipe_while_argv_runs(self):
+        """EOF with no data once argv runs: the wrapper's end never reaches argv."""
+        go = os.path.join(self.root, "go")
+        with open(self.path, "w") as f:
+            json.dump({"argv": [sys.executable, "-c", WAIT, go], "env": {}, "cwd": self.root}, f)
+        wrapper = subprocess.Popen(
+            self.wrapper(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+        )
+        self.addCleanup(lambda: wrapper.returncode is None and wrapper.kill())
+        piped, deadline = None, time.monotonic() + 10
+        while piped is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+            if not os.path.exists(self.path):  # a FIFO no writer opened yet reads as EOF too
+                with suppress(BlockingIOError):
+                    piped = self.piped()
+        self.assertEqual(piped, b"")
+        self.assertIsNone(wrapper.poll())
+        open(go, "w").close()
+        out, err = wrapper.communicate(timeout=30)
+        self.assertEqual((wrapper.returncode, out), (0, ""), err)
+
+    def test_an_exec_failure_writes_its_errno_and_argv_never_runs(self):
+        for text, number in (
+            ("#!/nonexistent/interpreter\nprint('ran')\n", errno.ENOENT),
+            ("echo ran\n", errno.ENOEXEC),
+        ):
+            with self.subTest(text=text):
+                program = os.path.join(self.root, "program")
+                with open(program, "w") as f:
+                    f.write(text)
+                os.chmod(program, 0o755)
+                res = self.run_exec([program], {}, self.root, {})
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertEqual(self.piped(), b"%d" % number)
+                self.assertFalse(os.path.exists(self.path))
+
+    def test_any_other_exec_failure_writes_einval_and_argv_never_runs(self):
+        for env in ({"X": "a\0b"}, {"X": "\ud800"}, {"X=Y": "1"}):
+            with self.subTest(env=env):
+                res = self.run_exec([sys.executable, "-c", "print('ran')"], env, self.root, {})
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("Error: ", res.stderr)
+                self.assertEqual(self.piped(), b"%d" % errno.EINVAL)
 
     def test_a_cwd_it_cannot_enter_fails_it_leaving_the_handover_untaken(self):
         res = self.run_exec(
@@ -4631,6 +4882,16 @@ class Exec(unittest.TestCase):
         )
         self.assertEqual((res.returncode, res.stdout), (1, ""))
         self.assertIn("FileNotFoundError", res.stderr)
+        self.assertTrue(os.path.exists(self.path))
+        self.assertEqual(self.piped(), b"%d" % errno.ENOENT)
+
+    def test_an_errpipe_without_a_reader_runs_nothing_leaving_the_handover_untaken(self):
+        """The caller gone: ENXIO."""
+        self.fifo = os.path.join(self.root, "unread")
+        os.mkfifo(self.fifo, 0o600)
+        res = self.run_exec([sys.executable, "-c", "print('ran')"], {}, self.root, {})
+        self.assertEqual((res.returncode, res.stdout), (1, ""))
+        self.assertIn(f"[Errno {errno.ENXIO}]", res.stderr)
         self.assertTrue(os.path.exists(self.path))
 
     def test_block_signals_stay_blocked_in_argv(self):
@@ -4647,7 +4908,7 @@ class Exec(unittest.TestCase):
                 )
 
     def test_waits_for_the_old_process_to_end_after_taking_the_handover(self):
-        """respawn's `after`: argv runs once that process is gone; the handover file goes first, so respawn returns."""
+        """respawn's `after`: the handover goes first; argv runs, closing the errpipe, once that process is gone."""
         old, reaper = self.child(1)
         with open(self.path, "w") as f:
             json.dump(
@@ -4660,7 +4921,7 @@ class Exec(unittest.TestCase):
                 f,
             )
         wrapper = subprocess.Popen(
-            [sys.executable, "-I", "-c", tmux_host.EXEC, self.path],
+            self.wrapper(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
@@ -4672,8 +4933,10 @@ class Exec(unittest.TestCase):
             time.sleep(0.01)
         self.assertFalse(os.path.exists(self.path))
         self.assertIsNone(old.returncode)
+        self.assertRaises(BlockingIOError, self.piped)
         out, err = wrapper.communicate(timeout=30)
         self.assertEqual((wrapper.returncode, out), (0, "gone\n"), err)
+        self.assertEqual(self.piped(), b"")
         reaper.join(timeout=5)
         self.assertIsNotNone(old.returncode)
 

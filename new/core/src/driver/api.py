@@ -155,6 +155,7 @@ class Handle:
         idle_timeout: float | None,
         name: str | None = None,
         reply: str | None = None,
+        blocked: bool = False,
     ):
         self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
@@ -163,7 +164,7 @@ class Handle:
         self._queue: deque = deque()
         self._closed = False
         self._ended = False
-        self._blocked = False
+        self._blocked = blocked
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
         last = time.monotonic()
@@ -469,6 +470,7 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         idle_timeout=idle_timeout,
         name=name,
         reply=host.reply,
+        blocked=host.blocked,
     )
 
 
@@ -547,7 +549,7 @@ def attach_command(name: str) -> str:
 def detach(
     name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None
 ) -> None:
-    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv runs."""
+    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd."""
     _name(name)
     if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
         raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
