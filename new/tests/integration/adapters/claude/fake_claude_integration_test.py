@@ -1,4 +1,4 @@
-"""new/tests/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
+"""new/tests/integration/adapters/claude/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
 file or output; print mode's stream-json lines, write and resume steps; a session's gate; interactive mode's turns,
 hooks and steps over a pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 
@@ -17,8 +17,10 @@ from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 
-from new.tests import case, fake_claude, live_tmux
+from new.tests import case, live_tmux
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.selection import configured
+
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

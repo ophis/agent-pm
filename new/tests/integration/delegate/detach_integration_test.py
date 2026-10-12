@@ -1,5 +1,5 @@
 """delegate/cli.py --detach as a subprocess on a private tmux server (new/tests/live_tmux.py), a control-mode client on
-the manager, the core config's ClaudeAdapter running new/tests/fake_claude.py: the Driver session, the TUI beside the
+the manager, the core config's ClaudeAdapter running new/tests/integration/adapters/claude/fake_claude.py: the Driver session, the TUI beside the
 caller or in no pane, the outcome line, a kill-session of the Driver session, an events path tmux would misread.
 Ports main's tests/integration/core/drive_tui_integration_test.py test_detach_from_the_manager. Not ported, as role
 entries are TASK-356: its test_detach_events_default (the manager directory's events file needs roster) and main's
@@ -19,8 +19,9 @@ import unittest
 
 from agent_pm.session.driver import records
 
-from new.tests import fake_claude, live_tmux
+from new.tests import live_tmux
 from new.tests.case import ROOT, Case
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.delegate.cli_integration_test import (
     ASKING,
     CLI,

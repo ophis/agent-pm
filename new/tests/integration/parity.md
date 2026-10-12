@@ -18,12 +18,12 @@ The new identity is one of:
 | CR | `new.tests.integration.composer.resume_integration_test` |
 | CE | `new.tests.integration.composer.extension_runtime_integration_test` |
 | CTD | `new.tests.integration.composer.team_dirs_integration_test` |
-| DCL | `new.tests.integration.driver.claude_integration_test` |
+| DCL | `new.tests.integration.adapters.claude.claude_integration_test` |
 | DEA | `new.tests.integration.driver.extension_adapter_integration_test` |
 | H | `new.tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
 | T | `new.tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
 | K | `new.tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |
-| F | `new.tests.integration.fake_claude_integration_test` |
+| F | `new.tests.integration.adapters.claude.fake_claude_integration_test` |
 | L | `new.tests.integration.live_tmux_integration_test` |
 | C | `new.tests.integration.tmux.crew_integration_test` |
 | OGH | `new.tests.integration.orchestrator.fake_gh_integration_test` |
@@ -34,7 +34,7 @@ The new identity is one of:
 | ORT | `new.tests.integration.orchestrator.router_integration_test.Router` |
 | OTU | `new.tests.integration.orchestrator.run_tui_integration_test.Tui` |
 | DTH | `new.tests.integration.driver.tmux_host_integration_test` |
-| DCT | `new.tests.integration.driver.claude_tui_integration_test` |
+| DCT | `new.tests.integration.adapters.claude.claude_tui_integration_test` |
 | UCR | `new.tests.unit.tmux.crew_test` |
 | URO | `new.tests.unit.roster_test` |
 | UDA | `new.tests.unit.driver.api_test` |
