@@ -173,7 +173,8 @@ class LayerImports(Sample):
         root = self.tree(
             {
                 f"{PKG}/delegate/x.py": "from agent_pm.driver.api import start\n"
-                "from agent_pm.composer import y\nfrom agent_pm.driver import api\n",
+                "from agent_pm.composer import y\nfrom agent_pm.driver import api\n"
+                "from agent_pm.utils.files import append_line\n",
                 f"{PKG}/driver/x.py": "import agent_pm.adapters.base\nfrom .modes import headless\n"
                 "from agent_pm.driver.modes import headless\n",
                 f"{PKG}/x.py": "from agent_pm.driver import api\nimport agent_pm.driver.api\n"
@@ -194,6 +195,21 @@ class LayerImports(Sample):
             [
                 f"{PKG}/x.py: outside the layers imports agent_pm.adapters",
                 f"{PKG}/y.py: outside the layers imports agent_pm.driver.registry",
+            ],
+        )
+
+    def test_a_layer_reaches_outside_the_layers_only_utils(self):
+        root = self.tree(
+            {
+                f"{PKG}/delegate/x.py": "from agent_pm import roster\n",
+                f"{PKG}/driver/x.py": "import agent_pm.crew\n",
+            }
+        )
+        self.assertEqual(
+            guards.layer_imports(root),
+            [
+                f"{PKG}/delegate/x.py: delegate imports agent_pm.roster",
+                f"{PKG}/driver/x.py: driver imports agent_pm.crew",
             ],
         )
 

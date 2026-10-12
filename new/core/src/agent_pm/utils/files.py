@@ -32,15 +32,19 @@ def read_regular(
         os.close(fd)
 
 
-def append_line(path: str | Path, text: str, *, durable: bool = False) -> None:
-    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it and its directory."""
+def append_line(path: str | Path, text: str, *, durable: bool = False, own: bool = False) -> None:
+    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it and its directory;
+    `own` also refuses one another user owns (EPERM)."""
     data = memoryview(text.encode(errors="replace"))
     fd = os.open(
         path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
     )
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
             raise OSError(errno.EINVAL, "not a regular file", str(path))
+        if own and st.st_uid != os.getuid():
+            raise OSError(errno.EPERM, "not owned by you", str(path))
         while data:
             data = data[os.write(fd, data) :]
         if durable:
