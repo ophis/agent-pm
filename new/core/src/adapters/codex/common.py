@@ -1,5 +1,6 @@
-"""Codex access, settings, usage parsing and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
-recovery and session files have bounded nonblocking reads with regular-file, ownership and symlink checks."""
+"""Codex access, settings, usage parsing and inspection; read dirs need no flag (the sandbox reads the whole disk).
+Both Modes share ~/.agent-pm/core-new-sessions/codex/; recovery and session files have bounded nonblocking reads with
+regular-file, ownership and symlink checks."""
 
 import fcntl
 import fnmatch
