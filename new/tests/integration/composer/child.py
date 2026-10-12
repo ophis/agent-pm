@@ -1,14 +1,15 @@
 """The Composer in a child process: `python3 -I` with only new/core/src on its sys.path, the test's own HOME (its
 ~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
 agent run as its caller (the Delegate) would."""
+
+from new.tests import SRC, hermetic
+
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-
-from new.tests import SRC, hermetic
 
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nsys.path.insert(0, sys.argv[1])\nimport composer\n"
@@ -51,13 +52,26 @@ class Case(unittest.TestCase):
             f.write(text)
 
     def child(self, code: str, *args: str):
-        res = subprocess.run([sys.executable, "-I", "-c", PRELUDE + code, SRC, *args], cwd=self.root,
-                             env={**os.environ, "HOME": self.home}, stdin=subprocess.DEVNULL, capture_output=True,
-                             text=True, timeout=TIMEOUT)
+        res = subprocess.run(
+            [sys.executable, "-I", "-c", PRELUDE + code, SRC, *args],
+            cwd=self.root,
+            env={**os.environ, "HOME": self.home},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         return json.loads(res.stdout)
 
     def compose(self, role: str, task: str | None = None, **req) -> dict:
-        req = {"role": role, "task": task, "input": "Hello.", "out": self.out, "workdir": self.work, "cwd": self.work,
-               **req}
+        req = {
+            "role": role,
+            "task": task,
+            "input": "Hello.",
+            "out": self.out,
+            "workdir": self.work,
+            "cwd": self.work,
+            **req,
+        }
         return self.child(COMPOSE, json.dumps(req))

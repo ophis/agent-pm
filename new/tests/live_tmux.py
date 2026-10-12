@@ -1,5 +1,8 @@
 """Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE, ITERM_SESSION_ID or
 TERM_PROGRAM. No tmux: the test skips."""
+
+from new.tests import fake_claude
+
 import os
 import resource
 import select
@@ -11,13 +14,11 @@ import threading
 import time
 from typing import NamedTuple
 
-from new.tests import fake_claude
-
 # two words: tmux execs them, not the user's login shell (and its rc files)
 IDLE = ("cat", "-")
 TIMEOUT = 10
 POLL = 0.05
-SOCKET_MAX = 100   # sun_path: 104 bytes (macOS), 108 (Linux)
+SOCKET_MAX = 100  # sun_path: 104 bytes (macOS), 108 (Linux)
 HEADROOM = 256
 PANES = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}"
 
@@ -30,7 +31,6 @@ class Client(NamedTuple):
 
 
 class Server:
-
     def __init__(self, case, home: str):
         self.case, self.home, self.size, self.clients = case, home, (200, 50), []
         self.program = shutil.which("tmux")
@@ -42,35 +42,74 @@ class Server:
         self.socket = os.path.join(self.root, f"tmux-{os.getuid()}", "default")
         self.bin = os.path.join(self.root, "bin")
         os.mkdir(self.bin)
-        self.path = fake_claude.install(self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin")
+        self.path = fake_claude.install(
+            self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin"
+        )
         case.addCleanup(self._close_clients)
         case.addCleanup(self.kill)
         if len(os.fsencode(self.socket)) > SOCKET_MAX:
             case.fail(f"tmux socket path over {SOCKET_MAX} bytes: {self.socket}")
 
     def env(self, **extra: str) -> dict[str, str]:
-        return {"PATH": self.path, "HOME": self.home, "PYTHONUTF8": "1", "TMUX_TMPDIR": self.root, **extra}
+        return {
+            "PATH": self.path,
+            "HOME": self.home,
+            "PYTHONUTF8": "1",
+            "TMUX_TMPDIR": self.root,
+            **extra,
+        }
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
         """Capped (RLIMIT_NPROC) at the user's processes plus HEADROOM against a fork loop."""
         self.size = width, height
         _, hard = resource.getrlimit(resource.RLIMIT_NPROC)
         uid = str(os.getuid())
-        ps = (["ps", "-L", "-U", uid, "-o", "lwp="] if sys.platform.startswith("linux")
-              else ["ps", "-U", uid, "-o", "pid="])
-        cap = len(subprocess.run(ps, capture_output=True, text=True, check=True).stdout.split()) + HEADROOM
+        ps = (
+            ["ps", "-L", "-U", uid, "-o", "lwp="]
+            if sys.platform.startswith("linux")
+            else ["ps", "-U", uid, "-o", "pid="]
+        )
+        cap = (
+            len(subprocess.run(ps, capture_output=True, text=True, check=True).stdout.split())
+            + HEADROOM
+        )
         cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
-        subprocess.run([self.program, "-u", "-S", self.socket, "-f", "/dev/null", "new-session", "-d", "-s", manager,
-                        "-x", str(width), "-y", str(height), *IDLE], env=self.env(), stdin=subprocess.DEVNULL,
-                       timeout=TIMEOUT, check=True,
-                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)))
+        subprocess.run(
+            [
+                self.program,
+                "-u",
+                "-S",
+                self.socket,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                manager,
+                "-x",
+                str(width),
+                "-y",
+                str(height),
+                *IDLE,
+            ],
+            env=self.env(),
+            stdin=subprocess.DEVNULL,
+            timeout=TIMEOUT,
+            check=True,
+            preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard)),
+        )
 
     def attach(self, session: str) -> None:
         master, slave = os.openpty()
         try:
-            proc = subprocess.Popen([self.program, "-S", self.socket, "-CC", "attach", "-t", f"={session}"],
-                                    stdin=slave, stdout=slave, stderr=slave, env=self.env(TERM="xterm-256color"),
-                                    start_new_session=True)
+            proc = subprocess.Popen(
+                [self.program, "-S", self.socket, "-CC", "attach", "-t", f"={session}"],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=self.env(TERM="xterm-256color"),
+                start_new_session=True,
+            )
         except OSError:
             os.close(master)
             raise
@@ -84,20 +123,42 @@ class Server:
         def listed() -> bool:
             if proc.poll() is not None:
                 self.case.fail(f"tmux -CC attach -t ={session} exited {proc.returncode}")
-            rows = self._out("list-clients", "-t", f"={session}", "-F",
-                             "#{client_pid} #{client_control_mode} #{client_tty}").splitlines()
+            rows = self._out(
+                "list-clients",
+                "-t",
+                f"={session}",
+                "-F",
+                "#{client_pid} #{client_control_mode} #{client_tty}",
+            ).splitlines()
             return any(r.startswith(f"{proc.pid} 1 /") for r in rows)
 
         wait(listed, what=f"a control-mode client of {session}")
         width, height = self.size
         os.write(master, f"refresh-client -C {width}x{height}\n".encode())
-        wait(lambda: self._out("display-message", "-p", "-t", f"={session}:", "#{window_width}x#{window_height}")
-             == f"{width}x{height}\n", what=f"{session}'s window at {width}x{height}")
+        wait(
+            lambda: (
+                self._out(
+                    "display-message",
+                    "-p",
+                    "-t",
+                    f"={session}:",
+                    "#{window_width}x#{window_height}",
+                )
+                == f"{width}x{height}\n"
+            ),
+            what=f"{session}'s window at {width}x{height}",
+        )
 
     def tmux(self, *args: str) -> subprocess.CompletedProcess:
         # -u: without locale or TMUX, tmux prints tabs and non-ASCII as "_"
-        return subprocess.run([self.program, "-u", "-S", self.socket, *args], env=self.env(), capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT)
+        return subprocess.run(
+            [self.program, "-u", "-S", self.socket, *args],
+            env=self.env(),
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=TIMEOUT,
+        )
 
     def inside(self, session: str) -> dict[str, str]:
         pid = self._out("display-message", "-p", "#{pid}").strip()
@@ -105,7 +166,9 @@ class Server:
         return {"TMUX": f"{self.socket},{pid},0", "TMUX_PANE": pane}
 
     def panes(self, window: str) -> dict[str, tuple[int, int, int, int]]:
-        rows = (line.split() for line in self._out("list-panes", "-t", window, "-F", PANES).splitlines())
+        rows = (
+            line.split() for line in self._out("list-panes", "-t", window, "-F", PANES).splitlines()
+        )
         return {r[0]: (int(r[1]), int(r[2]), int(r[3]), int(r[4])) for r in rows}
 
     def pane_of(self, session: str) -> str:
@@ -124,7 +187,10 @@ class Server:
         res = self.tmux("list-panes", "-a", "-F", "#{pid} #{pane_pid}")
         self.tmux("kill-server")
         pids = {int(p) for p in res.stdout.split() if p.isdigit()} if res.returncode == 0 else set()
-        wait(lambda: not any(map(_alive, pids)), what=f"the tmux server and its panes' processes {sorted(pids)} to end")
+        wait(
+            lambda: not any(map(_alive, pids)),
+            what=f"the tmux server and its panes' processes {sorted(pids)} to end",
+        )
 
     def _close_clients(self) -> None:
         for c in self.clients:
@@ -177,12 +243,15 @@ def wait(check, timeout: float = TIMEOUT, what: str = "check() to hold"):
             if value:
                 return value
         if time.monotonic() > deadline:
-            raise AssertionError(f"timed out after {timeout} s waiting for {what}; last value: {value!r}")
+            raise AssertionError(
+                f"timed out after {timeout} s waiting for {what}; last value: {value!r}"
+            )
         time.sleep(POLL)
 
 
 class Box(NamedTuple):
     """right and bottom exclusive: a neighbour past the 1-cell border starts at right + 1."""
+
     left: int
     top: int
     right: int
@@ -198,26 +267,51 @@ class Box(NamedTuple):
 
 
 def _union(boxes: list[Box]) -> Box:
-    return Box(min(b.left for b in boxes), min(b.top for b in boxes), max(b.right for b in boxes),
-               max(b.bottom for b in boxes))
+    return Box(
+        min(b.left for b in boxes),
+        min(b.top for b in boxes),
+        max(b.right for b in boxes),
+        max(b.bottom for b in boxes),
+    )
 
 
 def _sessions(cell) -> list[str]:
-    return [cell] if isinstance(cell, str) else [cell[0], *cell[1]] if isinstance(cell, tuple) else list(cell)
+    return (
+        [cell]
+        if isinstance(cell, str)
+        else [cell[0], *cell[1]]
+        if isinstance(cell, tuple)
+        else list(cell)
+    )
 
 
-def assert_grid(case, server: Server, manager: str, columns: list, manager_width: int | None = None) -> bool:
+def assert_grid(
+    case, server: Server, manager: str, columns: list, manager_width: int | None = None
+) -> bool:
     """Fails `case` unless manager's window is the grid `columns` gives (columns left to right, cells top down: a
     session, (parent, [subs]) or [subs]); True when it holds."""
-    window, width, stored = server._out("display-message", "-p", "-t", f"={manager}:",
-                                        "#{window_id}\t#{window_width}\t#{@grid-manager}").rstrip("\n").split("\t")
+    window, width, stored = (
+        server._out(
+            "display-message",
+            "-p",
+            "-t",
+            f"={manager}:",
+            "#{window_id}\t#{window_width}\t#{@grid-manager}",
+        )
+        .rstrip("\n")
+        .split("\t")
+    )
     panes = server.panes(window)
-    at = dict(line.split("\t", 1) for line in server._out("list-sessions", "-F", "#{session_name}\t#{@pane}")
-              .splitlines())
+    at = dict(
+        line.split("\t", 1)
+        for line in server._out("list-sessions", "-F", "#{session_name}\t#{@pane}").splitlines()
+    )
     names = {pane: name for name, pane in at.items() if pane in panes}
     names[stored] = f"{manager} (manager)"
-    layout = "\n".join(f"  {p} {names.get(p, '?')}: left {x} top {y} {w}x{h}"
-                       for p, (x, y, w, h) in sorted(panes.items(), key=lambda kv: kv[1][:2]))
+    layout = "\n".join(
+        f"  {p} {names.get(p, '?')}: left {x} top {y} {w}x{h}"
+        for p, (x, y, w, h) in sorted(panes.items(), key=lambda kv: kv[1][:2])
+    )
 
     def fail(problem: str):
         case.fail(f"grid: {problem}\n want {columns!r}\n window {window} {width} wide:\n{layout}")
@@ -229,7 +323,7 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
         return Box(x, y, x + w, y + h)
 
     def stacked(boxes: list[Box], what: str) -> None:
-        if any(a.bottom >= b.top for a, b in zip(boxes, boxes[1:])):
+        if any(a.bottom >= b.top for a, b in zip(boxes, boxes[1:], strict=False)):
             fail(f"{what}: not stacked top to bottom in the order given")
 
     def cell_box(cell) -> Box:
@@ -261,7 +355,9 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
     x, y, w, h = panes[stored]
     m = Box(x, y, x + w, y + h)
     if m.left != 0 or manager_width not in (None, m.width):
-        fail(f"manager at left {m.left}, {m.width} wide; want left 0, width {manager_width or 'any'}")
+        fail(
+            f"manager at left {m.left}, {m.width} wide; want left 0, width {manager_width or 'any'}"
+        )
     if not all(columns):
         fail("an empty column")
     cells = [[cell_box(cell) for cell in column] for column in columns]
@@ -272,8 +368,10 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
         fail(f"panes of no session given: {extra}")
     boxes = [_union(column) for column in cells]
     if boxes and (boxes[0].left != m.right + 1 or boxes[-1].right != int(width)):
-        fail(f"the columns span {boxes[0].left} to {boxes[-1].right}; want {m.right + 1} to {width}")
-    if any(a.right >= b.left for a, b in zip(boxes, boxes[1:])):
+        fail(
+            f"the columns span {boxes[0].left} to {boxes[-1].right}; want {m.right + 1} to {width}"
+        )
+    if any(a.right >= b.left for a, b in zip(boxes, boxes[1:], strict=False)):
         fail("the columns overlap or are out of order")
     if boxes and max(b.width for b in boxes) - min(b.width for b in boxes) > 1:
         fail(f"column widths {[b.width for b in boxes]} differ by more than 1")
@@ -282,7 +380,9 @@ def assert_grid(case, server: Server, manager: str, columns: list, manager_width
             fail(f"column {i}: its cells differ in left or width")
         stacked(column, f"column {i}")
         if (column[0].top, column[-1].bottom) != (m.top, m.bottom):
-            fail(f"column {i}: spans {column[0].top} to {column[-1].bottom}; want the manager's {m.top} to {m.bottom}")
+            fail(
+                f"column {i}: spans {column[0].top} to {column[-1].bottom}; want the manager's {m.top} to {m.bottom}"
+            )
         if max(c.height for c in column) - min(c.height for c in column) > 1:
             fail(f"column {i}: cell heights {[c.height for c in column]} differ by more than 1")
     return True

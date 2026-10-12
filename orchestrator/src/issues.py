@@ -69,17 +69,36 @@ def read_issue(gql, ident) -> Issue:
         raise LookupError(f"{ident}: issue not found")
     if node["identifier"] != ident:
         raise LookupError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
-    notes = sorted((Note(c["body"], c["createdAt"], (c["user"] or {}).get("email"), (c["user"] or {}).get("name"))
-                    for c in node["comments"]["nodes"] if not sessions.is_comment(c)),
-                   key=lambda n: linear.parse_time(n.at))
+    notes = sorted(
+        (
+            Note(
+                c["body"],
+                c["createdAt"],
+                (c["user"] or {}).get("email"),
+                (c["user"] or {}).get("name"),
+            )
+            for c in node["comments"]["nodes"]
+            if not sessions.is_comment(c)
+        ),
+        key=lambda n: linear.parse_time(n.at),
+    )
     linked = {}
-    for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [x["issue"] for x in node["inverseRelations"]["nodes"]]:
+    for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [
+        x["issue"] for x in node["inverseRelations"]["nodes"]
+    ]:
         linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
     return Issue(
-        id=node["id"], identifier=node["identifier"], url=node["url"], title=node["title"],
-        description=node["description"] or "", created_at=node["createdAt"],
-        project_id=(node["project"] or {}).get("id"), notes=tuple(notes),
-        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]), linked=tuple(linked.values()))
+        id=node["id"],
+        identifier=node["identifier"],
+        url=node["url"],
+        title=node["title"],
+        description=node["description"] or "",
+        created_at=node["createdAt"],
+        project_id=(node["project"] or {}).get("id"),
+        notes=tuple(notes),
+        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
+        linked=tuple(linked.values()),
+    )
 
 
 def parse_handoff(description) -> Handoff | None:
@@ -94,20 +113,27 @@ def parse_handoff(description) -> Handoff | None:
     def find(header, after, last=False):
         found = [i for i, line in enumerate(lines) if line == header and i > after]
         return (found[-1] if last else found[0]) if found else None
+
     src, ins = find(source, 0), find(instructions, 0)
     if src is not None and ins is not None and src > ins:
         src = None
     if src is not None:
         ins = find(instructions, src)
-    starts = {source: src, instructions: ins,
-              comments: find(comments, max((s for s in (src, ins) if s is not None), default=0), last=True)}
+    starts = {
+        source: src,
+        instructions: ins,
+        comments: find(
+            comments, max((s for s in (src, ins) if s is not None), default=0), last=True
+        ),
+    }
     starts = {h: i for h, i in starts.items() if i is not None}
 
     def body(header):
         if header not in starts:
             return ""
         end = min((s for s in starts.values() if s > starts[header]), default=len(lines))
-        return "\n".join(lines[starts[header] + 1:end]).strip()
+        return "\n".join(lines[starts[header] + 1 : end]).strip()
+
     return Handoff(m.group(1), body(instructions), body(comments))
 
 
@@ -121,5 +147,7 @@ def brief(issue) -> str:
 
 
 def build_cutoff(issue, humans) -> str:
-    started = [n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())]
+    started = [
+        n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())
+    ]
     return max(started, key=linear.parse_time) if started else issue.created_at

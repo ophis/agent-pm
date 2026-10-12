@@ -14,12 +14,38 @@ def main():
     if case in ("ignore-term", "ignore-term-silent"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
     with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as log:
-        keys = ("HOME", "PWD", "CODEX_HOME", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-                "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CLAUDECODE", "PYTHONPATH",
-                "NO_COLOR", "CODEX_CI", "PAGER", "GIT_PAGER", "GH_PAGER", "FAKE_ADDITION")
-        log.write(json.dumps({"pid": os.getpid(), "ppid": os.getppid(), "cwd": os.getcwd(), "argv": sys.argv[1:],
-                              "marker": os.environ.get("CODEX_THREAD_ID"),
-                              "env": {key: os.environ.get(key) for key in keys}}) + "\n")
+        keys = (
+            "HOME",
+            "PWD",
+            "CODEX_HOME",
+            "CODEX_THREAD_ID",
+            "CODEX_SESSION_ID",
+            "CODEX_VERSION",
+            "CODEX_SANDBOX",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+            "CODEX_PERMISSION_PROFILE",
+            "CLAUDECODE",
+            "PYTHONPATH",
+            "NO_COLOR",
+            "CODEX_CI",
+            "PAGER",
+            "GIT_PAGER",
+            "GH_PAGER",
+            "FAKE_ADDITION",
+        )
+        log.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "ppid": os.getppid(),
+                    "cwd": os.getcwd(),
+                    "argv": sys.argv[1:],
+                    "marker": os.environ.get("CODEX_THREAD_ID"),
+                    "env": {key: os.environ.get(key) for key in keys},
+                }
+            )
+            + "\n"
+        )
         log.flush()
         if case in ("silent", "ignore-term-silent"):
             time.sleep(30)
@@ -72,10 +98,22 @@ def main():
                     if case == "null":
                         primary = secondary = None
                     if case == "invalid-window":
-                        primary = {"usedPercent": True, "windowDurationMins": 10080, "resetsAt": "bad"}
-                        secondary = {"usedPercent": 60, "windowDurationMins": None, "resetsAt": 2000}
+                        primary = {
+                            "usedPercent": True,
+                            "windowDurationMins": 10080,
+                            "resetsAt": "bad",
+                        }
+                        secondary = {
+                            "usedPercent": 60,
+                            "windowDurationMins": None,
+                            "resetsAt": 2000,
+                        }
                     if case == "huge-number":
-                        primary = {"usedPercent": 10 ** 1000, "windowDurationMins": 10080, "resetsAt": None}
+                        primary = {
+                            "usedPercent": 10**1000,
+                            "windowDurationMins": 10080,
+                            "resetsAt": None,
+                        }
                         secondary = None
                     if case == "five-first":
                         primary, secondary = secondary, primary

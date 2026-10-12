@@ -1,5 +1,6 @@
 """Codex access, settings, usage parsing and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
 recovery and session files have bounded nonblocking reads with regular-file, ownership and symlink checks."""
+
 import fcntl
 import fnmatch
 import hashlib
@@ -24,8 +25,16 @@ def _absolute(path: str, label: str) -> str:
 
 
 def _snapshot(value: dict) -> dict:
-    if not isinstance(value, dict) or set(value) != {"cwd", "project", "dirs", "commands", "model", "effort",
-                                                   "network", "codex_home"}:
+    if not isinstance(value, dict) or set(value) != {
+        "cwd",
+        "project",
+        "dirs",
+        "commands",
+        "model",
+        "effort",
+        "network",
+        "codex_home",
+    }:
         raise ConfigError("invalid Codex recovery snapshot fields")
     paths = {key: _absolute(value[key], key) for key in ("cwd", "codex_home")}
     for key in ("project", "network"):
@@ -39,10 +48,19 @@ def _snapshot(value: dict) -> dict:
     if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
         raise ConfigError("invalid Codex recovery snapshot commands")
     for key in ("model", "effort"):
-        if value[key] is not None and (not isinstance(value[key], str) or not value[key] or not value[key].isprintable()):
+        if value[key] is not None and (
+            not isinstance(value[key], str) or not value[key] or not value[key].isprintable()
+        ):
             raise ConfigError(f"invalid Codex recovery snapshot {key}")
-    validated = {**paths, "project": value["project"], "dirs": dirs, "commands": commands.copy(),
-                 "model": value["model"], "effort": value["effort"], "network": value["network"]}
+    validated = {
+        **paths,
+        "project": value["project"],
+        "dirs": dirs,
+        "commands": commands.copy(),
+        "model": value["model"],
+        "effort": value["effort"],
+        "network": value["network"],
+    }
     if validated != value:
         raise ConfigError("invalid Codex recovery snapshot path")
     return validated
@@ -55,30 +73,40 @@ def _inside(path: str, root: str) -> bool:
 def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
     if not _inside(real_cwd, real_workdir):
-        raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
+        raise ConfigError(
+            f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load"
+        )
 
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
     config_home = _config_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
     if _inside(config_home, workdir) or _inside(real_config_home, real_workdir):
-        raise ConfigError(f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
-                          "move Codex config outside the workdir")
+        raise ConfigError(
+            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
+            "move Codex config outside the workdir"
+        )
 
     for start in (cwd, real_cwd):
         ancestor = start
         while True:
             candidate = os.path.join(ancestor, ".codex")
-            if os.path.lexists(candidate) and (os.path.isdir(candidate) or os.path.islink(candidate)):
+            if os.path.lexists(candidate) and (
+                os.path.isdir(candidate) or os.path.islink(candidate)
+            ):
                 real_candidate = os.path.realpath(candidate)
-                genuine_user_home = (candidate in (default_home, real_default_home)
-                                     and real_candidate == real_default_home
-                                     and not os.path.islink(candidate)
-                                     and not _inside(candidate, workdir)
-                                     and not _inside(real_candidate, real_workdir))
+                genuine_user_home = (
+                    candidate in (default_home, real_default_home)
+                    and real_candidate == real_default_home
+                    and not os.path.islink(candidate)
+                    and not _inside(candidate, workdir)
+                    and not _inside(real_candidate, real_workdir)
+                )
                 if not genuine_user_home:
-                    raise ConfigError(f"project Codex settings at {candidate} may load in an untrusted run; "
-                                      "use a clean workdir or trusted_dirs")
+                    raise ConfigError(
+                        f"project Codex settings at {candidate} may load in an untrusted run; "
+                        "use a clean workdir or trusted_dirs"
+                    )
             parent = os.path.dirname(ancestor)
             if parent == ancestor:
                 break
@@ -86,8 +114,11 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
 
 
 def _config_home(cwd: str, config_home: str | None = None) -> str:
-    return os.path.abspath(os.path.join(
-        cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")))
+    return os.path.abspath(
+        os.path.join(
+            cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -113,12 +144,18 @@ def _metadata(path: str) -> SessionFile:
                 metadata = json.loads(stream.readline(128 * 1024))
             except (ValueError, UnicodeError, RecursionError) as exc:
                 raise ConfigError(f"malformed Codex session metadata: {path}") from exc
-        if (not isinstance(metadata, dict) or metadata.get("type") != "session_meta"
-                or not isinstance(metadata.get("payload"), dict)):
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("type") != "session_meta"
+            or not isinstance(metadata.get("payload"), dict)
+        ):
             raise ConfigError(f"malformed Codex session metadata: {path}")
         payload = metadata["payload"]
-        if (not native_id(payload.get("id")) or not path.endswith("-" + payload["id"] + ".jsonl")
-                or _absolute(payload.get("cwd"), "session cwd") != payload["cwd"]):
+        if (
+            not native_id(payload.get("id"))
+            or not path.endswith("-" + payload["id"] + ".jsonl")
+            or _absolute(payload.get("cwd"), "session cwd") != payload["cwd"]
+        ):
             raise ConfigError(f"mismatched Codex session metadata: {path}")
         return SessionFile(path, info.st_mtime, metadata["payload"])
     finally:
@@ -145,8 +182,11 @@ def _session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
     matches = []
     for directory in directories:
         with os.scandir(directory) as entries:
-            matches.extend(entry.path for entry in entries
-                           if fnmatch.fnmatchcase(entry.name, f"rollout-*-{identifier}.jsonl"))
+            matches.extend(
+                entry.path
+                for entry in entries
+                if fnmatch.fnmatchcase(entry.name, f"rollout-*-{identifier}.jsonl")
+            )
     return matches
 
 
@@ -160,7 +200,9 @@ def session_file(snapshot: dict, identifier: str) -> SessionFile | None:
         return None
     found = _metadata(matches[0])
     if found.metadata["id"] != identifier or found.metadata["cwd"] != snapshot["cwd"]:
-        raise ConfigError(f"mismatched Codex session metadata for native ID {identifier}: {found.path}")
+        raise ConfigError(
+            f"mismatched Codex session metadata for native ID {identifier}: {found.path}"
+        )
     return found
 
 
@@ -172,10 +214,18 @@ def native_id(value) -> bool:
 
 
 def flags(snapshot: dict, *, interactive: bool) -> list[str]:
-    result = ["-s", "workspace-write", "-c", 'approval_policy="on-request"',
-              "-c", 'approvals_reviewer="auto_review"',
-              "-c", f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
-              "-c", "sandbox_workspace_write.writable_roots=[]"]
+    result = [
+        "-s",
+        "workspace-write",
+        "-c",
+        'approval_policy="on-request"',
+        "-c",
+        'approvals_reviewer="auto_review"',
+        "-c",
+        f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
+        "-c",
+        "sandbox_workspace_write.writable_roots=[]",
+    ]
     if snapshot["model"] is not None:
         result.extend(("-m", snapshot["model"]))
     if snapshot["effort"] is not None:
@@ -209,7 +259,9 @@ def _recovery_snapshot(state: SessionState) -> dict:
     _unsafe_root(_store_root(), paths)
     for path in paths:
         if not any(_inside(path, grant) for grant in state.writable_roots):
-            raise ConfigError(f"invalid Codex recovery writable grants: no recorded root covers {path}")
+            raise ConfigError(
+                f"invalid Codex recovery writable grants: no recorded root covers {path}"
+            )
     return snapshot
 
 
@@ -231,8 +283,12 @@ def _identity(workdir: str, sid: str) -> tuple[str, str]:
 
 
 def _state(data: object, workdir: str, sid: str) -> SessionState:
-    if not isinstance(data, dict) or set(data) != _SESSION_KEYS or type(data["version"]) is not int \
-            or data["version"] != _SESSION_VERSION:
+    if (
+        not isinstance(data, dict)
+        or set(data) != _SESSION_KEYS
+        or type(data["version"]) is not int
+        or data["version"] != _SESSION_VERSION
+    ):
         raise ConfigError("malformed recovery state")
     if data["workdir"] != workdir or data["sid"] != sid:
         raise ConfigError("invalid recovery state identity")
@@ -240,9 +296,13 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
     if native is not None and not native_id(native):
         raise ConfigError("invalid recovery native ID")
     roots = data["writable_roots"]
-    if not isinstance(roots, list) or any(_absolute(path, "writable root") != path for path in roots):
+    if not isinstance(roots, list) or any(
+        _absolute(path, "writable root") != path for path in roots
+    ):
         raise ConfigError("invalid recovery writable roots")
-    return SessionState(workdir, sid, _snapshot(_copy_snapshot(data["snapshot"])), roots.copy(), native)
+    return SessionState(
+        workdir, sid, _snapshot(_copy_snapshot(data["snapshot"])), roots.copy(), native
+    )
 
 
 def _components(path: str):
@@ -286,7 +346,9 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
 
 
 def _store_root() -> str:
-    return os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex")
+    return os.path.join(
+        os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
+    )
 
 
 def _store(*, create: bool) -> str | None:
@@ -308,8 +370,13 @@ def _path(root: str, workdir: str, sid: str) -> str:
 
 def _implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
     environment = os.environ if environment is None else environment
-    return ["/tmp", "/private/tmp", "/var/tmp", tempfile.gettempdir(),
-            *([os.path.abspath(environment["TMPDIR"])] if environment.get("TMPDIR") else [])]
+    return [
+        "/tmp",
+        "/private/tmp",
+        "/var/tmp",
+        tempfile.gettempdir(),
+        *([os.path.abspath(environment["TMPDIR"])] if environment.get("TMPDIR") else []),
+    ]
 
 
 def _unsafe_root(root: str, paths: list[str]) -> None:
@@ -330,7 +397,11 @@ def _read(path: str, workdir: str | None = None, sid: str | None = None) -> Sess
         raise ConfigError(f"cannot read recovery state {path}: {exc}") from exc
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
             raise ConfigError(f"unsafe recovery state file mode or owner: {path}")
         if info.st_size > _MAX_SESSION_BYTES:
             raise ConfigError(f"malformed recovery state: file too large: {path}")
@@ -369,10 +440,17 @@ def _locked(root: str):
 
 
 def _write(path: str, state: SessionState, *, exclusive: bool) -> None:
-    payload = json.dumps({"version": _SESSION_VERSION, "workdir": state.workdir, "sid": state.sid,
-                          "snapshot": state.snapshot, "native_id": state.native_id,
-                          "writable_roots": state.writable_roots},
-                         separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(
+        {
+            "version": _SESSION_VERSION,
+            "workdir": state.workdir,
+            "sid": state.sid,
+            "snapshot": state.snapshot,
+            "native_id": state.native_id,
+            "writable_roots": state.writable_roots,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
     if len(payload) > _MAX_SESSION_BYTES:
         raise ConfigError("recovery state is too large")
     root = os.path.dirname(path)
@@ -388,7 +466,9 @@ def _write(path: str, state: SessionState, *, exclusive: bool) -> None:
             try:
                 os.link(tmp, path, follow_symlinks=False)
             except FileExistsError as exc:
-                raise ConfigError(f"recovery state already exists for run ID {state.sid!r}") from exc
+                raise ConfigError(
+                    f"recovery state already exists for run ID {state.sid!r}"
+                ) from exc
         else:
             os.replace(tmp, path)
         directory = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -403,12 +483,26 @@ def _write(path: str, state: SessionState, *, exclusive: bool) -> None:
             os.unlink(tmp)
 
 
-def _create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list[str]) -> SessionState:
+def _create_session(
+    workdir: str, sid: str, snapshot: dict, writable_roots: list[str]
+) -> SessionState:
     workdir, sid = _identity(workdir, sid)
-    state = _state({"version": _SESSION_VERSION, "workdir": workdir, "sid": sid,
-                    "snapshot": snapshot, "native_id": None,
-                    "writable_roots": list(dict.fromkeys([workdir, *(_absolute(path, "writable root")
-                                                                    for path in writable_roots)]))}, workdir, sid)
+    state = _state(
+        {
+            "version": _SESSION_VERSION,
+            "workdir": workdir,
+            "sid": sid,
+            "snapshot": snapshot,
+            "native_id": None,
+            "writable_roots": list(
+                dict.fromkeys(
+                    [workdir, *(_absolute(path, "writable root") for path in writable_roots)]
+                )
+            ),
+        },
+        workdir,
+        sid,
+    )
     _recovery_snapshot(state)
     _unsafe_root(_store_root(), [*state.writable_roots, *_implicit_writable_roots()])
     root = _store(create=True)
@@ -439,12 +533,23 @@ def _bind_session(workdir: str, sid: str, identifier: str) -> SessionState:
         existing = _load_session(workdir, sid)
         if existing is None:
             raise ConfigError(f"missing recovery state for run ID {sid!r}")
-        validated = _state({"version": _SESSION_VERSION, "workdir": workdir, "sid": sid,
-                            "snapshot": existing.snapshot,
-                            "native_id": identifier, "writable_roots": existing.writable_roots}, workdir, sid)
+        validated = _state(
+            {
+                "version": _SESSION_VERSION,
+                "workdir": workdir,
+                "sid": sid,
+                "snapshot": existing.snapshot,
+                "native_id": identifier,
+                "writable_roots": existing.writable_roots,
+            },
+            workdir,
+            sid,
+        )
         if existing.native_id is not None:
             if existing.native_id != validated.native_id:
-                raise ConfigError(f"recovery run ID {sid!r} is already bound to a different native ID")
+                raise ConfigError(
+                    f"recovery run ID {sid!r} is already bound to a different native ID"
+                )
             return existing
         _write(_path(root, workdir, sid), validated, exclusive=False)
         return validated
@@ -491,9 +596,22 @@ def _usage(snapshot) -> Usage | None:
 
 
 class CodexCommon:
-    unset = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-             "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CLAUDECODE")
-    defaults = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
+    unset = (
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CODEX_VERSION",
+        "CODEX_SANDBOX",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+        "CODEX_PERMISSION_PROFILE",
+        "CLAUDECODE",
+    )
+    defaults = {
+        "NO_COLOR": "1",
+        "CODEX_CI": "1",
+        "PAGER": "cat",
+        "GIT_PAGER": "cat",
+        "GH_PAGER": "cat",
+    }
 
     def __init__(self, config):
         self.config = dict(config)
@@ -501,14 +619,24 @@ class CodexCommon:
             raise ConfigError("Codex shell_network must be a boolean")
         for name in ("tiers", "efforts"):
             values = config.get(name, {})
-            if not isinstance(values, dict) or any(not isinstance(key, str) or not isinstance(value, str)
-                                                 or not value.strip() or not value.isprintable()
-                                                 for key, value in values.items()):
+            if not isinstance(values, dict) or any(
+                not isinstance(key, str)
+                or not isinstance(value, str)
+                or not value.strip()
+                or not value.isprintable()
+                for key, value in values.items()
+            ):
                 raise ConfigError(f"Codex {name} must map strings to printable text")
         env = config.get("env", {})
-        if not isinstance(env, dict) or any(not isinstance(key, str) or not key or "=" in key or "\0" in key
-                                           or not isinstance(value, str) or "\0" in value
-                                           for key, value in env.items()):
+        if not isinstance(env, dict) or any(
+            not isinstance(key, str)
+            or not key
+            or "=" in key
+            or "\0" in key
+            or not isinstance(value, str)
+            or "\0" in value
+            for key, value in env.items()
+        ):
             raise ConfigError("Codex env must map environment names to strings without NUL")
 
     def _mapped(self, name, value):
@@ -536,14 +664,23 @@ class CodexCommon:
             return state
         workdir, sid = _identity(spec.workdir, spec.sid)
         cwd = _absolute(spec.access.cwd or workdir, "cwd")
-        home = _absolute(_config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home")
+        home = _absolute(
+            _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
+        )
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
-        snapshot = _snapshot({"cwd": cwd, "project": spec.access.project,
-                              "dirs": [_absolute(path, "dir") for path in spec.access.dirs],
-                              "commands": list(spec.access.commands), "model": self._mapped("tiers", spec.tier),
-                              "effort": self._mapped("efforts", spec.effort),
-                              "network": self.config["shell_network"], "codex_home": home})
+        snapshot = _snapshot(
+            {
+                "cwd": cwd,
+                "project": spec.access.project,
+                "dirs": [_absolute(path, "dir") for path in spec.access.dirs],
+                "commands": list(spec.access.commands),
+                "model": self._mapped("tiers", spec.tier),
+                "effort": self._mapped("efforts", spec.effort),
+                "network": self.config["shell_network"],
+                "codex_home": home,
+            }
+        )
         return _create_session(workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]])
 
     def load(self, workdir: str, sid: str) -> SessionState | None:
@@ -557,8 +694,11 @@ class CodexCommon:
 
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
-        return Launch((os.path.realpath(sys.executable), script),
-                      env={**self.defaults, **self.config.get("env", {})}, unset=self.unset)
+        return Launch(
+            (os.path.realpath(sys.executable), script),
+            env={**self.defaults, **self.config.get("env", {})},
+            unset=self.unset,
+        )
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
@@ -578,7 +718,9 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
-        command = shlex.join(["codex", "resume", *flags(snapshot, interactive=True), state.native_id])
+        command = shlex.join(
+            ["codex", "resume", *flags(snapshot, interactive=True), state.native_id]
+        )
         return f"cd {shlex.quote(snapshot['cwd'])} && CODEX_HOME={shlex.quote(snapshot['codex_home'])} {command}"
 
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
@@ -615,8 +757,11 @@ class CodexCommon:
                 candidates.append((payload["id"], parent, metadata.mtime))
         related, newest = {state.native_id}, found.mtime
         while True:
-            children = [(identifier, stamp) for identifier, parent, stamp in candidates
-                        if parent in related and identifier not in related]
+            children = [
+                (identifier, stamp)
+                for identifier, parent, stamp in candidates
+                if parent in related and identifier not in related
+            ]
             added = {identifier for identifier, stamp in children} - related
             if not added:
                 return newest
@@ -631,14 +776,23 @@ class CodexCommon:
             state = self.lookup(sid, cwd)
             if state is None:
                 return result
-            result = replace(result, native_id=state.native_id or "", cwd=state.snapshot["cwd"],
-                             project=state.snapshot["project"])
+            result = replace(
+                result,
+                native_id=state.native_id or "",
+                cwd=state.snapshot["cwd"],
+                project=state.snapshot["project"],
+            )
             if state.native_id is None:
                 return result
             result = replace(result, resume=self.resume_command(state))
             found = session_file(state.snapshot, state.native_id)
             if found is None:
                 return result
-            return replace(result, transcript=found.path, resumable="yes", last_active=self.last_active(state, found))
+            return replace(
+                result,
+                transcript=found.path,
+                resumable="yes",
+                last_active=self.last_active(state, found),
+            )
         except (ConfigError, OSError):
             return replace(result, resumable="unknown")

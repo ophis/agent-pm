@@ -3,6 +3,7 @@
 Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
 record to Exited(99), which the Driver drops. InProcessFakeAdapter, in_process only, logs {prompt, sid, resume, pid,
 thread} and runs out, err, sleep, exit and raise steps."""
+
 import json
 import os
 import shlex
@@ -10,8 +11,24 @@ import sys
 import threading
 import time
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, InProcess,
-                           Launch, LimitHit, Reply, SessionBound, Stderr, Tui, TurnEnd)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Adapter,
+    Blocked,
+    Exited,
+    Headless,
+    InProcess,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Stderr,
+    Tui,
+    TurnEnd,
+)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -39,8 +56,19 @@ class InProcessFakeAdapter(FakeAdapter):
 
 
 def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
-    return (sys.executable, RUNTIME, "--scenario", adapter.config["scenario"], "--log", adapter.config["log"],
-            "--sid", spec.sid, *(["--resume"] if resume else []), "--", prompt)
+    return (
+        sys.executable,
+        RUNTIME,
+        "--scenario",
+        adapter.config["scenario"],
+        "--log",
+        adapter.config["log"],
+        "--sid",
+        spec.sid,
+        *(["--resume"] if resume else []),
+        "--",
+        prompt,
+    )
 
 
 def _parse(record):
@@ -63,9 +91,11 @@ def _parse(record):
 
 class FakeHeadless(Headless):
     def launch(self, prompt, spec, resume):
-        return Launch(_argv(self.adapter, prompt, spec, resume),
-                      transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
-                      resume=f"fake --resume {shlex.quote(spec.sid)}")
+        return Launch(
+            _argv(self.adapter, prompt, spec, resume),
+            transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
+            resume=f"fake --resume {shlex.quote(spec.sid)}",
+        )
 
     def parse(self, record):
         return _parse(record)
@@ -75,13 +105,25 @@ class FakeInProcess(InProcess):
     def run(self, prompt, spec, resume):
         config = self.adapter.config
         with open(config["log"], "a", encoding="utf-8") as f:
-            f.write(json.dumps({"prompt": prompt, "sid": spec.sid, "resume": resume, "pid": os.getpid(),
-                                "thread": threading.get_ident()}) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "prompt": prompt,
+                        "sid": spec.sid,
+                        "resume": resume,
+                        "pid": os.getpid(),
+                        "thread": threading.get_ident(),
+                    }
+                )
+                + "\n"
+            )
         with open(config["scenario"], encoding="utf-8") as f:
             scenario = json.load(f)
         if isinstance(scenario, list):
             scenario = {"steps": scenario}
-        for step in scenario["resume"] if resume and "resume" in scenario else scenario.get("steps", []):
+        for step in (
+            scenario["resume"] if resume and "resume" in scenario else scenario.get("steps", [])
+        ):
             if "out" in step:
                 yield from _parse(step["out"])
             elif "err" in step:

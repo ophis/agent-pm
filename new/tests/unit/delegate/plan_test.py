@@ -1,5 +1,9 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
 dir checks (TeamRuns), for a custom team and for the configured team dirs."""
+
+from new.tests import NEW, hermetic
+from new.tests.unit.composer.team_test import POET, VERSE
+
 import io
 import json
 import os
@@ -12,8 +16,6 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from new.tests import NEW, hermetic
-from new.tests.unit.composer.team_test import POET, VERSE
 import composer
 from composer import RunConfig, RunParams
 from composer.base import SRC
@@ -49,6 +51,7 @@ def write_team(top, files=TEAM_FILES):
 
 class Base(unittest.TestCase):
     """A real temp dir for the workdir `work` (not made) and a HOME of the test's own (self.agent_pm)."""
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -61,7 +64,9 @@ class Base(unittest.TestCase):
         with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write(text)
 
-    def planned(self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw):
+    def planned(
+        self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
+    ):
         """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.", runtime "fake",
         headless, out self.out, workdir self.work, the cwd the workdir, unless `kw` says otherwise."""
         kw = {"runtime": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
@@ -81,6 +86,7 @@ class Base(unittest.TestCase):
 
 class Cwd(Base):
     """place: the run's cwd and whether its project settings load."""
+
     def setUp(self):
         super().setUp()
         self.trusted, self.other = (os.path.join(self.tmp, d) for d in ("trusted", "other"))
@@ -92,7 +98,12 @@ class Cwd(Base):
         self.local(f"trusted_dirs = {json.dumps(list(trusted))}\n")
         err = io.StringIO()
         with redirect_stderr(err):
-            got = place(replace(composer.resolve("researcher"), cwd=key), self.work, resume_sid=resume, cwd=cwd)
+            got = place(
+                replace(composer.resolve("researcher"), cwd=key),
+                self.work,
+                resume_sid=resume,
+                cwd=cwd,
+            )
         return got, err.getvalue()
 
     def write_record(self, *entries):
@@ -111,13 +122,19 @@ class Cwd(Base):
     def test_a_trusted_cwd_loads_project_settings_without_a_notice(self):
         link = os.path.join(self.tmp, "link")
         os.symlink(self.trusted, link)
-        for entry, cwd in ((self.trusted, self.trusted), (link, self.trusted), (self.tmp, self.trusted),
-                           (self.trusted, link)):
+        for entry, cwd in (
+            (self.trusted, self.trusted),
+            (link, self.trusted),
+            (self.tmp, self.trusted),
+            (self.trusted, link),
+        ):
             with self.subTest(entry=entry, cwd=cwd):
                 self.assertEqual(self.placed(entry, cwd=cwd), ((cwd, True), ""))
 
     def test_an_untrusted_cwd_gets_a_notice(self):
-        self.assertEqual(self.placed(self.trusted, cwd=self.other), ((self.other, False), notice(self.other)))
+        self.assertEqual(
+            self.placed(self.trusted, cwd=self.other), ((self.other, False), notice(self.other))
+        )
 
     def test_the_workdir_as_cwd_has_no_notice(self):
         self.assertEqual(self.placed(cwd=self.work), ((self.work, False), ""))
@@ -128,25 +145,40 @@ class Cwd(Base):
         for cwd in (self.work, sub):
             with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as cm:
                 self.placed(self.tmp, cwd=cwd)
-            self.assertEqual(str(cm.exception), f"cwd {cwd} is in trusted_dirs and in the workdir: project settings "
-                                                "must not load from it")
+            self.assertEqual(
+                str(cm.exception),
+                f"cwd {cwd} is in trusted_dirs and in the workdir: project settings "
+                "must not load from it",
+            )
         self.assertEqual(self.placed(cwd=sub)[0], (sub, False))
 
     def test_a_cwd_that_is_no_directory_or_a_bad_trusted_dirs_is_refused(self):
         nope, file = os.path.join(self.tmp, "nope"), os.path.join(self.tmp, "file")
         open(file, "w").close()
-        for trusted, key, want in (((), nope, f"cwd {nope} is not a directory"),
-                                   ((), file, f"cwd {file} is not a directory"),
-                                   (("rel/dir",), "", "trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path")):
+        for trusted, key, want in (
+            ((), nope, f"cwd {nope} is not a directory"),
+            ((), file, f"cwd {file} is not a directory"),
+            (("rel/dir",), "", "trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path"),
+        ):
             with self.subTest(want=want), self.assertRaises(ConfigError) as cm:
                 self.placed(*trusted, cwd=self.other, key=key)
             self.assertEqual(str(cm.exception), want)
 
     def test_a_resume_runs_in_the_cwd_and_project_of_its_session_record(self):
         os.makedirs(self.work)
-        api.records.note(api.records.path(self.work), "session", sid=SID, cwd=self.trusted, project=True,
-                         transcript="", resume="")
-        self.assertEqual(self.placed(self.trusted, cwd=self.other, key=self.work, resume=SID), ((self.trusted, True), ""))
+        api.records.note(
+            api.records.path(self.work),
+            "session",
+            sid=SID,
+            cwd=self.trusted,
+            project=True,
+            transcript="",
+            resume="",
+        )
+        self.assertEqual(
+            self.placed(self.trusted, cwd=self.other, key=self.work, resume=SID),
+            ((self.trusted, True), ""),
+        )
         self.write_record({"sid": SID, "cwd": self.trusted, "project": False})
         self.assertEqual(self.placed(self.trusted, resume=SID)[0], (self.trusted, False))
 
@@ -157,13 +189,21 @@ class Cwd(Base):
         self.assertEqual(str(cm.exception), f"cwd {self.trusted} is no longer in trusted_dirs")
 
     def test_a_resume_without_its_session_record_runs_in_the_workdir(self):
-        self.assertEqual(self.placed(self.trusted, cwd=self.trusted, resume=SID), ((self.work, False), ""))
-        for entries in ((), ({"sid": "other", "cwd": self.trusted, "project": True},),
-                        ({"sid": SID, "cwd": "rel", "project": True},),
-                        ({"sid": SID, "cwd": self.trusted, "project": 1},)):
+        self.assertEqual(
+            self.placed(self.trusted, cwd=self.trusted, resume=SID), ((self.work, False), "")
+        )
+        for entries in (
+            (),
+            ({"sid": "other", "cwd": self.trusted, "project": True},),
+            ({"sid": SID, "cwd": "rel", "project": True},),
+            ({"sid": SID, "cwd": self.trusted, "project": 1},),
+        ):
             with self.subTest(entries=entries):
                 self.write_record(*entries)
-                self.assertEqual(self.placed(self.trusted, cwd=self.trusted, resume=SID), ((self.work, False), ""))
+                self.assertEqual(
+                    self.placed(self.trusted, cwd=self.trusted, resume=SID),
+                    ((self.work, False), ""),
+                )
 
     def test_prompt_paths_stay_absolute_whatever_the_cwd_and_an_input_naming_a_file_is_text(self):
         os.makedirs(self.work)
@@ -175,32 +215,45 @@ class Cwd(Base):
         self.local(f"trusted_dirs = {json.dumps([self.trusted])}\n")
         for cwd in (self.trusted, self.other):
             with self.subTest(cwd=cwd):
-                got, _ = self.planned(cwd=cwd, input="work/input.md", workdir="work", out="work/out.md")
+                got, _ = self.planned(
+                    cwd=cwd, input="work/input.md", workdir="work", out="work/out.md"
+                )
                 self.assertIn(f"\n- `<Workdir>`: `{self.work}`\n", got.prompt)
                 self.assertTrue(got.prompt.endswith("\n# Input\n\nwork/input.md\n"))
-                self.assertEqual((got.spec.workdir, got.params.workdir, got.out), (self.work, self.work, self.out))
+                self.assertEqual(
+                    (got.spec.workdir, got.params.workdir, got.out),
+                    (self.work, self.work, self.out),
+                )
 
 
 class Refusals(Base):
     def test_each_refusal_names_its_cause_and_nothing_is_written(self):
         tasks = ", ".join(composer.index("researcher"))
-        nobody = RunConfig(role="nope", tier=2, effort="high", runtime="fake", output={"type": "local"})
-        for kw, want in (({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),
-                         ({"name": "n"}, "name: tui mode only"),
-                         ({"events": "e"}, "events: tui mode only"),
-                         ({"mode": "in_process", "name": "n"}, "name: tui mode only"),
-                         ({"mode": "in_process", "events": "e"}, "events: tui mode only"),
-                         ({"sid": "a", "resume": "b"}, "sid 'a' differs from resume 'b'"),
-                         ({"run": nobody}, "unknown role 'nope'"),
-                         ({"task": "nope"}, f"task 'nope' is not one of researcher's tasks ({tasks})")):
+        nobody = RunConfig(
+            role="nope", tier=2, effort="high", runtime="fake", output={"type": "local"}
+        )
+        for kw, want in (
+            ({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),
+            ({"name": "n"}, "name: tui mode only"),
+            ({"events": "e"}, "events: tui mode only"),
+            ({"mode": "in_process", "name": "n"}, "name: tui mode only"),
+            ({"mode": "in_process", "events": "e"}, "events: tui mode only"),
+            ({"sid": "a", "resume": "b"}, "sid 'a' differs from resume 'b'"),
+            ({"run": nobody}, "unknown role 'nope'"),
+            ({"task": "nope"}, f"task 'nope' is not one of researcher's tasks ({tasks})"),
+        ):
             with self.subTest(want=want):
                 self.assertEqual(self.refused(**kw), want)
                 self.assertFalse(os.path.exists(self.work))
 
     def test_a_composer_or_driver_error_is_the_delegates_with_its_message(self):
-        self.assertEqual(self.refused(keys={"templates": ["nope"]}), "missing file templates/nope.md")
-        self.assertIn("workdir must be a printable absolute path, got ", self.refused(workdir=self.work + "\n",
-                                                                                      cwd=self.tmp))
+        self.assertEqual(
+            self.refused(keys={"templates": ["nope"]}), "missing file templates/nope.md"
+        )
+        self.assertIn(
+            "workdir must be a printable absolute path, got ",
+            self.refused(workdir=self.work + "\n", cwd=self.tmp),
+        )
 
 
 class Planned(Base):
@@ -211,24 +264,37 @@ class Planned(Base):
         for value, commands in ((gate, (command, gate)), ("", (command,))):
             with self.subTest(gate=value):
                 got, _ = self.planned(keys=self.KEYS | {"gate": value})
-                self.assertEqual(got.spec.access, api.Access(dirs=(TASKS, METHODS), commands=commands, cwd=self.work,
-                                                             project=False))
+                self.assertEqual(
+                    got.spec.access,
+                    api.Access(
+                        dirs=(TASKS, METHODS), commands=commands, cwd=self.work, project=False
+                    ),
+                )
 
     def test_the_cwd_unset_is_the_callers_and_the_workdir_an_added_dir(self):
         got, err = self.planned(keys=self.KEYS, cwd=None)
         access = got.spec.access
-        self.assertEqual((access.cwd, access.project, access.dirs), (os.getcwd(), False, (self.work, TASKS, METHODS)))
+        self.assertEqual(
+            (access.cwd, access.project, access.dirs),
+            (os.getcwd(), False, (self.work, TASKS, METHODS)),
+        )
         self.assertEqual(err, notice(os.getcwd()))
 
     def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_workdir(self):
         spec = self.planned(keys={"tier": 4, "effort": "low"})[0].spec
-        self.assertEqual((spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", None))
+        self.assertEqual(
+            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", None)
+        )
 
     def test_a_new_run_gets_a_new_uuid4_sid_unless_given_one_and_a_resume_its_own(self):
         first, second = self.planned()[0], self.planned()[0]
         self.assertEqual((uuid.UUID(first.sid).version, first.resume), (4, False))
         self.assertNotEqual(first.sid, second.sid)
-        for kw, resume in (({"sid": SID}, False), ({"resume": SID}, True), ({"sid": SID, "resume": SID}, True)):
+        for kw, resume in (
+            ({"sid": SID}, False),
+            ({"resume": SID}, True),
+            ({"sid": SID, "resume": SID}, True),
+        ):
             with self.subTest(kw=kw):
                 got = self.planned(**kw)[0]
                 self.assertEqual((got.sid, got.resume, got.params.resume), (SID, resume, resume))
@@ -249,9 +315,13 @@ class Planned(Base):
 
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
-        self.assertEqual((got.runtime, got.mode, got.run.task), ("fake", "headless", "light-research"))
+        self.assertEqual(
+            (got.runtime, got.mode, got.run.task), ("fake", "headless", "light-research")
+        )
         self.assertEqual((got.name, got.events), (None, None))
-        self.assertEqual(got.params, RunParams(input="Research X.", out=self.out, workdir=self.work))
+        self.assertEqual(
+            got.params, RunParams(input="Research X.", out=self.out, workdir=self.work)
+        )
         self.assertEqual(self.planned(task=None)[0].run.task, "")
 
     def test_in_process_is_planned_as_headless(self):
@@ -278,6 +348,7 @@ class Planned(Base):
 
 class ConfiguredTeamDirs(Base):
     """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir) checked only for overlap."""
+
     def setUp(self):
         super().setUp()
         self.team = os.path.join(self.tmp, "team")
@@ -286,22 +357,29 @@ class ConfiguredTeamDirs(Base):
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
         inside, tasks = os.path.join(self.team, "w"), os.path.join(self.team, "tasks")
-        for kw, what in (({"workdir": inside}, f"the workdir {inside}"),
-                         ({"cwd": self.tmp}, f"the cwd {self.tmp}"),
-                         ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
-                         ({"keys": {"read": [self.tmp]}}, f"a dir the run adds {self.tmp}"),
-                         ({"keys": {"read": [tasks]}}, f"a dir the run adds {tasks}")):
+        for kw, what in (
+            ({"workdir": inside}, f"the workdir {inside}"),
+            ({"cwd": self.tmp}, f"the cwd {self.tmp}"),
+            ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
+            ({"keys": {"read": [self.tmp]}}, f"a dir the run adds {self.tmp}"),
+            ({"keys": {"read": [tasks]}}, f"a dir the run adds {tasks}"),
+        ):
             with self.subTest(what=what):
-                self.assertEqual(self.refused(**kw), f"team_dirs: {self.team} overlaps {what}: the agent run can "
-                                                     "write there")
+                self.assertEqual(
+                    self.refused(**kw),
+                    f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
+                )
 
     def test_a_symlink_in_one_is_checked_by_its_real_path(self):
         tasks, moved = os.path.join(self.team, "tasks"), os.path.join(self.work, "team-tasks")
         os.makedirs(self.work)
         os.rename(tasks, moved)
         os.symlink(moved, tasks)
-        self.assertEqual(self.refused(), f"team_dirs: {tasks} ({moved}) overlaps the workdir {self.work}: the agent "
-                                         "run can write there")
+        self.assertEqual(
+            self.refused(),
+            f"team_dirs: {tasks} ({moved}) overlaps the workdir {self.work}: the agent "
+            "run can write there",
+        )
 
     def test_a_bad_or_unset_team_dirs_changes_nothing(self):
         base = self.planned(sid=SID)[0]
@@ -312,12 +390,17 @@ class ConfiguredTeamDirs(Base):
 
     def test_given_as_the_runs_team_it_is_refused_in_a_temp_dir(self):
         found = composer.team(composer.TEAM, [self.team])
-        self.assertTrue(self.refused("poet", "verse", team=found).startswith(f"team_dirs: {self.team} is in temp dir "))
+        self.assertTrue(
+            self.refused("poet", "verse", team=found).startswith(
+                f"team_dirs: {self.team} is in temp dir "
+            )
+        )
 
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CustomTeam(Base):
     """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run can write."""
+
     def setUp(self):
         super().setUp()
         os.makedirs(TEAMS, mode=0o700, exist_ok=True)
@@ -336,15 +419,19 @@ class CustomTeam(Base):
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
         inside, top = os.path.join(self.team, "w"), os.path.dirname(self.team)
-        for role, kw, what in (("poet", {"workdir": inside}, f"the workdir {inside}"),
-                               ("poet", {"cwd": top}, f"the cwd {top}"),
-                               ("poet", {"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
-                               ("poet", {"keys": {"read": [self.team]}}, f"a dir the run adds {self.team}"),
-                               ("researcher", {"keys": {"read": [self.tasks]}}, f"a dir the run adds {self.tasks}")):
+        for role, kw, what in (
+            ("poet", {"workdir": inside}, f"the workdir {inside}"),
+            ("poet", {"cwd": top}, f"the cwd {top}"),
+            ("poet", {"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
+            ("poet", {"keys": {"read": [self.team]}}, f"a dir the run adds {self.team}"),
+            ("researcher", {"keys": {"read": [self.tasks]}}, f"a dir the run adds {self.tasks}"),
+        ):
             with self.subTest(role=role, what=what):
                 task = "verse" if role == "poet" else "light-research"
-                self.assertEqual(self.refused(role, task, team=self.found, **kw),
-                                 f"team_dirs: {self.team} overlaps {what}: the agent run can write there")
+                self.assertEqual(
+                    self.refused(role, task, team=self.found, **kw),
+                    f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
+                )
 
 
 if __name__ == "__main__":

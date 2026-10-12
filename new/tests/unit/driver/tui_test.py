@@ -2,6 +2,9 @@
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
+
+from new.tests import SRC, fake_adapter, hermetic
+
 import errno
 import fcntl
 import inspect
@@ -16,9 +19,19 @@ import threading
 import unittest
 from unittest import mock
 
-from new.tests import SRC, fake_adapter, hermetic
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Blocked, Key, LimitHit, Paste, SessionBound,
-                           SessionInfo, TurnEnd)
+from adapters.base import (
+    ACTIVITY,
+    BLOCKED,
+    TURN_END,
+    Activity,
+    Blocked,
+    Key,
+    LimitHit,
+    Paste,
+    SessionBound,
+    SessionInfo,
+    TurnEnd,
+)
 from driver import api, tmux_host
 from driver.errors import DriverError
 from driver.modes import tui
@@ -65,6 +78,7 @@ class Clock:
 class ScanTui(fake_adapter.FakeTui):
     """The fake Tui with two dialogs and a usage-limit message `LIMIT <epoch>`; activity is the payload's tool, the
     blocked reason its why; each screen limit() sees is kept."""
+
     dialogs = ("Trust  this\nfolder?", "Sign in")
 
     def __init__(self, adapter):
@@ -96,8 +110,11 @@ class Base(unittest.TestCase):
         self.host = fake_host()
         self.log = []
         self.clock = Clock(self.log)
-        for patch in (mock.patch.object(tui, "tmux_host", self.host),
-                      mock.patch("time.monotonic", lambda: self.clock.now), mock.patch("time.sleep", self.clock.sleep)):
+        for patch in (
+            mock.patch.object(tui, "tmux_host", self.host),
+            mock.patch("time.monotonic", lambda: self.clock.now),
+            mock.patch("time.sleep", self.clock.sleep),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
         self.run = ScanTui(fake_adapter.FakeAdapter({"tui": True}))
@@ -105,8 +122,14 @@ class Base(unittest.TestCase):
 
     def prepare(self, run=None, info=None, events=DEFAULT, workdir=None) -> tui.TuiMode:
         events = self.events if events is DEFAULT else events
-        return tui.TuiMode.prepare(NAME, run or self.run, info or self.info, events, runtime="fake",
-                                   workdir=workdir or self.tmp)
+        return tui.TuiMode.prepare(
+            NAME,
+            run or self.run,
+            info or self.info,
+            events,
+            runtime="fake",
+            workdir=workdir or self.tmp,
+        )
 
     def started(self) -> tui.TuiMode:
         """A TuiMode prepared (the session absent), begun on pane %1, the host's calls cleared, its status RUNNING."""
@@ -124,8 +147,18 @@ class Base(unittest.TestCase):
                 f.write(line if isinstance(line, bytes) else (json.dumps(line) + "\n").encode())
 
     def state(self, **changes) -> dict:
-        return {"runtime": "fake", "sid": SID, "workdir": self.tmp, "cwd": self.tmp, "project": False,
-                "transcript": "", "resume": "", "events": self.events, "words": WORDS, **changes}
+        return {
+            "runtime": "fake",
+            "sid": SID,
+            "workdir": self.tmp,
+            "cwd": self.tmp,
+            "project": False,
+            "transcript": "",
+            "resume": "",
+            "events": self.events,
+            "words": WORDS,
+            **changes,
+        }
 
     def write_state(self, value) -> None:
         os.makedirs(self.dir, 0o700, exist_ok=True)
@@ -167,20 +200,46 @@ class PrepareTest(Base):
         info = SessionInfo(SID, "", "/cwd", True, "/t/x.jsonl", "fake --resume x")
         mode = self.prepare(info=info, workdir="/work")
         with open(os.path.join(self.dir, "session.json")) as f:
-            self.assertEqual(json.load(f), self.state(workdir="/work", cwd="/cwd", project=True,
-                                                      transcript="/t/x.jsonl", resume="fake --resume x"))
+            self.assertEqual(
+                json.load(f),
+                self.state(
+                    workdir="/work",
+                    cwd="/cwd",
+                    project=True,
+                    transcript="/t/x.jsonl",
+                    resume="fake --resume x",
+                ),
+            )
         self.assertEqual(os.listdir(self.dir), ["session.json"])
-        for path, mode_bits in ((self.root, 0o700), (self.dir, 0o700), (os.path.join(self.dir, "session.json"), 0o600)):
+        for path, mode_bits in (
+            (self.root, 0o700),
+            (self.dir, 0o700),
+            (os.path.join(self.dir, "session.json"), 0o600),
+        ):
             self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode), mode_bits, path)
         self.assertEqual(self.host.mock_calls, [mock.call.status(NAME)])
-        self.assertEqual((mode.name, mode.sid, mode.events, mode.dir), (NAME, SID, self.events, self.dir))
+        self.assertEqual(
+            (mode.name, mode.sid, mode.events, mode.dir), (NAME, SID, self.events, self.dir)
+        )
 
     def test_only_labels_of_a_known_kind_get_a_word_and_events_may_be_none(self):
         class Labels(ScanTui):
-            hooks = {"end": TURN_END, "perm": BLOCKED, "note": BLOCKED, "use": ACTIVITY, "odd": "other"}
+            hooks = {
+                "end": TURN_END,
+                "perm": BLOCKED,
+                "note": BLOCKED,
+                "use": ACTIVITY,
+                "odd": "other",
+            }
+
         self.prepare(run=Labels(self.run.adapter), events=None)
-        self.assertEqual(tui.read_state(NAME), self.state(events=None, words={
-            "end": "done", "perm": "blocked", "note": "blocked", "use": "working"}))
+        self.assertEqual(
+            tui.read_state(NAME),
+            self.state(
+                events=None,
+                words={"end": "done", "perm": "blocked", "note": "blocked", "use": "working"},
+            ),
+        )
 
     def test_a_dead_or_absent_session_is_prepared(self):
         for status in (0, 2, -15, None):
@@ -190,8 +249,10 @@ class PrepareTest(Base):
                 self.assertTrue(os.path.isfile(os.path.join(self.dir, "session.json")))
 
     def test_a_running_or_unknown_session_is_refused_with_nothing_made(self):
-        for status, message in ((tmux_host.RUNNING, "tui session w1 is running; tmux attach -t '=w1'"),
-                                (tmux_host.UNKNOWN, "tui session w1: its tmux state is unknown")):
+        for status, message in (
+            (tmux_host.RUNNING, "tui session w1 is running; tmux attach -t '=w1'"),
+            (tmux_host.UNKNOWN, "tui session w1: its tmux state is unknown"),
+        ):
             with self.subTest(status=status):
                 self.host.status.return_value = status
                 with self.assertRaises(DriverError) as caught:
@@ -202,11 +263,15 @@ class PrepareTest(Base):
     def test_a_bad_session_state_is_refused_before_tmux_or_a_path(self):
         class BadLabel(ScanTui):
             hooks = {"a b": TURN_END}
-        for kwargs, field in (({"info": SessionInfo(SID, "", self.tmp, False, "rel.jsonl", "")}, "transcript"),
-                              ({"info": SessionInfo(SID, "", "rel", False, "", "")}, "cwd"),
-                              ({"info": SessionInfo("a/b", "", self.tmp, False, "", "")}, "sid"),
-                              ({"events": "rel"}, "events"), ({"workdir": "/a\nb"}, "workdir"),
-                              ({"run": BadLabel(self.run.adapter)}, "words")):
+
+        for kwargs, field in (
+            ({"info": SessionInfo(SID, "", self.tmp, False, "rel.jsonl", "")}, "transcript"),
+            ({"info": SessionInfo(SID, "", "rel", False, "", "")}, "cwd"),
+            ({"info": SessionInfo("a/b", "", self.tmp, False, "", "")}, "sid"),
+            ({"events": "rel"}, "events"),
+            ({"workdir": "/a\nb"}, "workdir"),
+            ({"run": BadLabel(self.run.adapter)}, "words"),
+        ):
             with self.subTest(field):
                 with self.assertRaisesRegex(DriverError, rf"\Atui session w1: bad {field} "):
                     self.prepare(**kwargs)
@@ -228,9 +293,11 @@ class PrepareTest(Base):
         target = os.path.join(self.tmp, "target")
         os.mkdir(target, 0o755)
         os.chmod(target, 0o755)
-        cases = (("symlink", lambda: os.symlink(target, self.root), None),
-                 ("file", lambda: open(self.root, "w").close(), None),
-                 ("another user's", lambda: os.mkdir(self.root, 0o700), os.getuid() + 1))
+        cases = (
+            ("symlink", lambda: os.symlink(target, self.root), None),
+            ("file", lambda: open(self.root, "w").close(), None),
+            ("another user's", lambda: os.mkdir(self.root, 0o700), os.getuid() + 1),
+        )
         for case, make, uid in cases:
             with self.subTest(case):
                 make()
@@ -256,11 +323,16 @@ class PrepareTest(Base):
         target = os.path.join(self.tmp, "target")
         os.mkdir(target)
         open(os.path.join(target, "keep"), "w").close()
-        for case, make in (("symlink", lambda: os.symlink(target, self.dir)),
-                           ("file", lambda: open(self.dir, "w").close()), ("fifo", lambda: os.mkfifo(self.dir))):
+        for case, make in (
+            ("symlink", lambda: os.symlink(target, self.dir)),
+            ("file", lambda: open(self.dir, "w").close()),
+            ("fifo", lambda: os.mkfifo(self.dir)),
+        ):
             with self.subTest(case):
                 make()
-                with self.assertRaisesRegex(DriverError, rf"\A{re.escape(self.dir)}: not a directory\Z"):
+                with self.assertRaisesRegex(
+                    DriverError, rf"\A{re.escape(self.dir)}: not a directory\Z"
+                ):
                     self.prepare()
                 self.assertTrue(os.path.lexists(self.dir))
                 os.unlink(self.dir)
@@ -270,10 +342,11 @@ class PrepareTest(Base):
         real = os.mkdir
 
         def racing(path, mode=0o777, **kwargs):
-            if os.fspath(path) == self.dir:   # another start's mkdir lands first
+            if os.fspath(path) == self.dir:  # another start's mkdir lands first
                 real(path, 0o700)
                 open(os.path.join(path, "theirs"), "w").close()
             return real(path, mode, **kwargs)
+
         with mock.patch("os.mkdir", racing):
             with self.assertRaises(DriverError) as caught:
                 self.prepare()
@@ -281,7 +354,9 @@ class PrepareTest(Base):
         self.assertEqual(os.listdir(self.dir), ["theirs"])
 
     def test_a_failed_write_is_a_driver_error_and_removes_the_dir(self):
-        with mock.patch("tempfile.mkstemp", side_effect=OSError(errno.ENOSPC, "No space left on device")):
+        with mock.patch(
+            "tempfile.mkstemp", side_effect=OSError(errno.ENOSPC, "No space left on device")
+        ):
             with self.assertRaisesRegex(DriverError, "No space left on device"):
                 self.prepare()
         self.assertNoSessionDir()
@@ -307,6 +382,7 @@ class LockTest(Base):
         def second():
             with tui.lock(NAME):
                 entered.set()
+
         with tui.lock(NAME):
             thread = threading.Thread(target=second)
             thread.start()
@@ -319,8 +395,11 @@ class LockTest(Base):
         target = os.path.join(self.tmp, "target")
         open(target, "w").close()
         path = os.path.join(self.root, "w1.lock")
-        for case, make in (("symlink", lambda: os.symlink(target, path)), ("fifo", lambda: os.mkfifo(path)),
-                           ("directory", lambda: os.mkdir(path))):
+        for case, make in (
+            ("symlink", lambda: os.symlink(target, path)),
+            ("fifo", lambda: os.mkfifo(path)),
+            ("directory", lambda: os.mkdir(path)),
+        ):
             with self.subTest(case):
                 make()
                 with self.assertRaisesRegex(DriverError, rf"\A{re.escape(path)}: "), tui.lock(NAME):
@@ -332,12 +411,34 @@ class BeginTest(Base):
     def test_starts_the_session_tagged_with_its_sid(self):
         mode = self.prepare()
         mode.begin(["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}, status_line=True)
-        self.assertEqual(self.host.mock_calls[1:], [mock.call.start(
-            NAME, ["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}, events=self.events, status_line=True,
-            tags={"@sid": SID}), mock.call.pane(NAME)])
+        self.assertEqual(
+            self.host.mock_calls[1:],
+            [
+                mock.call.start(
+                    NAME,
+                    ["/bin/run", "a"],
+                    cwd=self.tmp,
+                    env={"A": "1"},
+                    events=self.events,
+                    status_line=True,
+                    tags={"@sid": SID},
+                ),
+                mock.call.pane(NAME),
+            ],
+        )
         self.prepare(events=None).begin(("/bin/run",), cwd=self.tmp, env={})
-        self.assertEqual(self.host.start.call_args, mock.call(NAME, ["/bin/run"], cwd=self.tmp, env={}, events=None,
-                                                              status_line=False, tags={"@sid": SID}))
+        self.assertEqual(
+            self.host.start.call_args,
+            mock.call(
+                NAME,
+                ["/bin/run"],
+                cwd=self.tmp,
+                env={},
+                events=None,
+                status_line=False,
+                tags={"@sid": SID},
+            ),
+        )
 
     def test_a_failed_start_is_a_driver_error_removing_only_its_own_dir(self):
         other = os.path.join(self.root, "w2")
@@ -354,7 +455,9 @@ class BeginTest(Base):
 
     def test_a_failed_start_keeps_a_dir_it_did_not_make(self):
         mode = self.prepare()
-        os.rename(self.dir, os.path.join(self.tmp, "ours"))   # kept, so the new dir cannot reuse its inode
+        os.rename(
+            self.dir, os.path.join(self.tmp, "ours")
+        )  # kept, so the new dir cannot reuse its inode
         os.mkdir(self.dir)
         open(os.path.join(self.dir, "theirs"), "w").close()
         self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
@@ -381,6 +484,7 @@ class BeginTest(Base):
                     mode.begin(("/bin/run",), cwd=self.tmp, env={})
                 except DriverError as e:
                     caught.append(str(e))
+
         thread = threading.Thread(target=begin, daemon=True)
         thread.start()
         thread.join(5)
@@ -393,20 +497,37 @@ class ReadStateTest(Base):
     def test_a_valid_state(self):
         self.prepare()
         self.assertEqual(tui.read_state(NAME), self.state())
-        self.write_state(self.state(events=None, cwd="", transcript="/t", project=True, resume="r", words={},
-                                    later=1))
+        self.write_state(
+            self.state(
+                events=None, cwd="", transcript="/t", project=True, resume="r", words={}, later=1
+            )
+        )
         self.assertEqual(tui.read_state(NAME)["later"], 1)
 
     def test_missing_or_invalid_is_a_driver_error(self):
         with self.assertRaisesRegex(DriverError, r"\Ano tui session w1: "):
             tui.read_state(NAME)
-        bad = {"words": {"stop": "dead"}, "events": "rel", "sid": "a/b", "runtime": "Fake", "workdir": "rel",
-               "cwd": "rel", "transcript": "rel", "project": "no", "resume": None}
+        bad = {
+            "words": {"stop": "dead"},
+            "events": "rel",
+            "sid": "a/b",
+            "runtime": "Fake",
+            "workdir": "rel",
+            "cwd": "rel",
+            "transcript": "rel",
+            "project": "no",
+            "resume": None,
+        }
         for field, value in bad.items():
-            for state in (self.state(**{field: value}), {k: v for k, v in self.state().items() if k != field}):
+            for state in (
+                self.state(**{field: value}),
+                {k: v for k, v in self.state().items() if k != field},
+            ):
                 with self.subTest(field=field, missing=field not in state):
                     self.write_state(state)
-                    with self.assertRaisesRegex(DriverError, rf"\Ano tui session w1: .*bad {field}"):
+                    with self.assertRaisesRegex(
+                        DriverError, rf"\Ano tui session w1: .*bad {field}"
+                    ):
                         tui.read_state(NAME)
         for data in (b"", b"[]", b"not json"):
             with self.subTest(data):
@@ -420,11 +541,17 @@ class ReadStateTest(Base):
         real = os.path.join(self.tmp, "real.json")
         with open(real, "w") as f:
             json.dump(self.state(), f)
-        for make in (lambda: os.symlink(real, path), lambda: os.mkfifo(path), lambda: os.mkdir(path)):
+        for make in (
+            lambda: os.symlink(real, path),
+            lambda: os.mkfifo(path),
+            lambda: os.mkdir(path),
+        ):
             make()
             with self.subTest(stat.filemode(os.lstat(path).st_mode)):
                 out = {}
-                thread = threading.Thread(target=lambda: out.setdefault("error", self.refused()), daemon=True)
+                thread = threading.Thread(
+                    target=lambda: out.setdefault("error", self.refused()), daemon=True
+                )
                 thread.start()
                 thread.join(10)
                 self.assertFalse(thread.is_alive(), "blocked")
@@ -442,11 +569,21 @@ class ReadStateTest(Base):
 class PollTest(Base):
     def test_records_become_the_runs_events_in_order_bound_once(self):
         mode = self.started()
-        self.append(record("tool", session_id="n1", tool="Bash"), record("stop", session_id="n1", last_message="hi",
-                                                                        tasks=[1, 2]))
-        self.assertEqual(mode.poll(0.5), ([SessionBound("n1"), Activity("Bash"), TurnEnd("hi", 2)], False))
-        self.append(record("ask", session_id="n2", why="perm"), record("other", session_id="n2"), record("tool"))
-        self.assertEqual(mode.poll(0.5), ([SessionBound("n2"), Blocked("perm"), Activity("")], False))
+        self.append(
+            record("tool", session_id="n1", tool="Bash"),
+            record("stop", session_id="n1", last_message="hi", tasks=[1, 2]),
+        )
+        self.assertEqual(
+            mode.poll(0.5), ([SessionBound("n1"), Activity("Bash"), TurnEnd("hi", 2)], False)
+        )
+        self.append(
+            record("ask", session_id="n2", why="perm"),
+            record("other", session_id="n2"),
+            record("tool"),
+        )
+        self.assertEqual(
+            mode.poll(0.5), ([SessionBound("n2"), Blocked("perm"), Activity("")], False)
+        )
         self.assertEqual(mode.bound, "n2")
         self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME)] * 2)
         self.assertEqual(self.log, [])
@@ -462,8 +599,17 @@ class PollTest(Base):
 
     def test_bad_lines_are_skipped(self):
         mode = self.started()
-        self.append(b"not json\n", b"[1]\n", b'{"label": 1, "payload": {}}\n', b'{"label": "stop", "payload": []}\n',
-                    b'{"label": "stop"}\n', b"\xff\xfe\n", b"\n", b"[" * 100000 + b"\n", record("tool", tool="t"))
+        self.append(
+            b"not json\n",
+            b"[1]\n",
+            b'{"label": 1, "payload": {}}\n',
+            b'{"label": "stop", "payload": []}\n',
+            b'{"label": "stop"}\n',
+            b"\xff\xfe\n",
+            b"\n",
+            b"[" * 100000 + b"\n",
+            record("tool", tool="t"),
+        )
         self.assertEqual(mode.poll(0), ([Activity("t")], False))
 
     def test_a_hooks_file_that_is_no_regular_file_gives_no_records(self):
@@ -477,10 +623,15 @@ class PollTest(Base):
                 self.assertEqual(mode.poll(0), ([], False))
             os.unlink(self.hooks)
 
-    def test_nothing_new_checks_status_the_screen_then_its_pane_once_then_waits_the_timeout_in_slices(self):
+    def test_nothing_new_checks_status_the_screen_then_its_pane_once_then_waits_the_timeout_in_slices(
+        self,
+    ):
         mode = self.started()
         self.assertEqual(mode.poll(0.5), ([], False))
-        self.assertEqual(self.host.mock_calls, [mock.call.status(NAME), mock.call.read(NAME), mock.call.pane(NAME)])
+        self.assertEqual(
+            self.host.mock_calls,
+            [mock.call.status(NAME), mock.call.read(NAME), mock.call.pane(NAME)],
+        )
         self.assertTrue(all(0 < s <= 0.1 for _, s in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
 
@@ -496,8 +647,9 @@ class PollTest(Base):
                 mode = self.started()
 
                 def ended(name, status=status):
-                    self.append(record("stop", last_message="last"))   # written before the pane died
+                    self.append(record("stop", last_message="last"))  # written before the pane died
                     return status
+
                 self.host.status.side_effect = ended
                 self.assertEqual(mode.poll(0.5), ([TurnEnd("last", 0)], True))
                 self.host.read.assert_not_called()
@@ -514,15 +666,31 @@ class PollTest(Base):
     def test_exact_events_per_poll_over_a_session(self):
         mode = self.started()
         self.host.read.side_effect = ["", "Sign in", "Sign in", "x", "LIMIT 9", "x"]
-        script = [[record("tool", session_id="n1")], [], [], [record("ask", session_id="n1")], [], [],
-                  [record("stop", session_id="n1", last_message="done")]]
+        script = [
+            [record("tool", session_id="n1")],
+            [],
+            [],
+            [record("ask", session_id="n1")],
+            [],
+            [],
+            [record("stop", session_id="n1", last_message="done")],
+        ]
         got = []
         for lines in script:
             self.append(*lines)
             got.append(mode.poll(0.1))
-        self.assertEqual(got, [([SessionBound("n1"), Activity("")], False), ([], False), ([Blocked("Sign in")], False),
-                               ([Blocked("")], False), ([], False), ([Activity("")], False),
-                               ([TurnEnd("done", 0)], False)])
+        self.assertEqual(
+            got,
+            [
+                ([SessionBound("n1"), Activity("")], False),
+                ([], False),
+                ([Blocked("Sign in")], False),
+                ([Blocked("")], False),
+                ([], False),
+                ([Activity("")], False),
+                ([TurnEnd("done", 0)], False),
+            ],
+        )
         self.assertEqual(mode.poll(0.1), ([LimitHit(9.0)], False))
         self.assertEqual(mode.poll(0.1), ([], False))
 
@@ -538,22 +706,32 @@ class ScanTest(Base):
 
     def test_a_dialog_is_blocked_once_and_its_end_activity(self):
         mode = self.started()
-        self.assertEqual(self.scans(mode, "x", "a Trust this \n  folder? b", "Trust this folder?", "y", "y"),
-                         [[], [Blocked("Trust  this\nfolder?")], [], [Activity("")], []])
+        self.assertEqual(
+            self.scans(mode, "x", "a Trust this \n  folder? b", "Trust this folder?", "y", "y"),
+            [[], [Blocked("Trust  this\nfolder?")], [], [Activity("")], []],
+        )
         self.assertEqual(self.run.screens[1], "a Trust this folder? b")
 
     def test_two_dialogs_one_going_as_the_other_comes(self):
         mode = self.started()
-        self.assertEqual(self.scans(mode, "Sign in; Trust this folder?", "Sign in", "Trust this folder?", ""),
-                         [[Blocked("Trust  this\nfolder?"), Blocked("Sign in")], [Activity("")],
-                          [Activity(""), Blocked("Trust  this\nfolder?")], [Activity("")]])
+        self.assertEqual(
+            self.scans(mode, "Sign in; Trust this folder?", "Sign in", "Trust this folder?", ""),
+            [
+                [Blocked("Trust  this\nfolder?"), Blocked("Sign in")],
+                [Activity("")],
+                [Activity(""), Blocked("Trust  this\nfolder?")],
+                [Activity("")],
+            ],
+        )
 
     def test_a_dialog_marks_the_pane_blocked_unless_it_is(self):
         mode = self.started()
         self.host.option.return_value = "done"
         self.scans(mode, "Sign in Trust this folder?")
-        self.assertEqual(self.host.mock_calls[3:], [mock.call.option(NAME, "@state"),
-                                                    mock.call.mark("blocked", self.events, pane="%1")])
+        self.assertEqual(
+            self.host.mock_calls[3:],
+            [mock.call.option(NAME, "@state"), mock.call.mark("blocked", self.events, pane="%1")],
+        )
         self.host.reset_mock()
         self.host.option.return_value = "blocked"
         self.scans(mode, "", "Sign in")
@@ -572,13 +750,17 @@ class ScanTest(Base):
         for method in ("option", "mark"):
             with self.subTest(method):
                 getattr(self.host, method).side_effect = tmux_host.TuiError("tmux: boom")
-                self.assertEqual(self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]])
+                self.assertEqual(
+                    self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]]
+                )
                 getattr(self.host, method).side_effect = None
 
     def test_a_limit_is_one_event_per_appearance_its_reset_changing_or_not(self):
         mode = self.started()
-        self.assertEqual(self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
-                         [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []])
+        self.assertEqual(
+            self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
+            [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []],
+        )
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()
@@ -588,8 +770,14 @@ class ScanTest(Base):
 
 class ReturncodeStateTest(Base):
     def test_returncode_maps_the_status(self):
-        for status, code in ((0, 0), (2, 2), (-9, -9), (None, -signal.SIGHUP), (tmux_host.RUNNING, None),
-                             (tmux_host.UNKNOWN, None)):
+        for status, code in (
+            (0, 0),
+            (2, 2),
+            (-9, -9),
+            (None, -signal.SIGHUP),
+            (tmux_host.RUNNING, None),
+            (tmux_host.UNKNOWN, None),
+        ):
             with self.subTest(status=status):
                 mode = self.started()
                 self.host.status.return_value = status
@@ -607,8 +795,13 @@ class ReturncodeStateTest(Base):
         self.assertAlmostEqual(self.clock.now, 0.35)
 
     def test_state_maps_the_status(self):
-        for status, state in ((tmux_host.RUNNING, "live"), (0, "live"), (-15, "live"), (None, "absent"),
-                              (tmux_host.UNKNOWN, "unknown")):
+        for status, state in (
+            (tmux_host.RUNNING, "live"),
+            (0, "live"),
+            (-15, "live"),
+            (None, "absent"),
+            (tmux_host.UNKNOWN, "unknown"),
+        ):
             with self.subTest(status=status):
                 mode = self.started()
                 self.host.status.return_value = status
@@ -626,13 +819,26 @@ class SendScreenTest(Base):
         self.host.paste.side_effect = lambda *args: self.log.append(("paste", *args))
         self.host.keys.side_effect = lambda *args: self.log.append(("keys", *args))
         mode.send("hi\nthere")
-        self.assertEqual(self.log, [("paste", NAME, "hi\nthere"), ("sleep", tmux_host.PAUSE), ("keys", NAME, "Enter")])
+        self.assertEqual(
+            self.log,
+            [("paste", NAME, "hi\nthere"), ("sleep", tmux_host.PAUSE), ("keys", NAME, "Enter")],
+        )
         self.log.clear()
         mode.run = Keys(self.run.adapter)
         mode.send("a")
-        self.assertEqual(self.log, [("keys", NAME, "Escape"), ("paste", NAME, "a"), ("sleep", tmux_host.PAUSE),
-                                    ("keys", NAME, "Enter"), ("keys", NAME, "Enter"), ("paste", NAME, "b"),
-                                    ("sleep", tmux_host.PAUSE), ("keys", NAME, "Tab")])
+        self.assertEqual(
+            self.log,
+            [
+                ("keys", NAME, "Escape"),
+                ("paste", NAME, "a"),
+                ("sleep", tmux_host.PAUSE),
+                ("keys", NAME, "Enter"),
+                ("keys", NAME, "Enter"),
+                ("paste", NAME, "b"),
+                ("sleep", tmux_host.PAUSE),
+                ("keys", NAME, "Tab"),
+            ],
+        )
 
     def test_send_or_screen_to_a_session_not_running_is_refused(self):
         mode = self.started()
@@ -648,8 +854,11 @@ class SendScreenTest(Base):
 
     def test_a_tmux_error_is_a_driver_error(self):
         mode = self.started()
-        for method, call in (("paste", lambda: mode.send("hi")), ("keys", lambda: mode.send("hi")),
-                             ("read", mode.screen)):
+        for method, call in (
+            ("paste", lambda: mode.send("hi")),
+            ("keys", lambda: mode.send("hi")),
+            ("read", mode.screen),
+        ):
             with self.subTest(method):
                 getattr(self.host, method).side_effect = tmux_host.TuiError("tmux: boom")
                 with self.assertRaisesRegex(DriverError, r"\A.*tui session w1: tmux: boom\Z"):
@@ -676,7 +885,9 @@ class CloseStopTest(Base):
         self.started()
         held, remove = [], tui._remove
         self.host.kill.side_effect = lambda name: held.append(self.locked())
-        with mock.patch.object(tui, "_remove", lambda path: (held.append(self.locked()), remove(path))):
+        with mock.patch.object(
+            tui, "_remove", lambda path: (held.append(self.locked()), remove(path))
+        ):
             tui.close(NAME)
         self.assertEqual((held, self.locked()), ([True, True], False))
         self.assertNoSessionDir()
@@ -733,7 +944,9 @@ class BoundTest(Base):
                 self.host.read.return_value = "Sign in LIMIT 9"
                 self.log.clear()
                 self.assertEqual(mode.poll(5), ([], True))
-                self.assertEqual((self.run.screens, self.log, mode.returncode(0)), ([], [], -signal.SIGHUP))
+                self.assertEqual(
+                    (self.run.screens, self.log, mode.returncode(0)), ([], [], -signal.SIGHUP)
+                )
                 self.host.mark.assert_not_called()
                 self.append(record("tool"))
                 self.host.reset_mock()
@@ -750,6 +963,7 @@ class BoundTest(Base):
         def theirs():
             self.host.pane.return_value = "%2"
             self.append(record("stop", last_message="theirs"))
+
         self.clock.actions.append((self.clock.now + 0.25, theirs))
         self.assertEqual((mode.poll(5), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
@@ -768,13 +982,20 @@ class BoundTest(Base):
         self.assertEqual(mode.returncode(0), 3)
 
     def test_stop_closes_unless_another_pane_holds_the_name(self):
-        for holder, closed in (("%1", True), (None, True), ("%2", False), (tmux_host.TuiError("tmux: boom"), True)):
+        for holder, closed in (
+            ("%1", True),
+            (None, True),
+            ("%2", False),
+            (tmux_host.TuiError("tmux: boom"), True),
+        ):
             with self.subTest(holder=holder):
                 mode = self.started()
                 self.host.pane.return_value = holder
                 self.host.pane.side_effect = holder if isinstance(holder, Exception) else None
                 mode.stop()
-                self.assertEqual((self.host.kill.called, os.path.isdir(self.dir)), (closed, not closed))
+                self.assertEqual(
+                    (self.host.kill.called, os.path.isdir(self.dir)), (closed, not closed)
+                )
                 self.assertEqual(mode.poll(0), ([], True))
                 self.host.pane.side_effect = None
 
@@ -806,7 +1027,9 @@ class BoundTest(Base):
         self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
         self.host.read.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([], False))
-        self.assertEqual((self.run.screens, mode.returncode(0), mode.state()), ([], None, "unknown"))
+        self.assertEqual(
+            (self.run.screens, mode.returncode(0), mode.state()), ([], None, "unknown")
+        )
 
 
 class AttachTest(Base):
@@ -823,11 +1046,21 @@ class AttachTest(Base):
 
     def test_reply_bound_and_the_next_record_from_the_files_end(self):
         partial = (json.dumps(record("tool", tool="next")) + "\n").encode()
-        mode = self.attach(record("tool", session_id="n1"), record("stop", session_id="n1", last_message="r1"),
-                           record("stop", session_id="n2", last_message="r2"), record("ask"), b"bad\n", partial[:7])
-        self.assertEqual((mode.name, mode.sid, mode.events, mode.reply, mode.bound),
-                         (NAME, SID, self.events, "r2", "n2"))
-        self.assertEqual(self.host.mock_calls, [mock.call.option(NAME, "@sid"), mock.call.pane(NAME)])
+        mode = self.attach(
+            record("tool", session_id="n1"),
+            record("stop", session_id="n1", last_message="r1"),
+            record("stop", session_id="n2", last_message="r2"),
+            record("ask"),
+            b"bad\n",
+            partial[:7],
+        )
+        self.assertEqual(
+            (mode.name, mode.sid, mode.events, mode.reply, mode.bound),
+            (NAME, SID, self.events, "r2", "n2"),
+        )
+        self.assertEqual(
+            self.host.mock_calls, [mock.call.option(NAME, "@sid"), mock.call.pane(NAME)]
+        )
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
@@ -844,7 +1077,9 @@ class AttachTest(Base):
     def test_another_sid_absent_or_unknown_is_no_tui_session(self):
         for found in ("other", None, tmux_host.TuiError("tmux: denied")):
             with self.subTest(found=found):
-                self.host.option.side_effect = found if isinstance(found, Exception) else lambda name, key: found
+                self.host.option.side_effect = (
+                    found if isinstance(found, Exception) else lambda name, key: found
+                )
                 with self.assertRaises(DriverError) as caught:
                     self.attach()
                 self.assertEqual(str(caught.exception), "no tui session w1")
@@ -875,10 +1110,15 @@ class AttachTest(Base):
 class ModeTest(unittest.TestCase):
     def test_tui_mode_has_each_mode_method_with_its_parameters(self):
         def params(function):
-            return [(p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()]
+            return [
+                (p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()
+            ]
+
         for name in ("poll", "returncode", "state", "send", "screen", "stop"):
             with self.subTest(name=name):
-                self.assertEqual(params(getattr(tui.TuiMode, name)), params(getattr(api.Mode, name)))
+                self.assertEqual(
+                    params(getattr(tui.TuiMode, name)), params(getattr(api.Mode, name))
+                )
 
 
 if __name__ == "__main__":

@@ -1,3 +1,6 @@
+from new.tests import NEW
+from new.tests.integration.adapters.codex import fake_app_server
+
 import json
 import os
 import shlex
@@ -8,9 +11,6 @@ import time
 import unittest
 from pathlib import Path
 
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_app_server
-
 
 class AccountProbeIntegrationTest(unittest.TestCase):
     def setUp(self):
@@ -20,18 +20,29 @@ class AccountProbeIntegrationTest(unittest.TestCase):
         for path in (self.home, self.work, self.bin, self.codex_home):
             path.mkdir()
         self.executable = self.bin / "codex"
-        self.executable.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + " "
-                                   + shlex.quote(fake_app_server.__file__) + ' "$@"\n')
+        self.executable.write_text(
+            "#!/bin/sh\nexec "
+            + shlex.quote(sys.executable)
+            + " "
+            + shlex.quote(fake_app_server.__file__)
+            + ' "$@"\n'
+        )
         self.executable.chmod(0o755)
         self.log = self.root / "probe.jsonl"
         self.config = self.codex_home / "config.toml"
         self.auth = self.codex_home / "auth.json"
         self.config.write_text('model = "preserve-config"\n')
         self.auth.write_text('{"token": "fixture-only"}\n')
-        self.original = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.config, self.auth)}
+        self.original = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.config, self.auth)
+        }
         self.env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
-        self.env.update(HOME=str(self.home), CODEX_HOME=str(self.codex_home),
-                        PATH=str(self.bin) + os.pathsep + os.environ["PATH"], FAKE_LOG=str(self.log))
+        self.env.update(
+            HOME=str(self.home),
+            CODEX_HOME=str(self.codex_home),
+            PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+            FAKE_LOG=str(self.log),
+        )
         self.script = Path(NEW) / "core" / "src" / "adapters" / "codex" / "account_probe.py"
         self.addCleanup(self.cleanup)
 
@@ -42,14 +53,23 @@ class AccountProbeIntegrationTest(unittest.TestCase):
             path.rmdir()
 
     def logged(self):
-        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+        return (
+            [json.loads(line) for line in self.log.read_text().splitlines()]
+            if self.log.exists()
+            else []
+        )
 
     def probe(self, case="normal", timeout=2, **env):
         self.log.unlink(missing_ok=True)
         started = time.monotonic()
-        result = subprocess.run((sys.executable, str(self.script), "--timeout", str(timeout)),
-                                cwd=self.work, env={**self.env, "FAKE_CASE": case, **env},
-                                capture_output=True, text=True, timeout=3)
+        result = subprocess.run(
+            (sys.executable, str(self.script), "--timeout", str(timeout)),
+            cwd=self.work,
+            env={**self.env, "FAKE_CASE": case, **env},
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertEqual(len(result.stdout.splitlines()), 1)
@@ -67,17 +87,30 @@ class AccountProbeIntegrationTest(unittest.TestCase):
         result = self.probe()
         weekly = {"usedPercent": 41, "windowDurationMins": 10080, "resetsAt": 4000}
         five = {"usedPercent": 62, "windowDurationMins": 300, "resetsAt": 2000}
-        self.assertEqual(result, {"rateLimits": {"primary": None, "secondary": None},
-                                  "rateLimitsByLimitId": {"codex": {"primary": weekly, "secondary": five}}})
+        self.assertEqual(
+            result,
+            {
+                "rateLimits": {"primary": None, "secondary": None},
+                "rateLimitsByLimitId": {"codex": {"primary": weekly, "secondary": five}},
+            },
+        )
         self.assertTrue(os.path.isabs(sys.executable))
         self.assertTrue(self.script.is_absolute())
         rows = self.logged()
         self.assertEqual(rows[0]["argv"], ["app-server"])
         self.assertIsNone(rows[0]["env"]["PYTHONPATH"])
-        self.assertEqual(rows[1:], [
-            {"id": 1, "method": "initialize", "params": {
-                "clientInfo": {"name": "agent_pm", "version": "0.1.0"}}},
-            {"method": "initialized"}, {"id": 2, "method": "account/rateLimits/read"}])
+        self.assertEqual(
+            rows[1:],
+            [
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"clientInfo": {"name": "agent_pm", "version": "0.1.0"}},
+                },
+                {"method": "initialized"},
+                {"id": 2, "method": "account/rateLimits/read"},
+            ],
+        )
 
     def test_partial_null_and_empty_native_snapshots_are_preserved(self):
         for case in ("weekly-only", "null", "empty", "fallback", "five-first", "weekly-full"):
@@ -101,14 +134,28 @@ class AccountProbeIntegrationTest(unittest.TestCase):
 
     def test_interleaved_notifications_and_typed_response_ids(self):
         self.assertIsInstance(self.probe("wrong-type-id"), dict)
-        self.assertEqual([row["method"] for row in self.logged()[1:]],
-                         ["initialize", "initialized", "account/rateLimits/read"])
+        self.assertEqual(
+            [row["method"] for row in self.logged()[1:]],
+            ["initialize", "initialized", "account/rateLimits/read"],
+        )
         self.assertIsNone(self.probe("init-wrong-type-id", timeout=0.15))
         self.assertEqual([row["method"] for row in self.logged()[1:]], ["initialize"])
 
     def test_failures_return_null_and_reap_the_app_server(self):
-        cases = ("error", "init-error", "malformed", "oversize", "exit", "silent", "wrong-id",
-                 "null-result", "invalid-utf8", "partial-exit", "stderr", "ignore-term-silent")
+        cases = (
+            "error",
+            "init-error",
+            "malformed",
+            "oversize",
+            "exit",
+            "silent",
+            "wrong-id",
+            "null-result",
+            "invalid-utf8",
+            "partial-exit",
+            "stderr",
+            "ignore-term-silent",
+        )
         for case in cases:
             with self.subTest(case=case):
                 self.assertIsNone(self.probe(case, timeout=0.15))
@@ -119,16 +166,35 @@ class AccountProbeIntegrationTest(unittest.TestCase):
         self.assertIsInstance(self.probe("ignore-term"), dict)
 
     def test_invalid_timeout_and_arguments_return_null_without_spawning(self):
-        for argv in (("--timeout", "0"), ("--timeout", "-1"), ("--timeout", "11"), ("--timeout", "nan"),
-                     ("--timeout", "inf"), ("--timeout", "invalid"), ("--unknown",)):
+        for argv in (
+            ("--timeout", "0"),
+            ("--timeout", "-1"),
+            ("--timeout", "11"),
+            ("--timeout", "nan"),
+            ("--timeout", "inf"),
+            ("--timeout", "invalid"),
+            ("--unknown",),
+        ):
             with self.subTest(argv=argv):
-                result = subprocess.run((sys.executable, str(self.script), *argv), cwd=self.work, env=self.env,
-                                        capture_output=True, text=True, timeout=3)
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "null\n", ""))
+                result = subprocess.run(
+                    (sys.executable, str(self.script), *argv),
+                    cwd=self.work,
+                    env=self.env,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                self.assertEqual(
+                    (result.returncode, result.stdout, result.stderr), (0, "null\n", "")
+                )
                 self.assertEqual(self.logged(), [])
 
     def test_native_environment_is_forwarded_without_config_writes(self):
-        self.assertIsInstance(self.probe(FAKE_ADDITION="configured", NO_COLOR="configured", PAGER="configured"), dict)
+        self.assertIsInstance(
+            self.probe(FAKE_ADDITION="configured", NO_COLOR="configured", PAGER="configured"), dict
+        )
         env = self.logged()[0]["env"]
-        self.assertEqual((env["HOME"], env["CODEX_HOME"], env["FAKE_ADDITION"], env["NO_COLOR"], env["PAGER"]),
-                         (str(self.home), str(self.codex_home), "configured", "configured", "configured"))
+        self.assertEqual(
+            (env["HOME"], env["CODEX_HOME"], env["FAKE_ADDITION"], env["NO_COLOR"], env["PAGER"]),
+            (str(self.home), str(self.codex_home), "configured", "configured", "configured"),
+        )
