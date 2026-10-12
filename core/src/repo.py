@@ -254,7 +254,7 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
 
 
 def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh, temp=None,
-             links=frozenset()) -> dict:
+             links=frozenset(), base_branch: str | None = None) -> dict:
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -278,6 +278,9 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
         raise Invalid(f"{repo.slug}: unsafe default branch name")
     if branch == default:
         raise Invalid(f"{branch} is the default branch; build on another")
+    onto = base_branch if base_branch is not None else default
+    if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
+        raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     add = clone is not None and not exists
     # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move local branches.
     if exists:
@@ -297,7 +300,7 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
         elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
             opts, start = ["--track", "-b", branch], f"origin/{branch}"
         else:
-            opts, start = ["--no-track", "-b", branch], f"origin/{default}"
+            opts, start = ["--no-track", "-b", branch], f"origin/{onto}"
         if add:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
             # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds our own path
@@ -413,14 +416,13 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
         p.add_argument("--dir", required=True, action=Once)
         p.add_argument("--branch", required=True, action=Once)
         p.add_argument("--name", action=Once)
-        if cmd == "status":
-            p.add_argument("--base", action=Once)
+        p.add_argument("--base", action=Once)
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
         cfg = read_config(config)
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
+            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg), base_branch=a.base)
         else:
             r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"), base_branch=a.base)
     except Invalid as e:
