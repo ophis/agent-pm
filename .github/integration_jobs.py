@@ -1,7 +1,6 @@
-"""CI integration jobs: JOBS gives each test file under DIRECTORY to the job of its longest matching entry (a
-directory ending in / or a file). --check fails on a loader error, a file no entry matches, an empty job, a test id
-in no job or two, or a workflow matrix.job unlike JOBS; <job> runs that job's tests. An entry cannot name a test class
-yet: splitting one file across shards needs that."""
+"""CI integration jobs: JOBS entries are directories ending in /, files, or <file>::<Class>.
+Exact classes outrank the longest matching path. --check rejects loader errors, unmatched classes/tests,
+empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests."""
 
 import json
 import re
@@ -18,7 +17,18 @@ JOBS = {
     "adapters": ["adapters/"],
     "delegate-composer": ["delegate/", "composer/"],
     "orchestrator": ["orchestrator/"],
-    "crew": ["tmux/"],
+    "crew-1": [
+        "tmux/crew_integration_test.py::ClaudeLifecycleTest",
+        "tmux/crew_integration_test.py::RuntimeTest",
+    ],
+    "crew-2": [
+        "tmux/crew_integration_test.py::CodexLifecycleTest",
+        "tmux/crew_integration_test.py::RosterTest",
+    ],
+    "crew-3": [
+        "tmux/crew_integration_test.py::ManagersTest",
+        "tmux/crew_integration_test.py::RosterRecoveryTest",
+    ],
     "shared": ["imports_integration_test.py", "live_tmux_integration_test.py"],
 }
 
@@ -31,7 +41,10 @@ def tests(suite):
             yield test
 
 
-def owners(file, jobs):
+def owners(file, jobs, class_name):
+    exact = [job for job, entries in jobs.items() if f"{file}::{class_name}" in entries]
+    if exact:
+        return exact
     longest = {
         job: max(
             (len(e) for e in entries if file == e or e.endswith("/") and file.startswith(e)),
@@ -82,9 +95,18 @@ def check(root, directory, jobs, workflow):
         raise ValueError("\n".join(loader.errors))
     split, unassigned = {job: [] for job in jobs}, set()
     prefix = directory.replace("/", ".") + "."
-    for test in found:
-        file = type(test).__module__.removeprefix(prefix).replace(".", "/") + ".py"
-        matched = owners(file, jobs)
+    locations = [
+        (test, type(test).__module__.removeprefix(prefix).replace(".", "/") + ".py")
+        for test in found
+    ]
+    classes = {f"{file}::{type(test).__name__}" for test, file in locations}
+    missing_classes = sorted(
+        {entry for entries in jobs.values() for entry in entries if "::" in entry} - classes
+    )
+    if missing_classes:
+        raise ValueError("no integration tests for: " + ", ".join(missing_classes))
+    for test, file in locations:
+        matched = owners(file, jobs, type(test).__name__)
         if not matched:
             unassigned.add(file)
         for job in matched:

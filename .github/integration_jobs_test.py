@@ -63,6 +63,50 @@ class Tree(unittest.TestCase):
 
 
 class Assignment(Tree):
+    def test_classes_in_one_file_can_belong_to_different_jobs(self):
+        self.write({"x_test.py": PASS + PASS.replace("class T", "class U")})
+        jobs = {"a": ["x_test.py::T"], "b": ["x_test.py::U"]}
+        split = gate.check(self.root, self.package, jobs, WORKFLOW)
+        self.assertEqual(
+            {job: [type(test).__name__ for test in suite] for job, suite in split.items()},
+            {"a": ["T"], "b": ["U"]},
+        )
+
+    def test_a_class_overrides_file_and_directory_entries(self):
+        source = PASS + PASS.replace("class T", "class VeryLongClassName")
+        self.write({"a/x_test.py": source})
+        for fallback in ("a/", "a/x_test.py", "a/x_test.py::VeryLongClassName"):
+            jobs = {"a": [fallback], "b": ["a/x_test.py::T"]}
+            with self.subTest(fallback=fallback):
+                split = gate.check(self.root, self.package, jobs, WORKFLOW)
+                self.assertEqual(
+                    {job: [type(test).__name__ for test in suite] for job, suite in split.items()},
+                    {"a": ["VeryLongClassName"], "b": ["T"]},
+                )
+
+    def test_a_class_in_two_jobs_fails(self):
+        self.write({"a/x_test.py": PASS, "b/y_test.py": PASS})
+        with self.assertRaisesRegex(
+            ValueError, rf"duplicate=\['{self.package}\.a\.x_test\.T\.test_a'\]$"
+        ):
+            self.check({"a": ["a/x_test.py::T"], "b": ["b/", "a/x_test.py::T"]})
+
+    def test_a_missing_class_fails_even_with_a_matching_file_or_directory(self):
+        self.write({"a/x_test.py": PASS, "b/y_test.py": PASS})
+        for fallback in ("a/", "a/x_test.py"):
+            with (
+                self.subTest(fallback=fallback),
+                self.assertRaisesRegex(
+                    ValueError, r"^no integration tests for: a/x_test\.py::Missing$"
+                ),
+            ):
+                self.check({"a": [fallback, "a/x_test.py::Missing"], "b": ["b/"]})
+
+    def test_an_unspecified_class_fails_naming_its_file(self):
+        self.write({"a/x_test.py": PASS + PASS.replace("class T", "class U"), "b/y_test.py": PASS})
+        with self.assertRaisesRegex(ValueError, r"^no integration job for: a/x_test\.py$"):
+            self.check({"a": ["a/x_test.py::T"], "b": ["b/"]})
+
     def test_an_unassigned_file_fails_naming_its_path(self):
         self.write(
             {"a/x_test.py": PASS, "b/y_test.py": PASS, "new_test.py": PASS, "c/d/z_test.py": PASS}
